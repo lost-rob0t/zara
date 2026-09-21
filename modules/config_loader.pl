@@ -111,6 +111,13 @@ write_default_config(Stream) :-
     writeln(Stream, '% Optional explicit wake phrases replace project-name-derived defaults:'),
     writeln(Stream, '% wake_word("jarvis").'),
     writeln(Stream, ''),
+    writeln(Stream, '% ---- Voice Expert ----'),
+    writeln(Stream, '% Prolog owns final TTS voice selection even when the LLM proposes roles:'),
+    writeln(Stream, '% voice_default("zara").'),
+    writeln(Stream, '% voice_role(narrator, "zara").'),
+    writeln(Stream, '% voice_role(character, "my_character_voice").'),
+    writeln(Stream, '% voice_policy(character, distinct_if_available).'),
+    writeln(Stream, ''),
     writeln(Stream, '% ---- Timer and Alarm Sounds ----'),
     writeln(Stream, '% Use the unquoted atom disabled to turn either sound off:'),
     writeln(Stream, '% timer_sound(disabled).'),
@@ -267,7 +274,7 @@ replace_user_config(Facts) :-
            )).
 
 validate_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents, kb_device_providers]),
+    memberchk(Module, [kb_config, kb_intents, kb_device_providers, kb_voice_expert]),
     validate_user_fact(Term, Module, Fact).
 validate_user_fact(app_mapping(Name, Command), kb_device_providers, app_mapping(Name, Command)) :-
     atom(Name),
@@ -288,6 +295,14 @@ validate_user_fact(llm_app_name(Name), kb_config, llm_app_name(Name)) :-
     nonempty_text(Name).
 validate_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
     nonempty_text(Word).
+validate_user_fact(voice_default(Voice), kb_voice_expert, voice_default(Voice)) :-
+    nonempty_text(Voice).
+validate_user_fact(voice_role(Role, Voice), kb_voice_expert, voice_role(Role, Voice)) :-
+    atom(Role),
+    nonempty_text(Voice).
+validate_user_fact(voice_policy(Role, Policy), kb_voice_expert, voice_policy(Role, Policy)) :-
+    atom(Role),
+    memberchk(Policy, [prefer_default, distinct_if_available]).
 validate_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
     memberchk(Provider, [ollama, openai, openrouter, anthropic]).
 validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
@@ -381,7 +396,7 @@ valid_intent(python(Skill)) :-
 %% intentionally have no clause here, so a server boot fails loudly on
 %% server-inappropriate mappings instead of accepting shell commands.
 validate_server_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents]),
+    memberchk(Module, [kb_config, kb_intents, kb_voice_expert]),
     validate_server_user_fact(Term, Module, Fact).
 validate_server_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
@@ -391,6 +406,14 @@ validate_server_user_fact(llm_app_name(Name), kb_config, llm_app_name(Name)) :-
     nonempty_text(Name).
 validate_server_user_fact(wake_word(Word), kb_config, wake_word(Word)) :-
     nonempty_text(Word).
+validate_server_user_fact(voice_default(Voice), kb_voice_expert, voice_default(Voice)) :-
+    nonempty_text(Voice).
+validate_server_user_fact(voice_role(Role, Voice), kb_voice_expert, voice_role(Role, Voice)) :-
+    atom(Role),
+    nonempty_text(Voice).
+validate_server_user_fact(voice_policy(Role, Policy), kb_voice_expert, voice_policy(Role, Policy)) :-
+    atom(Role),
+    memberchk(Policy, [prefer_default, distinct_if_available]).
 validate_server_user_fact(llm_provider(Provider), kb_config, llm_provider(Provider)) :-
     memberchk(Provider, [ollama, openai, openrouter, anthropic]).
 validate_server_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
