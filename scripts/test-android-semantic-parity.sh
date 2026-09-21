@@ -70,11 +70,13 @@ parity_main :-
 
 % Exercise the exact logical envelope Android sends through the JNI bridge.
 % This keeps the parity gate honest: semantic_core.pl imports the canonical
-% dialogue modules, Context0 is parsed from the persisted textual term, the
-% router/renderer is committed once, and response + Context1 are then exposed
-% as the two Result solutions consumed by the bounded native adapter.
+% dialogue modules, Context0 is bridged from persisted string data to the atom
+% input required by pinned Trealla read_term_from_atom/3, the router/renderer
+% is committed once, and response + Context1 are then exposed as the two
+% Result solutions consumed by the bounded native adapter.
 parity_dialogue_envelope :-
-    read_term_from_atom("[]", Context0, []),
+    atom_string(Context0Atom, "[]"),
+    read_term_from_atom(Context0Atom, Context0, []),
     findall(Result,
         ( ( ( symbolic_dialogue_turn:valid_dialogue_context(Context0),
               symbolic_dialogue_turn:dialogue_turn(
@@ -140,7 +142,7 @@ fi
 if ! "$trealla/tpl" -q -f \
     "$stage/portable/semantic_core.pl" \
     "$stage/shared/kb/semantic_corpus.pl" \
-    "$stage/parity_driver.pl" \
+    -s "$stage/parity_driver.pl" \
     -g parity_main >"$trealla_out" 2>"$trealla_err"; then
   echo "semantic parity FAILED: Trealla corpus execution failed" >&2
   cat "$trealla_err" >&2
