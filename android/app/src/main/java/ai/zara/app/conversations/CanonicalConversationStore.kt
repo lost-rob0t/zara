@@ -23,7 +23,7 @@ private const val UI_METADATA_MAGIC = "ZARA-CONVERSATION-UI/1"
 private const val MAX_UI_METADATA_BYTES = 512 * 1024
 private const val MAX_CONVERSATIONS = 256
 private const val MAX_ID_CHARS = 256
-private const val MAX_PROJECT_ID_CHARS = 128
+private const val MAX_PROJECT_ID_CHARS = 512
 private const val DEFAULT_TITLE = "New chat"
 private const val INTERRUPTED_MESSAGE = "Interrupted before completion."
 
