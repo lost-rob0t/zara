@@ -45,7 +45,7 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
-    fun persistedDialogueEnvelopeReturnsResponseCanonicalContextAndActWireFromOneDialogueTurn() {
+    fun persistedDialogueEnvelopeReturnsResponseCanonicalContextActAndExpertEvidenceFromOneDialogueTurn() {
         val context = "completed_frame(frame(intent(ns(device),name('timer.set')),[],complete))"
         val query = AndroidPureSymbolicConversationFactory.dialogueTurnEnvelopeQuery(
             "actually ten minutes",
@@ -88,9 +88,11 @@ class AndroidPureSymbolicConversationFactoryTest {
                 query.contains("string_codes(ActWire, ActWireCodes)"),
         )
         assertTrue(
-            "expert response acts must project the canonical edge token expert_answer instead of raw Prolog functor answer",
-            query.contains("Act = answer(expert, _, _) -> ActName = expert_answer") &&
-                query.contains("functor(Act, ActName, _)")
+            "expert response acts must carry both the canonical expert_answer token and their canonical evidence reference",
+            query.contains("Act = answer(expert, _, evidence(EvidenceRef))") &&
+                query.contains("ActName = expert_answer") &&
+                query.contains("__zara_expert_evidence__:") &&
+                query.contains("string_codes(EvidenceWire, EvidenceWireCodes)"),
         )
         assertTrue(
             "ISO if-then-else must commit the router/renderer/context serialization condition before Result enumeration",
@@ -107,7 +109,11 @@ class AndroidPureSymbolicConversationFactoryTest {
             Regex("symbolic_dialogue_turn:dialogue_turn\\(").findAll(query).count(),
         )
         assertTrue(query.contains("symbolic_dialogue:render_response(Act, Response)"))
-        assertTrue(query.endsWith("(Result = Response ; Result = ContextWire ; Result = ActWire)"))
+        assertTrue(
+            query.endsWith(
+                "(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)",
+            ),
+        )
         assertTrue(query.contains("valid_dialogue_context(Context0)"))
         assertTrue(query.contains("valid_dialogue_context(Context1)"))
     }
