@@ -34,6 +34,8 @@ class SymbolicConversationContinuityGateTest {
             SymbolicConversationContinuityGate.accepts(
                 EXPECTED_PRINCIPAL_ID,
                 EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
                 null,
                 wrongPrincipal,
             ),
@@ -42,6 +44,8 @@ class SymbolicConversationContinuityGateTest {
             SymbolicConversationContinuityGate.decodeAccepted(
                 EXPECTED_PRINCIPAL_ID,
                 EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
                 null,
                 SymbolicConversationEdgeCodec.encode(wrongPrincipal),
             ),
@@ -52,6 +56,8 @@ class SymbolicConversationContinuityGateTest {
             SymbolicConversationContinuityGate.accepts(
                 EXPECTED_PRINCIPAL_ID,
                 EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
                 null,
                 wrongConversation,
             ),
@@ -60,10 +66,49 @@ class SymbolicConversationContinuityGateTest {
             SymbolicConversationContinuityGate.decodeAccepted(
                 EXPECTED_PRINCIPAL_ID,
                 EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
                 null,
                 SymbolicConversationEdgeCodec.encode(wrongConversation),
             ),
         )
+    }
+
+    @Test
+    fun initialProjectionRequiresExpectedProjectScopeAndGenerationFloor() {
+        val staleProject = fixture(projectId = "one", projectGeneration = 3)
+        assertFalse(
+            SymbolicConversationContinuityGate.accepts(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
+                null,
+                staleProject,
+            ),
+        )
+        assertNull(
+            SymbolicConversationContinuityGate.decodeAccepted(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
+                null,
+                SymbolicConversationEdgeCodec.encode(staleProject),
+            ),
+        )
+
+        val staleGeneration = fixture(
+            projectId = EXPECTED_PROJECT_ID,
+            projectGeneration = EXPECTED_PROJECT_GENERATION - 1,
+        )
+        assertFalse(accepts(null, staleGeneration))
+
+        val currentScope = fixture(
+            projectId = EXPECTED_PROJECT_ID,
+            projectGeneration = EXPECTED_PROJECT_GENERATION,
+        )
+        assertTrue(accepts(null, currentScope))
     }
 
     @Test
@@ -110,6 +155,8 @@ class SymbolicConversationContinuityGateTest {
             SymbolicConversationContinuityGate.accepts(
                 EXPECTED_PRINCIPAL_ID,
                 EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
                 fixture(principalId = "principal:bob", projectionGeneration = 4, runtimeGeneration = 7),
                 incoming,
             ),
@@ -118,6 +165,8 @@ class SymbolicConversationContinuityGateTest {
             SymbolicConversationContinuityGate.accepts(
                 EXPECTED_PRINCIPAL_ID,
                 EXPECTED_CONVERSATION_ID,
+                EXPECTED_PROJECT_ID,
+                EXPECTED_PROJECT_GENERATION,
                 fixture(conversationId = "chat-other", projectionGeneration = 4, runtimeGeneration = 7),
                 incoming,
             ),
@@ -129,13 +178,21 @@ class SymbolicConversationContinuityGateTest {
         val current = fixture(projectId = "one", projectGeneration = 3, projectionGeneration = 4)
 
         assertFalse(
-            accepts(
+            SymbolicConversationContinuityGate.accepts(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                "two",
+                4L,
                 current,
                 fixture(projectId = "two", projectGeneration = 3, projectionGeneration = 5),
             ),
         )
         assertTrue(
-            accepts(
+            SymbolicConversationContinuityGate.accepts(
+                EXPECTED_PRINCIPAL_ID,
+                EXPECTED_CONVERSATION_ID,
+                "two",
+                4L,
                 current,
                 fixture(projectId = "two", projectGeneration = 4, projectionGeneration = 5),
             ),
@@ -167,6 +224,8 @@ class SymbolicConversationContinuityGateTest {
     ): Boolean = SymbolicConversationContinuityGate.accepts(
         EXPECTED_PRINCIPAL_ID,
         EXPECTED_CONVERSATION_ID,
+        EXPECTED_PROJECT_ID,
+        EXPECTED_PROJECT_GENERATION,
         current,
         incoming,
     )
@@ -177,6 +236,8 @@ class SymbolicConversationContinuityGateTest {
     ): SymbolicConversationEdgeSnapshot? = SymbolicConversationContinuityGate.decodeAccepted(
         EXPECTED_PRINCIPAL_ID,
         EXPECTED_CONVERSATION_ID,
+        EXPECTED_PROJECT_ID,
+        EXPECTED_PROJECT_GENERATION,
         current,
         encoded,
     )
@@ -186,8 +247,8 @@ class SymbolicConversationContinuityGateTest {
         conversationId: String = EXPECTED_CONVERSATION_ID,
         projectionGeneration: Long = 1,
         runtimeGeneration: Long = 1,
-        projectId: String? = "dotfiles",
-        projectGeneration: Long = 1,
+        projectId: String? = EXPECTED_PROJECT_ID,
+        projectGeneration: Long = EXPECTED_PROJECT_GENERATION,
         dialogueAct: String = "expert_answer",
         rendererProvenance: String = "symbolic-dcg/v1",
         providersEnabled: Boolean = false,
@@ -216,5 +277,7 @@ class SymbolicConversationContinuityGateTest {
     private companion object {
         const val EXPECTED_PRINCIPAL_ID = "principal:alice"
         const val EXPECTED_CONVERSATION_ID = "chat-1"
+        const val EXPECTED_PROJECT_ID = "dotfiles"
+        const val EXPECTED_PROJECT_GENERATION = 4L
     }
 }
