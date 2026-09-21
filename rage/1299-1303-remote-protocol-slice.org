@@ -65,3 +65,23 @@
 
 Runs in the GitHub Actions =android= job at the exact PR head (no local
 emulator); artifacts fail-closed via android-ui-evidence (if:always).
+
+* Outcome — merged
+
+- PR: https://github.com/lost-rob0t/zara/pull/1329
+- Merge SHA :: =db16e56490869e24a7c7ecb5832f0bff5170bef6= (auto-merged after
+  required checks; branch head =50e87974=)
+- Teardown hardening follow-up: PR #1392, merge SHA =af7185ee48def384783002332262412e9674343e=
+- Exact-head CI evidence (all green): run 35567805867 at =4aa8b136=
+  (android 34m39s incl. device recovery acceptance), run 35581847475 at
+  =5eaea4cc= (android 35m12s incl. recovery with best-effort teardown).
+- Device recovery manifest at the merged head (run 35576575595): passed=true
+  with first_text_turn, voice_turn_completed, malformed_typed_error,
+  diagnostics_v2_primary_failure, reconnected_second_turn, close_typed_error,
+  second_recovery_turn, recreation_fenced all true; the job's only failure
+  was the post-evidence force-stop against an offline emulator, fixed by
+  PR #1392.
+- The final-branch-head android failure at =c50a1fbb= was the pre-existing
+  stock acceptance flake class (rage/575) under heavy concurrent master
+  churn (other merges red the same window), not the recovery gate.
+- Issues #1299-#1303 closed with the merged SHA and evidence links.
