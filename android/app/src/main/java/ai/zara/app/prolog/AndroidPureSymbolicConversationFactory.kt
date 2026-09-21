@@ -150,16 +150,11 @@ internal object AndroidPureSymbolicConversationFactory {
             )
         }
         val output = PersistenceFencedFuture(turnFuture) {
-            projectionStore.completeSymbolicTurnAtomically(
-                projection = terminalProjection(
-                    pending = pendingProjection,
-                    contextTerm = prepared.context0,
-                    outcome = "cancelled",
-                ),
-                expectedGeneration = pendingGeneration,
-                turnId = turnId,
-                assistantContent = "",
-                assistantStatus = HistoryMessageStatus.Cancelled,
+            cancelPersistedTurnIfOwned(
+                projectionStore = projectionStore,
+                pendingProjection = pendingProjection,
+                pendingGeneration = pendingGeneration,
+                context0 = prepared.context0,
             )
         }
 
@@ -285,6 +280,38 @@ internal object AndroidPureSymbolicConversationFactory {
             CompletableFuture.failedFuture(error)
         } catch (fenceError: Throwable) {
             CompletableFuture.failedFuture(fenceError)
+        }
+    }
+
+    private fun cancelPersistedTurnIfOwned(
+        projectionStore: PortableConversationStore,
+        pendingProjection: SymbolicConversationProjection,
+        pendingGeneration: Long,
+        context0: String,
+    ) {
+        try {
+            projectionStore.completeSymbolicTurnAtomically(
+                projection = terminalProjection(
+                    pending = pendingProjection,
+                    contextTerm = context0,
+                    outcome = "cancelled",
+                ),
+                expectedGeneration = pendingGeneration,
+                turnId = requireNotNull(pendingProjection.turnId),
+                assistantContent = "",
+                assistantStatus = HistoryMessageStatus.Cancelled,
+            )
+        } catch (error: Throwable) {
+            val current = try {
+                projectionStore.loadSymbolicProjection(pendingProjection.conversationId)
+            } catch (_: Throwable) {
+                throw error
+            }
+            val stillOwnsPendingGeneration = current != null &&
+                current.turnId == pendingProjection.turnId &&
+                current.outcome == "pending" &&
+                current.projectionGeneration == pendingGeneration
+            if (stillOwnsPendingGeneration) throw error
         }
     }
 
@@ -419,12 +446,11 @@ internal object AndroidPureSymbolicConversationFactory {
     /**
      * Serialize cancellation against the canonical projection terminal commit.
      *
-     * Cancellation and completion hold the same monitor. If cancellation wins, it records a
-     * terminal cancelled projection and the canonical assistant row in one transaction (when this
-     * process still owns the pending generation), marks the returned future cancelled, and cancels
-     * the upstream local query. If restart recovery has already advanced the generation to
-     * interrupted, the stale cancellation write is ignored and the old turn still cannot commit
-     * Context1 or assistant output.
+     * Cancellation and completion hold the same monitor. If cancellation wins, it durably records
+     * a terminal cancelled projection and canonical assistant row before publishing Future
+     * cancellation. If restart recovery already advanced ownership, the cancellation helper proves
+     * that loss from the canonical projection and treats the old future as stale. Arbitrary
+     * persistence failures are not swallowed.
      */
     private class PersistenceFencedFuture(
         private val upstream: CompletableFuture<*>,
@@ -438,11 +464,9 @@ internal object AndroidPureSymbolicConversationFactory {
 
         override fun cancel(mayInterruptIfRunning: Boolean): Boolean = synchronized(fence) {
             if (isDone) return@synchronized false
+            onCancel()
             val cancelled = super.cancel(mayInterruptIfRunning)
-            if (cancelled) {
-                runCatching(onCancel)
-                upstream.cancel(mayInterruptIfRunning)
-            }
+            if (cancelled) upstream.cancel(mayInterruptIfRunning)
             cancelled
         }
     }
