@@ -1,11 +1,8 @@
 """Native Zara settings and Prolog source workspace.
 
-THESIS: Configuration is one inspectable route; the surface refuses nested preference cards.
-OWN-WORLD: Signal Cabin rails, open forms, semantic theme swatches, and a real code field.
-STORY: Choose a look, tune Zara, edit source, add validated facts, save with clear restart truth.
-FIRST VIEWPORT: Category rail left, one generous task surface center, save state anchored below.
-FORM: The established Signal Cabin operating surface; seed 35e80c4d.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+Desktop settings use the same semantic theme family and surface hierarchy as
+Zara Android while preserving native Qt controls and the existing durable
+configuration source.
 """
 
 from __future__ import annotations
@@ -619,7 +616,7 @@ class SettingsWindow(QWidget):
         except (OSError, SettingsValidationError) as error:
             self.feedback_label.setText(f"config.toml was not saved: {error}")
             return
-        theme = str(self.config.get("desktop", "theme", "signal-cabin"))
+        theme = str(self.config.get("desktop", "theme", "outrun"))
         self.setting_widgets["desktop.theme"].setCurrentIndex(
             self.setting_widgets["desktop.theme"].findData(theme)  # type: ignore[union-attr]
         )
