@@ -41,11 +41,19 @@ def test_emulator_gate_executes_zero_model_and_verified_receipt_fences() -> None
         )
 
 
-def test_semantic_parity_gate_uses_pinned_trealla_atom_input_contract() -> None:
+def test_semantic_parity_gate_uses_pinned_trealla_context_wire_contract() -> None:
     source = SEMANTIC_PARITY_GATE.read_text(encoding="utf-8")
 
     assert 'string_codes("[]", Context0Codes)' in source
     assert "atom_codes(Context0Atom, Context0Codes)" in source
     assert "read_term_from_atom(Context0Atom, Context0, [])" in source
+    assert "term_to_atom(Context1, ContextAtom)" in source
+    assert "atom_concat('__zara_context__:', ContextAtom, ContextTagged)" in source
+    assert "atom_codes(ContextTagged, ContextWireCodes)" in source
+    assert "string_codes(ContextWire, ContextWireCodes)" in source
+    assert "Results = [Rendered, ContextWire]" in source
+    assert "append(PrefixCodes, ContextAtomCodes, ContextWireCodes)" in source
+    assert "read_term_from_atom(ContextAtom, Context, [])" in source
+    assert "symbolic_dialogue_turn:valid_dialogue_context(Context)" in source
     assert "atom_string(" not in source
     assert 'read_term_from_atom("[]", Context0, [])' not in source
