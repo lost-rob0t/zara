@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.ZaraApplication
 import ai.zara.app.conversations.CanonicalConversationStore
 import ai.zara.app.history.ConversationHistoryContract
 import ai.zara.app.history.HistoryMessageRole
@@ -41,12 +42,14 @@ class AndroidPureSymbolicPreflightFailureInstrumentedTest {
             idFactory = { CONVERSATION_ID },
         )
         assertEquals(CONVERSATION_ID, history.create().id)
-        session = AndroidAppSession(context)
+        session = (context.applicationContext as ZaraApplication).appSession
     }
 
     @After
     fun tearDown() {
-        session.close()
+        // AndroidAppSession owns the process-wide native Trealla runtime in production. The
+        // application owns this session, so this test must not tear that singleton down and then
+        // recreate it inside the same instrumentation process.
         store.close()
         context.deleteDatabase(ConversationHistoryContract.databaseName)
         metadataFile.delete()
