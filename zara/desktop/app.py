@@ -20,6 +20,7 @@ from zara.desktop.control import (
 )
 from zara.desktop.controller import DesktopController
 from zara.desktop.conversation import ConversationStore
+from zara.desktop.conversation.symbolic_runtime import PureSymbolicProjectionAdapter
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
 from zara.runtime.host import RuntimeHost
@@ -90,7 +91,7 @@ def _default_desktop_client(
         store = conversation_store or ConversationStore()
         return InProcessZaraClient(
             backend_factory=lambda: PureSymbolicRuntimeBackend(
-                projection_store=store,
+                projection_adapter=PureSymbolicProjectionAdapter(store),
             ),
             config=config,
         )
