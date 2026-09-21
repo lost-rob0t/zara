@@ -107,6 +107,9 @@ partial_transcript_ms = 1000  # partial transcription interval
 [tts]
 # Text-to-Speech settings
 provider = "qwen3"  # "local", "11labs", "edge", or "qwen3"
+# Qwen3-TTS OpenAI-compatible endpoint and configured default voice.
+endpoint = "http://localhost:7860"
+voice = "zara"
 model_path = ""
 sample_rate = 16000
 connect_timeout = 5.0
@@ -171,6 +174,13 @@ remember = true
 recall = true
 memory_list = true
 forget = true
+youtube_search = true
+voice_list = true
+voice_plan = true
+voice_speak = true
+voice_narrate = true
+voice_clone_from_youtube = true
+voice_delete = true
 file_tools = false
 
 [tool_approval]
@@ -356,6 +366,10 @@ class ZaraConfig:
         if provider not in supported_providers:
             choices = ", ".join(sorted(supported_providers))
             raise ConfigError(f"Unsupported TTS provider {provider!r}; choose one of: {choices}")
+
+        voice = tts_config.get("voice", "zara")
+        if not isinstance(voice, str) or not voice.strip():
+            raise ConfigError("tts.voice must be a non-empty string")
 
         if provider == "11labs":
             required = ("elevenlabs_api_key", "elevenlabs_voice_id")
