@@ -1,5 +1,6 @@
 import json
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -76,9 +77,9 @@ def test_single_mode_collapses_to_one_prolog_selected_voice():
     assert len(prolog.goals) == 1
 
 
-def test_youtube_search_uses_bounded_ytdlp_delays(monkeypatch):
+def test_youtube_search_routes_through_delayed_wrapper(monkeypatch):
     value = expert()
-    monkeypatch.setattr(value, "_require_binary", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(value, "_ytdlp_command", lambda: ["/bin/zara-ytdlp"])
     captured = {}
 
     def fake_run(command, *, timeout):
@@ -109,9 +110,7 @@ def test_youtube_search_uses_bounded_ytdlp_delays(monkeypatch):
 
     assert payload["results"][0]["url"] == "https://www.youtube.com/watch?v=abc123"
     command = captured["command"]
-    assert "--sleep-requests" in command
-    assert "--sleep-interval" in command
-    assert "--max-sleep-interval" in command
+    assert command[0] == "/bin/zara-ytdlp"
     assert command[-1] == "ytsearch1:authorized sample"
 
 
@@ -123,6 +122,13 @@ def test_youtube_search_uses_bounded_ytdlp_delays(monkeypatch):
         "javascript:alert(1)",
     ],
 )
+def test_packaged_ytdlp_wrapper_enforces_delays():
+    text = (Path(__file__).resolve().parents[1] / "scripts" / "zara-ytdlp").read_text()
+    assert "--sleep-requests 1" in text
+    assert "--sleep-interval 1" in text
+    assert "--max-sleep-interval 3" in text
+
+
 def test_clone_rejects_non_youtube_sources_before_download(url):
     value = expert()
 
