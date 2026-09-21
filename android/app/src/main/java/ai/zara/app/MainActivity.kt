@@ -801,7 +801,8 @@ class MainActivity : ComponentActivity() {
                     expectedTurnId = expectedTurnId,
                 )
             }
-        } catch (_: Exception) {
+        } catch (storeError: Exception) {
+            operationError = UiOperationFailure.summarize(storeError)
         }
     }
 
