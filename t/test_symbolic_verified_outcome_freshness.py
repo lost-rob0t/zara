@@ -108,6 +108,7 @@ def test_migrated_legacy_v1_projection_remains_readable_and_continuable(tmp_path
         conversation_id="conv-verified-freshness-legacy",
     )
     current = _seed_legacy_verified_projection(store, conversation.id)
+    fresh_v2 = _v2_receipt(8, 8)
 
     second = store.save_symbolic_projection(
         _projection(
@@ -115,13 +116,13 @@ def test_migrated_legacy_v1_projection_remains_readable_and_continuable(tmp_path
             generation=2,
             runtime_generation=8,
             turn_id="turn-8",
-            receipts=[_STALE_RECEIPT, _FRESH_RECEIPT],
+            receipts=[_STALE_RECEIPT, fresh_v2],
         ),
         expected_generation=current.projection_generation,
     )
 
     second.assert_pure_symbolic()
-    assert second.verified_outcome_refs == [_STALE_RECEIPT, _FRESH_RECEIPT]
+    assert second.verified_outcome_refs == [_STALE_RECEIPT, fresh_v2]
     assert second.max_model_calls == 0
     assert second.provider_calls == 0
     assert second.model_calls == 0
@@ -176,6 +177,7 @@ def test_new_verified_turn_accepts_fresh_postcondition_receipt_without_dropping_
         conversation_id="conv-verified-freshness-ok",
     )
     first = _seed_legacy_verified_projection(store, conversation.id)
+    fresh_v2 = _v2_receipt(8, 8)
 
     second = store.save_symbolic_projection(
         _projection(
@@ -183,13 +185,13 @@ def test_new_verified_turn_accepts_fresh_postcondition_receipt_without_dropping_
             generation=2,
             runtime_generation=8,
             turn_id="turn-8",
-            receipts=[_STALE_RECEIPT, _FRESH_RECEIPT],
+            receipts=[_STALE_RECEIPT, fresh_v2],
         ),
         expected_generation=first.projection_generation,
     )
 
     second.assert_pure_symbolic()
-    assert second.verified_outcome_refs == [_STALE_RECEIPT, _FRESH_RECEIPT]
+    assert second.verified_outcome_refs == [_STALE_RECEIPT, fresh_v2]
     assert second.provider_calls == 0
     assert second.model_calls == 0
 
