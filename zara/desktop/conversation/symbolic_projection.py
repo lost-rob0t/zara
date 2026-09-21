@@ -27,6 +27,28 @@ _VERIFIED_OUTCOME_V2_REF_RE = re.compile(
     r"(?:effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
 )
 _VERIFIED_OUTCOME_WINDOW = 64
+_EXPERT_FORBIDDEN_METADATA_KEYS = frozenset(
+    {
+        "usage",
+        "provider",
+        "provider_calls",
+        "providers_enabled",
+        "provider_id",
+        "provider_name",
+        "max_model_calls",
+        "model",
+        "model_id",
+        "model_name",
+        "model_provider",
+        "tokens",
+        "token_usage",
+        "prompt_tokens",
+        "completion_tokens",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    }
+)
 
 
 def _require_exact_integer(name: str, value: object, *, minimum: int = 0) -> int:
@@ -95,6 +117,75 @@ def _decode_array(value: str) -> list[dict[str, Any]]:
     if not isinstance(decoded, list) or any(not isinstance(item, dict) for item in decoded):
         raise ValueError("stored symbolic array payload is not an array of objects")
     return decoded
+
+
+def _is_forbidden_expert_metadata_key(key: str) -> bool:
+    normalized = key.lower()
+    return (
+        normalized in _EXPERT_FORBIDDEN_METADATA_KEYS
+        or normalized.startswith("provider_")
+        or normalized.endswith("_tokens")
+    )
+
+
+def _validate_expert_metadata_tree(
+    value: object,
+    *,
+    path: str,
+    allow_model_calls: bool,
+) -> None:
+    if isinstance(value, dict):
+        for key, member in value.items():
+            if not isinstance(key, str):
+                raise TypeError(f"expert evidence key at {path} must be a string")
+            member_path = f"{path}.{key}"
+            if key == "model_calls" and allow_model_calls:
+                model_calls = _require_exact_integer(member_path, member)
+                if model_calls != 0:
+                    raise ValueError("expert evidence model_calls must be exactly zero")
+                continue
+            if key == "model_calls" or _is_forbidden_expert_metadata_key(key):
+                raise ValueError(
+                    "expert evidence forbids provider/model/token usage metadata "
+                    f"at {member_path}"
+                )
+            _validate_expert_metadata_tree(
+                member,
+                path=member_path,
+                allow_model_calls=False,
+            )
+    elif isinstance(value, list):
+        for index, member in enumerate(value):
+            _validate_expert_metadata_tree(
+                member,
+                path=f"{path}[{index}]",
+                allow_model_calls=False,
+            )
+
+
+def _validate_pure_symbolic_expert_evidence(value: list[dict[str, Any]]) -> None:
+    """Fence provider/model usage metadata inside trusted symbolic expert evidence.
+
+    Legacy evidence objects remain readable for migration, while the canonical
+    typed expert shape may carry only a root exact-integer ``model_calls=0``.
+    Provider usage, token accounting, model identity, and nested model-call
+    counters are never trusted as symbolic evidence after persistence/restart.
+    """
+
+    _canonical_array(value)
+    for index, entry in enumerate(value):
+        path = f"expert_evidence[{index}]"
+        if "expert_id" in entry:
+            expert_id = entry["expert_id"]
+            if not isinstance(expert_id, str) or not expert_id:
+                raise ValueError(f"{path}.expert_id must be a non-empty string")
+            if "model_calls" not in entry:
+                raise ValueError(f"{path}.model_calls is required for typed expert evidence")
+        _validate_expert_metadata_tree(
+            entry,
+            path=path,
+            allow_model_calls=True,
+        )
 
 
 def _validate_dialogue_act(value: str) -> str:
@@ -272,7 +363,10 @@ class SymbolicConversationProjection:
         _canonical_object(self.dialogue_state)
         _canonical_array(self.discourse_entities)
         _canonical_array(self.unresolved_questions)
-        _canonical_array(self.expert_evidence)
+        if not self.providers_enabled and self.max_model_calls == 0:
+            _validate_pure_symbolic_expert_evidence(self.expert_evidence)
+        else:
+            _canonical_array(self.expert_evidence)
         _canonical_array(self.verified_facts)
 
     def assert_pure_symbolic(self) -> None:
