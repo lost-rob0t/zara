@@ -301,6 +301,126 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
         }
     }
 
+    @Test
+    fun laterTurnProjectSwitchBeforePendingProjectionFencesPriorTerminalGeneration() {
+        val firstStore = PortableConversationStore(context)
+        val conversations = CanonicalConversationStore(
+            history = firstStore,
+            metadataFile = metadataFile,
+            legacyFile = null,
+            idFactory = { CONVERSATION_ID },
+        )
+        assertEquals(CONVERSATION_ID, conversations.create(PROJECT_A).id)
+
+        conversations.beginTurn(CONVERSATION_ID, "first symbolic turn")
+        val firstTurnId = checkNotNull(
+            firstStore.loadMessages(CONVERSATION_ID)
+                .last { it.role == HistoryMessageRole.Assistant }
+                .turnId,
+        )
+        val firstPending = pendingProjection(firstTurnId)
+        firstStore.saveSymbolicProjection(firstPending, expectedGeneration = 0L)
+        val firstTerminal = firstPending.copy(
+            projectionGeneration = 2L,
+            outcome = "success",
+            rendererProvenance = "symbolic-dcg/v1",
+        )
+        firstStore.completeSymbolicTurnAtomically(
+            projection = firstTerminal,
+            expectedGeneration = 1L,
+            turnId = firstTurnId,
+            assistantContent = "first turn complete",
+            assistantStatus = HistoryMessageStatus.Complete,
+        )
+
+        conversations.beginTurn(CONVERSATION_ID, "second turn before pending projection")
+        val secondAssistant = firstStore.loadMessages(CONVERSATION_ID)
+            .last { it.role == HistoryMessageRole.Assistant }
+        val secondTurnId = checkNotNull(secondAssistant.turnId)
+        assertTrue(secondAssistant.status.isRunning())
+        assertTrue(secondTurnId != firstTurnId)
+
+        val priorTerminal = checkNotNull(firstStore.loadSymbolicProjection(CONVERSATION_ID))
+        assertEquals("success", priorTerminal.outcome)
+        assertEquals(firstTurnId, priorTerminal.turnId)
+        assertEquals(2L, priorTerminal.projectionGeneration)
+
+        val staleProjectAPending = priorTerminal.copy(
+            projectionGeneration = 3L,
+            runtimeGeneration = RUNTIME_GENERATION + 1L,
+            turnId = secondTurnId,
+            outcome = "pending",
+            projectId = PROJECT_A,
+            projectGeneration = 1L,
+            dialogueAct = "conversation",
+            rendererProvenance = "",
+        )
+
+        val moved = conversations.moveToProject(CONVERSATION_ID, PROJECT_B)
+        assertEquals(PROJECT_B, checkNotNull(moved.conversation(CONVERSATION_ID)).projectId)
+
+        val fenced = checkNotNull(firstStore.loadSymbolicProjection(CONVERSATION_ID))
+        fenced.assertPureSymbolic()
+        assertEquals("cancelled", fenced.outcome)
+        assertEquals(secondTurnId, fenced.turnId)
+        assertEquals(3L, fenced.projectionGeneration)
+        assertEquals(RUNTIME_GENERATION + 1L, fenced.runtimeGeneration)
+        assertEquals(PROJECT_B, fenced.projectId)
+        assertEquals(2L, fenced.projectGeneration)
+        assertEquals("{}", fenced.dialogueStateJson)
+        assertEquals("[]", fenced.discourseEntitiesJson)
+        assertEquals("[]", fenced.unresolvedQuestionsJson)
+        assertEquals("[]", fenced.expertEvidenceJson)
+        assertEquals("[]", fenced.verifiedFactsJson)
+        assertZeroModel(fenced)
+
+        val secondTerminal = firstStore.loadMessages(CONVERSATION_ID)
+            .single { it.role == HistoryMessageRole.Assistant && it.turnId == secondTurnId }
+        assertEquals(HistoryMessageStatus.Cancelled, secondTerminal.status)
+        assertFalse(
+            firstStore.loadMessages(CONVERSATION_ID).any { message ->
+                message.role == HistoryMessageRole.Assistant && message.status.isRunning()
+            },
+        )
+
+        val lateInstall = runCatching {
+            firstStore.saveSymbolicProjection(
+                projection = staleProjectAPending,
+                expectedGeneration = 2L,
+            )
+        }
+        assertTrue(
+            "project-B fence must reject the losing project-A pending install",
+            lateInstall.isFailure,
+        )
+        firstStore.close()
+
+        val reopenedStore = PortableConversationStore(context)
+        try {
+            val reopenedConversations = CanonicalConversationStore(
+                history = reopenedStore,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            assertEquals(
+                PROJECT_B,
+                checkNotNull(reopenedConversations.state().conversation(CONVERSATION_ID)).projectId,
+            )
+            val recovered = checkNotNull(reopenedStore.loadSymbolicProjection(CONVERSATION_ID))
+            recovered.assertPureSymbolic()
+            assertEquals("cancelled", recovered.outcome)
+            assertEquals(secondTurnId, recovered.turnId)
+            assertEquals(3L, recovered.projectionGeneration)
+            assertEquals(RUNTIME_GENERATION + 1L, recovered.runtimeGeneration)
+            assertEquals(PROJECT_B, recovered.projectId)
+            assertEquals(2L, recovered.projectGeneration)
+            assertZeroModel(recovered)
+        } finally {
+            reopenedStore.close()
+        }
+    }
+
     private fun assertProjectBSafeEdgeSnapshot(store: PortableConversationStore) {
         val edge = checkNotNull(store.loadSymbolicEdgeSnapshot(CONVERSATION_ID))
         edge.assertPureSymbolic()
