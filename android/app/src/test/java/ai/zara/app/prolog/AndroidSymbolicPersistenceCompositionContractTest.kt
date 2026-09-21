@@ -22,6 +22,20 @@ class AndroidSymbolicPersistenceCompositionContractTest {
     }
 
     @Test
+    fun `symbolic factory cannot be created without canonical durable projection store`() {
+        val factory = File(
+            "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
+        ).readText()
+
+        assertFalse(
+            "a stateless factory overload would reintroduce per-turn Context0 reset",
+            factory.contains("fun create(session: AndroidAppSession): PureSymbolicConversationController"),
+        )
+        assertTrue(factory.contains("projectionStore: PortableConversationStore"))
+        assertTrue(factory.contains("resolvePersistedTurn("))
+    }
+
+    @Test
     fun `natural symbolic turns load and generation fence canonical projection context`() {
         val factory = File(
             "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
