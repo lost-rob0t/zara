@@ -6,11 +6,11 @@ import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
 /**
  * Fail-closed freshness gate for a Wear/edge view of one selected conversation.
  *
- * The caller supplies the selected principal/conversation scope explicitly. This
+ * The caller supplies the selected principal/conversation/project scope explicitly. This
  * matters when [current] is null during initial load or process recreation: a
- * valid snapshot from a different principal/conversation must not become the
- * first accepted edge truth merely because no previous in-memory projection is
- * available yet.
+ * valid snapshot from a different principal/conversation/project or an older project
+ * generation must not become the first accepted edge truth merely because no previous
+ * in-memory projection is available yet.
  *
  * The caller owns the current UI projection. This gate never persists chat state
  * and never grants runtime/tool authority; it only decides whether a newer
@@ -20,6 +20,8 @@ object SymbolicConversationContinuityGate {
     fun decodeAccepted(
         expectedPrincipalId: String,
         expectedConversationId: String,
+        expectedProjectId: String?,
+        expectedProjectGeneration: Long,
         current: SymbolicConversationEdgeSnapshot?,
         encoded: ByteArray,
     ): SymbolicConversationEdgeSnapshot? {
@@ -34,6 +36,8 @@ object SymbolicConversationContinuityGate {
             accepts(
                 expectedPrincipalId = expectedPrincipalId,
                 expectedConversationId = expectedConversationId,
+                expectedProjectId = expectedProjectId,
+                expectedProjectGeneration = expectedProjectGeneration,
                 current = current,
                 incoming = it,
             )
@@ -43,12 +47,20 @@ object SymbolicConversationContinuityGate {
     fun accepts(
         expectedPrincipalId: String,
         expectedConversationId: String,
+        expectedProjectId: String?,
+        expectedProjectGeneration: Long,
         current: SymbolicConversationEdgeSnapshot?,
         incoming: SymbolicConversationEdgeSnapshot,
     ): Boolean {
+        if (expectedPrincipalId.isBlank()) return false
+        if (expectedConversationId.isBlank()) return false
+        if (expectedProjectId?.isBlank() == true) return false
+        if (expectedProjectGeneration < 0L) return false
         if (!isPureSymbolic(incoming)) return false
         if (incoming.principalId != expectedPrincipalId) return false
         if (incoming.conversationId != expectedConversationId) return false
+        if (incoming.projectId != expectedProjectId) return false
+        if (incoming.projectGeneration < expectedProjectGeneration) return false
         if (current == null) return true
         if (!isPureSymbolic(current)) return false
         if (current.principalId != expectedPrincipalId) return false
