@@ -9,10 +9,6 @@ _SYMBOLIC_RENDERER = "symbolic-dcg/v1"
 _WINDOW = 64
 
 
-def _receipt(index: int) -> str:
-    return f"zara.verified-outcome/v1:outcome:postcondition/tool-run-{index}"
-
-
 def _v2_receipt(runtime_generation: int, index: int) -> str:
     return (
         "zara.verified-outcome/v2:"
@@ -51,7 +47,7 @@ def _store_with_full_window(tmp_path, *, conversation_id: str):
         "Verified bounded receipt window",
         conversation_id=conversation_id,
     )
-    initial_receipts = [_receipt(index) for index in range(1, _WINDOW + 1)]
+    initial_receipts = [_v2_receipt(1, index) for index in range(1, _WINDOW + 1)]
     current = store.save_symbolic_projection(
         _projection(
             conversation.id,
