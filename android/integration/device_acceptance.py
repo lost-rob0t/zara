@@ -465,8 +465,20 @@ def exercise_three_menu_ui(device: Device) -> None:
     ):
         device.tap_tab(tab)
         device.assert_accessible_targets((tab,))
+        if tab == "Plugins":
+            device.await_label("PLUGIN HOST")
+            device.assert_accessible_targets(("Plugins", "Publisher SHA-256", "Choose APK"))
         time.sleep(0.4)
         device.capture(f"settings-{tab.lower()}")
+
+    device.tap_tab("Plugins")
+    device.set_display_profile(
+        "plugins-narrow-large-font", target_width_dp=320, font_scale=1.30
+    )
+    device.await_label("PLUGIN HOST")
+    device.capture("settings-plugins-narrow-large-font")
+    device.restore_profile()
+    device.await_label("Plugins")
 
     device.tap_tab("Appearance")
     device.tap("Outrun")
