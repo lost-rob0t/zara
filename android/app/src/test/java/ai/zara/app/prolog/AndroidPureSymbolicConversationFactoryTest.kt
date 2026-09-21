@@ -88,6 +88,11 @@ class AndroidPureSymbolicConversationFactoryTest {
                 query.contains("string_codes(ActWire, ActWireCodes)"),
         )
         assertTrue(
+            "expert response acts must project the canonical edge token expert_answer instead of raw Prolog functor answer",
+            query.contains("Act = answer(expert, _, _) -> ActName = expert_answer") &&
+                query.contains("functor(Act, ActName, _)")
+        )
+        assertTrue(
             "ISO if-then-else must commit the router/renderer/context serialization condition before Result enumeration",
             query.startsWith("((") && query.contains(") -> true ; fail), "),
         )
