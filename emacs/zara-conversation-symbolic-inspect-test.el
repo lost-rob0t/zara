@@ -32,6 +32,35 @@
    zara-conversation-symbolic-inspect-test--payload
    "emacs-main"))
 
+(ert-deftest zara-conversation-symbolic-rejects-enabled-provider-runtime ()
+  "Pure-symbolic inspection refuses projections with provider access enabled."
+  (let ((projection (zara-conversation-symbolic-inspect-test--projection)))
+    (puthash "providers_enabled" t projection)
+    (should-error
+     (zara-conversation-symbolic--validate-projection projection))))
+
+(ert-deftest zara-conversation-symbolic-rejects-positive-model-budget ()
+  "Pure-symbolic inspection refuses any model-call budget above zero."
+  (let ((projection (zara-conversation-symbolic-inspect-test--projection)))
+    (puthash "max_model_calls" 1 projection)
+    (should-error
+     (zara-conversation-symbolic--validate-projection projection))))
+
+(ert-deftest zara-conversation-symbolic-rejects-provider-call-ledger-use ()
+  "Pure-symbolic inspection refuses any provider-call ledger activity."
+  (let ((projection (zara-conversation-symbolic-inspect-test--projection)))
+    (puthash "provider_calls" 1 projection)
+    (should-error
+     (zara-conversation-symbolic--validate-projection projection))))
+
+(ert-deftest zara-conversation-symbolic-rejects-model-call-ledger-use ()
+  "Pure-symbolic inspection refuses any model-call ledger activity."
+  (let ((projection (zara-conversation-symbolic-inspect-test--projection)))
+    (puthash "max_model_calls" 1 projection)
+    (puthash "model_calls" 1 projection)
+    (should-error
+     (zara-conversation-symbolic--validate-projection projection))))
+
 (ert-deftest zara-conversation-symbolic-status-exposes-canonical-evidence ()
   "Programmatic status exposes evidence, not only presentation counts."
   (with-temp-buffer
