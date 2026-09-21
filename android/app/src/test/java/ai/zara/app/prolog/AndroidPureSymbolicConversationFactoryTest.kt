@@ -22,7 +22,7 @@ class AndroidPureSymbolicConversationFactoryTest {
         assertTrue(query.contains("symbolic_dialogue_turn:dialogue_turn("))
         assertTrue(query.contains("conversation, Context0, turn(_Frames, Act, Context1)"))
         assertTrue(query.contains("symbolic_dialogue_turn:valid_dialogue_context(Context1)"))
-        assertTrue(query.endsWith("symbolic_dialogue:render_response(Act, Result)"))
+        assertTrue(query.endsWith(", symbolic_dialogue:render_response(Act, Result)"))
         assertTrue(query.contains("set a timer for \\\"five\\\"\\\\minutes\\nplease"))
         assertFalse(query.contains("resolve_frames("))
     }
@@ -69,8 +69,8 @@ class AndroidPureSymbolicConversationFactoryTest {
             query.contains("read_term_from_atom("),
         )
         assertTrue(
-            "Context1 must be rendered as a canonical readable Prolog atom before JNI sees it",
-            query.contains("term_to_atom(Context1, ContextAtom)"),
+            "Context1 must be rendered with the same quoted reader-safe writer exercised by pinned SWI/Trealla parity",
+            query.contains("write_term_to_atom(ContextAtom, Context1, [quoted(true)])"),
         )
         assertTrue(
             "canonical Context1 must cross JNI as a real string through portable code-list conversion",
