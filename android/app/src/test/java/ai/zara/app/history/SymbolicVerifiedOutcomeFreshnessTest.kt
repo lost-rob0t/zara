@@ -40,6 +40,26 @@ class SymbolicVerifiedOutcomeFreshnessTest {
     }
 
     @Test
+    fun `migrated legacy v1 projection rejects new generation unbound v1 evidence`() {
+        val current = projection(
+            generation = 1,
+            runtimeGeneration = 7,
+            turnId = "turn-7",
+            receipts = listOf(STALE_RECEIPT),
+        )
+        val proposed = projection(
+            generation = 2,
+            runtimeGeneration = 8,
+            turnId = "turn-8",
+            receipts = listOf(STALE_RECEIPT, FRESH_RECEIPT),
+        )
+
+        assertRejected("verified projection requires fresh outcome evidence") {
+            SymbolicProjectionContract.validateWrite(current, proposed, expectedGeneration = 1)
+        }
+    }
+
+    @Test
     fun `new verified turn rejects reused postcondition receipt`() {
         val current = projection(
             generation = 1,
