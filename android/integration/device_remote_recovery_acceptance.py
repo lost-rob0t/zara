@@ -217,8 +217,9 @@ def exercise_recovery(device: Device, fixture: dict[str, str]) -> dict[str, obje
     assert_footer_truth(device, "CONNECTED")
 
     arm_fixture(fixture, "CLOSE")
-    send_chat_turn(device, "trigger close", "Remote connection lost")
-    assert_typed_error_card(device, "transport.timeout")
+    send_chat_turn(device, "trigger close", "trigger close")
+    assert_footer_truth(device, "REMOTE")
+    assert_diagnostics_names_primary_failure(device, "transport.timeout")
     evidence["close_typed_error"] = True
 
     send_chat_turn(device, "after close recovery", "stock server response")

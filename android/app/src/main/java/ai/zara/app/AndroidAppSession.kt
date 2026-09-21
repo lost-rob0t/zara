@@ -413,6 +413,13 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun diagnosticsIncidentId(): String? = telemetry.primaryIncident()?.let { diagnosticId() }
 
+    fun recordChatBreadcrumb(event: String, conversationId: String) {
+        diagnostics.record(
+            "chat.breadcrumb",
+            mapOf("event" to event, "conversation" to conversationId.take(24)),
+        )
+    }
+
     private fun diagnosticId(): String {
         val incident = telemetry.primaryIncident()
         val basis = buildString {

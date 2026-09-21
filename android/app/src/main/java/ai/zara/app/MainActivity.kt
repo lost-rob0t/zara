@@ -156,6 +156,7 @@ class MainActivity : ComponentActivity() {
                     operationBusy = true
                     val conversationId = conversation.id
                     try {
+                        appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
                         conversationState = conversationStore.beginTurn(conversationId, text)
                         val requestedPolicy = when (text.trim().lowercase()) {
                             "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
@@ -605,6 +606,7 @@ class MainActivity : ComponentActivity() {
 
     private fun recordTurnFailure(conversationId: String, error: Throwable) {
         val classified = ZaraFailures.classify(error, ZaraOperation.SUBMIT)
+        appSession.recordChatBreadcrumb("chat.turn.failed code=${classified.code}", conversationId)
         val connected = appSession.state().server is ServerConnection.Connected
         val candidate = TurnFailures.from(
             failure = classified,
