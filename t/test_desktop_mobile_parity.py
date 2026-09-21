@@ -183,11 +183,9 @@ def test_waiting_tool_card_exposes_bounded_approve_reject_actions() -> None:
         assert approve is not None
         assert reject is not None
         QTest.mouseClick(approve, Qt.MouseButton.LeftButton)
-        QTest.mouseClick(reject, Qt.MouseButton.LeftButton)
-        assert actions == [
-            ("tool-run-1", "approve"),
-            ("tool-run-1", "reject"),
-        ]
+        assert actions == [("tool-run-1", "approve")]
+        assert approve.isEnabled() is False
+        assert reject.isEnabled() is False
     finally:
         message.deleteLater()
         qt_app.processEvents()
@@ -207,6 +205,7 @@ def test_copilot_routes_tool_card_actions_through_runtime_commands(tmp_path) -> 
                 turn_id="turn-1",
                 tool_run_id="tool-run-1",
                 tool_name="calendar.sync",
+                prompt="Sync the selected calendar now?",
             )
         )
         window.sync_from_shared_state()
@@ -219,14 +218,32 @@ def test_copilot_routes_tool_card_actions_through_runtime_commands(tmp_path) -> 
         reject = tool_widget.findChild(QPushButton, "zaraToolReject")
         assert approve is not None
         assert reject is not None
+        assert "Sync the selected calendar now?" in tool_widget.body_text
 
         QTest.mouseClick(approve, Qt.MouseButton.LeftButton)
-        QTest.mouseClick(reject, Qt.MouseButton.LeftButton)
-
-        assert isinstance(bridge.commands[-2], ApproveTool)
-        assert bridge.commands[-2].tool_run_id == "tool-run-1"
-        assert isinstance(bridge.commands[-1], RejectTool)
+        assert isinstance(bridge.commands[-1], ApproveTool)
         assert bridge.commands[-1].tool_run_id == "tool-run-1"
+
+        conversations.apply_event(
+            events.ToolWaitingForUser(
+                conversation_id=conversation_id,
+                turn_id="turn-2",
+                tool_run_id="tool-run-2",
+                tool_name="workspace.apply",
+                prompt="Apply the verified update?",
+            )
+        )
+        window.sync_from_shared_state()
+        reject_widget = next(
+            widget
+            for widget in window.message_widgets.values()
+            if widget.message.tool_run_id == "tool-run-2"
+        )
+        reject = reject_widget.findChild(QPushButton, "zaraToolReject")
+        assert reject is not None
+        QTest.mouseClick(reject, Qt.MouseButton.LeftButton)
+        assert isinstance(bridge.commands[-1], RejectTool)
+        assert bridge.commands[-1].tool_run_id == "tool-run-2"
     finally:
         window.prepare_for_quit()
         window.close()
