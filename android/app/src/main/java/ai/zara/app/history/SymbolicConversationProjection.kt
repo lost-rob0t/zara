@@ -346,6 +346,11 @@ internal object SymbolicProjectionContract {
         check(!(current.turnId != null && proposed.turnId == null)) {
             "turnId rewind rejected"
         }
+        val currentVerifiedOutcomeRefs = current.verifiedOutcomeRefs.toSet()
+        val proposedVerifiedOutcomeRefs = proposed.verifiedOutcomeRefs.toSet()
+        check(proposedVerifiedOutcomeRefs.containsAll(currentVerifiedOutcomeRefs)) {
+            "verified outcome evidence rewind rejected"
+        }
         if (proposed.turnId == current.turnId) {
             if (current.turnId != null) {
                 check(proposed.runtimeGeneration == current.runtimeGeneration) {
@@ -360,7 +365,7 @@ internal object SymbolicProjectionContract {
                 "new turn must advance runtimeGeneration"
             }
             if (proposed.dialogueAct == "verified") {
-                check(proposed.verifiedOutcomeRefs.any { it !in current.verifiedOutcomeRefs }) {
+                check(proposedVerifiedOutcomeRefs.any { it !in currentVerifiedOutcomeRefs }) {
                     "verified projection requires fresh outcome evidence"
                 }
             }
