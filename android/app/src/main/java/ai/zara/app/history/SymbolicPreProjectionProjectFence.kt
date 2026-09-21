@@ -44,7 +44,7 @@ internal fun PortableConversationStore.fenceRunningTurnBeforeSymbolicProjection(
         unresolvedQuestionsJson = "[]",
         expertEvidenceJson = "[]",
         verifiedFactsJson = "[]",
-        rendererProvenance = "",
+        rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
         maxModelCalls = 0L,
         providerCalls = 0L,
