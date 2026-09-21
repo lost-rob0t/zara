@@ -602,7 +602,10 @@ state of its own."
                (buffer-string) conversation-id))))
     (when (buffer-live-p target)
       (with-current-buffer target
-        (zara-conversation--render-replay payload)))
+        (zara-conversation--render-replay payload)
+        (when (fboundp 'zara-conversation-symbolic--adopt-replay-payload)
+          (zara-conversation-symbolic--adopt-replay-payload
+           payload conversation-id))))
     payload))
 
 ;;;###autoload
