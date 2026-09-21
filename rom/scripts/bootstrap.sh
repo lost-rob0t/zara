@@ -52,7 +52,7 @@ else
         'warning: GAPPS_VENDOR_DIR is unset; sync succeeded but ROM build will refuse to run without vendor/zara-gapps/product.mk' >&2
 fi
 
-"$rom_root/vendor/zara-fork/rom/scripts/sync-prebuilts.sh" "$rom_root"
-"$rom_root/vendor/zara-fork/rom/scripts/apply-patches.sh" "$rom_root"
+bash "$rom_root/vendor/zara-fork/rom/scripts/sync-prebuilts.sh" "$rom_root"
+bash "$rom_root/vendor/zara-fork/rom/scripts/apply-patches.sh" "$rom_root"
 
 printf 'ROM workspace ready: %s\n' "$rom_root"
