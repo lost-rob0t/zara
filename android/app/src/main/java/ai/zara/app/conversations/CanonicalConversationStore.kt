@@ -20,6 +20,7 @@ import java.time.format.DateTimeFormatter
 import java.util.UUID
 
 private const val UI_METADATA_MAGIC = "ZARA-CONVERSATION-UI/1"
+private const val UI_METADATA_LOAD_FAILURE = "Conversation UI metadata is corrupt or unsupported"
 private const val MAX_UI_METADATA_BYTES = 512 * 1024
 private const val MAX_CONVERSATIONS = 256
 private const val MAX_ID_CHARS = 256
@@ -57,12 +58,19 @@ class CanonicalConversationStore(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
 ) {
     @Volatile
+    private var metadataLoadFailure: String? = null
+
+    @Volatile
     private var metadata: ConversationUiMetadataState = loadMetadata()
 
     init {
-        migrateLegacyIfNeeded(legacyFile)
+        if (metadataLoadFailure == null) {
+            migrateLegacyIfNeeded(legacyFile)
+        }
         recoverInterruptedTurns()
-        pruneMetadata()
+        if (metadataLoadFailure == null) {
+            pruneMetadata()
+        }
     }
 
     @Synchronized
@@ -70,6 +78,7 @@ class CanonicalConversationStore(
 
     @Synchronized
     fun create(projectId: String? = null): ConversationRecord {
+        ensureMetadataHealthy()
         val cleanProjectId = normalizeOptionalId(projectId, MAX_PROJECT_ID_CHARS, "Project id")
         check(history.listConversations(limit = MAX_CONVERSATIONS).size < MAX_CONVERSATIONS) {
             "Conversation limit reached"
@@ -88,6 +97,7 @@ class CanonicalConversationStore(
 
     @Synchronized
     fun select(conversationId: String): ConversationState {
+        ensureMetadataHealthy()
         val id = normalizeId(conversationId)
         require(history.getConversation(id) != null) { "Unknown conversation: $id" }
         metadata = metadata.copy(selectedConversationId = id)
@@ -247,6 +257,9 @@ class CanonicalConversationStore(
     }
 
     private fun snapshot(): ConversationState {
+        if (metadataLoadFailure != null) {
+            return ConversationState(loadFailure = metadataLoadFailure)
+        }
         val rows = history.listConversations(limit = MAX_CONVERSATIONS)
         val records = rows.map { conversation ->
             val ui = metadata.conversations[conversation.id] ?: ConversationUiMetadata()
@@ -413,6 +426,7 @@ class CanonicalConversationStore(
     }
 
     private fun requireConversation(rawConversationId: String): String {
+        ensureMetadataHealthy()
         val id = normalizeId(rawConversationId)
         require(history.getConversation(id) != null) { "Unknown conversation: $id" }
         return id
@@ -432,6 +446,7 @@ class CanonicalConversationStore(
     private fun loadMetadata(): ConversationUiMetadataState {
         if (!metadataFile.exists()) return ConversationUiMetadataState()
         if (!metadataFile.isFile || metadataFile.length() !in 1..MAX_UI_METADATA_BYTES.toLong()) {
+            metadataLoadFailure = UI_METADATA_LOAD_FAILURE
             return ConversationUiMetadataState()
         }
         return try {
@@ -453,11 +468,13 @@ class CanonicalConversationStore(
                 ConversationUiMetadataState(selected, rows)
             }
         } catch (_: Exception) {
+            metadataLoadFailure = UI_METADATA_LOAD_FAILURE
             ConversationUiMetadataState()
         }
     }
 
     private fun persistMetadata() {
+        ensureMetadataHealthy()
         val directory = metadataFile.absoluteFile.parentFile
             ?: error("Conversation UI metadata path has no parent")
         check(directory.exists() || directory.mkdirs()) {
@@ -492,6 +509,10 @@ class CanonicalConversationStore(
         } finally {
             if (temp.exists()) temp.delete()
         }
+    }
+
+    private fun ensureMetadataHealthy() {
+        metadataLoadFailure?.let { error(it) }
     }
 
     private fun DataOutputStream.writeBoundedString(value: String, maxChars: Int) {
