@@ -1,0 +1,67 @@
+* Run identity
+- Consumed issues :: #1299, #1300, #1301, #1302, #1303 (one user-authorized end-to-end P0 slice; #1299 is the anchor)
+- Branch :: =rage/1299-1303-remote-protocol-slice=
+- RAGE start commit :: =36e6d48fa750f30b5493f0c2acc789f3e9300e97=
+- Mode :: Auto-RAGE per repo =skills/rage/SKILL.md= (research/design artifacts under =rage/=), user explicitly authorized owning the whole slice through merge and issue closure.
+
+* Iteration 1 — implementation evidence (Auto-RAGE)
+
+** Root causes fixed (all code-proven, see research artifact)
+
+1. Server voice markers rejected by Android codec (commit a9077cbd).
+2. turn.cancelled/runtime.error/runtime.stopped rejected (commit 447db486).
+3. Server protocol.error code+retryable discarded (commit 447db486).
+4. Fake-connected after pump death / desyncing wire failures
+   (commits c6988133, fcfa635c): actor classifies typed failures, fenced to
+   current generation/session; controller collapses via existing bounded
+   reconnect.
+5. Legal text frames interleaved into the voice stream killed the pump
+   (commit e60c711f).
+6. Stale-generation straggler frames fenced without collapsing the new
+   session (commit fd4e2e5e) — protocol.message.rejected telemetry.
+7. Typed hello version mismatch (commit fd4e2e5e).
+8. No restore after process recreation; remote-mode fast-fail collapsed to
+   operation_failed (commit 0b40b293): session.restore.* + typed
+   remote.not_connected with requires_action recovery.
+
+** Telemetry + diagnostics (#1300, #1301)
+
+- ZaraFailure taxonomy + ZaraWireException typed codes (e3bb00f9).
+- ClientEventJournal: closed vocabulary, monotonic sequences, bounded ring,
+  metadata-only protocol messages, secret redaction (17528bc7).
+- FailureIncidentTracker with generation fencing + retention (57b029f5).
+- SessionTelemetry state-transition events (50c55782).
+- DiagnosticsV2 renderer: text + canonical JSON, primary_failure block,
+  remote context, voice stages, not_applicable semantics, timeline,
+  canaries (c97b34b3); wired into app session export (0b40b293).
+
+** UI truth (#1303)
+
+- TurnFailure model + specific actionable rendering (dd8a4c88).
+- One error card, no duplicate banner, Retry/Reconnect/Diagnostics actions,
+  truthful footer via chatFooter (116a7205).
+
+** Regression layers (#1302)
+
+- remote_recovery_fixture.py + 7 pytest contract tests (8df917c7).
+- RemoteRecoveryInteropTest: real CURVE actor; text+voice turns with speech
+  markers; MALFORMED/OUT_OF_ORDER/CLOSE typed failures; STALE fencing;
+  reconnect + second turn each time; VERSION_MISMATCH typed hello (fd4e2e5e).
+- device_remote_recovery_acceptance.py + emulator gate wiring: real APK text
+  + real voice turn, injected malformed + close, one typed card, footer
+  truth, Diagnostics v2 named primary failure in UI, reconnect, second turn,
+  activity recreation (c5ef8922). Evidence retained via if:always artifact +
+  fail-closed manifest checks.
+
+** Exact-head local gate (recorded by prolog-verify observe, all exit 0)
+
+- =nix develop -c bash scripts/test-all.sh= → ALL PHASES PASSED (2726 tests).
+- =nix develop ./android -c bash scripts/test-android.sh= → full JVM suite +
+  stock + recovery interop executed (not skipped) + 5 APKs.
+- =nix flake check= → all checks passed.
+- =nix build= → success.
+
+** Emulator device acceptance
+
+Runs in the GitHub Actions =android= job at the exact PR head (no local
+emulator); artifacts fail-closed via android-ui-evidence (if:always).

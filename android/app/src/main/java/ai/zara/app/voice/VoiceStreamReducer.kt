@@ -49,6 +49,7 @@ fun reduceVoiceStream(
         )
         is VoiceStreamEvent.AudioChunk -> reduceAudioChunk(state, event)
         is VoiceStreamEvent.AudioDone -> reduceAudioDone(state, event)
+        is VoiceStreamEvent.SpeechStarted, is VoiceStreamEvent.SpeechEnded -> state
     }
 }
 
