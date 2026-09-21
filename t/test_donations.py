@@ -86,6 +86,10 @@ def test_json_projection_is_stable_and_includes_wallets_and_summary():
             lambda doc: doc["campaigns"][0]["wallets"][0].update(address=""),
             "must not be empty",
         ),
+        (
+            lambda doc: doc["campaigns"][0]["wallets"][0].update(private_key="nope"),
+            "unsupported fields",
+        ),
     ],
 )
 def test_invalid_documents_fail_closed(mutation, message):
