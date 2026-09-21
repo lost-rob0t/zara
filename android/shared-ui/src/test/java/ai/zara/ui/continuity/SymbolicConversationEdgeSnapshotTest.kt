@@ -22,6 +22,7 @@ class SymbolicConversationEdgeSnapshotTest {
             "zara.verified-outcome/v2:${index + 1}:outcome:postcondition/tool-run-${index + 1}"
         }
         val snapshot = fixture().copy(
+            runtimeGeneration = 64,
             dialogueAct = "verified",
             verifiedOutcomeRefs = receipts,
         )
@@ -95,6 +96,29 @@ class SymbolicConversationEdgeSnapshotTest {
     }
 
     @Test
+    fun verifiedOutcomeRefsRequireCanonicalReceiptSyntax() {
+        assertFails("verifiedOutcomeRefs contains invalid canonical receipt") {
+            fixture().copy(
+                dialogueAct = "verified",
+                verifiedOutcomeRefs = listOf("outcome:postcondition:42"),
+            ).assertPureSymbolic()
+        }
+    }
+
+    @Test
+    fun generationBoundVerifiedOutcomeCannotComeFromFutureRuntime() {
+        assertFails("verifiedOutcomeRefs generation exceeds runtimeGeneration") {
+            fixture().copy(
+                dialogueAct = "verified",
+                runtimeGeneration = 9,
+                verifiedOutcomeRefs = listOf(
+                    "zara.verified-outcome/v2:10:outcome:postcondition:future",
+                ),
+            ).assertPureSymbolic()
+        }
+    }
+
+    @Test
     fun principalScopeIsRequired() {
         assertFails("principalId must not be blank") { fixture().copy(principalId = "").validate() }
     }
@@ -126,7 +150,7 @@ class SymbolicConversationEdgeSnapshotTest {
         discourseEntityRefs = listOf("entity:dotfiles", "entity:emacs"),
         unresolvedQuestionRefs = listOf("question:q1"),
         expertEvidenceRefs = listOf("expert:dotfiles:invoke:42", "evidence:sha256:abc"),
-        verifiedOutcomeRefs = listOf("outcome:postcondition:42"),
+        verifiedOutcomeRefs = listOf("zara.verified-outcome/v2:9:outcome:postcondition:42"),
         rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
         maxModelCalls = 0,
