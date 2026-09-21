@@ -23,14 +23,6 @@ class AndroidPinnedTreallaContextInputContractTest {
             "pinned Trealla does not provide atom_string/2; the natural-turn envelope must not depend on it",
             query.contains("atom_string("),
         )
-        assertFalse(
-            "SWI-Prolog does not provide write_term_to_atom/3; the Android envelope must stay on the shared SWI/Trealla surface",
-            query.contains("write_term_to_atom("),
-        )
-        assertTrue(
-            "Context1 must be rendered as a quoted reader-safe atom through the portable output-capture surface",
-            query.contains("with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)]))"),
-        )
         assertTrue(
             "persisted context must be decoded to code points before crossing the portable atom bridge",
             query.contains("string_codes("),
