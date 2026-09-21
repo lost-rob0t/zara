@@ -116,6 +116,7 @@ write_default_config(Stream) :-
     writeln(Stream, '% voice_default("zara").'),
     writeln(Stream, '% voice_role(narrator, "zara").'),
     writeln(Stream, '% voice_role(character, "my_character_voice").'),
+    writeln(Stream, '% voice_speaker("speaker_00", "my_saved_voice").'),
     writeln(Stream, '% voice_policy(character, distinct_if_available).'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Timer and Alarm Sounds ----'),
@@ -300,6 +301,9 @@ validate_user_fact(voice_default(Voice), kb_voice_expert, voice_default(Voice)) 
 validate_user_fact(voice_role(Role, Voice), kb_voice_expert, voice_role(Role, Voice)) :-
     atom(Role),
     nonempty_text(Voice).
+validate_user_fact(voice_speaker(Speaker, Voice), kb_voice_expert, voice_speaker(Speaker, Voice)) :-
+    nonempty_text(Speaker),
+    nonempty_text(Voice).
 validate_user_fact(voice_policy(Role, Policy), kb_voice_expert, voice_policy(Role, Policy)) :-
     atom(Role),
     memberchk(Policy, [prefer_default, distinct_if_available]).
@@ -410,6 +414,9 @@ validate_server_user_fact(voice_default(Voice), kb_voice_expert, voice_default(V
     nonempty_text(Voice).
 validate_server_user_fact(voice_role(Role, Voice), kb_voice_expert, voice_role(Role, Voice)) :-
     atom(Role),
+    nonempty_text(Voice).
+validate_server_user_fact(voice_speaker(Speaker, Voice), kb_voice_expert, voice_speaker(Speaker, Voice)) :-
+    nonempty_text(Speaker),
     nonempty_text(Voice).
 validate_server_user_fact(voice_policy(Role, Policy), kb_voice_expert, voice_policy(Role, Policy)) :-
     atom(Role),
