@@ -19,6 +19,7 @@ from zara.desktop.control import (
     send_desktop_control,
 )
 from zara.desktop.controller import DesktopController
+from zara.desktop.conversation import ConversationStore
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
 from zara.runtime.host import RuntimeHost
@@ -72,7 +73,11 @@ def _configured_conversation_policy(config: Optional[ZaraConfig]) -> str:
     ).strip().lower()
 
 
-def _default_desktop_client(config: Optional[ZaraConfig] = None) -> ZaraClient:
+def _default_desktop_client(
+    config: Optional[ZaraConfig] = None,
+    *,
+    conversation_store: Optional[ConversationStore] = None,
+) -> ZaraClient:
     """Construct the configured canonical Desktop client boundary.
 
     Standard mode remains daemon-backed. A conversation execution policy of
@@ -82,8 +87,11 @@ def _default_desktop_client(config: Optional[ZaraConfig] = None) -> ZaraClient:
     ``[agent].backend``, which remains the canonical AgentLoopRegistry selector.
     """
     if _configured_conversation_policy(config) == "pure_symbolic":
+        store = conversation_store or ConversationStore()
         return InProcessZaraClient(
-            backend_factory=PureSymbolicRuntimeBackend,
+            backend_factory=lambda: PureSymbolicRuntimeBackend(
+                projection_store=store,
+            ),
             config=config,
         )
     return create_daemon_client(_default_daemon_endpoint(config), config=config)
