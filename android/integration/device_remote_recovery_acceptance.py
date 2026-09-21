@@ -278,11 +278,12 @@ def main() -> None:
         result.update(collect_app_diagnostics(device, args.output))
         try:
             device.adb("shell", "am", "force-stop", APP_PACKAGE)
-        finally:
-            (args.output / "recovery-manifest.json").write_text(
-                json.dumps(result, indent=2) + "\n",
-                encoding="utf-8",
-            )
+        except Exception as stop_error:
+            result["force_stop_failure"] = str(stop_error)
+        (args.output / "recovery-manifest.json").write_text(
+            json.dumps(result, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 if __name__ == "__main__":
