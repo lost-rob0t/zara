@@ -25,7 +25,9 @@ PURE_SYMBOLIC_RENDER_ERROR = (
     "I couldn't render that symbolic response. No model or provider was used."
 )
 _MAX_CONTEXT_TERM_CHARS = 8192
+_MAX_EXPERT_EVIDENCE_CHARS = 128
 _DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\(|$)")
+_EXPERT_ANSWER_RE = re.compile(r"^answer\(expert,")
 
 
 class SymbolicProjectionPort(Protocol):
@@ -44,6 +46,7 @@ class SymbolicProjectionPort(Protocol):
         response_act_term: str,
         context_term: str,
         renderer_provenance: str,
+        expert_evidence_ref: Optional[str] = None,
     ) -> None: ...
 
 
@@ -54,6 +57,7 @@ class PureSymbolicTurn:
     response: str
     act_term: str
     context_term: str
+    expert_evidence_ref: Optional[str] = None
     renderer: str = PURE_SYMBOLIC_RENDERER
     provider_calls: int = 0
     model_calls: int = 0
@@ -94,6 +98,35 @@ def _dialogue_act_token(value: object) -> str:
     return match.group(1)
 
 
+def _require_expert_evidence_ref(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("expert evidence reference must be text")
+    if not value or len(value) > _MAX_EXPERT_EVIDENCE_CHARS:
+        raise ValueError(
+            f"expert evidence reference must be 1..{_MAX_EXPERT_EVIDENCE_CHARS} characters"
+        )
+    if any(ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F for character in value):
+        raise ValueError("expert evidence reference contains control characters")
+    return value
+
+
+def _dialogue_envelope(
+    act_term: object,
+    expert_evidence_ref: object,
+) -> tuple[str, Optional[str]]:
+    dialogue_act = _dialogue_act_token(act_term)
+    is_expert_answer = bool(
+        isinstance(act_term, str) and _EXPERT_ANSWER_RE.match(act_term)
+    )
+    if is_expert_answer:
+        if expert_evidence_ref is None:
+            raise RuntimeError("canonical expert answer requires expert evidence")
+        return "expert_answer", _require_expert_evidence_ref(expert_evidence_ref)
+    if expert_evidence_ref is not None:
+        raise RuntimeError("non-expert symbolic dialogue returned expert evidence")
+    return dialogue_act, None
+
+
 def _resolve_turn(
     engine: PrologEngine,
     text: str,
@@ -112,7 +145,11 @@ def _resolve_turn(
         f"{text_term}, conversation, Context0, turn(_Frames, Act, Context)), "
         "symbolic_dialogue:render_response(Act, Response), "
         "term_string(Act, ActTerm, [quoted(true)]), "
-        "term_string(Context, ContextTerm, [quoted(true)])"
+        "term_string(Context, ContextTerm, [quoted(true)]), "
+        "(Act = answer(expert, _, evidence(EvidenceValue)) -> "
+        " (string(EvidenceValue) -> EvidenceRef = EvidenceValue ; "
+        "  atom(EvidenceValue) -> atom_string(EvidenceValue, EvidenceRef) ; fail) ; "
+        " EvidenceRef = \"\")"
     )
     row = engine.query_once(goal)
     if row is None:
@@ -121,10 +158,12 @@ def _resolve_turn(
             act_term="error(renderer_unavailable)",
             context_term="[]",
         )
+    raw_evidence = _as_text(row.get("EvidenceRef", ""))
     return PureSymbolicTurn(
         response=_as_text(row["Response"]),
         act_term=_as_text(row["ActTerm"]),
         context_term=_bounded_context_term(_as_text(row["ContextTerm"])),
+        expert_evidence_ref=raw_evidence or None,
     )
 
 
@@ -211,6 +250,10 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             raise RuntimeError(
                 "pure symbolic resolver returned a non-canonical renderer"
             )
+        dialogue_act, expert_evidence_ref = _dialogue_envelope(
+            symbolic.act_term,
+            symbolic.expert_evidence_ref,
+        )
         metadata = {
             "route": "pure_symbolic",
             "response_act": symbolic.act_term,
@@ -222,6 +265,9 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             "provider_calls": 0,
             "model_calls": 0,
         }
+        if expert_evidence_ref is not None:
+            metadata["dialogue_act"] = dialogue_act
+            metadata["expert_evidence_ref"] = expert_evidence_ref
         if self._projection_adapter is not None and conversation_id is not None:
             metadata["projection_base_generation"] = base_generation
         return RuntimeTurnResult(response=symbolic.response, metadata=metadata)
@@ -257,7 +303,13 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
                 raise RuntimeError(f"pure symbolic commit has nonzero {key}")
 
         response_act = metadata.get("response_act")
-        dialogue_act = _dialogue_act_token(response_act)
+        dialogue_act, expert_evidence_ref = _dialogue_envelope(
+            response_act,
+            metadata.get("expert_evidence_ref"),
+        )
+        metadata_dialogue_act = metadata.get("dialogue_act")
+        if metadata_dialogue_act is not None and metadata_dialogue_act != dialogue_act:
+            raise RuntimeError("pure symbolic commit has mismatched dialogue act")
         context_term = _bounded_context_term(metadata.get("dialogue_context"))
         adapter.commit_turn(
             conversation_id=conversation_id,
@@ -268,6 +320,7 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             response_act_term=response_act,
             context_term=context_term,
             renderer_provenance=PURE_SYMBOLIC_RENDERER,
+            expert_evidence_ref=expert_evidence_ref,
         )
 
     async def cancel_turn(self, turn_id: str) -> None:
