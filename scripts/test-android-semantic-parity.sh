@@ -16,6 +16,8 @@ test -f "$semantic_core"
 test -f "$semantic_corpus"
 test -f "$repo_root/modules/intent_frames.pl"
 test -f "$repo_root/modules/normalizer.pl"
+test -f "$repo_root/modules/symbolic_dialogue.pl"
+test -f "$repo_root/modules/symbolic_dialogue_turn.pl"
 test -f "$repo_root/kb/intents.pl"
 
 trealla_embed_sample="$ZARA_TREALLA_SOURCE_DIR/samples/embed.c"
@@ -48,11 +50,14 @@ mkdir -p "$stage/portable" "$stage/shared/modules" "$stage/shared/kb"
 cp "$semantic_core" "$stage/portable/semantic_core.pl"
 cp "$repo_root/modules/intent_frames.pl" "$stage/shared/modules/intent_frames.pl"
 cp "$repo_root/modules/normalizer.pl" "$stage/shared/modules/normalizer.pl"
+cp "$repo_root/modules/symbolic_dialogue.pl" "$stage/shared/modules/symbolic_dialogue.pl"
+cp "$repo_root/modules/symbolic_dialogue_turn.pl" "$stage/shared/modules/symbolic_dialogue_turn.pl"
 cp "$repo_root/kb/intents.pl" "$stage/shared/kb/intents.pl"
 cp "$semantic_corpus" "$stage/shared/kb/semantic_corpus.pl"
 
 cat >"$stage/parity_driver.pl" <<'PL'
 parity_main :-
+    parity_dialogue_envelope,
     findall(Id, corpus_case(Id, _, _, _, _, _), Ids),
     sort(Ids, UniqueIds),
     length(Ids, Count),
@@ -62,6 +67,39 @@ parity_main :-
     halt(0).
 parity_main :-
     halt(2).
+
+% Exercise the exact logical envelope Android sends through the JNI bridge.
+% This keeps the parity gate honest: semantic_core.pl imports the canonical
+% dialogue modules, Context0 is parsed from the persisted textual term, the
+% router/renderer is committed once, and response + Context1 are then exposed
+% as the two Result solutions consumed by the bounded native adapter.
+parity_dialogue_envelope :-
+    term_string(Context0, "[]", [quoted(true)]),
+    findall(Result,
+        ( ( ( symbolic_dialogue_turn:valid_dialogue_context(Context0),
+              symbolic_dialogue_turn:dialogue_turn(
+                  "timer",
+                  conversation,
+                  Context0,
+                  turn(_Frames, Act, Context1)
+              ),
+              symbolic_dialogue_turn:valid_dialogue_context(Context1),
+              symbolic_dialogue:render_response(Act, Response)
+            ) -> true ; fail
+          ),
+          ( Result = Response ; Result = dialogue_context(Context1) )
+        ),
+        Results),
+    Results = [Rendered, dialogue_context(Context)],
+    string_codes(Rendered, RenderedCodes),
+    string_codes("How long should I set the timer for?", ExpectedCodes),
+    RenderedCodes == ExpectedCodes,
+    Context = partial_frame(
+        frame(intent(ns(device), name('timer.set')), [], missing([duration])),
+        [duration]
+    ),
+    write_canonical(dialogue(timer_envelope, verified)),
+    nl.
 
 parity_cases([]).
 parity_cases([Id|Rest]) :-
