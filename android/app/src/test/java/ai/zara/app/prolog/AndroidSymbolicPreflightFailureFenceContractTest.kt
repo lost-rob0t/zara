@@ -21,6 +21,9 @@ class AndroidSymbolicPreflightFailureFenceContractTest {
         val resolver = factory
             .substringAfter("private fun resolvePersistedTurn(", "")
             .substringBefore("private fun requireRunningTurnId(", "")
+        val preflightFailure = factory
+            .substringAfter("private fun failBeforePendingProjection(", "")
+            .substringBefore("private fun failBeforeAsyncEvaluation(", "")
 
         assertTrue("persisted symbolic resolver disappeared", resolver.isNotEmpty())
         assertTrue(
@@ -28,9 +31,13 @@ class AndroidSymbolicPreflightFailureFenceContractTest {
             resolver.indexOf("requireRunningTurnId(") in 0 until resolver.indexOf("SymbolicDialogueContextCodec.decode("),
         )
         assertTrue(
-            "preflight failure must use the canonical PortableConversationStore failure fence instead of " +
+            "preflight failure must leave the resolver through the canonical failure helper",
+            resolver.contains("failBeforePendingProjection("),
+        )
+        assertTrue(
+            "the preflight helper must use the canonical PortableConversationStore failure fence instead of " +
                 "escaping to the controller where a synthetic turn id can be minted",
-            resolver.contains("failSymbolicTurnBeforeProjection("),
+            preflightFailure.contains("failSymbolicTurnBeforeProjection("),
         )
     }
 
