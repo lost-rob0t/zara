@@ -1,9 +1,9 @@
 package ai.zara.app.ui
 
 import java.io.File
-import kotlin.test.Test
-import kotlin.test.assertContains
-import kotlin.test.assertFalse
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 class PureSymbolicExplicitRoutePersistenceContractTest {
     private fun activity(): String = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
@@ -15,14 +15,13 @@ class PureSymbolicExplicitRoutePersistenceContractTest {
             .substringAfter("if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {")
             .substringBefore("} else {")
 
-        assertContains(
-            pureSymbolicBranch,
-            "conversationStore.completeTurn(",
+        assertTrue(
             "Every pure-symbolic result must terminalize the canonical turn; explicit /prolog, /expert, ?-, and ? routes bypass the persisted natural-language resolver.",
+            pureSymbolicBranch.contains("conversationStore.completeTurn("),
         )
         assertFalse(
-            pureSymbolicBranch.contains("conversationStore.state()"),
             "Reloading state without terminalizing leaves explicit pure-symbolic assistant history Pending.",
+            pureSymbolicBranch.contains("conversationStore.state()"),
         )
     }
 
@@ -35,14 +34,13 @@ class PureSymbolicExplicitRoutePersistenceContractTest {
             .substringAfter("if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {")
             .substringBefore("} else {")
 
-        assertContains(
-            pureSymbolicBranch,
-            "recordTurnFailure(conversationId, error)",
+        assertTrue(
             "Exceptional explicit pure-symbolic routes must terminalize a still-Running canonical assistant row.",
+            pureSymbolicBranch.contains("recordTurnFailure(conversationId, error)"),
         )
         assertFalse(
-            pureSymbolicBranch.contains("conversationStore.state()"),
             "Reloading canonical state is not terminalization and would preserve a Pending assistant row.",
+            pureSymbolicBranch.contains("conversationStore.state()"),
         )
     }
 }
