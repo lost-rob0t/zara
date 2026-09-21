@@ -99,11 +99,24 @@ class AndroidPureSymbolicContextRoundTripInstrumentedTest {
 
     private fun extractContext(result: LocalQueryResult): String {
         val evidence = evidence("envelope", result, null)
-        assertEquals(evidence, 3, result.terms.size)
+        assertEquals(evidence, 4, result.terms.size)
         assertEquals(
             evidence,
             1,
             result.terms.count { term -> term.startsWith(DIALOGUE_ACT_WIRE_PREFIX) },
+        )
+        assertEquals(
+            evidence,
+            1,
+            result.terms.count { term -> term.startsWith(DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX) },
+        )
+        val evidenceWire = result.terms.single { term ->
+            term.startsWith(DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX)
+        }
+        assertEquals(
+            "non-expert timer dialogue must not smuggle expert evidence\n$evidence",
+            DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX,
+            evidenceWire,
         )
         val wire = result.terms.singleOrNull { term ->
             term.startsWith(DIALOGUE_CONTEXT_WIRE_PREFIX)
@@ -142,6 +155,7 @@ class AndroidPureSymbolicContextRoundTripInstrumentedTest {
             "That action needs capability-checked execution before I can report success."
         const val DIALOGUE_ACT_WIRE_PREFIX = "__zara_act__:"
         const val DIALOGUE_CONTEXT_WIRE_PREFIX = "__zara_context__:"
+        const val DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX = "__zara_expert_evidence__:"
         const val TURN_TIMEOUT_SECONDS = 15L
         const val SERVER_TIMEOUT_MILLIS = 20_000L
     }
