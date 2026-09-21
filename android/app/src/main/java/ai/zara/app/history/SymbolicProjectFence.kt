@@ -57,6 +57,7 @@ fun PortableConversationStore.fencePendingSymbolicProject(
             unresolvedQuestionsJson = "[]",
             expertEvidenceJson = "[]",
             verifiedFactsJson = "[]",
+            rendererProvenance = "symbolic-dcg/v1",
         ),
         expectedGeneration = current.projectionGeneration,
         turnId = turnId,
