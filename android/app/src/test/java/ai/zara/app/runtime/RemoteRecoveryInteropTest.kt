@@ -150,12 +150,11 @@ class RemoteRecoveryInteropTest {
         actor.sendVoiceChunk(context, 0, ByteArray(1024)).get(20, TimeUnit.SECONDS)
         actor.commitVoice(context).get(20, TimeUnit.SECONDS)
         val deadline = System.currentTimeMillis() + 5_000
-        while (!streamEvents.subList(before, streamEvents.size).contains("AudioDone") &&
-            System.currentTimeMillis() < deadline
-        ) {
+        fun recent(): List<String> = streamEvents.toList().drop(before)
+        while (!recent().contains("AudioDone") && System.currentTimeMillis() < deadline) {
             Thread.sleep(20)
         }
-        return streamEvents.subList(before, streamEvents.size).contains("AudioDone")
+        return recent().contains("AudioDone")
     }
 
     private fun awaitFailure(failures: List<ai.zara.app.telemetry.ZaraFailure>): ai.zara.app.telemetry.ZaraFailure {
