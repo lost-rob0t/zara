@@ -75,5 +75,28 @@
     (should-not zara-conversation-symbolic-projection)
     (should (string-match-p "Canonical conversation emacs-main" (buffer-string)))))
 
+(ert-deftest zara-conversation-replay-invalid-symbolic-state-is-presentation-atomic ()
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (insert "existing presentation")
+    (let* ((before (buffer-string))
+           (previous (make-hash-table :test 'equal))
+           (payload
+            (replace-regexp-in-string
+             "\"providers_enabled\":false"
+             "\"providers_enabled\":true"
+             zara-conversation-unified-replay-test--payload
+             t t)))
+      (setq-local zara-conversation-symbolic-projection previous)
+      (cl-letf (((symbol-function 'zara--program) (lambda () "zara"))
+                ((symbol-function 'process-file)
+                 (lambda (_program _infile _destination _display &rest _args)
+                   (insert payload)
+                   0)))
+        (should-error (zara-conversation-replay) :type 'error))
+      (should (equal (buffer-string) before))
+      (should (eq zara-conversation-symbolic-projection previous)))))
+
 (provide 'zara-conversation-unified-replay-test)
 ;;; zara-conversation-unified-replay-test.el ends here
