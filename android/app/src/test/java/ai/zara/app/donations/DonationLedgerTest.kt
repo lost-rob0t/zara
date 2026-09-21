@@ -79,29 +79,31 @@ class DonationLedgerTest {
     }
 
     @Test
-    fun rejectsPrivateKeyShapedFieldsByIgnoringNoUnknownSecretsContract() {
-        val ledger = DonationLedger.parse(
-            """
-            {
-              "version":"ZARA-DONATIONS/1",
-              "campaigns":[
+    fun rejectsPrivateKeyShapedUnknownFields() {
+        assertThrows(DonationDocumentException::class.java) {
+            DonationLedger.parse(
+                """
                 {
-                  "id":"safe",
-                  "title":"Safe",
-                  "wallets":[
+                  "version":"ZARA-DONATIONS/1",
+                  "campaigns":[
                     {
-                      "chain":"bitcoin",
-                      "network":"mainnet",
-                      "asset":"BTC",
-                      "address":"bc1qexample"
+                      "id":"safe",
+                      "title":"Safe",
+                      "wallets":[
+                        {
+                          "chain":"bitcoin",
+                          "network":"mainnet",
+                          "asset":"BTC",
+                          "address":"bc1qexample",
+                          "private_key":"nope"
+                        }
+                      ]
                     }
                   ]
                 }
-              ]
-            }
-            """.trimIndent(),
-        )
-
-        assertEquals(1, ledger.campaigns.single().wallets.size)
+                """.trimIndent(),
+            )
+        }
     }
+
 }
