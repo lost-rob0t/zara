@@ -5,6 +5,7 @@ LangChain tool definitions used by the agent system.
 """
 
 import ast
+import json
 import operator
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
@@ -277,6 +278,91 @@ def build_forget_tool(memory_manager) -> Optional[StructuredTool]:
     return forget
 
 
+def build_commerce_policy_tool(prolog_engine) -> StructuredTool:
+    def scalar(goal: str):
+        row = prolog_engine.query_once(goal)
+        if not isinstance(row, dict) or "Value" not in row:
+            raise LookupError("missing-commerce-policy-fact")
+        value = row["Value"]
+        if isinstance(value, bytes):
+            return value.decode("utf-8")
+        return value
+
+    def commerce_policy() -> str:
+        try:
+            provider = scalar("kb_config:commerce_provider(Value)")
+            confirmation = scalar("kb_config:commerce_confirmation(Value)")
+            learning = scalar("kb_config:preference_learning(Value)")
+            min_observations = scalar(
+                "kb_config:preference_min_observations(Value)"
+            )
+            max_patterns = scalar("kb_config:preference_max_patterns(Value)")
+            min_confidence = scalar(
+                "kb_config:preference_min_confidence(Value)"
+            )
+        except LookupError:
+            return json.dumps(
+                {
+                    "status": "unavailable",
+                    "reason": "missing-commerce-policy-fact",
+                },
+                sort_keys=True,
+            )
+        except Exception:
+            return json.dumps(
+                {
+                    "status": "unavailable",
+                    "reason": "commerce-policy-query-failed",
+                },
+                sort_keys=True,
+            )
+
+        provider = str(provider)
+        confirmation = str(confirmation)
+        learning = str(learning)
+        valid = (
+            provider == "doordash"
+            and confirmation == "always"
+            and learning in {"enabled", "disabled"}
+            and type(min_observations) is int
+            and 1 <= min_observations <= 1000
+            and type(max_patterns) is int
+            and 1 <= max_patterns <= 100
+            and not isinstance(min_confidence, bool)
+            and isinstance(min_confidence, (int, float))
+            and 0.0 <= float(min_confidence) <= 1.0
+        )
+        if not valid:
+            return json.dumps(
+                {
+                    "status": "unavailable",
+                    "reason": "malformed-commerce-policy-fact",
+                },
+                sort_keys=True,
+            )
+
+        return json.dumps(
+            {
+                "provider": provider,
+                "confirmation": confirmation,
+                "preference_learning": learning == "enabled",
+                "preference_min_observations": min_observations,
+                "preference_max_patterns": max_patterns,
+                "preference_min_confidence": float(min_confidence),
+            },
+            sort_keys=True,
+        )
+
+    return StructuredTool.from_function(
+        func=commerce_policy,
+        name="commerce.policy",
+        description=(
+            "Read Zara's validated Prolog-owned commerce and preference-learning "
+            "policy. This is read-only and grants no purchase authority."
+        ),
+    )
+
+
 def build_prolog_tool(prolog_engine) -> StructuredTool:
     def query_prolog(query: str) -> str:
         try:
@@ -478,6 +564,7 @@ def get_builtin_tools(
         tools.append(forget_tool)
 
     if prolog_engine is not None:
+        tools.append(build_commerce_policy_tool(prolog_engine))
         tools.append(build_prolog_tool(prolog_engine))
 
     noaa_tool = build_noaa_weather_tool()
