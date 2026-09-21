@@ -10,6 +10,10 @@ from __future__ import annotations
 from .symbolic_projection import SymbolicConversationProjection
 
 
+_CONTEXT_PROJECT_ID = "prolog_context_project_id"
+_CONTEXT_PROJECT_GENERATION = "prolog_context_project_generation"
+
+
 class PureSymbolicProjectionAdapter:
     """Persist pure-symbolic dialogue context in the canonical conversation store."""
 
@@ -21,7 +25,15 @@ class PureSymbolicProjectionAdapter:
         if projection is None:
             return "[]", 0
         projection.assert_pure_symbolic()
-        context = projection.dialogue_state.get("prolog_context_term", "[]")
+        dialogue_state = projection.dialogue_state
+        context_project_id = dialogue_state.get(_CONTEXT_PROJECT_ID)
+        context_project_generation = dialogue_state.get(_CONTEXT_PROJECT_GENERATION, 0)
+        if (
+            context_project_id != projection.project_id
+            or context_project_generation != projection.project_generation
+        ):
+            return "[]", projection.projection_generation
+        context = dialogue_state.get("prolog_context_term", "[]")
         if not isinstance(context, str):
             raise TypeError("persisted symbolic dialogue context must be text")
         return context, projection.projection_generation
@@ -51,6 +63,10 @@ class PureSymbolicProjectionAdapter:
         dialogue_state = dict(current.dialogue_state) if current is not None else {}
         dialogue_state["prolog_context_term"] = context_term
         dialogue_state["response_act_term"] = response_act_term
+        dialogue_state[_CONTEXT_PROJECT_ID] = current.project_id if current else None
+        dialogue_state[_CONTEXT_PROJECT_GENERATION] = (
+            current.project_generation if current else 0
+        )
 
         prior_questions = list(current.unresolved_questions) if current is not None else []
         unresolved_questions = [
