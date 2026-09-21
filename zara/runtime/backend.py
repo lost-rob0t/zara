@@ -424,6 +424,11 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                     "preference_min_confidence"
                 ],
                 "policy_source": "prolog",
+                "compose_capabilities": [
+                    "browser.tab.open",
+                    "memory.preference.observe",
+                    "memory.preference.patterns",
+                ],
             }
         )
         return projected
