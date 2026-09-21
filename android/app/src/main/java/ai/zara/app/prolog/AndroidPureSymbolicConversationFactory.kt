@@ -5,6 +5,7 @@ import ai.zara.app.history.HistoryMessageRole
 import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.SymbolicConversationProjection
+import ai.zara.app.history.SymbolicProjectScopeContract
 import ai.zara.app.history.completeSymbolicTurnAtomically
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.history.saveSymbolicProjection
@@ -27,9 +28,10 @@ internal object AndroidPureSymbolicConversationFactory {
      * The supplied [projectionStore] remains the sole persistence authority. This factory adds no
      * Android-local context cache: every natural turn loads Context0 from the existing
      * SymbolicConversationProjection, installs a pending CAS fence bound to the already-persisted
-     * canonical message turn id, executes the canonical dialogue turn exactly once, receives both
-     * the rendered response and Context1 through the existing Trealla Result-binding ABI, and
-     * persists Context1 through the same pending generation.
+     * canonical message turn id, derives project scope from the existing conversation binding,
+     * executes the canonical dialogue turn exactly once, receives both the rendered response and
+     * Context1 through the existing Trealla Result-binding ABI, and persists Context1 through the
+     * same pending generation.
      *
      * Persisting the pending projection before local evaluation is what lets
      * PortableConversationStore.loadState() interrupt an in-flight turn during Activity/process
@@ -39,6 +41,7 @@ internal object AndroidPureSymbolicConversationFactory {
     fun create(
         session: AndroidAppSession,
         projectionStore: PortableConversationStore,
+        projectIdForConversation: (String) -> String?,
     ): PureSymbolicConversationController =
         controller(
             session = session,
@@ -48,6 +51,7 @@ internal object AndroidPureSymbolicConversationFactory {
                     projectionStore = projectionStore,
                     utterance = utterance,
                     conversationId = conversationId,
+                    requestedProjectId = projectIdForConversation(conversationId),
                 )
             },
         )
@@ -67,9 +71,11 @@ internal object AndroidPureSymbolicConversationFactory {
         projectionStore: PortableConversationStore,
         utterance: String,
         conversationId: String,
+        requestedProjectId: String?,
     ): CompletableFuture<LocalQueryResult> {
         val current = projectionStore.loadSymbolicProjection(conversationId)
         current?.assertPureSymbolic()
+        val projectScope = SymbolicProjectScopeContract.next(current, requestedProjectId)
         val expectedGeneration = current?.projectionGeneration ?: 0L
         val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
         val turnId = requireRunningTurnId(projectionStore, conversationId)
@@ -79,6 +85,8 @@ internal object AndroidPureSymbolicConversationFactory {
             expectedGeneration = expectedGeneration,
             context0 = context0,
             turnId = turnId,
+            projectId = projectScope.projectId,
+            projectGeneration = projectScope.projectGeneration,
         )
         projectionStore.saveSymbolicProjection(
             projection = pendingProjection,
@@ -274,6 +282,8 @@ internal object AndroidPureSymbolicConversationFactory {
         expectedGeneration: Long,
         context0: String,
         turnId: String,
+        projectId: String?,
+        projectGeneration: Long,
     ): SymbolicConversationProjection {
         val runtimeGeneration = current?.runtimeGeneration?.let { Math.addExact(it, 1L) } ?: 1L
         val base = current ?: SymbolicConversationProjection(
@@ -287,6 +297,8 @@ internal object AndroidPureSymbolicConversationFactory {
             runtimeGeneration = runtimeGeneration,
             turnId = turnId,
             outcome = "pending",
+            projectId = projectId,
+            projectGeneration = projectGeneration,
             dialogueAct = "conversation",
             dialogueStateJson = SymbolicDialogueContextCodec.encode(context0),
             rendererProvenance = "",
