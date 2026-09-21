@@ -48,6 +48,43 @@ def _projection(
     )
 
 
+def _seed_legacy_projection(
+    store: ConversationStore,
+    *,
+    conversation_id: str,
+    receipts: list[str],
+) -> SymbolicConversationProjection:
+    with store.database.transaction(immediate=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO desktop_symbolic_projections (
+                conversation_id, principal_id, turn_id, outcome,
+                projection_generation, runtime_generation, project_id,
+                project_generation, dialogue_act, dialogue_state_json,
+                discourse_entities_json, unresolved_questions_json,
+                expert_evidence_json, verified_facts_json,
+                verified_outcome_refs, renderer_provenance,
+                providers_enabled, max_model_calls,
+                provider_calls, model_calls, updated_at
+            ) VALUES (?, ?, ?, 'success', 1, 1, NULL, 0, 'verified', ?,
+                      '[]', '[]', '[]', '[]', ?, ?, 0, 0, 0, 0, ?)
+            """,
+            (
+                conversation_id,
+                store.storage_principal_id,
+                "turn-64",
+                '{"act":"verified"}',
+                "\n".join(receipts),
+                _SYMBOLIC_RENDERER,
+                "2026-09-21T00:00:00.000000",
+            ),
+        )
+    projection = store.load_symbolic_projection(conversation_id)
+    assert projection is not None
+    projection.assert_pure_symbolic()
+    return projection
+
+
 def test_full_legacy_window_cuts_over_to_generation_bound_v2_and_survives_restart(tmp_path):
     database_path = tmp_path / "verified-v2-cutover.db"
     first = ConversationStore(DatabaseManager(database_path))
@@ -56,15 +93,10 @@ def test_full_legacy_window_cuts_over_to_generation_bound_v2_and_survives_restar
         conversation_id="conv-verified-v2-cutover",
     )
     legacy = [_legacy_receipt(index) for index in range(1, _WINDOW + 1)]
-    current = first.save_symbolic_projection(
-        _projection(
-            conversation.id,
-            projection_generation=1,
-            runtime_generation=1,
-            turn_id="turn-64",
-            receipts=legacy,
-        ),
-        expected_generation=0,
+    current = _seed_legacy_projection(
+        first,
+        conversation_id=conversation.id,
+        receipts=legacy,
     )
 
     cutover_receipt = _v2_receipt(2, _WINDOW + 1)
@@ -114,15 +146,10 @@ def test_v2_cutover_rejects_retired_legacy_receipt(tmp_path):
         conversation_id="conv-verified-v2-legacy-replay",
     )
     legacy = [_legacy_receipt(index) for index in range(1, _WINDOW + 1)]
-    current = store.save_symbolic_projection(
-        _projection(
-            conversation.id,
-            projection_generation=1,
-            runtime_generation=1,
-            turn_id="turn-64",
-            receipts=legacy,
-        ),
-        expected_generation=0,
+    current = _seed_legacy_projection(
+        store,
+        conversation_id=conversation.id,
+        receipts=legacy,
     )
     cutover = store.save_symbolic_projection(
         _projection(
