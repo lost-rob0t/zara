@@ -142,6 +142,7 @@ class MessageWidget(QFrame):
         self._message = message
         self.code_copy_buttons: list[QPushButton] = []
         self.code_blocks: list[str] = []
+        self._tool_action_buttons: list[QPushButton] = []
         self.body_text = ""
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -237,21 +238,29 @@ class MessageWidget(QFrame):
                 widget.deleteLater()
         self.code_copy_buttons.clear()
         self.code_blocks.clear()
+        self._tool_action_buttons.clear()
         self.content_widget.show()
 
-        if message.role is MessageRole.TOOL and content.lower() in {
-            "queued",
-            "running",
-            "waiting for approval",
-            "completed",
-            "failed",
-            "cancelled",
-        }:
-            if content.lower() == "waiting for approval" and message.tool_run_id:
-                self._add_tool_approval_actions(message.tool_run_id)
-            else:
+        if message.role is MessageRole.TOOL:
+            normalized = content.lower()
+            if normalized.startswith("waiting for approval"):
+                _, separator, prompt = content.partition("\n")
+                if separator and prompt.strip():
+                    text = _MessageBody(maximum_height=120)
+                    text.setMarkdown(prompt.strip())
+                    self.content_layout.addWidget(text)
+                if message.tool_run_id:
+                    self._add_tool_approval_actions(message.tool_run_id)
+                return
+            if normalized in {
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "cancelled",
+            }:
                 self.content_widget.hide()
-            return
+                return
 
         if message.role is MessageRole.ASSISTANT:
             self._render_markdown_with_code(content or "...")
@@ -281,15 +290,21 @@ class MessageWidget(QFrame):
 
         reject.clicked.connect(
             lambda _checked=False, run_id=tool_run_id:
-                self.tool_action_requested.emit(run_id, "reject")
+                self._request_tool_action(run_id, "reject")
         )
         approve.clicked.connect(
             lambda _checked=False, run_id=tool_run_id:
-                self.tool_action_requested.emit(run_id, "approve")
+                self._request_tool_action(run_id, "approve")
         )
+        self._tool_action_buttons.extend((reject, approve))
         row.addWidget(reject)
         row.addWidget(approve)
         self.content_layout.addWidget(actions)
+
+    def _request_tool_action(self, tool_run_id: str, action: str) -> None:
+        for button in self._tool_action_buttons:
+            button.setEnabled(False)
+        self.tool_action_requested.emit(tool_run_id, action)
 
     def _render_markdown_with_code(self, content: str) -> None:
         cursor = 0
