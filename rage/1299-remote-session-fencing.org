@@ -106,3 +106,36 @@ gate at the exact candidate head.
 
 - =https://github.com/lost-rob0t/zara/pull/1389= (exact head =841e77b6=).
 - CI pending at time of writing; merge only on exact-head green.
+
+** Outcome (superseded — attempt preserved)
+
+While this iteration ran, concurrent #1299/#1301 workers landed a superset
+of the same design on master:
+
+- =e3bb00f9= typed ZaraFailure taxonomy (remote+voice)
+- =447db486= decode turn.cancelled / runtime.error / runtime.stopped
+- =c6988133= typed connection failures (no fake-connected sessions)
+- =fcfa635c= controller =clientReportedFailure= -> bounded reconnect,
+  generation-fenced (this iteration's exact mechanism)
+- =0b40b293= session telemetry + Diagnostics/2 export
+- =e60c711f= voice-stream interleaving tolerance
+- =fd4e2e5e= JVM recovery interop matrix vs injected protocol failures
+
+The merge of origin/master into this branch conflicts in exactly the three
+files this attempt changed; the landed taxonomy-based implementation
+subsumes the proposed four-point design. Per RAGE failure handling the
+merge was aborted, the branch and PR are preserved as evidence, and the
+attempt is not continued.
+
+Retained value: live-incident evidence (server =handshake_required=
+mechanism at =zmq_transport.py:717=, phone diagnostics showing
+=remote_connected=true= with zero server turns, AUTHENTICATED footer
+during failure), and follow-up issue #1390
+(LocalEmbeddingPreferenceStore crash).
+
+PR #1389 closed as superseded. The operator's phone runs the candidate
+APK from =841e77b6= (compatible subset); the next master/android-latest
+build supersedes it.
+
+Next iteration: re-read the queue (candidates: #1390, remaining #1299
+children, #1303).
