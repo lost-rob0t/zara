@@ -13,6 +13,8 @@ from typing import Any, Mapping, Sequence
 
 DONATION_DOCUMENT_VERSION = "ZARA-DONATIONS/1"
 MAX_USD = Decimal("1000000000000.00")
+MAX_CAMPAIGNS = 256
+MAX_WALLETS_PER_CAMPAIGN = 64
 _CAMPAIGN_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -151,6 +153,10 @@ class DonationCampaign:
             raw_wallets, (str, bytes, bytearray)
         ):
             raise DonationConfigError("campaign wallets must be an array")
+        if len(raw_wallets) > MAX_WALLETS_PER_CAMPAIGN:
+            raise DonationConfigError(
+                f"campaign wallets exceed {MAX_WALLETS_PER_CAMPAIGN}"
+            )
         wallets = tuple(DonationWallet.from_mapping(item) for item in raw_wallets)
         return cls(
             campaign_id=campaign_id,
@@ -198,11 +204,28 @@ class DonationLedger:
             raise DonationConfigError(
                 f"version must be {DONATION_DOCUMENT_VERSION}"
             )
+        summary = value.get("summary")
+        if summary is not None:
+            if not isinstance(summary, Mapping):
+                raise DonationConfigError("summary must be an object")
+            _reject_unknown(
+                summary,
+                {
+                    "campaign_count",
+                    "active_campaign_count",
+                    "goal_usd",
+                    "raised_usd",
+                    "remaining_usd",
+                },
+                "summary",
+            )
         raw_campaigns = value.get("campaigns", [])
         if not isinstance(raw_campaigns, Sequence) or isinstance(
             raw_campaigns, (str, bytes, bytearray)
         ):
             raise DonationConfigError("campaigns must be an array")
+        if len(raw_campaigns) > MAX_CAMPAIGNS:
+            raise DonationConfigError(f"campaigns exceed {MAX_CAMPAIGNS}")
         campaigns = tuple(DonationCampaign.from_mapping(item) for item in raw_campaigns)
         ids = [campaign.campaign_id for campaign in campaigns]
         if len(ids) != len(set(ids)):
