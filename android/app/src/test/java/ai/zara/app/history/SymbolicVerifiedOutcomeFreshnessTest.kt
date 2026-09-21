@@ -27,16 +27,17 @@ class SymbolicVerifiedOutcomeFreshnessTest {
             turnId = "turn-7",
             receipts = listOf(STALE_RECEIPT),
         )
+        val freshV2 = v2Receipt(8, 8)
         val proposed = projection(
             generation = 2,
             runtimeGeneration = 8,
             turnId = "turn-8",
-            receipts = listOf(STALE_RECEIPT, FRESH_RECEIPT),
+            receipts = listOf(STALE_RECEIPT, freshV2),
         )
 
         SymbolicProjectionContract.validateWrite(current, proposed, expectedGeneration = 1)
         proposed.assertPureSymbolic()
-        assertTrue(proposed.verifiedOutcomeRefs == listOf(STALE_RECEIPT, FRESH_RECEIPT))
+        assertTrue(proposed.verifiedOutcomeRefs == listOf(STALE_RECEIPT, freshV2))
     }
 
     @Test
@@ -87,16 +88,17 @@ class SymbolicVerifiedOutcomeFreshnessTest {
             turnId = "turn-7",
             receipts = listOf(STALE_RECEIPT),
         )
+        val freshV2 = v2Receipt(8, 8)
         val proposed = projection(
             generation = 2,
             runtimeGeneration = 8,
             turnId = "turn-8",
-            receipts = listOf(STALE_RECEIPT, FRESH_RECEIPT),
+            receipts = listOf(STALE_RECEIPT, freshV2),
         )
 
         SymbolicProjectionContract.validateWrite(current, proposed, expectedGeneration = 1)
         proposed.assertPureSymbolic()
-        assertTrue(proposed.verifiedOutcomeRefs == listOf(STALE_RECEIPT, FRESH_RECEIPT))
+        assertTrue(proposed.verifiedOutcomeRefs == listOf(STALE_RECEIPT, freshV2))
     }
 
     @Test
