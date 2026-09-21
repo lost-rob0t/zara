@@ -1,13 +1,13 @@
 package ai.zara.app.prolog
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.ZaraApplication
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
 import android.content.Context
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import java.util.concurrent.TimeUnit
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -20,13 +20,8 @@ class AndroidPureSymbolicContextRoundTripInstrumentedTest {
     @Before
     fun setUp() {
         context = InstrumentationRegistry.getInstrumentation().targetContext
-        session = AndroidAppSession(context)
+        session = (context.applicationContext as ZaraApplication).appSession
         awaitLocalServerReady()
-    }
-
-    @After
-    fun tearDown() {
-        session.close()
     }
 
     @Test
