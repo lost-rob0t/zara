@@ -461,12 +461,12 @@ class SymbolicProjectionMixin:
                     if current_turn_id is not None and projection.runtime_generation != current_runtime_generation:
                         raise RuntimeError("same turn must preserve runtime_generation")
                     if projection.dialogue_act == "verified":
-                        has_current_generation_v2 = any(
+                        has_fresh_current_generation_v2 = any(
                             _verified_outcome_runtime_generation(reference)
                             == projection.runtime_generation
-                            for reference in projection.verified_outcome_refs
+                            for reference in fresh_verified_outcome_refs
                         )
-                        if not has_current_generation_v2:
+                        if not has_fresh_current_generation_v2:
                             raise RuntimeError(
                                 "verified projection requires fresh outcome evidence"
                             )
