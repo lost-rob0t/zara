@@ -76,8 +76,8 @@ class VoiceCloneYouTubeArgs(BaseModel):
         "synthetic",
     ]
     subject_is_public_figure: bool = Field(
-        False,
-        description="Must be false. This tool does not support public-figure voice cloning.",
+        ...,
+        description="Explicit attestation. Must be false; public-figure voice cloning is unsupported.",
     )
 
 
@@ -287,11 +287,11 @@ class VoiceExpert:
         self,
         url: str,
         voice_name: str,
+        rights_basis: str,
+        subject_is_public_figure: bool,
         start_seconds: float = 0.0,
         duration_seconds: float = 15.0,
         reference_text: str = "",
-        rights_basis: str = "self",
-        subject_is_public_figure: bool = False,
     ) -> str:
         self._validate_clone_rights(rights_basis, subject_is_public_figure)
         self._validate_voice_name(voice_name)
@@ -355,7 +355,7 @@ class VoiceExpert:
             if not wav_path.is_file() or wav_path.stat().st_size < 1024:
                 raise RuntimeError("reference extraction produced no usable WAV audio")
             result = asyncio.run(
-                self._qwen_client().register_voice(
+                self._qwen_register_voice(
                     voice_name,
                     str(wav_path),
                     reference_text=str(reference_text).strip(),
@@ -374,7 +374,7 @@ class VoiceExpert:
 
     def delete_voice(self, voice_name: str) -> str:
         self._validate_voice_name(voice_name)
-        result = asyncio.run(self._qwen_client().delete_voice(voice_name))
+        result = asyncio.run(self._qwen_delete_voice(voice_name))
         return json.dumps(
             {
                 "deleted": True,
@@ -413,7 +413,7 @@ class VoiceExpert:
         provider = self._provider()
         tts = self._tts_config()
         if provider == "qwen3":
-            voices = asyncio.run(self._qwen_client().list_voices())
+            voices = asyncio.run(self._qwen_list_voices())
             configured = str(tts.get("voice") or os.getenv("QWEN3_VOICE", "zara"))
             normalized = [str(voice) for voice in voices if str(voice)]
             if configured and configured not in normalized:
@@ -440,6 +440,37 @@ class VoiceExpert:
             return asyncio.run(engine.synthesize_async(text))
         finally:
             asyncio.run(engine.close())
+
+    async def _qwen_list_voices(self) -> list[str]:
+        client = self._qwen_client()
+        try:
+            return await client.list_voices()
+        finally:
+            await client.close()
+
+    async def _qwen_register_voice(
+        self,
+        voice_name: str,
+        wav_path: str,
+        *,
+        reference_text: str,
+    ) -> dict:
+        client = self._qwen_client()
+        try:
+            return await client.register_voice(
+                voice_name,
+                wav_path,
+                reference_text=reference_text,
+            )
+        finally:
+            await client.close()
+
+    async def _qwen_delete_voice(self, voice_name: str) -> dict:
+        client = self._qwen_client()
+        try:
+            return await client.delete_voice(voice_name)
+        finally:
+            await client.close()
 
     def _qwen_client(self) -> Qwen3TTSClient:
         tts = self._tts_config()
