@@ -36,7 +36,11 @@ internal object PureSymbolicExpertEvidenceValidator {
         for (index in 0 until evidence.length()) {
             val entry = evidence.optJSONObject(index)
                 ?: throw IllegalArgumentException("$name[$index] must be a JSON object")
-            validateObject(entry, "$name[$index]", allowModelCalls = true)
+            validateObject(
+                entry,
+                "$name[$index]",
+                allowModelCalls = entry.has("expert_id"),
+            )
         }
     }
 
