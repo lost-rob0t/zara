@@ -6,6 +6,7 @@ import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.SymbolicConversationProjection
 import ai.zara.app.history.completeSymbolicTurnAtomically
+import ai.zara.app.history.loadSymbolicEdgeSnapshot
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.history.saveSymbolicProjection
 import android.content.Context
@@ -27,6 +28,10 @@ import org.junit.Test
  * symbolic projection, and clear project-scoped dialogue knowledge before the new project becomes
  * visible. A late project-A callback must never publish output or Context1. The fence must remain
  * durable across process/store recreation and preserve exact zero-provider/model policy.
+ *
+ * Wear/edge is read-only over the same canonical projection. The project-switch terminal state must
+ * therefore remain a valid pure-symbolic edge snapshot before and after process recreation; it may
+ * not force an edge consumer to invent a second state owner or silently drop the switch.
  *
  * This test intentionally uses the existing CanonicalConversationStore + PortableConversationStore
  * owners. It must not be satisfied by a second project, conversation, or symbolic state store.
@@ -90,6 +95,7 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
         assertEquals("[]", fencedB.expertEvidenceJson)
         assertEquals("[]", fencedB.verifiedFactsJson)
         assertZeroModel(fencedB)
+        assertProjectBSafeEdgeSnapshot(firstStore)
         assertEquals(
             HistoryMessageStatus.Cancelled,
             firstStore.loadMessages(CONVERSATION_ID).single { it.role == HistoryMessageRole.Assistant }.status,
@@ -174,6 +180,7 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             assertEquals("[]", recovered.expertEvidenceJson)
             assertEquals("[]", recovered.verifiedFactsJson)
             assertZeroModel(recovered)
+            assertProjectBSafeEdgeSnapshot(reopenedStore)
 
             val recoveredAssistant = reopenedStore.loadMessages(CONVERSATION_ID).single { message ->
                 message.role == HistoryMessageRole.Assistant && message.turnId == turnId
@@ -201,6 +208,21 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
         } finally {
             reopenedStore.close()
         }
+    }
+
+    private fun assertProjectBSafeEdgeSnapshot(store: PortableConversationStore) {
+        val edge = checkNotNull(store.loadSymbolicEdgeSnapshot(CONVERSATION_ID))
+        edge.assertPureSymbolic()
+        assertEquals(PROJECT_B, edge.projectId)
+        assertEquals(2L, edge.projectGeneration)
+        assertEquals("cancelled", edge.dialogueAct)
+        assertTrue(edge.discourseEntityRefs.isEmpty())
+        assertTrue(edge.unresolvedQuestionRefs.isEmpty())
+        assertTrue(edge.expertEvidenceRefs.isEmpty())
+        assertFalse(edge.providersEnabled)
+        assertEquals(0L, edge.maxModelCalls)
+        assertEquals(0L, edge.providerCalls)
+        assertEquals(0L, edge.modelCalls)
     }
 
     private fun pendingProjection(turnId: String): SymbolicConversationProjection =
