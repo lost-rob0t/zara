@@ -11,9 +11,15 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,10 +29,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
@@ -78,9 +86,15 @@ internal fun PluginSettingsSurface(padding: PaddingValues) {
                             "No plugins match this search."
                         },
                     )
+                } else {
+                    visible.forEachIndexed { index, plugin ->
+                        PluginCatalogRow(plugin)
+                        if (index != visible.lastIndex) {
+                            HorizontalDivider(color = LocalZaraTokens.current.border)
+                        }
+                    }
                 }
             }
-            visible.forEach { plugin -> PluginCatalogCard(plugin) }
         } else {
             SectionCard("CATALOG UNAVAILABLE") {
                 MutedNotice(
@@ -119,31 +133,63 @@ private fun PluginHostSummary(snapshot: AndroidPluginCatalogSnapshot) {
 }
 
 @Composable
-private fun PluginCatalogCard(plugin: AndroidPluginCatalogItem) {
+private fun PluginCatalogRow(plugin: AndroidPluginCatalogItem) {
     val tokens = LocalZaraTokens.current
-    SectionCard(plugin.displayName.uppercase()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            .testTag("plugin-${plugin.pluginId}"),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                plugin.displayName,
+                modifier = Modifier.weight(1f),
+                color = tokens.text,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                plugin.health.label.uppercase(),
+                color = when (plugin.health) {
+                    AndroidPluginCatalogHealth.READY -> tokens.success
+                    AndroidPluginCatalogHealth.PERMISSION_REQUIRED,
+                    AndroidPluginCatalogHealth.DEGRADED -> tokens.warning
+                    AndroidPluginCatalogHealth.INCOMPATIBLE -> tokens.error
+                    else -> tokens.textMuted
+                },
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                letterSpacing = 1.2.sp,
+            )
+        }
         Text(
-            plugin.health.label.uppercase(),
-            color = when (plugin.health) {
-                AndroidPluginCatalogHealth.READY -> tokens.success
-                AndroidPluginCatalogHealth.PERMISSION_REQUIRED,
-                AndroidPluginCatalogHealth.DEGRADED -> tokens.warning
-                AndroidPluginCatalogHealth.INCOMPATIBLE -> tokens.error
-                else -> tokens.textMuted
-            },
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            letterSpacing = 1.2.sp,
+            "${plugin.version} · ${plugin.source.label} · ${plugin.pluginId}",
+            color = tokens.textMuted,
+            style = MaterialTheme.typography.bodySmall,
         )
-        KeyValueRow("id", plugin.pluginId)
-        KeyValueRow("version", plugin.version)
-        KeyValueRow("source", plugin.source.label)
-        KeyValueRow("trusted", yesNo(plugin.trusted))
-        KeyValueRow("enabled", yesNo(plugin.enabled))
-        KeyValueRow("capabilities", summarize(plugin.capabilities))
-        KeyValueRow("permissions", summarize(plugin.permissions))
-        plugin.diagnosticCode?.let { KeyValueRow("diagnostic", it) }
-
+        Text(
+            "Capabilities · ${summarize(plugin.capabilities)}",
+            color = tokens.text,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(
+            "Permissions · ${summarize(plugin.permissions)}",
+            color = tokens.text,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        plugin.diagnosticCode?.let { code ->
+            Text(
+                "Diagnostic · $code",
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
         if (plugin.health != AndroidPluginCatalogHealth.READY) {
             MutedNotice(healthGuidance(plugin.health))
         }
