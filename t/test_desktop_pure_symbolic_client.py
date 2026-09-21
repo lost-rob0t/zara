@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from zara.desktop import app as desktop_app
+from zara.desktop.conversation.symbolic_runtime import PureSymbolicProjectionAdapter
 from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
 
 
@@ -44,5 +45,6 @@ def test_default_desktop_client_selects_in_process_pure_symbolic_backend(monkeyp
     assert seen["config"] is config
     backend = seen["backend_factory"]()
     assert isinstance(backend, PureSymbolicRuntimeBackend)
-    assert backend._projection_store is expected_store
+    assert isinstance(backend._projection_adapter, PureSymbolicProjectionAdapter)
+    assert backend._projection_adapter.store is expected_store
     assert config.get("agent", "backend", "missing") == "langgraph"
