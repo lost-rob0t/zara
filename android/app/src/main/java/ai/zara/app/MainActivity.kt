@@ -337,32 +337,37 @@ class MainActivity : ComponentActivity() {
                                         val failure = UiOperationFailure.summarize(error)
                                         operationError = failure
                                         try {
-                                            conversationState = conversationStore.failTurn(conversationId, failure)
+                                            conversationState = if (
+                                                executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
+                                            ) {
+                                                conversationStore.state()
+                                            } else {
+                                                conversationStore.failTurn(conversationId, failure)
+                                            }
                                         } catch (storeError: Exception) {
                                             operationError = UiOperationFailure.summarize(storeError)
                                         }
                                     } else if (result != null) {
-                                        val remoteConversationId = if (
-                                            executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
-                                        ) {
-                                            null
-                                        } else {
-                                            result.conversationId?.takeUnless { it.startsWith("local-") }
-                                        }
                                         try {
-                                            conversationState = conversationStore.completeTurn(
-                                                conversationId = conversationId,
-                                                assistantText = result.text,
-                                                success = result.success,
-                                                remoteConversationId = remoteConversationId,
-                                            )
-                                            if (project != null && remoteConversationId != null &&
-                                                projectState.loadFailure == null
-                                            ) {
-                                                projectState = projectStore.bindConversation(
-                                                    project.id,
-                                                    remoteConversationId,
+                                            if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
+                                                conversationState = conversationStore.state()
+                                            } else {
+                                                val remoteConversationId = result.conversationId
+                                                    ?.takeUnless { it.startsWith("local-") }
+                                                conversationState = conversationStore.completeTurn(
+                                                    conversationId = conversationId,
+                                                    assistantText = result.text,
+                                                    success = result.success,
+                                                    remoteConversationId = remoteConversationId,
                                                 )
+                                                if (project != null && remoteConversationId != null &&
+                                                    projectState.loadFailure == null
+                                                ) {
+                                                    projectState = projectStore.bindConversation(
+                                                        project.id,
+                                                        remoteConversationId,
+                                                    )
+                                                }
                                             }
                                         } catch (storeError: Exception) {
                                             operationError = UiOperationFailure.summarize(storeError)
