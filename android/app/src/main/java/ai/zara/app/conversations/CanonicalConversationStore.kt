@@ -38,6 +38,13 @@ private data class ConversationUiMetadataState(
     val conversations: Map<String, ConversationUiMetadata> = emptyMap(),
 )
 
+data class ConversationRetryAttempt(
+    val state: ConversationState,
+    val userText: String,
+    val attempt: Int,
+    val turnId: String,
+)
+
 /**
  * Android chat facade over Zara's canonical portable conversation database.
  *
@@ -174,6 +181,56 @@ class CanonicalConversationStore(
     }
 
     @Synchronized
+    fun retryFailedTurn(
+        conversationId: String,
+        maxAttempts: Int,
+    ): ConversationRetryAttempt {
+        require(maxAttempts in 1..16) { "maxAttempts must be between 1 and 16" }
+        val id = requireConversation(conversationId)
+        val messages = history.loadMessages(id)
+        val userIndex = messages.indexOfLast { it.role == HistoryMessageRole.User }
+        check(userIndex >= 0) { "Conversation has no user turn to retry" }
+        val user = messages[userIndex]
+        val assistantAttempts = messages
+            .drop(userIndex + 1)
+            .filter { it.role == HistoryMessageRole.Assistant }
+        check(assistantAttempts.isNotEmpty()) { "Conversation has no assistant attempt to retry" }
+        check(assistantAttempts.none { it.status.isRunning() }) { "Conversation already has a running retry" }
+        val lastAssistant = assistantAttempts.last()
+        check(
+            lastAssistant.status == HistoryMessageStatus.Error ||
+                lastAssistant.status == HistoryMessageStatus.Cancelled
+        ) { "Only a failed or cancelled assistant attempt can be retried" }
+
+        val attempt = assistantAttempts.size
+        if (attempt >= maxAttempts) {
+            error("Retry attempt limit reached")
+        }
+
+        val turnId = UUID.randomUUID().toString()
+        val now = PortableConversationStore.nowIso()
+        history.saveMessage(
+            HistoryMessage(
+                id = UUID.randomUUID().toString(),
+                conversationId = id,
+                sequence = history.nextSequence(id),
+                role = HistoryMessageRole.Assistant,
+                content = "",
+                status = HistoryMessageStatus.Pending,
+                createdAt = now,
+                updatedAt = now,
+                turnId = turnId,
+            )
+        )
+        return ConversationRetryAttempt(
+            state = snapshot(),
+            userText = user.content,
+            attempt = attempt + 1,
+            turnId = turnId,
+        )
+    }
+
+    @Synchronized
     fun completeTurn(
         conversationId: String,
         assistantText: String,
@@ -278,7 +335,8 @@ class CanonicalConversationStore(
             when (message.role) {
                 HistoryMessageRole.User -> turns += ConversationTurn(userText = message.content)
                 HistoryMessageRole.Assistant -> {
-                    val index = turns.indexOfLast { it.assistantText == null }
+                    val unresolvedIndex = turns.indexOfLast { it.assistantText == null }
+                    val index = if (unresolvedIndex >= 0) unresolvedIndex else turns.lastIndex
                     if (index >= 0) {
                         val visibleText = when {
                             message.status == HistoryMessageStatus.Cancelled && message.content.isBlank() ->

@@ -19,6 +19,7 @@ import ai.zara.app.telemetry.ZaraFailures
 import ai.zara.app.telemetry.ZaraOperation
 import ai.zara.app.ui.TurnFailure
 import ai.zara.app.ui.TurnFailures
+import ai.zara.app.ui.TurnRetryPolicy
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
 import ai.zara.app.update.Changelog
@@ -166,6 +167,205 @@ class MainActivity : ComponentActivity() {
         }
         appSession.assessAssistantRole()
 
+        fun executeChatAttempt(
+            text: String,
+            conversation: ConversationRecord,
+            project: ProjectContext?,
+            retryExisting: Boolean,
+            automaticRetry: Boolean,
+        ) {
+            operationError = null
+            operationBusy = true
+            val conversationId = conversation.id
+            var expectedTurnId: String? = null
+            var attempt = 1
+            var executionText = text.trim()
+            try {
+                if (retryExisting) {
+                    val retry = conversationStore.retryFailedTurn(
+                        conversationId,
+                        TurnRetryPolicy.MAX_ATTEMPTS,
+                    )
+                    executionText = retry.userText
+                    conversationState = retry.state
+                    expectedTurnId = retry.turnId
+                    attempt = retry.attempt
+                    turnFailure = turnFailure?.let {
+                        TurnRetryPolicy.decorate(
+                            it,
+                            attempt = attempt,
+                            autoRetrying = automaticRetry,
+                        )
+                    }
+                    appSession.recordChatBreadcrumb(
+                        "chat.turn.retry attempt=$attempt/${TurnRetryPolicy.MAX_ATTEMPTS}",
+                        conversationId,
+                    )
+                } else {
+                    appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
+                    conversationState = conversationStore.beginTurn(conversationId, executionText)
+                    expectedTurnId = conversationStore.runningTurnId(conversationId)
+                }
+
+                val requestedPolicy = if (retryExisting) {
+                    null
+                } else {
+                    when (executionText.lowercase()) {
+                        "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
+                        "/symbolic off" -> ConversationExecutionPolicy.STANDARD
+                        else -> null
+                    }
+                }
+                if (requestedPolicy != null) {
+                    executionPolicyController.select(requestedPolicy)
+                    val enabled = requestedPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
+                    conversationState = conversationStore.completeTurn(
+                        conversationId = conversationId,
+                        assistantText = if (enabled) {
+                            "Pure symbolic mode enabled. max_model_calls=0 and max_provider_calls=0."
+                        } else {
+                            "Pure symbolic mode disabled. Standard execution policy restored."
+                        },
+                        success = true,
+                        expectedTurnId = requireNotNull(expectedTurnId),
+                        remoteConversationId = null,
+                    )
+                    operationBusy = false
+                    return
+                }
+
+                val executionPolicy = executionPolicyController.policy()
+                val future = executionPolicyController.submit(
+                    text = executionText,
+                    conversationId = conversation.id,
+                    standardTurn = {
+                        if (project == null) {
+                            appSession.submitText(
+                                text = executionText,
+                                localConversationId = conversation.localConversationId,
+                                remoteConversationId = conversation.remoteConversationId,
+                            )
+                        } else {
+                            appSession.submitProjectText(
+                                text = executionText,
+                                projectId = project.id,
+                                conversationId = conversation.remoteConversationId,
+                                localConversationId = conversation.localConversationId,
+                            )
+                        }
+                    },
+                )
+                future.whenComplete { result, error ->
+                    runOnUiThread {
+                        if (error != null) {
+                            if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
+                                operationError = UiOperationFailure.summarize(error)
+                            }
+                            val failure = recordTurnFailure(
+                                conversationId = conversationId,
+                                expectedTurnId = expectedTurnId,
+                                error = error,
+                                attempt = attempt,
+                            )
+                            if (TurnRetryPolicy.shouldAutoRetry(failure, attempt)) {
+                                val nextAttempt = attempt + 1
+                                turnFailure = TurnRetryPolicy.decorate(
+                                    failure,
+                                    attempt = nextAttempt,
+                                    autoRetrying = true,
+                                )
+                                val selected = conversationStore.state().conversation(conversationId)
+                                if (selected != null) {
+                                    executeChatAttempt(
+                                        text = executionText,
+                                        conversation = selected,
+                                        project = project,
+                                        retryExisting = true,
+                                        automaticRetry = true,
+                                    )
+                                } else {
+                                    operationBusy = false
+                                }
+                            } else {
+                                operationBusy = false
+                            }
+                        } else if (result != null) {
+                            operationBusy = false
+                            turnFailure = null
+                            try {
+                                if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
+                                    // Natural symbolic turns are already terminalized by the persisted resolver;
+                                    // completeTurn is an exact idempotence check there and is the canonical
+                                    // terminal write for explicit /prolog, /expert, ?-, and ? routes.
+                                    conversationState = conversationStore.completeTurn(
+                                        conversationId = conversationId,
+                                        assistantText = result.text,
+                                        success = result.success,
+                                        expectedTurnId = requireNotNull(expectedTurnId),
+                                        remoteConversationId = null,
+                                    )
+                                } else {
+                                    val remoteConversationId = result.conversationId
+                                        ?.takeUnless { it.startsWith("local-") }
+                                    conversationState = conversationStore.completeTurn(
+                                        conversationId = conversationId,
+                                        assistantText = result.text,
+                                        success = result.success,
+                                        expectedTurnId = requireNotNull(expectedTurnId),
+                                        remoteConversationId = remoteConversationId,
+                                    )
+                                    if (project != null && remoteConversationId != null &&
+                                        projectState.loadFailure == null
+                                    ) {
+                                        projectState = projectStore.bindConversation(
+                                            project.id,
+                                            remoteConversationId,
+                                        )
+                                    }
+                                }
+                            } catch (storeError: Exception) {
+                                operationError = UiOperationFailure.summarize(storeError)
+                            }
+                        } else {
+                            operationBusy = false
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                if (executionPolicyController.policy() == ConversationExecutionPolicy.PURE_SYMBOLIC) {
+                    operationError = UiOperationFailure.summarize(error)
+                }
+                val failure = recordTurnFailure(
+                    conversationId = conversationId,
+                    expectedTurnId = expectedTurnId,
+                    error = error,
+                    attempt = attempt,
+                )
+                if (TurnRetryPolicy.shouldAutoRetry(failure, attempt)) {
+                    val nextAttempt = attempt + 1
+                    turnFailure = TurnRetryPolicy.decorate(
+                        failure,
+                        attempt = nextAttempt,
+                        autoRetrying = true,
+                    )
+                    val selected = conversationStore.state().conversation(conversationId)
+                    if (selected != null) {
+                        executeChatAttempt(
+                            text = executionText,
+                            conversation = selected,
+                            project = project,
+                            retryExisting = true,
+                            automaticRetry = true,
+                        )
+                    } else {
+                        operationBusy = false
+                    }
+                } else {
+                    operationBusy = false
+                }
+            }
+        }
+
         setContent {
             val systemDark = isSystemInDarkTheme()
             val resolvedSystemBarDark = when (selectedTheme) {
@@ -181,117 +381,16 @@ class MainActivity : ComponentActivity() {
                 }
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
-            val submitChatText: (String, ConversationRecord, ProjectContext?) -> Unit = { text, conversation, project ->
-                operationError = null
-                operationBusy = true
-                val conversationId = conversation.id
-                var expectedTurnId: String? = null
-                try {
-                    appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
-                    conversationState = conversationStore.beginTurn(conversationId, text)
-                    expectedTurnId = conversationStore.runningTurnId(conversationId)
-                    val requestedPolicy = when (text.trim().lowercase()) {
-                        "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
-                        "/symbolic off" -> ConversationExecutionPolicy.STANDARD
-                        else -> null
-                    }
-                    if (requestedPolicy != null) {
-                        executionPolicyController.select(requestedPolicy)
-                        val enabled = requestedPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
-                        conversationState = conversationStore.completeTurn(
-                            conversationId = conversationId,
-                            assistantText = if (enabled) {
-                                "Pure symbolic mode enabled. max_model_calls=0 and max_provider_calls=0."
-                            } else {
-                                "Pure symbolic mode disabled. Standard execution policy restored."
-                            },
-                            success = true,
-                            expectedTurnId = requireNotNull(expectedTurnId),
-                            remoteConversationId = null,
-                        )
-                        operationBusy = false
-                    } else {
-                        val executionPolicy = executionPolicyController.policy()
-                        val future = executionPolicyController.submit(
-                            text = text,
-                            conversationId = conversation.id,
-                            standardTurn = {
-                                if (project == null) {
-                                    appSession.submitText(
-                                        text = text,
-                                        localConversationId = conversation.localConversationId,
-                                        remoteConversationId = conversation.remoteConversationId,
-                                    )
-                                } else {
-                                    appSession.submitProjectText(
-                                        text = text,
-                                        projectId = project.id,
-                                        conversationId = conversation.remoteConversationId,
-                                        localConversationId = conversation.localConversationId,
-                                    )
-                                }
-                            },
-                        )
-                        future.whenComplete { result, error ->
-                            runOnUiThread {
-                                operationBusy = false
-                                if (error != null) {
-                                    if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
-                                        operationError = UiOperationFailure.summarize(error)
-                                        recordTurnFailure(conversationId, expectedTurnId, error)
-                                    } else {
-                                        recordTurnFailure(conversationId, expectedTurnId, error)
-                                    }
-                                } else if (result != null) {
-                                    turnFailure = null
-                                    try {
-                                        if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
-                                            // Natural symbolic turns are already terminalized by the persisted resolver;
-                                            // completeTurn is an exact idempotence check there and is the canonical
-                                            // terminal write for explicit /prolog, /expert, ?-, and ? routes.
-                                            conversationState = conversationStore.completeTurn(
-                                                conversationId = conversationId,
-                                                assistantText = result.text,
-                                                success = result.success,
-                                                expectedTurnId = requireNotNull(expectedTurnId),
-                                                remoteConversationId = null,
-                                            )
-                                        } else {
-                                            val remoteConversationId = result.conversationId
-                                                ?.takeUnless { it.startsWith("local-") }
-                                            conversationState = conversationStore.completeTurn(
-                                                conversationId = conversationId,
-                                                assistantText = result.text,
-                                                success = result.success,
-                                                expectedTurnId = requireNotNull(expectedTurnId),
-                                                remoteConversationId = remoteConversationId,
-                                            )
-                                            if (project != null && remoteConversationId != null &&
-                                                projectState.loadFailure == null
-                                            ) {
-                                                projectState = projectStore.bindConversation(
-                                                    project.id,
-                                                    remoteConversationId,
-                                                )
-                                            }
-                                        }
-                                    } catch (storeError: Exception) {
-                                        operationError = UiOperationFailure.summarize(storeError)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } catch (error: Exception) {
-                    operationBusy = false
-                    if (executionPolicyController.policy() == ConversationExecutionPolicy.PURE_SYMBOLIC) {
-                        operationError = UiOperationFailure.summarize(error)
-                        recordTurnFailure(conversationId, expectedTurnId, error)
-                    } else {
-                        recordTurnFailure(conversationId, expectedTurnId, error)
-                    }
+            val submitChatText: (String, ConversationRecord, ProjectContext?) -> Unit =
+                { text, conversation, project ->
+                    executeChatAttempt(
+                        text = text,
+                        conversation = conversation,
+                        project = project,
+                        retryExisting = false,
+                        automaticRetry = false,
+                    )
                 }
-            }
 
             ZaraApp(
                 runtimeState = runtimeState,
@@ -604,7 +703,15 @@ class MainActivity : ComponentActivity() {
                 onRetryTurn = { text ->
                     val selected = conversationState.selectedConversation
                     val project = selected?.projectId?.let(projectState::project)
-                    if (selected != null) submitChatText(text, selected, project)
+                    if (selected != null && TurnRetryPolicy.canManualRetry(turnFailure)) {
+                        executeChatAttempt(
+                            text = text,
+                            conversation = selected,
+                            project = project,
+                            retryExisting = true,
+                            automaticRetry = false,
+                        )
+                    }
                 },
                 onReconnectRemote = {
                     appSession.state().configuredProfile?.let { profile ->
@@ -780,7 +887,8 @@ class MainActivity : ComponentActivity() {
         conversationId: String,
         expectedTurnId: String?,
         error: Throwable,
-    ) {
+        attempt: Int = 1,
+    ): TurnFailure {
         val classified = ZaraFailures.classify(error, ZaraOperation.SUBMIT)
         appSession.recordChatBreadcrumb("chat.turn.failed code=${classified.code}", conversationId)
         val connected = appSession.state().server is ServerConnection.Connected
@@ -789,9 +897,11 @@ class MainActivity : ComponentActivity() {
             transportConnected = connected,
             incidentId = appSession.diagnosticsIncidentId(),
         )
-        turnFailure = TurnFailures.mostSpecific(turnFailure, candidate)
-        val summary = TurnFailures.renderSummary(turnFailure ?: candidate)
-        if (expectedTurnId == null) return
+        val specific = TurnFailures.mostSpecific(turnFailure, candidate)
+        val visible = TurnRetryPolicy.decorate(specific, attempt = attempt)
+        turnFailure = visible
+        val summary = TurnFailures.renderSummary(visible)
+        if (expectedTurnId == null) return visible
         try {
             val selected = conversationStore.state().conversation(conversationId)
             if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
@@ -803,6 +913,7 @@ class MainActivity : ComponentActivity() {
             }
         } catch (_: Exception) {
         }
+        return visible
     }
 
     private fun copyDiagnostics() {

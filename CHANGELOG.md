@@ -8,6 +8,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android retry recovery no longer duplicates the failed user message: retryable connected turns automatically retry once, total execution attempts are capped at 2, cancellation/stale-generation remain non-retrying, and the error card exposes the current attempt while hiding Retry after the budget is exhausted.
 - Android remote sessions no longer break after a successful voice turn: the client now decodes the server's `voice.speech.started`/`voice.speech.ended` markers and the legal `turn.cancelled`/`runtime.error`/`runtime.stopped` lifecycle messages it previously rejected as protocol errors, and interleaved text frames no longer kill the voice stream.
 - A failed remote frame can no longer leave Android in a fake-connected state: voice pump death and session-desyncing protocol/transport failures now collapse the connection with a typed reason and drive the existing bounded reconnect.
 - Android restores a persisted remote session on launch with `session.restore` telemetry instead of silently staying disconnected after process recreation.
