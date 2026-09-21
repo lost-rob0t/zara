@@ -176,11 +176,8 @@ data class DonationLedger(
         }
 
         private fun usd(element: JsonElement?, label: String): BigDecimal {
-            if (
-                element == null ||
-                !element.isJsonPrimitive ||
-                element.asJsonPrimitive.isBoolean
-            ) {
+            if (element == null) return BigDecimal("0.00")
+            if (!element.isJsonPrimitive || element.asJsonPrimitive.isBoolean) {
                 throw DonationDocumentException("$label must be a USD amount")
             }
             val amount = try {
