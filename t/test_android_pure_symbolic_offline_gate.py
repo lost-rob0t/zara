@@ -82,7 +82,8 @@ def test_semantic_parity_gate_uses_pinned_trealla_context_wire_contract() -> Non
     assert 'string_codes("[]", Context0Codes)' in source
     assert "atom_codes(Context0Atom, Context0Codes)" in source
     assert "read_term_from_atom(Context0Atom, Context0, [])" in source
-    assert "write_term_to_atom(ContextAtom, Context1, [quoted(true)])" in source
+    assert "with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)]))" in source
+    assert "write_term_to_atom(" not in source
     assert "atom_concat('__zara_context__:', ContextAtom, ContextTagged)" in source
     assert "atom_codes(ContextTagged, ContextWireCodes)" in source
     assert "string_codes(ContextWire, ContextWireCodes)" in source
