@@ -293,6 +293,12 @@
                   cp -r $src/browser-addon $out/share/zarathushtra/
                 '' else ""}
 
+                # Package the shared yt-dlp throttle wrapper for every Zara runtime.
+                install -m755 $src/scripts/zara-ytdlp $out/bin/zara-ytdlp
+                patchShebangs $out/bin/zara-ytdlp
+                wrapProgram $out/bin/zara-ytdlp \
+                  --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.yt-dlp ]}
+
                 # Create wrapper with correct Python interpreter and environment
                 makeWrapper ${pythonLibs}/bin/python3 $out/bin/${binaryName} \
                   --add-flags "${addFlags}" \
