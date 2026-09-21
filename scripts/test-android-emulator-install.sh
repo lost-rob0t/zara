@@ -57,20 +57,20 @@ test -f "$trealla_library_root/x86_64/libtrealla.a"
 
 # Exercise the real Android SQLiteOpenHelper migrations, persisted-type fences,
 # legacy symbolic-owner claim, restart cancellation fencing, bounded verified-
-# outcome replay, duplicate edge-reference normalization, native Result binding/
-# context persistence boundaries, project-switch stale-generation fence,
-# project-switch verified-receipt retention for edge/Wear, verified-effect
-# restart/ABA evidence, stale UI completion identity fencing, preflight-failure
-# terminalization, and the actual native pure-symbolic dialogue runtime on the
-# same emulator used for acceptance. These classes are named explicitly, so
-# every acceptance class below must stay in this filter rather than merely
-# compiling in androidTest.
+# outcome replay, duplicate edge-reference normalization, expert-evidence trust
+# fencing, native Result binding/context persistence boundaries, project-switch
+# stale-generation fence, project-switch verified-receipt retention for edge/Wear,
+# verified-effect restart/ABA evidence, stale UI completion identity fencing,
+# preflight-failure terminalization, and the actual native pure-symbolic dialogue
+# runtime on the same emulator used for acceptance. These classes are named
+# explicitly, so every acceptance class below must stay in this filter rather than
+# merely compiling in androidTest.
 set +e
 ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
   ZARA_TREALLA_LIBRARY_ROOT="$trealla_library_root" \
   nix develop ./android -c bash -lc \
   'cd android && gradle :app:connectedDebugAndroidTest --no-daemon \
-    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest,ai.zara.app.prolog.NativeTreallaResultBindingInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicContextRoundTripInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicPersistenceBoundaryInstrumentedTest,ai.zara.app.conversations.CanonicalConversationProjectSwitchFenceInstrumentedTest,ai.zara.app.conversations.CanonicalConversationProjectSwitchVerifiedReceiptEdgeInstrumentedTest,ai.zara.app.conversations.CanonicalConversationStaleUiCompletionFenceInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicPreflightFailureInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicConversationInstrumentedTest' \
+    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest,ai.zara.app.history.SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest,ai.zara.app.prolog.NativeTreallaResultBindingInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicContextRoundTripInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicPersistenceBoundaryInstrumentedTest,ai.zara.app.conversations.CanonicalConversationProjectSwitchFenceInstrumentedTest,ai.zara.app.conversations.CanonicalConversationProjectSwitchVerifiedReceiptEdgeInstrumentedTest,ai.zara.app.conversations.CanonicalConversationStaleUiCompletionFenceInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicPreflightFailureInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicConversationInstrumentedTest' \
   2>&1 | tee "$instrumentation_log"
 instrumentation_status=${PIPESTATUS[0]}
 set -e
