@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -81,8 +82,13 @@ def test_stale_completion_charges_actual_usage_to_parent_budget() -> None:
         "user:alice", "ws:main", "zara:expert/stale-usage"
     )
 
+    synthetic_parent_invocation_id = "inv:synthetic-parent"
+    registry._invocations[synthetic_parent_invocation_id] = SimpleNamespace(
+        state="dispatching"
+    )
     parent = experts._DelegationFrame(
         expert_id="zara:expert/parent",
+        invocation_id=synthetic_parent_invocation_id,
         principal="user:alice",
         workspace="ws:main",
         delegation_policy=experts.DelegationPolicy.CHILDREN,
@@ -113,6 +119,7 @@ def test_stale_completion_charges_actual_usage_to_parent_budget() -> None:
         reloader.join(timeout=1.0)
         popped = registry._delegation_stack().pop()
         assert popped is parent
+        registry._invocations.pop(synthetic_parent_invocation_id, None)
 
     assert reload_finished.is_set()
     assert parent.remaining_model_calls == 0

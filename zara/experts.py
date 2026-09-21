@@ -30,6 +30,7 @@ class _DelegationFrame:
         "delegated_model_calls",
         "delegation_policy",
         "expert_id",
+        "invocation_id",
         "max_output_bytes",
         "max_results",
         "principal",
@@ -42,12 +43,14 @@ class _DelegationFrame:
         self,
         *,
         expert_id: str,
+        invocation_id: str,
         principal: str,
         workspace: str,
         delegation_policy: DelegationPolicy,
         limits: ExpertLimits,
     ) -> None:
         self.expert_id = expert_id
+        self.invocation_id = invocation_id
         self.principal = principal
         self.workspace = workspace
         self.delegation_policy = delegation_policy
@@ -68,6 +71,11 @@ class ExpertRegistry(_impl.ExpertRegistry):
         # second dispatcher or out-of-band composition path.
         self._lock = threading.RLock()
         self._delegation_state = threading.local()
+        # These are lineage indexes over the canonical invocation records, not a
+        # second scheduler/history store. They exist solely so root cancellation
+        # can fence every still-live nested invocation atomically.
+        self._invocation_parent: dict[str, str] = {}
+        self._invocation_children: dict[str, set[str]] = {}
 
     def _delegation_stack(self) -> list[_DelegationFrame]:
         stack = getattr(self._delegation_state, "stack", None)
@@ -167,6 +175,11 @@ class ExpertRegistry(_impl.ExpertRegistry):
         parent = self._delegation_parent()
         if parent is None:
             return admitted
+        parent_invocation = self._invocations.get(parent.invocation_id)
+        if parent_invocation is None or parent_invocation.state != "dispatching":
+            raise ExpertDeniedError(
+                "nested expert delegation denied: parent invocation is no longer live"
+            )
         if parent.delegation_policy is DelegationPolicy.NEVER:
             raise ExpertDeniedError(
                 f"expert {parent.expert_id!r} does not permit expert delegation"
@@ -238,8 +251,31 @@ class ExpertRegistry(_impl.ExpertRegistry):
                     raise ExpertDeniedError(
                         "expert dispatch lost its canonical descriptor"
                     )
+                if delegation_parent is not None:
+                    parent_invocation_id = delegation_parent.invocation_id
+                    parent_invocation = self._invocations.get(parent_invocation_id)
+                    if (
+                        parent_invocation is None
+                        or parent_invocation.state != "dispatching"
+                    ):
+                        denied = {
+                            "verdict": "cancelled",
+                            "data": {},
+                            "evidence_refs": [],
+                            "usage": {"model_calls": 0},
+                            "effect_receipts": [],
+                        }
+                        raw_outcome["value"] = denied
+                        raw_outcome["cancelled"] = True
+                        return denied
+                    self._invocation_parent[invocation_id] = parent_invocation_id
+                    self._invocation_children.setdefault(
+                        parent_invocation_id, set()
+                    ).add(invocation_id)
+
                 frame = _DelegationFrame(
                     expert_id=handle.expert_id,
+                    invocation_id=invocation_id,
                     principal=handle.principal,
                     workspace=handle.workspace,
                     delegation_policy=descriptor.delegation_policy,
@@ -437,6 +473,60 @@ class ExpertRegistry(_impl.ExpertRegistry):
             )
 
         return result
+
+    def cancel(self, invocation_id: str) -> dict[str, Any]:
+        """Cancel one invocation and every still-live canonical descendant."""
+
+        _impl._bounded_pattern(
+            invocation_id,
+            field_name="invocation_id",
+            pattern=_impl._PORTABLE,
+            limit=128,
+        )
+        with self._lock:
+            root = self._invocations.get(invocation_id)
+            if root is None:
+                raise ExpertInvalidInputError(
+                    f"unknown invocation: {invocation_id!r}"
+                )
+            if root.state == "completed":
+                _impl.logger.info(
+                    "[ExpertRegistry] cancel after commit for %s (no reversal)",
+                    invocation_id,
+                )
+                return {
+                    "invocation_id": root.invocation_id,
+                    "request_id": root.request_id,
+                    "cancelled": False,
+                    "committed": True,
+                    "verdict": root.verdict.value if root.verdict else None,
+                    "effect_receipts": [dict(item) for item in root.effect_receipts],
+                }
+
+            pending = [invocation_id]
+            visited: set[str] = set()
+            while pending:
+                current_id = pending.pop()
+                if current_id in visited:
+                    continue
+                visited.add(current_id)
+                pending.extend(self._invocation_children.get(current_id, ()))
+                current = self._invocations.get(current_id)
+                if current is None or current.state == "completed":
+                    continue
+                current.state = "cancelled"
+
+            _impl.logger.info(
+                "[ExpertRegistry] cancelled invocation tree %s (%d records)",
+                invocation_id,
+                len(visited),
+            )
+            return {
+                "invocation_id": root.invocation_id,
+                "request_id": root.request_id,
+                "cancelled": True,
+                "committed": False,
+            }
 
     def _discard_invalid_success(
         self,
