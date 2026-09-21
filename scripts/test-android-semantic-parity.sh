@@ -73,8 +73,8 @@ parity_main :-
 % dialogue modules, Context0 is bridged from persisted string data to the atom
 % input required by pinned Trealla read_term_from_atom/3, the router/renderer
 % is committed once, and canonical Context1 plus the canonical dialogue-act
-% token are rendered through the same SWI/Trealla output-capture surface used
-% by Android before crossing JNI as inert strings.
+% token are rendered through the same portable writer/code-list/string path
+% used by Android before crossing JNI as inert strings.
 parity_dialogue_envelope :-
     string_codes("[]", Context0Codes),
     atom_codes(Context0Atom, Context0Codes),
@@ -89,7 +89,7 @@ parity_dialogue_envelope :-
               ),
               symbolic_dialogue_turn:valid_dialogue_context(Context1),
               symbolic_dialogue:render_response(Act, Response),
-              with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)])),
+              write_term_to_atom(ContextAtom, Context1, [quoted(true)]),
               atom_concat('__zara_context__:', ContextAtom, ContextTagged),
               atom_codes(ContextTagged, ContextWireCodes),
               string_codes(ContextWire, ContextWireCodes),
