@@ -1,12 +1,13 @@
 package ai.zara.app.prolog
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.history.HistoryMessageRole
+import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.SymbolicConversationProjection
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.history.saveSymbolicProjection
 import ai.zara.app.runtime.LocalQueryResult
-import java.util.UUID
 import java.util.concurrent.CompletableFuture
 
 /**
@@ -24,9 +25,10 @@ internal object AndroidPureSymbolicConversationFactory {
      *
      * The supplied [projectionStore] remains the sole persistence authority. This factory adds no
      * Android-local context cache: every natural turn loads Context0 from the existing
-     * SymbolicConversationProjection, installs a pending CAS fence, executes the canonical dialogue
-     * turn exactly once, receives both the rendered response and Context1 through the existing
-     * Trealla Result-binding ABI, and persists Context1 through the same pending generation.
+     * SymbolicConversationProjection, installs a pending CAS fence bound to the already-persisted
+     * canonical message turn id, executes the canonical dialogue turn exactly once, receives both
+     * the rendered response and Context1 through the existing Trealla Result-binding ABI, and
+     * persists Context1 through the same pending generation.
      *
      * Persisting the pending projection before local evaluation is what lets
      * PortableConversationStore.loadState() interrupt an in-flight turn during Activity/process
@@ -69,11 +71,13 @@ internal object AndroidPureSymbolicConversationFactory {
         current?.assertPureSymbolic()
         val expectedGeneration = current?.projectionGeneration ?: 0L
         val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
+        val turnId = requireRunningTurnId(projectionStore, conversationId)
         val pendingProjection = pendingProjection(
             current = current,
             conversationId = conversationId,
             expectedGeneration = expectedGeneration,
             context0 = context0,
+            turnId = turnId,
         )
         projectionStore.saveSymbolicProjection(
             projection = pendingProjection,
@@ -159,6 +163,20 @@ internal object AndroidPureSymbolicConversationFactory {
         return output
     }
 
+    private fun requireRunningTurnId(
+        projectionStore: PortableConversationStore,
+        conversationId: String,
+    ): String {
+        val assistant = projectionStore.loadMessages(conversationId).lastOrNull { message ->
+            message.role == HistoryMessageRole.Assistant &&
+                (message.status == HistoryMessageStatus.Pending ||
+                    message.status == HistoryMessageStatus.Streaming)
+        } ?: error("Pure-symbolic conversation has no running canonical turn")
+        return requireNotNull(assistant.turnId) {
+            "Pure-symbolic running turn is missing canonical turn identity"
+        }
+    }
+
     private fun failBeforeAsyncEvaluation(
         projectionStore: PortableConversationStore,
         pendingProjection: SymbolicConversationProjection,
@@ -237,6 +255,7 @@ internal object AndroidPureSymbolicConversationFactory {
         conversationId: String,
         expectedGeneration: Long,
         context0: String,
+        turnId: String,
     ): SymbolicConversationProjection {
         val runtimeGeneration = current?.runtimeGeneration?.let(Math::incrementExact) ?: 1L
         val base = current ?: SymbolicConversationProjection(
@@ -248,7 +267,7 @@ internal object AndroidPureSymbolicConversationFactory {
         return base.copy(
             projectionGeneration = expectedGeneration + 1L,
             runtimeGeneration = runtimeGeneration,
-            turnId = UUID.randomUUID().toString(),
+            turnId = turnId,
             outcome = "pending",
             dialogueAct = "conversation",
             dialogueStateJson = SymbolicDialogueContextCodec.encode(context0),
