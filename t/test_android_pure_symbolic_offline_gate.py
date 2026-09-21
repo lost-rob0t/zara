@@ -26,6 +26,41 @@ def test_installed_pure_symbolic_transcript_is_forced_offline_and_restored() -> 
     assert source.index("set_airplane_mode(device, True)") < source.index("device.start()")
 
 
+def test_installed_pure_symbolic_transcript_checks_hard_zero_after_each_turn() -> None:
+    source = INSTALLED_ACCEPTANCE.read_text(encoding="utf-8")
+
+    assert "def inspect_hard_zero_accounting(" in source
+    assert '"providers_enabled"' in source
+    assert '"max_model_calls"' in source
+    assert '"provider_calls"' in source
+    assert '"model_calls"' in source
+    assert '"accounting_checkpoints"' in source
+
+    required_stages = (
+        "clarification",
+        "follow-up-after-restart",
+        "social-follow-up",
+        "unsupported-no-fallback",
+    )
+    for stage in required_stages:
+        marker = f'inspect_hard_zero_accounting(device, stage="{stage}")'
+        assert marker in source, (
+            f"Installed pure-symbolic acceptance must snapshot hard-zero accounting at {stage}; "
+            "checking only the final projection can hide a transient provider/model call because "
+            "the next symbolic turn resets per-turn counters to zero"
+        )
+
+    # Every natural turn checkpoint must happen before the following recreation,
+    # while that turn's counters are still the current durable projection.
+    timer_send = source.index('send_chat(device, "timer"')
+    timer_checkpoint = source.index(
+        'inspect_hard_zero_accounting(device, stage="clarification")',
+        timer_send,
+    )
+    timer_recreate = source.index("device.recreate()", timer_checkpoint)
+    assert timer_send < timer_checkpoint < timer_recreate
+
+
 def test_emulator_gate_executes_zero_model_and_verified_receipt_fences() -> None:
     source = EMULATOR_GATE.read_text(encoding="utf-8")
 
