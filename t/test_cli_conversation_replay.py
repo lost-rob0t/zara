@@ -49,6 +49,10 @@ class _ReplayStore:
             ),
         ]
 
+    def load_symbolic_projection(self, conversation_id: str):
+        self.requested.append(("symbolic_projection", conversation_id))
+        return None
+
 
 def _install_config(monkeypatch) -> None:
     class _Config:
@@ -95,11 +99,13 @@ def test_replay_reads_only_the_canonical_conversation_store(monkeypatch, capsys)
                 "turn_id": "turn-1",
             },
         ],
+        "symbolic_projection": None,
         "version": "ZARA-CONVERSATION-REPLAY/1",
     }
     assert store.requested == [
         ("conversation", "emacs-main"),
         ("messages", "emacs-main"),
+        ("symbolic_projection", "emacs-main"),
     ]
 
 
