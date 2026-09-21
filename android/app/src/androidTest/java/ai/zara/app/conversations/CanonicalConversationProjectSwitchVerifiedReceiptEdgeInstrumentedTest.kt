@@ -93,6 +93,47 @@ class CanonicalConversationProjectSwitchVerifiedReceiptEdgeInstrumentedTest {
         }
     }
 
+    @Test
+    fun expertAnswerProjectionCarriesEvidenceToWearAcrossRecreation() {
+        val firstStore = PortableConversationStore(context)
+        val conversations = CanonicalConversationStore(
+            history = firstStore,
+            metadataFile = metadataFile,
+            legacyFile = null,
+            idFactory = { EXPERT_CONVERSATION_ID },
+        )
+        assertEquals(EXPERT_CONVERSATION_ID, conversations.create(PROJECT_A).id)
+
+        firstStore.saveSymbolicProjection(
+            projection = SymbolicConversationProjection(
+                conversationId = EXPERT_CONVERSATION_ID,
+                projectionGeneration = 1L,
+                runtimeGeneration = 1L,
+                outcome = "success",
+                projectId = PROJECT_A,
+                projectGeneration = 1L,
+                dialogueAct = "expert_answer",
+                expertEvidenceJson = "[{\"ref\":\"$EXPERT_EVIDENCE_REF\"}]",
+                rendererProvenance = "symbolic-dcg/v1",
+                providersEnabled = false,
+                maxModelCalls = 0L,
+                providerCalls = 0L,
+                modelCalls = 0L,
+            ),
+            expectedGeneration = 0L,
+        ).assertPureSymbolic()
+
+        assertExpertAnswerEdge(firstStore)
+        firstStore.close()
+
+        val reopenedStore = PortableConversationStore(context)
+        try {
+            assertExpertAnswerEdge(reopenedStore)
+        } finally {
+            reopenedStore.close()
+        }
+    }
+
     private fun assertCanonicalAndEdgeTruth(store: PortableConversationStore) {
         val projection = checkNotNull(store.loadSymbolicProjection(CONVERSATION_ID))
         projection.assertPureSymbolic()
@@ -126,8 +167,32 @@ class CanonicalConversationProjectSwitchVerifiedReceiptEdgeInstrumentedTest {
         assertEquals(0L, edge.modelCalls)
     }
 
+    private fun assertExpertAnswerEdge(store: PortableConversationStore) {
+        val projection = checkNotNull(store.loadSymbolicProjection(EXPERT_CONVERSATION_ID))
+        projection.assertPureSymbolic()
+        assertEquals("success", projection.outcome)
+        assertEquals("expert_answer", projection.dialogueAct)
+        assertEquals("symbolic-dcg/v1", projection.rendererProvenance)
+        assertFalse(projection.providersEnabled)
+        assertEquals(0L, projection.maxModelCalls)
+        assertEquals(0L, projection.providerCalls)
+        assertEquals(0L, projection.modelCalls)
+
+        val edge = checkNotNull(store.loadSymbolicEdgeSnapshot(EXPERT_CONVERSATION_ID))
+        edge.assertPureSymbolic()
+        assertEquals("expert_answer", edge.dialogueAct)
+        assertEquals(listOf(EXPERT_EVIDENCE_REF), edge.expertEvidenceRefs)
+        assertEquals("symbolic-dcg/v1", edge.rendererProvenance)
+        assertFalse(edge.providersEnabled)
+        assertEquals(0L, edge.maxModelCalls)
+        assertEquals(0L, edge.providerCalls)
+        assertEquals(0L, edge.modelCalls)
+    }
+
     private companion object {
         const val CONVERSATION_ID = "android-project-switch-verified-edge"
+        const val EXPERT_CONVERSATION_ID = "android-expert-answer-edge"
+        const val EXPERT_EVIDENCE_REF = "expert:dotfiles:1"
         const val PROJECT_A = "project-a"
         const val PROJECT_B = "project-b"
         const val RUNTIME_GENERATION = 7L
