@@ -48,6 +48,7 @@ def symbolic_wheel(tmp_path_factory: pytest.TempPathFactory) -> pathlib.Path:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        timeout=120,
     )
     assert result.returncode == 0, (
         "wheel build failed\nstdout:\n{}\nstderr:\n{}".format(
@@ -210,6 +211,7 @@ asyncio.run(main())
         env=env,
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert result.returncode == 0, (
         "candidate wheel pure-symbolic smoke failed\nstdout:\n{}\nstderr:\n{}".format(
