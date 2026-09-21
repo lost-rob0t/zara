@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <project
+      name="lost-rob0t/zara"
+      path="vendor/zara-fork"
+      remote="github"
+      revision="refs/heads/fork/android-rom">
+    <linkfile
+        src="rom/aosp/vendor/extra/product.mk"
+        dest="vendor/extra/product.mk" />
+  </project>
+</manifest>
