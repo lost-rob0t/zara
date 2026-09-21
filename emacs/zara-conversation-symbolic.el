@@ -145,6 +145,30 @@
     (setq-local zara-conversation-symbolic-projection projection)
     projection))
 
+(defun zara-conversation-symbolic--adopt-replay-payload (payload expected-conversation-id)
+  "Adopt symbolic state from canonical conversation replay PAYLOAD.
+
+EXPECTED-CONVERSATION-ID is revalidated so this helper remains fail-closed
+when called independently of the transcript parser.  Replay version 1 predates
+the optional symbolic projection member, so an absent member is treated as no
+persisted projection while any present non-null value is validated strictly."
+  (unless (hash-table-p payload)
+    (error "conversation replay payload must be a JSON object"))
+  (let* ((expected
+          (zara-conversation--validate-id
+           expected-conversation-id "conversation id"))
+         (conversation (gethash "conversation" payload :missing))
+         (projection (gethash "symbolic_projection" payload :missing)))
+    (unless (hash-table-p conversation)
+      (error "conversation replay conversation must be a JSON object"))
+    (unless (equal (gethash "id" conversation :missing) expected)
+      (error "conversation replay conversation id mismatch"))
+    (setq-local
+     zara-conversation-symbolic-projection
+     (if (eq projection :missing)
+         nil
+       (zara-conversation-symbolic--validate-projection projection)))))
+
 (defun zara-conversation-symbolic--projection-value (key)
   "Return KEY from the cached projection, normalizing JSON null to nil."
   (when zara-conversation-symbolic-projection
