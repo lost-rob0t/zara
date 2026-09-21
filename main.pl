@@ -6,6 +6,7 @@
 :- use_module('modules/todo_schedule').
 :- use_module('modules/todo_expert').
 :- use_module('kb/config').          % shared semantic configuration
+:- use_module('kb/voice_expert').    % Prolog-authoritative TTS voice policy
 :- use_module('kb/device_providers'). % Linux device provider configuration (desktop only)
 :- use_module('kb/intents').
 :- use_module('modules/config_loader').
