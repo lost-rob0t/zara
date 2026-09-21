@@ -45,6 +45,9 @@ object AppNavigationWiringContract {
         val updates = settings.substringAfter("AppRoute.Updates -> {").substringBefore("else ->")
         check(runtime.contains("LOCAL ZARA SERVER"))
         check(runtime.contains("onSetLocalEmbeddingEnabled"))
+        check(runtime.contains("DONATION CAMPAIGNS"))
+        check(runtime.contains("donationState"))
+        check(runtime.contains("onImportDonations"))
         check(!runtime.contains("IDENTITY"))
         check(permissions.contains("ASSISTANT"))
         check(permissions.contains("onRequestMicrophonePermission"))
@@ -53,6 +56,18 @@ object AppNavigationWiringContract {
         check(connection.contains("onReplaceServerPin"))
         check(updates.contains("SELF UPDATE"))
         check(!updates.contains("IDENTITY"))
+    }
+
+    fun donationImportUsesExistingSettingsRouteAndAppPrivateStore() {
+        val source = app()
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        check(source.contains("SectionCard(\"DONATION CAMPAIGNS\")"))
+        check(source.contains("PrimaryAction(\n                        \"Import donation campaigns\""))
+        check(activity.contains("DonationStore(File(filesDir, \"donations.json\"))"))
+        check(activity.contains("ActivityResultContracts.OpenDocument()"))
+        check(activity.contains("donationStore.importDocument(payload)"))
+        check(!File("src/main/java/ai/zara/app/ui/AppNavigation.kt").readText()
+            .contains("Donations(AppMenu"))
     }
 
     fun adaptiveLayoutAndImeInsetsAreWired() {
@@ -73,7 +88,8 @@ object AppNavigationWiringContract {
         drawerAndRailShareExactlyThreeMenus()
         tabsAreScrollableAndLabeled()
         settingsSectionsDoNotRemainOneLongForm()
+        donationImportUsesExistingSettingsRouteAndAppPrivateStore()
         adaptiveLayoutAndImeInsetsAreWired()
-        println("PASS: 5 source-wiring contracts (not Android rendering tests)")
+        println("PASS: 6 source-wiring contracts (not Android rendering tests)")
     }
 }

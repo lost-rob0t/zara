@@ -4,6 +4,7 @@ import ai.zara.app.BuildConfig
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
+import ai.zara.app.donations.DonationState
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -152,9 +153,11 @@ fun ZaraApp(
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
+    donationState: DonationState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onImportDonations: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -364,6 +367,7 @@ fun ZaraApp(
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
+                                                donationState = donationState,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
                                                 operationError = operationError,
@@ -378,6 +382,7 @@ fun ZaraApp(
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                                                onImportDonations = onImportDonations,
                                                 padding = padding,
                                             )
                                             AppSurface.About -> AboutSurface(sourceSha, padding)
@@ -1144,6 +1149,7 @@ private fun SettingsSurface(
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    donationState: DonationState,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     operationError: String?,
@@ -1158,6 +1164,7 @@ private fun SettingsSurface(
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onImportDonations: () -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
@@ -1218,6 +1225,69 @@ private fun SettingsSurface(
                     KeyValueRow("model", localEmbedding.modelVersion)
                     KeyValueRow("dimensions", localEmbedding.dimensions.toString())
                     MutedNotice("Runs fully on-device. Disabling it returns no vectors and prevents local semantic indexing.")
+                }
+                SectionCard("DONATION CAMPAIGNS") {
+                    val ledger = donationState.ledger
+                    KeyValueRow("raised", "$" + ledger.totalRaisedUsd.toPlainString())
+                    KeyValueRow("goal", "$" + ledger.totalGoalUsd.toPlainString())
+                    KeyValueRow("remaining", "$" + ledger.totalRemainingUsd.toPlainString())
+                    KeyValueRow(
+                        "campaigns",
+                        "${ledger.activeCampaignCount}/${ledger.campaigns.size} active",
+                    )
+                    donationState.failure?.let { ErrorBanner(it) }
+                    if (ledger.campaigns.isEmpty()) {
+                        MutedNotice("No campaigns imported. Import a ZARA-DONATIONS/1 document to show receive wallets and declared USD totals.")
+                    } else {
+                        ledger.campaigns.forEach { campaign ->
+                            Text(
+                                campaign.title,
+                                color = tokens.text,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            KeyValueRow("status", if (campaign.active) "active" else "archived")
+                            KeyValueRow(
+                                "raised / goal",
+                                "$" + campaign.raisedUsd.toPlainString() +
+                                    " / $" + campaign.goalUsd.toPlainString(),
+                            )
+                            KeyValueRow(
+                                "remaining",
+                                "$" + campaign.remainingUsd.toPlainString(),
+                            )
+                            if (campaign.wallets.isEmpty()) {
+                                MutedNotice("No receive wallets configured for this campaign.")
+                            } else {
+                                campaign.wallets.forEach { wallet ->
+                                    Text(
+                                        buildString {
+                                            append(wallet.asset)
+                                            wallet.label?.let { append(" · ").append(it) }
+                                            append(" · ").append(wallet.chain).append("/").append(wallet.network)
+                                        },
+                                        color = tokens.accentCyan,
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                    SelectionContainer {
+                                        Text(
+                                            wallet.address,
+                                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                            color = tokens.text,
+                                            fontFamily = FontFamily.Monospace,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.size(6.dp))
+                        }
+                    }
+                    PrimaryAction(
+                        "Import donation campaigns",
+                        !operationBusy,
+                        onImportDonations,
+                    )
+                    MutedNotice("Receive-only display data is stored in app-private storage. Do not put seed phrases, private keys, signing material, or exchange credentials in this document.")
                 }
             }
             AppRoute.Permissions -> {

@@ -333,7 +333,49 @@ def _run_desktop_control(command: str) -> int:
         return 2
 
 
+def _run_donations(*, json_output: bool) -> int:
+    from .donations import DonationConfigError, DonationLedger
+
+    try:
+        ledger = DonationLedger.load()
+    except DonationConfigError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
+
+    if json_output:
+        print(ledger.to_json())
+        return 0
+
+    print(
+        f"Donations ${ledger.total_raised_usd:.2f} / "
+        f"${ledger.total_goal_usd:.2f} USD"
+    )
+    if not ledger.campaigns:
+        print("No donation campaigns configured.")
+        return 0
+
+    for campaign in ledger.campaigns:
+        status = "active" if campaign.active else "archived"
+        print(
+            f"- {campaign.title} [{status}] "
+            f"${campaign.raised_usd:.2f} / ${campaign.goal_usd:.2f} "
+            f"(${campaign.remaining_usd:.2f} remaining)"
+        )
+        for wallet in campaign.wallets:
+            label = f" {wallet.label}" if wallet.label else ""
+            print(
+                f"    {wallet.asset}{label} "
+                f"{wallet.chain}/{wallet.network}: {wallet.address}"
+            )
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--donations"]:
+        sys.exit(_run_donations(json_output=False))
+    if sys.argv[1:] == ["--donations-json"]:
+        sys.exit(_run_donations(json_output=True))
+
     config = init_config()
     stt_config = config.get_section("stt") if config is not None else {}
     default_stt_provider = normalize_provider(stt_config.get("provider", "faster-whisper"))
@@ -353,6 +395,7 @@ def main():
                "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
                "  zara --conversation-id emacs-main --context-id doc:alpha --json-events 'continue'\n"
                "  zara --replay-conversation emacs-main  # Replay durable history\n"
+               "  zara --donations-json         # Donation totals for UI clients\n"
                "  zara --cancel-turn TURN_ID    # Cancel through ZARA/1\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
@@ -414,6 +457,16 @@ def main():
         "--replay-conversation",
         metavar="CONVERSATION_ID",
         help="Render one canonical durable conversation as strict JSON"
+    )
+    mode_group.add_argument(
+        "--donations",
+        action="store_true",
+        help="Show configured donation campaigns, wallets, and USD totals"
+    )
+    mode_group.add_argument(
+        "--donations-json",
+        action="store_true",
+        help="Emit the validated ZARA-DONATIONS/1 document with aggregate totals"
     )
 
     client_group = parser.add_mutually_exclusive_group()
@@ -513,7 +566,16 @@ def main():
 
     args = parser.parse_args()
 
-    if args.replay_conversation:
+    if args.donations or args.donations_json:
+        if args.command:
+            parser.error("donation display modes cannot be combined with a text command")
+        if args.connect or args.standalone or args.cancel_turn:
+            parser.error("donation display modes read the local donation document directly")
+        if args.conversation_id or args.context_id or args.json_events:
+            parser.error("conversation options are not used with donation display modes")
+        if args.pets or args.pets_settings:
+            parser.error("pet modes are not used with donation display modes")
+    elif args.replay_conversation:
         if args.command:
             parser.error("--replay-conversation cannot be combined with a text command")
         if args.connect or args.standalone:
@@ -549,7 +611,13 @@ def main():
                 "--conversation-id/--context-id/--json-events require the daemon/ZARA/1 path"
             )
 
-    if args.desktop:
+    if args.donations:
+        sys.exit(_run_donations(json_output=False))
+
+    elif args.donations_json:
+        sys.exit(_run_donations(json_output=True))
+
+    elif args.desktop:
         from .desktop.app import main as desktop_main
         sys.exit(desktop_main([sys.argv[0]]))
 
