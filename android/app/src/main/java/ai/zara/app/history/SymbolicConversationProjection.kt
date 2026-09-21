@@ -55,6 +55,12 @@ data class SymbolicConversationProjection(
         check(dialogueAct != "verified" || verifiedOutcomeRefs.isNotEmpty()) {
             "verified projection requires verified outcome evidence"
         }
+        check(
+            dialogueAct != "expert_answer" ||
+                PortableJsonValidator.objectArrayHasEntries(expertEvidenceJson, "expertEvidenceJson")
+        ) {
+            "expert_answer projection requires expert evidence"
+        }
     }
 }
 
@@ -80,6 +86,12 @@ private object PortableJsonValidator {
         }
     }
 
+    fun objectArrayHasEntries(value: String, name: String): Boolean = try {
+        Parser(value).parseObjectArrayDocument()
+    } catch (error: IllegalArgumentException) {
+        throw IllegalArgumentException("$name must be a JSON array of objects: ${error.message}", error)
+    }
+
     private class Parser(private val text: String) {
         private var index = 0
 
@@ -91,14 +103,14 @@ private object PortableJsonValidator {
             return kind
         }
 
-        fun parseObjectArrayDocument() {
+        fun parseObjectArrayDocument(): Boolean {
             skipWhitespace()
             expect('[')
             skipWhitespace()
             if (consume(']')) {
                 skipWhitespace()
                 require(index == text.length) { "trailing JSON content" }
-                return
+                return false
             }
             while (true) {
                 require(parseValue() == JsonContainerKind.OBJECT) {
@@ -111,6 +123,7 @@ private object PortableJsonValidator {
             }
             skipWhitespace()
             require(index == text.length) { "trailing JSON content" }
+            return true
         }
 
         private fun parseValue(): JsonContainerKind {
