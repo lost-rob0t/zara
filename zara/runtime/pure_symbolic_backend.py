@@ -24,6 +24,8 @@ PURE_SYMBOLIC_RENDERER = "symbolic-dcg/v1"
 PURE_SYMBOLIC_RENDER_ERROR = (
     "I couldn't render that symbolic response. No model or provider was used."
 )
+_MAX_CONTEXT_TERM_CHARS = 8192
+_DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\\(|$)")
 
 
 @dataclass(frozen=True)
