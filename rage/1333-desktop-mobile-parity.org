@@ -1,0 +1,56 @@
+#+title: RAGE 1333 — Desktop mobile parity
+#+startup: overview
+
+* Iteration 1
+** Start
+- Issue: lost-rob0t/zara#1333
+- Integrated tool-UX issue: lost-rob0t/zara#89
+- Immutable start commit: =1095bc5537c98c555c29ac29ed335843191c558d=
+- Branch: =rage/1333-desktop-mobile-parity-20260920=
+
+** Research
+- Android design authority is =android/DESIGN.md= plus
+  =android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt=.
+- Android exposes the semantic token vocabulary
+  =background/surface/surfaceElevated/surfaceInput/border/borderActive/primary/secondary/accentMagenta/accentCyan/text/textMuted/success/warning/error/focus/ambientGlow=.
+- Desktop currently owns a second palette vocabulary and defaults to
+  =signal-cabin=, so visual identity can drift even though the chat runtime is
+  shared.
+- Desktop already has one adaptive =CopilotWindow= renderer and projects the
+  canonical runtime's tool lifecycle into durable conversation messages.
+- Authenticated =ZARA/1= tool approval transport is already implemented by
+  completed issue #191.  The remaining desktop gap is presentation/action
+  wiring: =ToolWaitingForUser= renders passive text and #89 remains open.
+
+** Design
+- Keep Qt as presentation only.  No Qt widget may invoke a tool directly.
+- Keep Android token values canonical and make desktop theme definitions a
+  deterministic projection of those semantic values.
+- Make =outrun= the new desktop default while retaining legacy themes for
+  existing configured users.
+- Add a small Prolog design expert that explains the token-to-role mapping and
+  provenance; it owns derivation facts, not Qt lifecycle or theme application.
+- Make tool approval a first-class activity-card action.  The card emits a
+  typed UI intent; =CopilotWindow=/=QuickCopilotWindow= submits only the
+  existing =ApproveTool=/=RejectTool= runtime command.
+- Stale/unknown/replayed approval remains runtime-owned and fail-closed.
+- Prefer mobile hierarchy: conversation title, compact status pill, chat,
+  bottom composer; no redundant permanent product wordmark.
+
+** Acceptance mapped to tests
+- Desktop registry contains Android-parity Outrun/StarIntel/Midnight/Terminal/Light.
+- Android token values and desktop source tokens remain byte-for-byte equal by
+  deterministic parity test.
+- Default desktop theme resolves to Outrun.
+- Every parity theme passes existing WCAG palette checks.
+- Design expert returns deterministic mappings and source provenance.
+- Waiting tool activity renders Approve/Reject and emits only its stable
+  =tool_run_id=.
+- Copilot turns approval UI intents into =ApproveTool=/=RejectTool= commands
+  through =QtRuntimeBridge=; no direct tool callable is reachable from widgets.
+- Existing compact/expanded conversation identity and screenshot fixtures stay
+  intact.
+
+** RED/GREEN evidence
+Pending.  Exact-head CI evidence must be recorded here after the implementation
+head exists; no prior or child-head green state is accepted.
