@@ -98,12 +98,14 @@ def _wait_until(app: QApplication, predicate, timeout: float = 8.0) -> None:
 def test_real_desktop_surface_runs_symbolic_greeting_without_runtime_errors(tmp_path):
     qt_app = _app()
     config = PureSymbolicConfig()
-    client = desktop_app._default_desktop_client(config)  # type: ignore[arg-type]
+    store = ConversationStore(DatabaseManager(tmp_path / "desktop-symbolic.db"))
+    service = ConversationService(store)
+    client = desktop_app._default_desktop_client(  # type: ignore[arg-type]
+        config,
+        conversation_store=store,
+    )
     diagnostics = client.subscribe(maxsize=256)
     bridge = QtRuntimeBridge(client, parent=qt_app, auto_start_timer=True)
-    service = ConversationService(
-        ConversationStore(DatabaseManager(tmp_path / "desktop-symbolic.db"))
-    )
     controller = DesktopController(
         qt_app,
         client,
