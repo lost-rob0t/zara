@@ -50,6 +50,8 @@ data class DonationLedger(
     companion object {
         const val DOCUMENT_VERSION = "ZARA-DONATIONS/1"
         private val maxUsd = BigDecimal("1000000000000.00")
+        private const val maxCampaigns = 256
+        private const val maxWalletsPerCampaign = 64
         private val campaignId = Regex("^[a-z0-9][a-z0-9_-]{0,63}$")
 
         fun parse(payload: String): DonationLedger {
@@ -70,7 +72,27 @@ data class DonationLedger(
             if (requiredString(document, "version", "version", 64) != DOCUMENT_VERSION) {
                 throw DonationDocumentException("version must be $DOCUMENT_VERSION")
             }
-            val campaigns = array(document, "campaigns").mapIndexed { index, element ->
+            document.get("summary")?.let { summary ->
+                if (!summary.isJsonObject) {
+                    throw DonationDocumentException("summary must be an object")
+                }
+                rejectUnknown(
+                    summary.asJsonObject,
+                    setOf(
+                        "campaign_count",
+                        "active_campaign_count",
+                        "goal_usd",
+                        "raised_usd",
+                        "remaining_usd",
+                    ),
+                    "summary",
+                )
+            }
+            val campaignElements = array(document, "campaigns")
+            if (campaignElements.size > maxCampaigns) {
+                throw DonationDocumentException("campaigns exceed $maxCampaigns")
+            }
+            val campaigns = campaignElements.mapIndexed { index, element ->
                 campaign(element, index)
             }
             val ids = campaigns.map { it.id }
@@ -105,7 +127,13 @@ data class DonationLedger(
                 )
             }
             val active = optionalBoolean(value, "active", true)
-            val wallets = array(value, "wallets").mapIndexed { walletIndex, wallet ->
+            val walletElements = array(value, "wallets")
+            if (walletElements.size > maxWalletsPerCampaign) {
+                throw DonationDocumentException(
+                    "campaign wallets exceed $maxWalletsPerCampaign",
+                )
+            }
+            val wallets = walletElements.mapIndexed { walletIndex, wallet ->
                 wallet(wallet, index, walletIndex)
             }
             return DonationCampaign(
