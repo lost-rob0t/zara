@@ -14,19 +14,18 @@ import ai.zara.app.device.DeviceCapabilityRegistry
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
-import ai.zara.app.diagnostics.DiagnosticsSnapshot
-import ai.zara.app.diagnostics.DiagnosticsV2
 import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
+import ai.zara.app.localai.LocalModelMetadata
+import ai.zara.app.localai.LocalModelSpec
 import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
 import ai.zara.app.runtime.ClientStateStore
 import ai.zara.app.runtime.ConnectedTextSession
-import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.JeroMqTextDealerFactory
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
@@ -40,21 +39,8 @@ import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.runtime.ServerProfile
 import ai.zara.app.runtime.TextTurnResult
 import ai.zara.app.runtime.ZaraTextClientActor
-import ai.zara.app.runtime.ZaraWireException
 import ai.zara.app.runtime.reduce
 import ai.zara.app.runtime.toRuntimeReadiness
-import ai.zara.app.telemetry.ClientEventJournal
-import ai.zara.app.telemetry.ClientEventNames
-import ai.zara.app.telemetry.ClientEventOutcome
-import ai.zara.app.telemetry.RemoteUnavailableException
-import ai.zara.app.telemetry.SessionTelemetry
-import ai.zara.app.telemetry.VoiceStage
-import ai.zara.app.telemetry.VoiceStageProgress
-import ai.zara.app.telemetry.ZaraFailure
-import ai.zara.app.telemetry.ZaraFailureCodes
-import ai.zara.app.telemetry.ZaraFailures
-import ai.zara.app.telemetry.ZaraOperation
-import ai.zara.app.telemetry.ZaraSubsystem
 import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
 import ai.zara.app.prolog.NativeTreallaBridge
 import ai.zara.app.prolog.PortableSemanticAssetStager
@@ -80,12 +66,12 @@ import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.PushToTalkController
 import ai.zara.app.voice.VoiceDiagnosticFailure
 import ai.zara.app.voice.VoicePlaybackController
-import ai.zara.app.voice.VoiceStreamEvent
 import ai.zara.app.voice.VoiceStreamSinkActor
 import ai.zara.app.voice.VoiceStreamState
 import android.content.Context
 import android.content.Intent
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
@@ -115,8 +101,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     @Volatile private var runtimeStateObserver: ((RuntimeState) -> Unit)? = null
     @Volatile private var playbackRuntimeSessionId: String? = null
     @Volatile private var runtimeMode: RuntimeMode = RuntimeMode.Auto
-    private val telemetry = SessionTelemetry()
-    @Volatile private var lastObservedRuntimeState: RuntimeState? = null
     private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-voice-control").apply { isDaemon = true }
     }
@@ -183,27 +167,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             deviceActionHandler = deviceActionHandler,
         )
         controller = AndroidTextSessionController(initial, actor)
-        controller.setConnectionLossListener { code, reason ->
-            telemetry.onConnectionLost(code, reason)
-        }
-        actor.setConnectionFailureObserver(::onClientConnectionFailure)
-        actor.setStaleFrameObserver { messageType, generation ->
-            telemetry.journal().recordProtocolMessage(
-                direction = ClientEventJournal.Direction.RX,
-                messageType = messageType,
-                messageSequence = null,
-                messageBytes = 0,
-                connectionGeneration = generation,
-            )
-            telemetry.journal().record(
-                ClientEventNames.PROTOCOL_MESSAGE_REJECTED,
-                subsystem = ZaraSubsystem.PROTOCOL,
-                operation = ZaraOperation.STREAM,
-                connectionGeneration = generation,
-                outcome = ClientEventOutcome.FAILURE,
-                code = ZaraFailureCodes.PROTOCOL_STALE_GENERATION,
-            )
-        }
         voice = ManualVoiceSessionCoordinator(
             PushToTalkController(
                 capture = ManualVoiceCapture(AuthenticatedVoiceIngress(actor)),
@@ -251,82 +214,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             reportVoiceStreamFailure(error)
         }
         actor.setVoiceStreamObserver { event ->
-            onVoiceStreamEvent(event)
             voiceStreamSink.accept(event)
         }
         actor.setVoiceStreamFailureObserver(::reportVoiceStreamFailure)
         controller.setStateObserver(::observeRuntimeState)
-        restoreRemoteSession(restored?.profile)
-    }
-
-    private fun restoreRemoteSession(profile: ServerProfile?) {
-        if (profile == null) return
-        if (state().enrollment != EnrollmentReadiness.Ready) return
-        telemetry.journal().record(
-            ClientEventNames.SESSION_RESTORE_BEGIN,
-            subsystem = ZaraSubsystem.TRANSPORT,
-            operation = ZaraOperation.RESTORE,
-        )
-        try {
-            controller.connect(profile).whenComplete { _, error ->
-                if (error != null) {
-                    telemetry.journal().record(
-                        ClientEventNames.SESSION_RESTORE_FAILED,
-                        subsystem = ZaraSubsystem.TRANSPORT,
-                        operation = ZaraOperation.RESTORE,
-                        outcome = ClientEventOutcome.FAILURE,
-                        code = ZaraFailures.classify(error, ZaraOperation.RESTORE).code,
-                        message = ZaraFailures.classify(error, ZaraOperation.RESTORE).message,
-                    )
-                } else {
-                    telemetry.journal().record(
-                        ClientEventNames.SESSION_RESTORE_COMPLETE,
-                        subsystem = ZaraSubsystem.TRANSPORT,
-                        operation = ZaraOperation.RESTORE,
-                        outcome = ClientEventOutcome.SUCCESS,
-                    )
-                }
-            }
-        } catch (error: Throwable) {
-            telemetry.journal().record(
-                ClientEventNames.SESSION_RESTORE_FAILED,
-                subsystem = ZaraSubsystem.TRANSPORT,
-                operation = ZaraOperation.RESTORE,
-                outcome = ClientEventOutcome.FAILURE,
-                code = ZaraFailures.classify(error, ZaraOperation.RESTORE).code,
-            )
-        }
-    }
-
-    private fun onClientConnectionFailure(failure: ZaraFailure) {
-        controller.clientReportedFailure(failure)
-        val eventName = if (failure.operation == ZaraOperation.VOICE_TURN || failure.subsystem == ZaraSubsystem.VOICE) {
-            ClientEventNames.VOICE_TURN_FAILED
-        } else {
-            ClientEventNames.PROTOCOL_FAILED
-        }
-        telemetry.onClientFailure(failure, eventName)
-        if (failure.subsystem == ZaraSubsystem.VOICE) {
-            latestVoiceStreamFailure = VoiceDiagnosticFailure.summarize(
-                ZaraWireException(failure.message, null, failure.code, failure.serverCode, failure.retryable),
-            )
-            voiceStreamObserver?.invoke(latestVoiceStreamState, latestVoiceStreamFailure)
-        }
-    }
-
-    private fun onVoiceStreamEvent(event: VoiceStreamEvent) {
-        when (event) {
-            is VoiceStreamEvent.Transcript -> if (event.final) {
-                telemetry.voiceStage(VoiceStage.STT, VoiceStageProgress.COMPLETE)
-            }
-            is VoiceStreamEvent.AudioStarted -> telemetry.voiceStage(VoiceStage.TTS, VoiceStageProgress.RUNNING)
-            is VoiceStreamEvent.AudioDone -> {
-                telemetry.voiceStage(VoiceStage.TTS, VoiceStageProgress.COMPLETE)
-                telemetry.voiceStage(VoiceStage.PLAYBACK, VoiceStageProgress.COMPLETE)
-                telemetry.noteSuccess("voice.playback.complete")
-            }
-            is VoiceStreamEvent.AudioChunk, is VoiceStreamEvent.SpeechStarted, is VoiceStreamEvent.SpeechEnded -> Unit
-        }
     }
 
     fun state(): RuntimeState = controller.state()
@@ -353,6 +244,20 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
 
+    fun localAiModels(): CompletableFuture<List<LocalModelSpec>> = localAi.models()
+
+    fun installLocalModel(
+        source: InputStream,
+        metadata: LocalModelMetadata,
+    ): CompletableFuture<LocalModelSpec> = localAi.installModel(source, metadata)
+
+    fun selectLocalModel(
+        id: String,
+        version: String,
+    ): CompletableFuture<LocalAiState> = localAi.selectModel(id, version)
+
+    fun unloadLocalModel(): CompletableFuture<LocalAiState> = localAi.unloadModel()
+
     fun exportDiagnostics(): String {
         val server = localServer.state()
         val aiFuture = localAi.state()
@@ -372,73 +277,24 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 "local_ai_phase" to (aiState?.phase?.name?.lowercase() ?: "unknown"),
             ),
         )
-        val runtimeState = state()
-        val localAiPhase = when {
-            runtimeMode == RuntimeMode.Remote -> "not_applicable"
-            aiState != null -> aiState.phase.name.lowercase()
-            else -> "unknown"
-        }
-        val localAiNote = if (runtimeMode == RuntimeMode.Remote) {
-            "remote-only mode never starts the local model"
-        } else {
-            null
-        }
-        val snapshot = DiagnosticsSnapshot(
-            version = BuildConfig.VERSION_NAME,
-            versionCode = BuildConfig.VERSION_CODE,
-            sourceSha = BuildConfig.SOURCE_SHA,
-            runtimeMode = runtimeMode.name.lowercase(),
-            sessionId = runtimeState.sessionId,
-            sessionGeneration = runtimeState.generation,
-            connectionPhase = connectionPhase(runtimeState),
-            enrollmentPhase = runtimeState.enrollment.name.lowercase(),
-            incident = telemetry.primaryIncident(),
-            remoteContext = telemetry.remoteContext(),
-            voiceStages = telemetry.voiceStages().values.toList(),
-            localAiPhase = localAiPhase,
-            localAiNote = localAiNote,
-            localAiGeneration = if (runtimeMode == RuntimeMode.Remote) null else (aiState?.generation ?: -1),
-            localAiModel = aiState?.model?.let { "${it.id}@${it.version}" },
-            localServerPhase = server.phase.name.lowercase(),
-            localServerGeneration = server.generation,
-            localServerFailure = server.failure,
-            events = telemetry.journal().snapshot(),
-            diagnosticId = diagnosticId(),
-            capturedAtMillis = System.currentTimeMillis(),
+        return diagnostics.export(
+            mapOf(
+                "version" to BuildConfig.VERSION_NAME,
+                "version_code" to BuildConfig.VERSION_CODE,
+                "source_sha" to BuildConfig.SOURCE_SHA,
+                "runtime_mode" to runtimeMode.name.lowercase(),
+                "local_server_phase" to server.phase.name.lowercase(),
+                "local_server_generation" to server.generation,
+                "local_server_sources" to server.loadedSources.joinToString(","),
+                "local_server_failure" to (server.failure ?: "none"),
+                "local_ai_phase" to (aiState?.phase?.name?.lowercase() ?: "unknown"),
+                "local_ai_generation" to (aiState?.generation ?: -1),
+                "local_ai_model" to (aiState?.model?.let { "${it.id}@${it.version}" } ?: "none"),
+                "local_ai_quantization" to (aiState?.model?.quantization?.wireName ?: "none"),
+                "enrollment" to state().enrollment.toString(),
+                "connection" to state().server::class.java.simpleName,
+            )
         )
-        val bundle = DiagnosticsV2.render(snapshot)
-        diagnostics.record("diagnostics.export.v2", mapOf("diagnostic_id" to snapshot.diagnosticId))
-        return bundle.text + "\n--- json ---\n" + bundle.json + "\n"
-    }
-
-    fun diagnosticsIncidentId(): String? = telemetry.primaryIncident()?.let { diagnosticId() }
-
-    fun recordChatBreadcrumb(event: String, conversationId: String) {
-        diagnostics.record(
-            "chat.breadcrumb",
-            mapOf("event" to event, "conversation" to conversationId.take(24)),
-        )
-    }
-
-    private fun diagnosticId(): String {
-        val incident = telemetry.primaryIncident()
-        val basis = buildString {
-            append(BuildConfig.SOURCE_SHA)
-            append('|')
-            append(incident?.failure?.code ?: "none")
-            append('|')
-            append(incident?.firstSeenMillis?.toString() ?: "0")
-        }
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(basis.encodeToByteArray())
-        return digest.take(8).joinToString("") { byte -> "%02x".format(byte) }.let { "diag-$it" }
-    }
-
-    private fun connectionPhase(state: RuntimeState): String = when (state.server) {
-        is ServerConnection.Connected -> "connected"
-        is ServerConnection.Connecting -> "connecting"
-        is ServerConnection.Reconnecting -> "reconnecting"
-        is ServerConnection.OfflineDegraded -> "offline_degraded"
-        is ServerConnection.Disconnected -> "disconnected"
     }
 
     fun clearDiagnostics() {
@@ -623,9 +479,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             RuntimeMode.Local -> return submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> {
                 if (!remoteConnected) {
-                    val failure = RemoteUnavailableException()
-                    recordRemotePreconditionFailure(failure)
-                    return CompletableFuture.failedFuture(failure)
+                    return CompletableFuture.failedFuture(
+                        IllegalStateException("Remote mode requires an authenticated Zara server"),
+                    )
                 }
                 return submitRemoteText(text, remoteConversationId)
             }
@@ -670,32 +526,17 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return submitLocalText(text, localConversationId)
     }
 
-    private fun recordRemotePreconditionFailure(error: Throwable) {
-        val failure = ZaraFailures.classify(error, ZaraOperation.SUBMIT, connectionGeneration = null)
-        telemetry.onClientFailure(failure, ClientEventNames.PROTOCOL_FAILED)
-        diagnostics.record(
-            "remote.submit.rejected",
-            mapOf("code" to failure.code, "recovery" to failure.recovery.name.lowercase()),
-        )
-    }
-
     private fun submitRemoteText(
         text: String,
         conversationId: String? = null,
     ): CompletableFuture<TextTurnResult> {
         val future = controller.submitText(text, conversationId)
-        future.whenComplete { result, error ->
-            if (error != null) {
-                val failure = ZaraFailures.classify(error, ZaraOperation.SUBMIT)
-                telemetry.onClientFailure(failure, ClientEventNames.PROTOCOL_FAILED)
-            } else if (result != null) {
-                telemetry.onTurnCompleted(result.turnId)
-            }
-            val profile = state().configuredProfile ?: return@whenComplete
+        future.thenAccept { result ->
+            val profile = state().configuredProfile ?: return@thenAccept
             stateStore.save(
                 RestorableClientState(
                     profile = profile,
-                    selectedConversationId = result?.conversationId ?: state().selectedConversationId,
+                    selectedConversationId = result.conversationId ?: state().selectedConversationId,
                 )
             )
         }
@@ -717,9 +558,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             RuntimeMode.Local -> submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> {
                 if (!remoteConnected) {
-                    val failure = RemoteUnavailableException()
-                    recordRemotePreconditionFailure(failure)
-                    CompletableFuture.failedFuture(failure)
+                    CompletableFuture.failedFuture(
+                        IllegalStateException("Remote mode requires an authenticated Zara server"),
+                    )
                 } else {
                     submitRemoteText(text, conversationId)
                 }
@@ -907,7 +748,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     fun releasePushToTalk(): CompletableFuture<Unit> =
         submitVoiceControl {
             try {
-                telemetry.voiceStage(VoiceStage.SUBMIT, VoiceStageProgress.RUNNING)
                 voice.release()
             } finally {
                 assistantVoiceGuard.onCaptureStopped()
@@ -942,7 +782,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         submitVoiceControl {
             localAi.stopSpeech()
             voiceStreamSink.interrupt().get()
-            telemetry.voiceStage(VoiceStage.CAPTURE, VoiceStageProgress.RUNNING)
             voice.press(state(), permissionGranted)
             assistantVoiceGuard.onCaptureStarted(ownership)
             if (ownership == AssistantVoiceOwnership.Assistant) {
@@ -959,11 +798,6 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     private fun observeRuntimeState(state: RuntimeState) {
-        val previous = lastObservedRuntimeState
-        lastObservedRuntimeState = state
-        if (previous != null && previous != state) {
-            telemetry.onRuntimeStateChanged(previous, state)
-        }
         val authenticatedSessionId = state.sessionId.takeIf { state.server is ServerConnection.Connected }
         val staleSessionId = playbackRuntimeSessionId
         if (authenticatedSessionId != staleSessionId) {

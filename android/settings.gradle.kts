@@ -29,3 +29,5 @@ include(":code-editor")
 include(":termux-bridge")
 include(":wear-app")
 include(":wear-voice")
+
+include(":llm-serve")

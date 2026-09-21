@@ -1,9 +1,11 @@
 package ai.zara.app
 
-import ai.zara.app.auth.PairingProgress
-import ai.zara.app.conversations.ConversationRecord
-import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStore
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelBackend
+import ai.zara.app.localai.LocalModelMetadata
+import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalModelSpec
 import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.ConversationExecutionPolicy
@@ -12,12 +14,6 @@ import ai.zara.app.ui.ConversationExecutionPolicyStore
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
-import ai.zara.app.projects.ProjectContext
-import ai.zara.app.runtime.ServerConnection
-import ai.zara.app.telemetry.ZaraFailures
-import ai.zara.app.telemetry.ZaraOperation
-import ai.zara.app.ui.TurnFailure
-import ai.zara.app.ui.TurnFailures
 import ai.zara.app.ui.UiOperationFailure
 import ai.zara.app.ui.ZaraApp
 import ai.zara.app.update.Changelog
@@ -38,43 +34,37 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
 import java.io.File
-
-private data class PairingDialogState(
-    val title: String,
-    val message: String,
-    val terminal: Boolean = false,
-)
+import java.io.InputStream
+import java.security.MessageDigest
+import java.util.concurrent.CompletableFuture
 
 class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
-    private lateinit var pairingCoordinator: AndroidPairingCoordinator
-    private lateinit var conversationStore: ConversationStore
-    private var conversationState by mutableStateOf(ConversationState())
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
-    private var turnFailure by mutableStateOf<TurnFailure?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
-    private var enrollmentPublicKey by mutableStateOf<String?>(null)
-    private var pinnedServerPublicKey by mutableStateOf<String?>(null)
-    private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
-    private var pairingUiGeneration = 0L
+    private var localAiState by mutableStateOf(LocalAiState())
+    private var localModels by mutableStateOf<List<LocalModelSpec>>(emptyList())
+    private var localModelBusy by mutableStateOf(false)
+    private var pendingLocalModelImport: LocalModelImportRequest? = null
+
+    private data class LocalModelImportRequest(
+        val id: String,
+        val version: String,
+        val quantization: LocalModelQuantization,
+        val maxContextTokens: Int,
+        val backend: LocalModelBackend,
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
-        pairingCoordinator = AndroidPairingCoordinator(applicationContext, appSession)
         val updateManager = (application as ZaraApplication).updateManager
         val changelogSeenStore = ChangelogSeenStore(this)
         val currentChangelog = Changelog.load(this, BuildConfig.VERSION_NAME)
@@ -83,10 +73,10 @@ class MainActivity : ComponentActivity() {
         )
         microphonePermissionGranted = hasMicrophonePermission()
         voiceState = appSession.voiceState()
-        enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
-        pinnedServerPublicKey = appSession.pinnedServerPublicKeyZ85()
 
         var runtimeState by mutableStateOf(appSession.state())
+        var enrollmentPublicKey by mutableStateOf(appSession.enrollmentPublicKeyZ85())
+        var pinnedServerPublicKey by mutableStateOf(appSession.pinnedServerPublicKeyZ85())
         var operationBusy by mutableStateOf(false)
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
@@ -102,8 +92,8 @@ class MainActivity : ComponentActivity() {
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
         var projectState by mutableStateOf(projectStore.state())
-        conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
-        conversationState = conversationStore.state()
+        val conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
+        var conversationState by mutableStateOf(conversationStore.state())
         val executionPolicyController = ConversationExecutionPolicyController(
             store = ConversationExecutionPolicyStore(
                 File(filesDir, "conversation-execution-policy.bin"),
@@ -136,6 +126,50 @@ class MainActivity : ComponentActivity() {
                 operationError = UiOperationFailure.summarize(error)
             }
         }
+        val localModelPicker = registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            val request = pendingLocalModelImport
+            pendingLocalModelImport = null
+            if (uri == null || request == null) return@registerForActivityResult
+
+            operationError = null
+            localModelBusy = true
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            CompletableFuture.supplyAsync {
+                val source = contentResolver.openInputStream(uri)
+                    ?: error("Selected local model could not be opened")
+                sha256(source)
+            }.thenCompose { digest ->
+                val source = contentResolver.openInputStream(uri)
+                    ?: error("Selected local model could not be reopened")
+                val metadata = LocalModelMetadata(
+                    id = request.id,
+                    version = request.version,
+                    quantization = request.quantization,
+                    sha256 = digest,
+                    maxContextTokens = request.maxContextTokens,
+                    backend = request.backend,
+                )
+                try {
+                    appSession.installLocalModel(source, metadata)
+                } catch (error: Throwable) {
+                    source.close()
+                    throw error
+                }
+            }.whenComplete { _, error ->
+                runOnUiThread {
+                    localModelBusy = false
+                    operationError = error?.let(UiOperationFailure::summarize)
+                    refreshLocalModels()
+                }
+            }
+        }
 
         appSession.setStateObserver { state ->
             runOnUiThread { runtimeState = state }
@@ -153,6 +187,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { updateState = state }
         }
         appSession.assessAssistantRole()
+        refreshLocalModels()
 
         setContent {
             val systemDark = isSystemInDarkTheme()
@@ -169,91 +204,6 @@ class MainActivity : ComponentActivity() {
                 }
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
-            val submitChatText: (String, ConversationRecord, ProjectContext?) -> Unit = { text, conversation, project ->
-
-                    operationError = null
-                    operationBusy = true
-                    val conversationId = conversation.id
-                    try {
-                        appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
-                        conversationState = conversationStore.beginTurn(conversationId, text)
-                        val requestedPolicy = when (text.trim().lowercase()) {
-                            "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
-                            "/symbolic off" -> ConversationExecutionPolicy.STANDARD
-                            else -> null
-                        }
-                        if (requestedPolicy != null) {
-                            executionPolicyController.select(requestedPolicy)
-                            val enabled = requestedPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
-                            conversationState = conversationStore.completeTurn(
-                                conversationId = conversationId,
-                                assistantText = if (enabled) {
-                                    "Pure symbolic mode enabled. max_model_calls=0 and max_provider_calls=0."
-                                } else {
-                                    "Pure symbolic mode disabled. Standard execution policy restored."
-                                },
-                                success = true,
-                                remoteConversationId = null,
-                            )
-                            operationBusy = false
-                        } else {
-                            val future = executionPolicyController.submit(
-                                text = text,
-                                conversationId = conversation.localConversationId,
-                                standardTurn = {
-                                    if (project == null) {
-                                        appSession.submitText(
-                                            text = text,
-                                            localConversationId = conversation.localConversationId,
-                                            remoteConversationId = conversation.remoteConversationId,
-                                        )
-                                    } else {
-                                        appSession.submitProjectText(
-                                            text = text,
-                                            projectId = project.id,
-                                            conversationId = conversation.remoteConversationId,
-                                            localConversationId = conversation.localConversationId,
-                                        )
-                                    }
-                                },
-                            )
-                            future.whenComplete { result, error ->
-                                runOnUiThread {
-                                    operationBusy = false
-                                    if (error != null) {
-                                        recordTurnFailure(conversationId, error)
-                                    } else if (result != null) {
-                                        turnFailure = null
-                                        val remoteConversationId = result.conversationId
-                                            ?.takeUnless { it.startsWith("local-") }
-                                        try {
-                                            conversationState = conversationStore.completeTurn(
-                                                conversationId = conversationId,
-                                                assistantText = result.text,
-                                                success = result.success,
-                                                remoteConversationId = remoteConversationId,
-                                            )
-                                            if (project != null && remoteConversationId != null &&
-                                                projectState.loadFailure == null
-                                            ) {
-                                                projectState = projectStore.bindConversation(
-                                                    project.id,
-                                                    remoteConversationId,
-                                                )
-                                            }
-                                        } catch (storeError: Exception) {
-                                            operationError = UiOperationFailure.summarize(storeError)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } catch (error: Exception) {
-                        operationBusy = false
-                        recordTurnFailure(conversationId, error)
-                    }
-            }
-
             ZaraApp(
                 runtimeState = runtimeState,
                 sourceSha = BuildConfig.SOURCE_SHA,
@@ -276,6 +226,9 @@ class MainActivity : ComponentActivity() {
                 showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                localAiState = localAiState,
+                localModels = localModels,
+                localModelBusy = localModelBusy,
                 projectState = projectState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
@@ -290,7 +243,38 @@ class MainActivity : ComponentActivity() {
                     localEmbedding = localEmbedding.copy(enabled = enabled)
                     embeddingPreferenceStore.save(localEmbedding)
                 },
-                onScanPairingQr = ::scanPairingQr,
+                onImportLocalModel = { id, version, quantization, maxContextTokens, backend ->
+                    pendingLocalModelImport = LocalModelImportRequest(
+                        id = id,
+                        version = version,
+                        quantization = quantization,
+                        maxContextTokens = maxContextTokens,
+                        backend = backend,
+                    )
+                    localModelPicker.launch(arrayOf("*/*"))
+                },
+                onSelectLocalModel = { id, version ->
+                    operationError = null
+                    localModelBusy = true
+                    appSession.selectLocalModel(id, version).whenComplete { _, error ->
+                        runOnUiThread {
+                            localModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            refreshLocalModels()
+                        }
+                    }
+                },
+                onUnloadLocalModel = {
+                    operationError = null
+                    localModelBusy = true
+                    appSession.unloadLocalModel().whenComplete { _, error ->
+                        runOnUiThread {
+                            localModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            refreshLocalModels()
+                        }
+                    }
+                },
                 onCreateIdentity = {
                     operationError = null
                     try {
@@ -390,7 +374,101 @@ class MainActivity : ComponentActivity() {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
-                onSendText = { text, conversation, project -> submitChatText(text, conversation, project) },
+                onSendText = { text, conversation, project ->
+                    operationError = null
+                    operationBusy = true
+                    val conversationId = conversation.id
+                    try {
+                        conversationState = conversationStore.beginTurn(conversationId, text)
+                        val requestedPolicy = when (text.trim().lowercase()) {
+                            "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
+                            "/symbolic off" -> ConversationExecutionPolicy.STANDARD
+                            else -> null
+                        }
+                        if (requestedPolicy != null) {
+                            executionPolicyController.select(requestedPolicy)
+                            val enabled = requestedPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
+                            conversationState = conversationStore.completeTurn(
+                                conversationId = conversationId,
+                                assistantText = if (enabled) {
+                                    "Pure symbolic mode enabled. max_model_calls=0 and max_provider_calls=0."
+                                } else {
+                                    "Pure symbolic mode disabled. Standard execution policy restored."
+                                },
+                                success = true,
+                                remoteConversationId = null,
+                            )
+                            operationBusy = false
+                        } else {
+                            val future = executionPolicyController.submit(
+                                text = text,
+                                conversationId = conversation.localConversationId,
+                                standardTurn = {
+                                    if (project == null) {
+                                        appSession.submitText(
+                                            text = text,
+                                            localConversationId = conversation.localConversationId,
+                                            remoteConversationId = conversation.remoteConversationId,
+                                        )
+                                    } else {
+                                        appSession.submitProjectText(
+                                            text = text,
+                                            projectId = project.id,
+                                            conversationId = conversation.remoteConversationId,
+                                            localConversationId = conversation.localConversationId,
+                                        )
+                                    }
+                                },
+                            )
+                            future.whenComplete { result, error ->
+                                runOnUiThread {
+                                    operationBusy = false
+                                    if (error != null) {
+                                        val failure = UiOperationFailure.summarize(error)
+                                        operationError = failure
+                                        try {
+                                            conversationState = conversationStore.failTurn(conversationId, failure)
+                                        } catch (storeError: Exception) {
+                                            operationError = UiOperationFailure.summarize(storeError)
+                                        }
+                                    } else if (result != null) {
+                                        val remoteConversationId = result.conversationId
+                                            ?.takeUnless { it.startsWith("local-") }
+                                        try {
+                                            conversationState = conversationStore.completeTurn(
+                                                conversationId = conversationId,
+                                                assistantText = result.text,
+                                                success = result.success,
+                                                remoteConversationId = remoteConversationId,
+                                            )
+                                            if (project != null && remoteConversationId != null &&
+                                                projectState.loadFailure == null
+                                            ) {
+                                                projectState = projectStore.bindConversation(
+                                                    project.id,
+                                                    remoteConversationId,
+                                                )
+                                            }
+                                        } catch (storeError: Exception) {
+                                            operationError = UiOperationFailure.summarize(storeError)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (error: Exception) {
+                        operationBusy = false
+                        val failure = UiOperationFailure.summarize(error)
+                        operationError = failure
+                        try {
+                            val selected = conversationStore.state().conversation(conversationId)
+                            if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
+                                conversationState = conversationStore.failTurn(conversationId, failure)
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                },
                 onCreateProject = { name ->
                     operationError = null
                     try {
@@ -561,20 +639,7 @@ class MainActivity : ComponentActivity() {
                     operationError = updateManager.requestInstall().exceptionOrNull()
                         ?.let(UiOperationFailure::summarize)
                 },
-                turnFailure = turnFailure,
-                onRetryTurn = { text ->
-                    val selected = conversationState.selectedConversation
-                    val project = selected?.projectId?.let(projectState::project)
-                    if (selected != null) submitChatText(text, selected, project)
-                },
-                onReconnectRemote = {
-                    appSession.state().configuredProfile?.let { profile ->
-                        appSession.connect(profile.endpoint)
-                    }
-                },
-                onOpenDiagnostics = ::copyDiagnostics,
                 onCopyDiagnostics = ::copyDiagnostics,
-                onExportDiagnostics = { appSession.exportDiagnostics() },
                 onShareDiagnostics = ::shareDiagnostics,
                 onClearDiagnostics = ::clearDiagnostics,
                 onDismissChangelog = {
@@ -582,36 +647,7 @@ class MainActivity : ComponentActivity() {
                     showCurrentChangelog = false
                 },
             )
-
-            pairingDialog?.let { dialog ->
-                AlertDialog(
-                    onDismissRequest = {
-                        if (dialog.terminal) pairingDialog = null
-                    },
-                    title = { Text(dialog.title) },
-                    text = { Text(dialog.message) },
-                    confirmButton = {
-                        if (dialog.terminal) {
-                            TextButton(onClick = { pairingDialog = null }) {
-                                Text("OK")
-                            }
-                        } else {
-                            TextButton(onClick = {}, enabled = false) {
-                                Text("WAITING")
-                            }
-                        }
-                    },
-                )
-            }
         }
-
-        handlePairingIntent(intent)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handlePairingIntent(intent)
     }
 
     override fun onResume() {
@@ -619,6 +655,7 @@ class MainActivity : ComponentActivity() {
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
         reconcileMicrophonePermission(hasMicrophonePermission())
+        refreshLocalModels()
     }
 
     override fun onStop() {
@@ -634,98 +671,43 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        pairingUiGeneration += 1
         if (::appSession.isInitialized) {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
             appSession.setLocalServerObserver(null)
             (application as ZaraApplication).updateManager.setObserver(null)
         }
-        if (::pairingCoordinator.isInitialized) pairingCoordinator.close()
         super.onDestroy()
     }
 
-    private fun scanPairingQr() {
-        operationError = null
-        val options = GmsBarcodeScannerOptions.Builder()
-            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-            .enableAutoZoom()
-            .build()
-        GmsBarcodeScanning.getClient(this, options)
-            .startScan()
-            .addOnSuccessListener { barcode ->
-                val raw = barcode.rawValue
-                if (raw.isNullOrBlank()) {
-                    operationError = "QR code did not contain Zara pairing data"
-                } else {
-                    handlePairingUri(raw)
-                }
-            }
-            .addOnCanceledListener {
-                // User cancellation is not an error.
-            }
-            .addOnFailureListener { error ->
-                operationError = UiOperationFailure.summarize(error)
-            }
-    }
-
-    private fun handlePairingIntent(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (!data.scheme.equals("zara", ignoreCase = true) ||
-            !data.host.equals("pair", ignoreCase = true) ||
-            data.path != "/v1"
-        ) {
-            return
-        }
-        handlePairingUri(data.toString())
-    }
-
-    private fun handlePairingUri(rawPayload: String) {
-        pairingUiGeneration += 1
-        val pairingGeneration = pairingUiGeneration
-        operationError = null
-        pairingDialog = PairingDialogState(
-            title = "PAIR WITH ZARA",
-            message = "Contacting the trusted pairing broker…",
-        )
-        pairingCoordinator.pair(rawPayload) { progress ->
-            if (progress is PairingProgress.AwaitingApproval) {
+    private fun refreshLocalModels() {
+        if (!::appSession.isInitialized) return
+        appSession.localAiState()
+            .thenCombine(appSession.localAiModels()) { state, models -> state to models }
+            .whenComplete { snapshot, error ->
                 runOnUiThread {
-                    if (!isPairingUiCurrent(pairingGeneration)) return@runOnUiThread
-                    pairingDialog = PairingDialogState(
-                        title = "VERIFY PAIRING",
-                        message =
-                            "${progress.verificationCode}\n\n" +
-                                "Confirm this same code in the zara pair terminal. " +
-                                "Device: ${progress.deviceId}",
-                    )
+                    if (error != null) {
+                        operationError = UiOperationFailure.summarize(error)
+                    } else if (snapshot != null) {
+                        localAiState = snapshot.first
+                        localModels = snapshot.second
+                    }
                 }
             }
-        }.whenComplete { _, error ->
-            runOnUiThread {
-                if (!isPairingUiCurrent(pairingGeneration)) return@runOnUiThread
-                enrollmentPublicKey = appSession.enrollmentPublicKeyZ85()
-                pinnedServerPublicKey = appSession.pinnedServerPublicKeyZ85()
-                if (error != null) {
-                    operationError = UiOperationFailure.summarize(error)
-                    pairingDialog = PairingDialogState(
-                        title = "PAIRING FAILED",
-                        message = operationError ?: "Zara pairing failed",
-                        terminal = true,
-                    )
-                } else {
-                    pairingDialog = PairingDialogState(
-                        title = "PAIRED",
-                        message = "This device is enrolled and connected to Zara.",
-                        terminal = true,
-                    )
-                }
-            }
-        }
     }
 
-    private fun isPairingUiCurrent(pairingGeneration: Long): Boolean =
-        !isDestroyed && pairingUiGeneration == pairingGeneration
+    private fun sha256(source: InputStream): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        source.use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 
     private fun reconcileMicrophonePermission(granted: Boolean) {
         microphonePermissionGranted = granted
@@ -734,26 +716,6 @@ class MainActivity : ComponentActivity() {
                 if (error != null) operationError = UiOperationFailure.summarize(error)
                 voiceState = appSession.voiceState()
             }
-        }
-    }
-
-    private fun recordTurnFailure(conversationId: String, error: Throwable) {
-        val classified = ZaraFailures.classify(error, ZaraOperation.SUBMIT)
-        appSession.recordChatBreadcrumb("chat.turn.failed code=${classified.code}", conversationId)
-        val connected = appSession.state().server is ServerConnection.Connected
-        val candidate = TurnFailures.from(
-            failure = classified,
-            transportConnected = connected,
-            incidentId = appSession.diagnosticsIncidentId(),
-        )
-        turnFailure = TurnFailures.mostSpecific(turnFailure, candidate)
-        val summary = TurnFailures.renderSummary(turnFailure ?: candidate)
-        try {
-            val selected = conversationStore.state().conversation(conversationId)
-            if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
-                conversationState = conversationStore.failTurn(conversationId, summary)
-            }
-        } catch (_: Exception) {
         }
     }
 

@@ -194,6 +194,15 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.tap("↑")
     device.await_contains("zara_ready", timeout=20.0)
     device.await_contains("LOCAL", timeout=5.0)
+
+    # Readiness alone is not enough: prove normal Local chat crosses the
+    # loaded portable semantic module instead of only accepting raw Prolog.
+    device.tap("Ask anything…")
+    type_printable_ascii(device, "set a timer for 2 hours")
+    device.press_back()
+    device.tap("↑")
+    device.await_contains("timer.set", timeout=20.0)
+    device.await_contains("LOCAL", timeout=5.0)
     device.capture("local-text-turn")
 
     # Then enroll the same installed app and prove the desktop/server path.

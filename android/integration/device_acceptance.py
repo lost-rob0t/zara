@@ -453,22 +453,25 @@ def exercise_three_menu_ui(device: Device) -> None:
         device.capture(f"workspace-{tab.lower()}")
 
     open_menu(device, "Settings")
-    for tab in (
-        "Runtime",
-        "Connection",
-        "Permissions",
-        "Appearance",
-        "Plugins",
-        "Updates",
-        "Diagnostics",
-        "About",
+    device.await_label("Runtime & local AI")
+    device.capture("settings-overview")
+    for label, capture_name in (
+        ("Runtime & local AI", "runtime"),
+        ("Connection", "connection"),
+        ("Permissions", "permissions"),
+        ("Appearance", "appearance"),
+        ("Plugins", "plugins"),
+        ("Updates", "updates"),
+        ("Diagnostics", "diagnostics"),
+        ("About", "about"),
     ):
-        device.tap_tab(tab)
-        device.assert_accessible_targets((tab,))
+        device.tap(label)
         time.sleep(0.4)
-        device.capture(f"settings-{tab.lower()}")
+        device.capture(f"settings-{capture_name}")
+        device.press_back()
+        device.await_label("Runtime & local AI")
 
-    device.tap_tab("Appearance")
+    device.tap("Appearance")
     device.tap("Outrun")
     time.sleep(0.4)
     device.capture("theme-outrun")
@@ -476,6 +479,8 @@ def exercise_three_menu_ui(device: Device) -> None:
     time.sleep(0.4)
     device.capture("theme-light")
     device.tap("Outrun")
+    device.press_back()
+    device.await_label("Runtime & local AI")
 
     open_menu(device, "Chat")
     device.set_display_profile(
@@ -507,7 +512,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-chat-draft")
 
     open_menu(device, "Settings")
-    device.tap_tab("Connection")
+    device.tap("Connection")
     device.await_label("tcp://host:port")
     device.tap("tcp://host:port")
     device.type_text("ui_connection_draft")
@@ -517,7 +522,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-connection-draft")
 
     device.press_back()
-    device.await_label("Runtime")
+    device.await_label("Runtime & local AI")
     device.press_back()
     device.await_label("Chat")
     device.capture("back-to-chat")

@@ -1,0 +1,40 @@
+#+title: Per-client configuration pins
+
+* Purpose
+
+Zara may run with different provider/model policy on different clients without
+making one mutable global provider setting authoritative for every client.
+
+Example: a phone can be pinned to an OpenRouter profile while a local desktop
+uses the loopback Ollama-compatible service.
+
+#+begin_src toml
+[client_pins]
+"android:phone" = "mobile"
+
+[client_profiles.mobile.llm]
+provider = "openrouter"
+model = "openai/gpt-5-mini"
+
+[client_profiles.desktop-local.llm]
+provider = "ollama"
+endpoint = "http://127.0.0.1:11434/api/chat"
+model = "zara-local"
+#+end_src
+
+A local process may select a named profile with =ZARA_CLIENT_PROFILE=. An exact
+client binding may be supplied through =client_id= or =ZARA_CLIENT_ID=.
+
+* Security
+
+Profile tables are routing policy, not credential stores. They reject API-key
+fields. Provider credentials continue to come from environment variables or
+platform secret storage. A remote request must not be allowed to choose an
+arbitrary profile name; authenticated transport/session code must bind client
+identity to a server/app-owned pin before passing it into runtime configuration.
+
+* Current scope
+
+0.3.0-alpha profiles override only the =[llm]= section: provider, model,
+endpoint, timeouts, retry bound, and history limit. Unknown sections or secret
+fields fail closed.
