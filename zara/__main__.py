@@ -371,6 +371,11 @@ def _run_donations(*, json_output: bool) -> int:
 
 
 def main():
+    if sys.argv[1:] == ["--donations"]:
+        sys.exit(_run_donations(json_output=False))
+    if sys.argv[1:] == ["--donations-json"]:
+        sys.exit(_run_donations(json_output=True))
+
     config = init_config()
     stt_config = config.get_section("stt") if config is not None else {}
     default_stt_provider = normalize_provider(stt_config.get("provider", "faster-whisper"))
