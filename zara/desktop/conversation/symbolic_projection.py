@@ -335,6 +335,10 @@ class SymbolicProjectionMixin:
                 )
                 current_turn_id = current["turn_id"]
                 current_outcome = current["outcome"]
+                current_verified_outcome_refs = set(
+                    _decode_verified_outcome_refs(current["verified_outcome_refs"])
+                )
+                proposed_verified_outcome_refs = set(projection.verified_outcome_refs)
                 if current_generation != expected_generation:
                     raise RuntimeError(
                         "stale symbolic projection write: "
@@ -344,6 +348,8 @@ class SymbolicProjectionMixin:
                     raise RuntimeError("runtime_generation regression rejected")
                 if current_turn_id is not None and projection.turn_id is None:
                     raise RuntimeError("turn_id rewind rejected")
+                if not current_verified_outcome_refs.issubset(proposed_verified_outcome_refs):
+                    raise RuntimeError("verified outcome evidence rewind rejected")
                 if projection.turn_id == current_turn_id:
                     if current_turn_id is not None and projection.runtime_generation != current_runtime_generation:
                         raise RuntimeError("same turn must preserve runtime_generation")
@@ -353,10 +359,7 @@ class SymbolicProjectionMixin:
                     if projection.runtime_generation <= current_runtime_generation:
                         raise RuntimeError("new turn must advance runtime_generation")
                     if projection.dialogue_act == "verified":
-                        current_verified_outcome_refs = set(
-                            _decode_verified_outcome_refs(current["verified_outcome_refs"])
-                        )
-                        if not set(projection.verified_outcome_refs).difference(
+                        if not proposed_verified_outcome_refs.difference(
                             current_verified_outcome_refs
                         ):
                             raise RuntimeError(
