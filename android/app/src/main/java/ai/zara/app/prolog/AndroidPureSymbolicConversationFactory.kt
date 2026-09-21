@@ -444,7 +444,7 @@ internal object AndroidPureSymbolicConversationFactory {
         contextTerm: String,
     ): String = "((" + dialogueTurnPrelude(utterance, contextTerm) +
         ", symbolic_dialogue:render_response(Act, Response), " +
-        "term_to_atom(Context1, ContextAtom), " +
+        "write_term_to_atom(ContextAtom, Context1, [quoted(true)]), " +
         "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
         "atom_codes(ContextTagged, ContextWireCodes), " +
         "string_codes(ContextWire, ContextWireCodes)) -> true ; fail), " +
