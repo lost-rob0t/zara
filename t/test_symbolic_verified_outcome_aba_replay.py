@@ -4,9 +4,9 @@ from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationStore, SymbolicConversationProjection
 
 _SYMBOLIC_RENDERER = "symbolic-dcg/v1"
-_R1 = "zara.verified-outcome/v1:effect:tool-run-1"
-_R2 = "zara.verified-outcome/v1:outcome:postcondition/tool-run-2"
-_R3 = "zara.verified-outcome/v1:outcome:postcondition/tool-run-3"
+_R1 = "zara.verified-outcome/v2:1:effect:tool-run-1"
+_R2 = "zara.verified-outcome/v2:2:outcome:postcondition/tool-run-2"
+_R3 = "zara.verified-outcome/v2:3:outcome:postcondition/tool-run-3"
 
 
 def _projection(
