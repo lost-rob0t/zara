@@ -87,7 +87,10 @@ def test_semantic_parity_gate_uses_pinned_trealla_context_wire_contract() -> Non
     assert "atom_concat('__zara_context__:', ContextAtom, ContextTagged)" in source
     assert "atom_codes(ContextTagged, ContextWireCodes)" in source
     assert "string_codes(ContextWire, ContextWireCodes)" in source
-    assert "Results = [Rendered, ContextWire]" in source
+    assert "Results = [Rendered, ContextWire, ActWire, EvidenceWire]" in source
+    assert "expert_wire_parts(Act, ActName, EvidenceCodes)" in source
+    assert "atom_concat('__zara_act__:', ActName, ActTagged)" in source
+    assert 'string_codes("__zara_expert_evidence__:", EvidencePrefixCodes)' in source
     assert "append(PrefixCodes, ContextAtomCodes, ContextWireCodes)" in source
     assert "read_term_from_atom(ContextAtom, Context, [])" in source
     assert "symbolic_dialogue_turn:valid_dialogue_context(Context)" in source
