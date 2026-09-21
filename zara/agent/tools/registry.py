@@ -76,7 +76,7 @@ class ScopedToolRegistry:
         await self._parent.prepare_async()
 
     def dynamic_system_context(self) -> Optional[str]:
-        return self._parent.dynamic_system_context()
+        return None
 
 
 class ToolRegistry:
