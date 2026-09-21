@@ -52,7 +52,7 @@ class AndroidSymbolicAtomicTerminalCommitContractTest {
             "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
         ).readText()
         val successPath = factory
-            .substringAfter("val (renderedResponse, context1) = splitDialogueEnvelope(result)", "")
+            .substringAfter("val (renderedResponse, context1, dialogueAct) = splitDialogueEnvelope(result)", "")
             .substringBefore("} catch (error: Throwable)", "")
 
         assertTrue("symbolic success path disappeared", successPath.isNotEmpty())
