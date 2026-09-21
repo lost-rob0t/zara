@@ -6,6 +6,7 @@ import ai.zara.app.history.SymbolicConversationProjection
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.history.saveSymbolicProjection
 import ai.zara.app.runtime.LocalQueryResult
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 
 /**
@@ -23,13 +24,14 @@ internal object AndroidPureSymbolicConversationFactory {
      *
      * The supplied [projectionStore] remains the sole persistence authority. This factory adds no
      * Android-local context cache: every natural turn loads Context0 from the existing
-     * SymbolicConversationProjection, executes the canonical dialogue turn exactly once, receives
-     * both the rendered response and Context1 through the existing Trealla Result-binding ABI,
-     * and persists Context1 with the projection generation CAS.
+     * SymbolicConversationProjection, installs a pending CAS fence, executes the canonical dialogue
+     * turn exactly once, receives both the rendered response and Context1 through the existing
+     * Trealla Result-binding ABI, and persists Context1 through the same pending generation.
      *
-     * Cancellation is fenced with the persistence commit. If cancellation wins the fence, no
-     * Context1 write occurs. If persistence wins, the resolver completes successfully before a
-     * later cancellation can claim the turn was cancelled.
+     * Persisting the pending projection before local evaluation is what lets
+     * PortableConversationStore.loadState() interrupt an in-flight turn during Activity/process
+     * recreation and advance the generation. A late callback from the old turn then loses its CAS
+     * and cannot publish stale Context1. Cancellation is serialized with the same terminal commit.
      */
     fun create(
         session: AndroidAppSession,
@@ -67,44 +69,211 @@ internal object AndroidPureSymbolicConversationFactory {
         current?.assertPureSymbolic()
         val expectedGeneration = current?.projectionGeneration ?: 0L
         val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
-        val turnFuture = session.queryLocalProlog(dialogueTurnEnvelopeQuery(utterance, context0))
-        val output = PersistenceFencedFuture(turnFuture)
+        val pendingProjection = pendingProjection(
+            current = current,
+            conversationId = conversationId,
+            expectedGeneration = expectedGeneration,
+            context0 = context0,
+        )
+        projectionStore.saveSymbolicProjection(
+            projection = pendingProjection,
+            expectedGeneration = expectedGeneration,
+        )
+        val pendingGeneration = pendingProjection.projectionGeneration
+
+        val turnFuture = try {
+            session.queryLocalProlog(dialogueTurnEnvelopeQuery(utterance, context0))
+        } catch (error: Throwable) {
+            return failBeforeAsyncEvaluation(
+                projectionStore = projectionStore,
+                pendingProjection = pendingProjection,
+                pendingGeneration = pendingGeneration,
+                context0 = context0,
+                error = error,
+            )
+        }
+        val output = PersistenceFencedFuture(turnFuture) {
+            val cancelledProjection = terminalProjection(
+                pending = pendingProjection,
+                contextTerm = context0,
+                outcome = "cancelled",
+            )
+            projectionStore.saveSymbolicProjection(
+                projection = cancelledProjection,
+                expectedGeneration = pendingGeneration,
+            )
+        }
 
         turnFuture.whenComplete { result, resultError ->
             if (output.isDone) return@whenComplete
             if (resultError != null || result == null) {
-                output.completeExceptionally(
-                    resultError ?: IllegalStateException("Symbolic dialogue result is missing"),
+                val failure = resultError
+                    ?: IllegalStateException("Symbolic dialogue result is missing")
+                completeFailure(
+                    output = output,
+                    projectionStore = projectionStore,
+                    pendingProjection = pendingProjection,
+                    pendingGeneration = pendingGeneration,
+                    context0 = context0,
+                    error = failure,
                 )
                 return@whenComplete
             }
             if (result.terms.isEmpty()) {
-                output.complete(result)
+                completeNoMatch(
+                    output = output,
+                    projectionStore = projectionStore,
+                    pendingProjection = pendingProjection,
+                    pendingGeneration = pendingGeneration,
+                    context0 = context0,
+                    result = result,
+                )
                 return@whenComplete
             }
 
             try {
                 val (renderedResponse, context1) = splitDialogueEnvelope(result)
-                val next = nextProjection(
-                    current = current,
-                    conversationId = conversationId,
-                    expectedGeneration = expectedGeneration,
-                    runtimeGeneration = result.generation,
-                    context1 = context1,
+                val completedProjection = terminalProjection(
+                    pending = pendingProjection,
+                    contextTerm = context1,
+                    outcome = "success",
                 )
                 output.commitOrCancel {
                     projectionStore.saveSymbolicProjection(
-                        projection = next,
-                        expectedGeneration = expectedGeneration,
+                        projection = completedProjection,
+                        expectedGeneration = pendingGeneration,
                     )
                     output.complete(result.copy(terms = listOf(renderedResponse)))
                 }
             } catch (error: Throwable) {
-                output.completeExceptionally(error)
+                completeFailure(
+                    output = output,
+                    projectionStore = projectionStore,
+                    pendingProjection = pendingProjection,
+                    pendingGeneration = pendingGeneration,
+                    context0 = context0,
+                    error = error,
+                )
             }
         }
         return output
     }
+
+    private fun failBeforeAsyncEvaluation(
+        projectionStore: PortableConversationStore,
+        pendingProjection: SymbolicConversationProjection,
+        pendingGeneration: Long,
+        context0: String,
+        error: Throwable,
+    ): CompletableFuture<LocalQueryResult> {
+        val terminal = terminalProjection(
+            pending = pendingProjection,
+            contextTerm = context0,
+            outcome = "error",
+        )
+        return try {
+            projectionStore.saveSymbolicProjection(
+                projection = terminal,
+                expectedGeneration = pendingGeneration,
+            )
+            CompletableFuture.failedFuture(error)
+        } catch (fenceError: Throwable) {
+            CompletableFuture.failedFuture(fenceError)
+        }
+    }
+
+    private fun completeFailure(
+        output: PersistenceFencedFuture,
+        projectionStore: PortableConversationStore,
+        pendingProjection: SymbolicConversationProjection,
+        pendingGeneration: Long,
+        context0: String,
+        error: Throwable,
+    ) {
+        try {
+            output.commitOrCancel {
+                projectionStore.saveSymbolicProjection(
+                    projection = terminalProjection(
+                        pending = pendingProjection,
+                        contextTerm = context0,
+                        outcome = "error",
+                    ),
+                    expectedGeneration = pendingGeneration,
+                )
+                output.completeExceptionally(error)
+            }
+        } catch (fenceError: Throwable) {
+            output.completeExceptionally(fenceError)
+        }
+    }
+
+    private fun completeNoMatch(
+        output: PersistenceFencedFuture,
+        projectionStore: PortableConversationStore,
+        pendingProjection: SymbolicConversationProjection,
+        pendingGeneration: Long,
+        context0: String,
+        result: LocalQueryResult,
+    ) {
+        try {
+            output.commitOrCancel {
+                projectionStore.saveSymbolicProjection(
+                    projection = terminalProjection(
+                        pending = pendingProjection,
+                        contextTerm = context0,
+                        outcome = "error",
+                    ),
+                    expectedGeneration = pendingGeneration,
+                )
+                output.complete(result)
+            }
+        } catch (fenceError: Throwable) {
+            output.completeExceptionally(fenceError)
+        }
+    }
+
+    private fun pendingProjection(
+        current: SymbolicConversationProjection?,
+        conversationId: String,
+        expectedGeneration: Long,
+        context0: String,
+    ): SymbolicConversationProjection {
+        val runtimeGeneration = current?.runtimeGeneration?.let(Math::incrementExact) ?: 1L
+        val base = current ?: SymbolicConversationProjection(
+            conversationId = conversationId,
+            projectionGeneration = expectedGeneration + 1L,
+            runtimeGeneration = runtimeGeneration,
+            dialogueStateJson = SymbolicDialogueContextCodec.encode(context0),
+        )
+        return base.copy(
+            projectionGeneration = expectedGeneration + 1L,
+            runtimeGeneration = runtimeGeneration,
+            turnId = UUID.randomUUID().toString(),
+            outcome = "pending",
+            dialogueAct = "conversation",
+            dialogueStateJson = SymbolicDialogueContextCodec.encode(context0),
+            rendererProvenance = "",
+            providersEnabled = false,
+            maxModelCalls = 0L,
+            providerCalls = 0L,
+            modelCalls = 0L,
+        ).also(SymbolicConversationProjection::assertPureSymbolic)
+    }
+
+    private fun terminalProjection(
+        pending: SymbolicConversationProjection,
+        contextTerm: String,
+        outcome: String,
+    ): SymbolicConversationProjection = pending.copy(
+        projectionGeneration = Math.incrementExact(pending.projectionGeneration),
+        outcome = outcome,
+        dialogueStateJson = SymbolicDialogueContextCodec.encode(contextTerm),
+        rendererProvenance = if (outcome == "success") "symbolic-dcg/v1" else "",
+        providersEnabled = false,
+        maxModelCalls = 0L,
+        providerCalls = 0L,
+        modelCalls = 0L,
+    ).also(SymbolicConversationProjection::assertPureSymbolic)
 
     private fun splitDialogueEnvelope(result: LocalQueryResult): Pair<String, String> {
         check(result.terms.size == 2) {
@@ -123,50 +292,18 @@ internal object AndroidPureSymbolicConversationFactory {
         return renderedResponse to SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
     }
 
-    private fun nextProjection(
-        current: SymbolicConversationProjection?,
-        conversationId: String,
-        expectedGeneration: Long,
-        runtimeGeneration: Long,
-        context1: String,
-    ): SymbolicConversationProjection {
-        val base = current ?: SymbolicConversationProjection(
-            conversationId = conversationId,
-            projectionGeneration = 1L,
-            runtimeGeneration = runtimeGeneration,
-            outcome = "unknown",
-            dialogueAct = "conversation",
-            dialogueStateJson = SymbolicDialogueContextCodec.encode(context1),
-            rendererProvenance = "symbolic-dcg/v1",
-            providersEnabled = false,
-            maxModelCalls = 0L,
-            providerCalls = 0L,
-            modelCalls = 0L,
-        )
-        return base.copy(
-            projectionGeneration = expectedGeneration + 1L,
-            runtimeGeneration = maxOf(base.runtimeGeneration, runtimeGeneration),
-            outcome = "unknown",
-            dialogueAct = "conversation",
-            dialogueStateJson = SymbolicDialogueContextCodec.encode(context1),
-            rendererProvenance = "symbolic-dcg/v1",
-            providersEnabled = false,
-            maxModelCalls = 0L,
-            providerCalls = 0L,
-            modelCalls = 0L,
-        ).also(SymbolicConversationProjection::assertPureSymbolic)
-    }
-
     /**
-     * Serialize cancellation against the canonical projection commit.
+     * Serialize cancellation against the canonical projection terminal commit.
      *
-     * A normal CompletableFuture chain can be cancelled between the final cancellation check and
-     * saveSymbolicProjection(), which would allow a late callback to mutate durable dialogue state
-     * after the UI already observed cancellation. This small fence makes those outcomes mutually
-     * exclusive without introducing another scheduler or persistence owner.
+     * Cancellation and completion hold the same monitor. If cancellation wins, it records a
+     * terminal cancelled projection (when this process still owns the pending generation), marks
+     * the returned future cancelled, and cancels the upstream local query. If restart recovery has
+     * already advanced the generation to interrupted, the stale cancellation write is ignored and
+     * the old turn still cannot commit Context1.
      */
     private class PersistenceFencedFuture(
         private val upstream: CompletableFuture<*>,
+        private val onCancel: () -> Unit,
     ) : CompletableFuture<LocalQueryResult>() {
         private val fence = Any()
 
@@ -175,8 +312,10 @@ internal object AndroidPureSymbolicConversationFactory {
         }
 
         override fun cancel(mayInterruptIfRunning: Boolean): Boolean = synchronized(fence) {
+            if (isDone) return@synchronized false
             val cancelled = super.cancel(mayInterruptIfRunning)
             if (cancelled) {
+                runCatching(onCancel)
                 upstream.cancel(mayInterruptIfRunning)
             }
             cancelled
@@ -238,6 +377,8 @@ internal object AndroidPureSymbolicConversationFactory {
             }
         }
     }
+
+    private fun Math.incrementExact(value: Long): Long = addExact(value, 1L)
 
     private const val DIALOGUE_CONTEXT_PREFIX = "dialogue_context("
     private const val MAX_UTTERANCE_CHARS = 8_192
