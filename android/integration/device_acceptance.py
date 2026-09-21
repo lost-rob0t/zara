@@ -191,14 +191,18 @@ class Device:
 
     def dismiss_pixel_launcher_anr(self) -> bool:
         # The hosted Pixel emulator can surface a launcher ANR over an otherwise
-        # healthy Zara activity. Dismiss only that OS-owned dialog; never hide a
-        # Zara crash/ANR or weaken the app assertions below.
+        # healthy Zara activity. Prefer closing only that OS-owned launcher process
+        # so the same hung launcher cannot immediately re-present the dialog. Keep
+        # Wait only as a compatibility fallback for platform variants that do not
+        # expose Close app. Never hide a Zara crash/ANR or weaken app assertions.
         if self.find_contains("Pixel Launcher isn't responding") is None:
             return False
-        wait = self.find("Wait")
-        if wait is None:
-            raise AssertionError("Pixel Launcher ANR did not expose a Wait action")
-        left, top, right, bottom = self.bounds(wait)
+        action = self.find("Close app")
+        if action is None:
+            action = self.find("Wait")
+        if action is None:
+            raise AssertionError("Pixel Launcher ANR did not expose a dismissal action")
+        left, top, right, bottom = self.bounds(action)
         self.adb(
             "shell",
             "input",
@@ -250,10 +254,13 @@ class Device:
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.find(label) is not None:
-                return
+            # UIAutomator includes nodes from the activity behind a system ANR
+            # dialog. Never accept those background labels as proof that Zara is
+            # interactive; clear only the known Pixel Launcher dialog first.
             if self.dismiss_pixel_launcher_anr():
                 continue
+            if self.find(label) is not None:
+                return
             if self.dismiss_release_notes():
                 continue
             time.sleep(0.2)
@@ -262,10 +269,10 @@ class Device:
     def await_contains(self, fragment: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.find_contains(fragment) is not None:
-                return
             if self.dismiss_pixel_launcher_anr():
                 continue
+            if self.find_contains(fragment) is not None:
+                return
             time.sleep(0.2)
         raise AssertionError(f"Screen did not retain text containing {fragment}")
 

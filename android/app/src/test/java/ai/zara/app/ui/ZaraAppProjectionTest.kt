@@ -2,6 +2,7 @@ package ai.zara.app.ui
 
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
+import ai.zara.app.runtime.RuntimeMode
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.ui.theme.ZaraTheme
@@ -13,6 +14,84 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ZaraAppProjectionTest {
+    @Test
+    fun chatFooterSeparatesModeAuthAndTransportTruth() {
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  CONNECTED  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  RECONNECTING (2)  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.Reconnecting(3, 2),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  OFFLINE — RECONNECT AVAILABLE  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.OfflineDegraded(6, "text request timed out"),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  DISCONNECTED  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.Disconnected,
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "LOCAL  •  SYMBOLIC  •  PRIVATE",
+            chatFooter(
+                mode = RuntimeMode.Local,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE AVAILABLE  •  LOCAL SYMBOLIC  •  PRIVATE",
+            chatFooter(
+                mode = RuntimeMode.Auto,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "LOCAL SYMBOLIC  •  REMOTE DISCONNECTED  •  PRIVATE",
+            chatFooter(
+                mode = RuntimeMode.Auto,
+                server = ServerConnection.Disconnected,
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+    }
+
+    @Test
+    fun chatFooterNeverClaimsRemoteWhileTransportIsDownInRemoteMode() {
+        val degraded = listOf(
+            ServerConnection.Connecting(1),
+            ServerConnection.Reconnecting(2, 1),
+            ServerConnection.OfflineDegraded(6, "offline"),
+            ServerConnection.Disconnected,
+        )
+        for (server in degraded) {
+            val footer = chatFooter(
+                mode = RuntimeMode.Remote,
+                server = server,
+                enrollment = EnrollmentReadiness.Ready,
+            )
+            assertFalse("footer must not claim a live remote: $footer", footer.startsWith("REMOTE  •  AUTHENTICATED  •  CONNECTED"))
+        }
+    }
+
     @Test
     fun connectionLabelsRemainHonestAcrossCanonicalReducerStates() {
         assertEquals("disconnected", connectionLabel(ServerConnection.Disconnected))

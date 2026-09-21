@@ -207,6 +207,43 @@ def test_secure_hello_publishes_node_before_acknowledgement(
         gateway.close(timeout=1.0)
 
 
+
+
+def test_secure_hello_publishes_node_binding_before_hello_ok(
+    zmq_context,
+    transport_config,
+):
+    gateway, dealer, principal, enrolled, _registry = _start_peer(
+        zmq_context,
+        transport_config,
+    )
+    node_mapping = _node_mapping(enrolled)
+    expected = ZaraNode.from_mapping(node_mapping)
+    observed_at_ack: list[ZaraNode | None] = []
+    original_send = gateway._send
+
+    def intercept_send(socket, route, message):
+        if message.type == "hello.ok":
+            observed_at_ack.append(
+                gateway.node_for_session(principal.principal_id, message.session_id)
+            )
+        return original_send(socket, route, message)
+
+    gateway._send = intercept_send
+    try:
+        hello = _send_hello(
+            dealer,
+            {"versions": [1], "node": node_mapping},
+            "publication-order",
+        )
+        assert hello.type == "hello.ok"
+        assert observed_at_ack == [expected]
+    finally:
+        gateway._send = original_send
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
 def test_secure_hello_rejects_node_identity_or_generation_mismatch(
     zmq_context,
     transport_config,

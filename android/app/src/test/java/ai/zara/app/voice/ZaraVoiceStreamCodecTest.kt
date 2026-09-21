@@ -82,6 +82,37 @@ class ZaraVoiceStreamCodecTest {
         }
     }
 
+    @Test fun `server speech markers decode as stream events`() {
+        val started = ZaraVoiceStreamCodec.decode(
+            server("{\"body\":{\"pre_speech_samples\":0},\"id\":\"speech-start\",\"payload_count\":0,\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":10,\"trace_id\":\"trace-1\",\"type\":\"voice.speech.started\"}")
+        )
+        assertEquals(
+            VoiceStreamEvent.SpeechStarted("session-1", "mic-1", 0),
+            started,
+        )
+
+        val ended = ZaraVoiceStreamCodec.decode(
+            server("{\"body\":{\"reason\":\"commit\"},\"id\":\"speech-end\",\"payload_count\":0,\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":11,\"trace_id\":\"trace-1\",\"type\":\"voice.speech.ended\"}")
+        )
+        assertEquals(
+            VoiceStreamEvent.SpeechEnded("session-1", "mic-1", "commit"),
+            ended,
+        )
+    }
+
+    @Test fun `speech markers reject malformed bodies fail closed`() {
+        assertThrows(ZaraWireException::class.java) {
+            ZaraVoiceStreamCodec.decode(
+                server("{\"body\":{\"pre_speech_samples\":-1},\"id\":\"speech-start\",\"payload_count\":0,\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":10,\"type\":\"voice.speech.started\"}")
+            )
+        }
+        assertThrows(ZaraWireException::class.java) {
+            ZaraVoiceStreamCodec.decode(
+                server("{\"body\":{\"reason\":\"commit\"},\"id\":\"speech-end\",\"payload_count\":1,\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":11,\"type\":\"voice.speech.ended\"}")
+            )
+        }
+    }
+
     @Test fun `voice JSON nesting is bounded at sixty four containers`() {
         val boundary = assertThrows(ZaraWireException::class.java) {
             ZaraVoiceStreamCodec.decode(server(nestedEnvelope(64)))

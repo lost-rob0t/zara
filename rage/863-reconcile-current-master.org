@@ -1,0 +1,4 @@
+* Run identity
+- Consumed issue :: #863
+- Branch :: =rage/863-reconcile-current-master=
+- RAGE start commit :: =eb76a2a07162f61272385e0875fa76d5e70c4301=
