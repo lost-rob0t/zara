@@ -156,3 +156,102 @@ def test_real_desktop_surface_runs_symbolic_greeting_without_runtime_errors(tmp_
         controller.setParent(None)
         controller.deleteLater()
         qt_app.processEvents()
+
+
+def test_real_desktop_surface_preserves_symbolic_clarification_context(tmp_path):
+    qt_app = _app()
+    config = PureSymbolicConfig()
+    store = ConversationStore(
+        DatabaseManager(tmp_path / "desktop-symbolic-continuity.db")
+    )
+    service = ConversationService(store)
+    client = desktop_app._default_desktop_client(  # type: ignore[arg-type]
+        config,
+        conversation_store=store,
+    )
+    diagnostics = client.subscribe(maxsize=256)
+    bridge = QtRuntimeBridge(client, parent=qt_app, auto_start_timer=True)
+    controller = DesktopController(
+        qt_app,
+        client,
+        bridge,
+        tray_factory=FakeTray,
+        conversation_service=service,
+    )
+    surface = controller.window
+
+    try:
+        controller.start().result(timeout=8.0)
+        _wait_until(qt_app, lambda: controller.status.detail == "Zara is ready")
+
+        conversation_id = surface.current_conversation_id
+        surface.composer.setPlainText("timer")
+        surface.submit_current_text()
+
+        _wait_until(
+            qt_app,
+            lambda: any(
+                message.role is MessageRole.ASSISTANT
+                and message.content == "How long should I set the timer for?"
+                for message in service.get_state(conversation_id).messages
+            ),
+        )
+
+        first_projection = store.load_symbolic_projection(conversation_id)
+        assert first_projection is not None
+        first_projection.assert_pure_symbolic()
+        assert first_projection.dialogue_act == "clarify"
+        assert "partial_frame" in first_projection.dialogue_state["prolog_context_term"]
+
+        surface.composer.setPlainText("5 minutes")
+        surface.submit_current_text()
+
+        _wait_until(
+            qt_app,
+            lambda: any(
+                message.role is MessageRole.ASSISTANT
+                and message.content
+                == "That action needs capability-checked execution before I can report success."
+                for message in service.get_state(conversation_id).messages
+            ),
+        )
+
+        state = service.get_state(conversation_id)
+        assert [message.content for message in state.messages] == [
+            "timer",
+            "How long should I set the timer for?",
+            "5 minutes",
+            "That action needs capability-checked execution before I can report success.",
+        ]
+        assert state.active_turn_id is None
+
+        second_projection = store.load_symbolic_projection(conversation_id)
+        assert second_projection is not None
+        second_projection.assert_pure_symbolic()
+        assert second_projection.projection_generation == 2
+        assert second_projection.runtime_generation == 2
+        assert second_projection.dialogue_act == "dispatch_required"
+        assert "completed_frame" in second_projection.dialogue_state["prolog_context_term"]
+        assert second_projection.providers_enabled is False
+        assert second_projection.max_model_calls == 0
+        assert second_projection.provider_calls == 0
+        assert second_projection.model_calls == 0
+
+        observed_errors = []
+        while True:
+            try:
+                envelope = diagnostics.get(timeout=0.01)
+            except queue.Empty:
+                break
+            if isinstance(envelope.event, events.RuntimeError):
+                observed_errors.append(envelope.event)
+        assert observed_errors == []
+    finally:
+        client.close(timeout=5.0)
+        bridge.close()
+        surface.prepare_for_quit()
+        surface.close()
+        surface.deleteLater()
+        controller.setParent(None)
+        controller.deleteLater()
+        qt_app.processEvents()
