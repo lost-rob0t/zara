@@ -166,17 +166,35 @@ class CanonicalConversationStore(
     }
 
     @Synchronized
+    fun runningTurnId(conversationId: String): String? {
+        val id = requireConversation(conversationId)
+        return history.loadMessages(id).lastOrNull {
+            it.role == HistoryMessageRole.Assistant && it.status.isRunning()
+        }?.turnId
+    }
+
+    @Synchronized
     fun completeTurn(
         conversationId: String,
         assistantText: String,
         success: Boolean,
+        expectedTurnId: String? = null,
         remoteConversationId: String? = null,
     ): ConversationState {
         val id = requireConversation(conversationId)
         val response = normalizeText(assistantText, "Assistant text", allowBlank = true)
+        val expectedTurn = expectedTurnId?.let(::normalizeId)
         val messages = history.loadMessages(id)
-        val pending = messages.lastOrNull {
-            it.role == HistoryMessageRole.Assistant && it.status.isRunning()
+        val pending = if (expectedTurn == null) {
+            messages.lastOrNull {
+                it.role == HistoryMessageRole.Assistant && it.status.isRunning()
+            }
+        } else {
+            messages.lastOrNull {
+                it.role == HistoryMessageRole.Assistant &&
+                    it.turnId == expectedTurnId &&
+                    it.status.isRunning()
+            }
         }
         if (pending != null) {
             history.saveMessage(
@@ -187,8 +205,13 @@ class CanonicalConversationStore(
                 )
             )
         } else {
-            val terminal = messages.lastOrNull { it.role == HistoryMessageRole.Assistant }
-                ?: error("Conversation has no assistant turn")
+            val terminal = if (expectedTurn == null) {
+                messages.lastOrNull { it.role == HistoryMessageRole.Assistant }
+            } else {
+                messages.lastOrNull {
+                    it.role == HistoryMessageRole.Assistant && it.turnId == expectedTurnId
+                }
+            } ?: error("Conversation has no assistant turn matching the expected turn id")
             val expectedStatus = if (success) {
                 HistoryMessageStatus.Complete
             } else {
@@ -206,8 +229,16 @@ class CanonicalConversationStore(
     }
 
     @Synchronized
-    fun failTurn(conversationId: String, message: String): ConversationState =
-        completeTurn(conversationId, message, success = false)
+    fun failTurn(
+        conversationId: String,
+        message: String,
+        expectedTurnId: String? = null,
+    ): ConversationState = completeTurn(
+        conversationId = conversationId,
+        assistantText = message,
+        success = false,
+        expectedTurnId = expectedTurnId,
+    )
 
     private fun recoverInterruptedTurns() {
         history.listConversations(limit = MAX_CONVERSATIONS).forEach { conversation ->
