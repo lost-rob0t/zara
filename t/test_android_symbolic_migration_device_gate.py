@@ -44,6 +44,19 @@ RESTART_FENCE_TEST = (
     / "history"
     / "PortableConversationRestartFenceInstrumentedTest.kt"
 )
+PURE_SYMBOLIC_E2E_TEST = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "androidTest"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "prolog"
+    / "AndroidPureSymbolicConversationInstrumentedTest.kt"
+)
 
 
 def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations() -> None:
@@ -90,6 +103,26 @@ def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations()
     assert "recovered.assertPureSymbolic()" in restart_test_source
     assert 'assertEquals("interrupted", recovered.outcome)' in restart_test_source
     assert "late same-turn completion must be rejected after restart interruption" in restart_test_source
+
+
+def test_emulator_gate_runs_real_native_pure_symbolic_multiturn_continuity() -> None:
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+    e2e = PURE_SYMBOLIC_E2E_TEST.read_text(encoding="utf-8")
+
+    assert "ai.zara.app.prolog.AndroidPureSymbolicConversationInstrumentedTest" in gate
+    assert "clarificationFollowUpAndProcessRecreationStayPureSymbolicAndDurable" in e2e
+    assert 'runNaturalTurn(history, "timer")' in e2e
+    assert 'runNaturalTurn(history, "5 minutes")' in e2e
+    assert 'runNaturalTurn(history, "thanks")' in e2e
+    assert "history = reopenHistory(createConversation = false)" in e2e
+    assert "assertZeroModel(clarification)" in e2e
+    assert "assertZeroModel(followUp)" in e2e
+    assert "assertZeroModel(acknowledgement)" in e2e
+    assert "finalProjection.assertPureSymbolic()" in e2e
+    assert "assertFalse(finalProjection.providersEnabled)" in e2e
+    assert "assertEquals(0L, finalProjection.providerCalls)" in e2e
+    assert "assertEquals(0L, finalProjection.modelCalls)" in e2e
+    assert "capability-checked execution" in e2e
 
 
 def test_symbolic_emulator_gate_preserves_current_master_device_acceptance() -> None:
