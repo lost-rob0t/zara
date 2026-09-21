@@ -82,7 +82,7 @@ async def test_pure_symbolic_dialogue_context_survives_backend_restart(tmp_path)
 
 @pytest.mark.asyncio
 async def test_project_switch_fences_stale_pure_symbolic_dialogue_context(tmp_path) -> None:
-    """A new project must not inherit a clarification frame from the old project."""
+    """A new project must not inherit symbolic knowledge from the old project."""
     store = ConversationStore(DatabaseManager(tmp_path / "symbolic-project-fence.db"))
     conversation = store.create_conversation(
         "Symbolic project fence",
@@ -120,6 +120,13 @@ async def test_project_switch_fences_stale_pure_symbolic_dialogue_context(tmp_pa
             project_id="project-b",
             project_generation=project_a.project_generation + 1,
             dialogue_act="cancelled",
+            dialogue_state={
+                **project_a.dialogue_state,
+                "project_fact": "project-a-only",
+            },
+            discourse_entities=[{"ref": "that", "entity_id": "file:project-a.nix"}],
+            expert_evidence=[{"expert": "DotfilesExpert", "evidence_id": "project-a"}],
+            verified_facts=[{"fact_id": "project-a", "value": "project-a.nix"}],
         ),
         expected_generation=project_a.projection_generation,
     )
@@ -130,3 +137,33 @@ async def test_project_switch_fences_stale_pure_symbolic_dialogue_context(tmp_pa
 
     assert generation == switched.projection_generation
     assert context_term == "[]"
+
+    project_b_backend = PureSymbolicRuntimeBackend(projection_adapter=adapter)
+    await project_b_backend.start()
+    try:
+        next_turn = await project_b_backend.submit_turn(
+            "hello",
+            turn_id="turn-project-b",
+            conversation_id=conversation.id,
+        )
+        assert next_turn.metadata["providers_enabled"] is False
+        assert next_turn.metadata["max_model_calls"] == 0
+        assert next_turn.metadata["provider_calls"] == 0
+        assert next_turn.metadata["model_calls"] == 0
+        project_b_backend.commit_turn_result(
+            next_turn,
+            turn_id="turn-project-b",
+            conversation_id=conversation.id,
+        )
+    finally:
+        await project_b_backend.stop()
+
+    project_b = store.load_symbolic_projection(conversation.id)
+    assert project_b is not None
+    project_b.assert_pure_symbolic()
+    assert project_b.project_id == "project-b"
+    assert project_b.project_generation == switched.project_generation
+    assert "project_fact" not in project_b.dialogue_state
+    assert project_b.discourse_entities == []
+    assert project_b.expert_evidence == []
+    assert project_b.verified_facts == []
