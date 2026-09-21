@@ -26,7 +26,7 @@ from zara.runtime import events
 _COMPACT_SIZE = (680, 460)
 _EXPANDED_SIZE = (960, 680)
 _MINIMUM_SIZE = (480, 320)
-_THEME = "signal-cabin"
+_THEME = "outrun"
 
 _FIXTURES: tuple[tuple[str, str], ...] = (
     ("empty-compact", "copilot-empty-compact.png"),
