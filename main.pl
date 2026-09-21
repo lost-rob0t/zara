@@ -8,8 +8,6 @@
 :- use_module('kb/config').          % shared semantic configuration
 :- use_module('kb/device_providers'). % Linux device provider configuration (desktop only)
 :- use_module('kb/intents').
-:- use_module('kb/philosophy').
-:- use_module('kb/agent_profiles').
 :- use_module('modules/philosophy_expert').
 :- use_module('modules/agent_profiles').
 :- use_module('modules/config_loader').
