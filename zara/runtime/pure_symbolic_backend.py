@@ -25,7 +25,7 @@ PURE_SYMBOLIC_RENDER_ERROR = (
     "I couldn't render that symbolic response. No model or provider was used."
 )
 _MAX_CONTEXT_TERM_CHARS = 8192
-_DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\\(|$)")
+_DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\(|$)")
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,7 @@ def _bounded_context_term(value: object) -> str:
         raise ValueError(
             f"symbolic dialogue context must be 1..{_MAX_CONTEXT_TERM_CHARS} characters"
         )
-    if "\\x00" in value:
+    if "\x00" in value:
         raise ValueError("symbolic dialogue context must not contain NUL")
     return value
 
