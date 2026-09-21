@@ -570,8 +570,8 @@ QLabel#zaraConversationTitle,
 QLabel#zaraQuickTitle,
 QLabel#zaraTitle {{
     color: {colors["text"]};
-    font-family: "Nimbus Sans Narrow";
-    font-size: 23px;
+    font-family: "Adwaita Sans";
+    font-size: 20px;
     font-weight: 700;
 }}
 
@@ -623,9 +623,9 @@ QWidget#zaraConversationSidebar {{
 }}
 
 QWidget#zaraConversationHistoryPanel {{
-    background: {colors["panel_deep"]};
-    border: none;
-    border-radius: 16px;
+    background: {colors["panel"]};
+    border: 1px solid {colors["line"]};
+    border-radius: 20px;
 }}
 
 QLineEdit,
@@ -700,6 +700,12 @@ QListWidget#zaraFactList::item:selected {{
     background: {colors["primary_deep"]};
 }}
 
+QScrollArea#zaraThemeStrip,
+QScrollArea#zaraThemeStrip > QWidget > QWidget {{
+    background: transparent;
+    border: none;
+}}
+
 QScrollArea#zaraConversationViewport,
 QScrollArea#zaraConversationViewport > QWidget > QWidget {{
     background: transparent;
@@ -739,6 +745,7 @@ QFrame#zaraMessageBubble[messageRole="system"] {{
 QFrame#zaraMessageBubble[messageKind="activity"] {{
     background: {colors["panel_deep"]};
     border: 1px solid {colors["line"]};
+    border-left: 3px solid {colors["primary"]};
     border-radius: 12px;
 }}
 
@@ -787,7 +794,7 @@ QPlainTextEdit#zaraCodeEditor {{
 }}
 
 QFrame#zaraComposerShell {{
-    background: {colors["panel_lift"]};
+    background: {colors["panel_deep"]};
     border: 1px solid {colors["line"]};
     border-radius: 20px;
 }}
@@ -808,20 +815,20 @@ QFrame#zaraConversationEmptyState {{
 
 QLabel#zaraEmptyStateTitle {{
     color: {colors["text"]};
-    font-family: "Nimbus Sans Narrow";
-    font-size: 26px;
+    font-family: "Adwaita Sans";
+    font-size: 24px;
     font-weight: 700;
 }}
 
 QLabel#zaraEmptyStateDetail {{ color: {colors["text_muted"]}; }}
 
 QPushButton {{
-    min-height: 34px;
-    padding: 0 13px;
+    min-height: 36px;
+    padding: 0 14px;
     color: {colors["text"]};
     background: {colors["panel_lift"]};
     border: 1px solid {colors["line_strong"]};
-    border-radius: 9px;
+    border-radius: 12px;
     font-weight: 600;
 }}
 
