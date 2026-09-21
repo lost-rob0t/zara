@@ -87,6 +87,11 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
         } <= set(window.setting_widgets)
         assert len(window.setting_widgets) >= 20
         assert [button.theme_key for button in window.theme_buttons] == [
+            "outrun",
+            "starintel",
+            "midnight",
+            "terminal",
+            "light",
             "signal-cabin",
             "dotfiles-outrun",
             "nord",
@@ -129,7 +134,7 @@ def test_theme_previews_keep_a_complete_card_height(tmp_path):
         apply_desktop_theme(qt_app, "dotfiles-outrun")
         qt_app.processEvents()
 
-        assert len(window.theme_buttons) == 5
+        assert len(window.theme_buttons) == 10
         assert all(button.height() >= 72 for button in window.theme_buttons)
         assert window.theme_buttons[0].parentWidget().height() >= 80
     finally:
@@ -183,7 +188,7 @@ def test_config_source_editor_validates_and_saves_actual_toml(tmp_path):
     window, config_path, _, _ = make_window(tmp_path)
     try:
         assert window.config_editor.toPlainText() == config_path.read_text(encoding="utf-8")
-        window.config_editor.setPlainText(window.config_editor.toPlainText().replace('theme = "signal-cabin"', 'theme = "nord"'))
+        window.config_editor.setPlainText(window.config_editor.toPlainText().replace('theme = "outrun"', 'theme = "nord"'))
         window.save_config_source()
         assert 'theme = "nord"' in config_path.read_text(encoding="utf-8")
         assert window.feedback_label.text() == "config.toml saved. Restart Zara to apply runtime changes."
