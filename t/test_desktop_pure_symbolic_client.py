@@ -34,11 +34,15 @@ def test_default_desktop_client_selects_in_process_pure_symbolic_backend(monkeyp
         ),
     )
 
-    client = desktop_app._default_desktop_client(config)
+    expected_store = object()
+    client = desktop_app._default_desktop_client(
+        config,
+        conversation_store=expected_store,
+    )
 
     assert client is expected_client
-    assert seen == {
-        "backend_factory": PureSymbolicRuntimeBackend,
-        "config": config,
-    }
+    assert seen["config"] is config
+    backend = seen["backend_factory"]()
+    assert isinstance(backend, PureSymbolicRuntimeBackend)
+    assert backend._projection_store is expected_store
     assert config.get("agent", "backend", "missing") == "langgraph"
