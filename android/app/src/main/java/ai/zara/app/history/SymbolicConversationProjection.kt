@@ -451,7 +451,7 @@ internal object SymbolicProjectionContract {
             }
             if (proposed.dialogueAct == "verified") {
                 check(
-                    proposed.verifiedOutcomeRefs.any { reference ->
+                    freshVerifiedOutcomeRefs.any { reference ->
                         verifiedOutcomeRuntimeGeneration(reference) == proposed.runtimeGeneration
                     }
                 ) {
