@@ -11,13 +11,13 @@ class SymbolicVerifiedOutcomeFreshnessTest {
             generation = 1,
             runtimeGeneration = 7,
             turnId = "turn-7",
-            receipt = STALE_RECEIPT,
+            receipts = listOf(STALE_RECEIPT),
         )
         val proposed = projection(
             generation = 2,
             runtimeGeneration = 8,
             turnId = "turn-8",
-            receipt = STALE_RECEIPT,
+            receipts = listOf(STALE_RECEIPT),
         )
 
         try {
@@ -33,29 +33,30 @@ class SymbolicVerifiedOutcomeFreshnessTest {
     }
 
     @Test
-    fun `new verified turn accepts fresh postcondition receipt`() {
+    fun `new verified turn accepts fresh receipt without dropping history`() {
         val current = projection(
             generation = 1,
             runtimeGeneration = 7,
             turnId = "turn-7",
-            receipt = STALE_RECEIPT,
+            receipts = listOf(STALE_RECEIPT),
         )
         val proposed = projection(
             generation = 2,
             runtimeGeneration = 8,
             turnId = "turn-8",
-            receipt = FRESH_RECEIPT,
+            receipts = listOf(STALE_RECEIPT, FRESH_RECEIPT),
         )
 
         SymbolicProjectionContract.validateWrite(current, proposed, expectedGeneration = 1)
         proposed.assertPureSymbolic()
+        assertTrue(proposed.verifiedOutcomeRefs == listOf(STALE_RECEIPT, FRESH_RECEIPT))
     }
 
     private fun projection(
         generation: Long,
         runtimeGeneration: Long,
         turnId: String,
-        receipt: String,
+        receipts: List<String>,
     ) = SymbolicConversationProjection(
         conversationId = "conv-verified-freshness",
         projectionGeneration = generation,
@@ -64,7 +65,7 @@ class SymbolicVerifiedOutcomeFreshnessTest {
         outcome = "success",
         dialogueAct = "verified",
         dialogueStateJson = "{\"act\":\"verified\"}",
-        verifiedOutcomeRefs = listOf(receipt),
+        verifiedOutcomeRefs = receipts,
         rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
         maxModelCalls = 0,
