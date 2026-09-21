@@ -144,6 +144,7 @@ def inspect_pure_symbolic_database(device: Device, output: Path) -> dict[str, ob
                 "How long should I set the timer for?",
                 "capability-checked execution",
                 "welcome",
+                "handle that symbolically yet",
             )
             for fragment in required_fragments:
                 if not any(fragment.lower() in content.lower() for content in contents):
@@ -209,6 +210,11 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
 
     device.recreate()
     device.await_contains("welcome", timeout=30.0)
+    send_chat(device, "frobnicate the moon", "handle that symbolically yet")
+    device.capture("pure-symbolic-unsupported-no-fallback")
+
+    device.recreate()
+    device.await_contains("handle that symbolically yet", timeout=30.0)
     device.capture("pure-symbolic-final-recreated")
 
     return inspect_pure_symbolic_database(device, output)
