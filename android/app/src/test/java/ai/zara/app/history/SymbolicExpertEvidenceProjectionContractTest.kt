@@ -13,6 +13,15 @@ class SymbolicExpertEvidenceProjectionContractTest {
     }
 
     @Test
+    fun `persistence payload rejects expert answer without canonical expert evidence`() {
+        assertFailsWithMessage("expert_answer projection requires expert evidence") {
+            SymbolicProjectionContract.validatePayload(
+                projection(expertEvidenceJson = "[]"),
+            )
+        }
+    }
+
+    @Test
     fun `expert answer with canonical evidence remains valid`() {
         projection(
             expertEvidenceJson = "[{\"ref\":\"expert:dotfiles:1\"}]",
