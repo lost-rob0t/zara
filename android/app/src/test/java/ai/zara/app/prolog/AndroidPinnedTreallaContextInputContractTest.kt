@@ -7,7 +7,7 @@ import org.junit.Test
 
 class AndroidPinnedTreallaContextInputContractTest {
     @Test
-    fun persistedDialogueContextDoesNotFeedAStringDirectlyToPinnedReadTermFromAtom() {
+    fun persistedDialogueContextBridgesStringDataToPinnedTreallaAtomInput() {
         val context =
             "partial_frame(frame(intent(ns(device),name('timer.set')),[],missing([duration])),[duration])"
         val query = AndroidPureSymbolicConversationFactory.dialogueTurnEnvelopeQuery(
@@ -20,8 +20,12 @@ class AndroidPinnedTreallaContextInputContractTest {
             Regex("read_term_from_atom\\(\\\"").containsMatchIn(query),
         )
         assertTrue(
-            "the canonical persisted-context parser must remain on read_term_from_atom/3 rather than bypassing the shape fence",
-            query.contains("read_term_from_atom("),
+            "persisted context must cross the existing atom_string/2 compatibility bridge before the pinned Trealla parser",
+            query.contains("atom_string(Context0Atom, "),
+        )
+        assertTrue(
+            "read_term_from_atom/3 must consume the bridged atom, not the durable string literal directly",
+            query.contains("read_term_from_atom(Context0Atom, Context0, [])"),
         )
         assertTrue(query.contains("symbolic_dialogue_turn:valid_dialogue_context(Context0)"))
         assertTrue(query.contains("symbolic_dialogue_turn:valid_dialogue_context(Context1)"))
