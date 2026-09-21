@@ -149,6 +149,8 @@ why_reference([why]).
 why_reference([why, though]).
 why_reference([why, is, that]).
 why_reference([why, is, it]).
+why_reference([why, did, you, do, that]).
+why_reference([why, did, you, do, it]).
 
 repeat_reference([it]).
 repeat_reference([that]).
