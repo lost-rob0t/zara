@@ -2,3 +2,42 @@
 - Consumed issue :: #1396
 - Branch :: =rage/1396-accepted-before-events=
 - RAGE start commit :: =af7185ee48def384783002332262412e9674343e=
+
+* Iteration 1
+
+** Research
+- Operator Diagnostics/2 export (10:39Z): submit -> protocol.unexpected_message
+  "expected turn.accepted" -> disconnect -> reconnect (gen 1->2->3) loop.
+  #1299/#1301 fencing + typed telemetry behaved correctly.
+- Server: RuntimeHost._submit_turn publishes TurnStarted before the submit
+  future resolves (zara/runtime/host.py:730); transport sent turn.accepted
+  from the completion callback through the per-route outbound FIFO
+  (zmq_transport.py completed()), while the event drain sent directly from
+  the poller thread (zmq_transport.py _send). Fast symbolic turns put events
+  on the wire first -> client rejects out-of-order frames.
+
+** Design (Auto-RAGE decision)
+Transport-local ordering (option a); rejected host-side immediate-accept
+(option b) because the host already accepts at start - execution is a
+background task - and the defect is purely wire serialization:
+1. Hold turn-scoped runtime events per (principal, turn_id) when the route
+   is unknown or the accepted reply is awaiting flush (bounded 64x128,
+   drop-oldest; replaces the silent drop of pre-registration events).
+2. Flush buffered events through the same per-route FIFO strictly after
+   turn.accepted; conversation-fallback and non-turn events unchanged.
+3. Turn-scoped events enqueue via _enqueue_outbound (never direct _send)
+   so they cannot overtake a queued accepted reply.
+
+** RED/GREEN
+- RED deterministic: turn.started overtook turn.accepted
+  (t/test_zmq_turn_accept_ordering.py).
+- GREEN: ordering test stable 5/5; full transport/voice suite 74 passed.
+- First implementation over-buffered conversation-fallback events
+  (two-routes + reconnect-idempotency tests caught it); corrected to
+  buffer only unroutable/awaiting turn events.
+
+** Deployment + gate
+- Dotfiles pin bumped to 629344a8 (local commit 619c8fcf lineage), home
+  built + activated on flake; zara-server + zara-pair green.
+- PR :: https://github.com/lost-rob0t/zara/pull/1397 (exact head =629344a8=)
+- Exact-head CI pending; merge on green.
