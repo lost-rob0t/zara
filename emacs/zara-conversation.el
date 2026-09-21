@@ -33,6 +33,7 @@ conversation after Emacs restarts.  Emacs persists no parallel transcript."
 
 (defconst zara-conversation--identifier-limit 128)
 (defconst zara-conversation--context-limit 32)
+(defconst zara-conversation--replay-version "ZARA-CONVERSATION-REPLAY/1")
 
 (defvar-local zara-conversation-id nil)
 (defvar-local zara-conversation-context-ids nil)
@@ -99,6 +100,123 @@ conversation after Emacs restarts.  Emacs persists no parallel transcript."
    (zara-conversation--endpoint-arguments)
    (list "--cancel-turn"
          (zara-conversation--validate-id turn-id "turn id"))))
+
+(defun zara-conversation--replay-arguments (conversation-id)
+  "Return local canonical replay arguments for CONVERSATION-ID."
+  (list "--replay-conversation"
+        (zara-conversation--validate-id conversation-id "conversation id")))
+
+(defun zara-conversation--replay-required-string (object key label)
+  "Return string KEY from replay OBJECT or signal an error using LABEL."
+  (let ((value (gethash key object :missing)))
+    (unless (stringp value)
+      (error "replay %s must be a string" label))
+    value))
+
+(defun zara-conversation--validate-replay-message (message previous-sequence)
+  "Validate replay MESSAGE after PREVIOUS-SEQUENCE and return its sequence."
+  (unless (hash-table-p message)
+    (error "replay message must be a JSON object"))
+  (let ((sequence (gethash "sequence" message :missing))
+        (role (gethash "role" message :missing))
+        (content (gethash "content" message :missing))
+        (status (gethash "status" message :missing))
+        (turn-id (gethash "turn_id" message :missing))
+        (error-text (gethash "error" message :missing))
+        (tool-run-id (gethash "tool_run_id" message :missing)))
+    (unless (and (integerp sequence) (> sequence 0))
+      (error "replay message sequence must be a positive integer"))
+    (when (and previous-sequence (<= sequence previous-sequence))
+      (error "replay message sequence must be strictly increasing"))
+    (unless (member role '("user" "assistant" "system" "tool"))
+      (error "replay message role is invalid"))
+    (unless (stringp content)
+      (error "replay message content must be a string"))
+    (unless (member status '("pending" "streaming" "complete" "error" "cancelled"))
+      (error "replay message status is invalid"))
+    (unless (or (eq turn-id :null) (stringp turn-id))
+      (error "replay message turn_id must be null or a string"))
+    (unless (stringp error-text)
+      (error "replay message error must be a string"))
+    (unless (or (eq tool-run-id :null) (stringp tool-run-id))
+      (error "replay message tool_run_id must be null or a string"))
+    sequence))
+
+(defun zara-conversation--parse-replay (text expected-conversation-id)
+  "Parse replay TEXT and require EXPECTED-CONVERSATION-ID."
+  (let* ((payload
+          (json-parse-string
+           text
+           :object-type 'hash-table
+           :array-type 'list
+           :null-object :null
+           :false-object :false))
+         (expected
+          (zara-conversation--validate-id
+           expected-conversation-id "conversation id")))
+    (unless (hash-table-p payload)
+      (error "replay payload must be a JSON object"))
+    (unless (equal (gethash "version" payload) zara-conversation--replay-version)
+      (error "unsupported conversation replay version"))
+    (let ((conversation (gethash "conversation" payload :missing))
+          (messages (gethash "messages" payload :missing)))
+      (unless (hash-table-p conversation)
+        (error "replay conversation must be a JSON object"))
+      (unless (string=
+               (zara-conversation--replay-required-string
+                conversation "id" "conversation id")
+               expected)
+        (error "replay conversation id mismatch"))
+      (zara-conversation--replay-required-string conversation "title" "title")
+      (zara-conversation--replay-required-string
+       conversation "created_at" "created_at")
+      (zara-conversation--replay-required-string
+       conversation "updated_at" "updated_at")
+      (unless (listp messages)
+        (error "replay messages must be a JSON array"))
+      (let ((previous nil))
+        (dolist (message messages)
+          (setq previous
+                (zara-conversation--validate-replay-message message previous))))
+      payload)))
+
+(defun zara-conversation--replay-speaker (role status)
+  "Return presentation speaker for replay ROLE and STATUS."
+  (let ((speaker
+         (pcase role
+           ("user" "You")
+           ("assistant" "Zara")
+           ("system" "Zara · system")
+           ("tool" "Zara · tool")
+           (_ (error "replay message role is invalid")))))
+    (if (string= status "complete")
+        speaker
+      (format "%s · %s" speaker status))))
+
+(defun zara-conversation--render-replay (payload)
+  "Replace the current chat presentation with canonical replay PAYLOAD."
+  (let* ((conversation (gethash "conversation" payload))
+         (conversation-id (gethash "id" conversation))
+         (title (gethash "title" conversation))
+         (messages (gethash "messages" payload)))
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert (propertize "Zara\n" 'face '(:height 1.5 :weight bold)))
+      (insert (format "Canonical conversation %s · %s\n\n"
+                      conversation-id title)))
+    (dolist (message messages)
+      (let* ((role (gethash "role" message))
+             (status (gethash "status" message))
+             (content (gethash "content" message))
+             (error-text (gethash "error" message))
+             (rendered
+              (if (string-empty-p error-text)
+                  content
+                (concat content "\n[" error-text "]"))))
+        (zara-chat--insert
+         (zara-conversation--replay-speaker role status)
+         rendered)))
+    (goto-char (point-max))))
 
 (defun zara-conversation--current-generation-p (process)
   "Return non-nil when PROCESS still owns the target presentation generation."
@@ -461,6 +579,36 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
   zara-conversation-id)
 
 ;;;###autoload
+(defun zara-conversation-replay ()
+  "Reload current durable conversation history into the Emacs presentation.
+
+The CLI reads Zara's canonical conversation store directly.  Emacs receives a
+strict JSON projection and persists no parallel transcript or conversation
+state of its own."
+  (interactive)
+  (when zara-chat--busy
+    (user-error "Cancel or finish the active Zara turn before replaying"))
+  (let* ((target (current-buffer))
+         (conversation-id (zara-conversation--current-id))
+         (program (zara--program))
+         (arguments (zara-conversation--replay-arguments conversation-id))
+         payload)
+    (with-temp-buffer
+      (let ((status (apply #'process-file program nil t nil arguments)))
+        (unless (and (integerp status) (zerop status))
+          (user-error "Zara conversation replay failed with exit status %s" status))
+        (setq payload
+              (zara-conversation--parse-replay
+               (buffer-string) conversation-id))))
+    (when (buffer-live-p target)
+      (with-current-buffer target
+        (zara-conversation--render-replay payload)
+        (when (fboundp 'zara-conversation-symbolic--adopt-replay-payload)
+          (zara-conversation-symbolic--adopt-replay-payload
+           payload conversation-id))))
+    payload))
+
+;;;###autoload
 (defun zara-conversation-status ()
   "Return and optionally display current canonical conversation state."
   (interactive)
@@ -487,6 +635,7 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
     (define-key map (kbd "C-c C-k") #'zara-conversation-cancel)
     (define-key map (kbd "C-c C-s") #'zara-conversation-status)
     (define-key map (kbd "C-c C-c") #'zara-conversation-switch)
+    (define-key map (kbd "C-c C-r") #'zara-conversation-replay)
     map)
   "Keymap for `zara-conversation-mode'.")
 

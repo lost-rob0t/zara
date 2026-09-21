@@ -5,10 +5,14 @@ on:
     paths:
       - "emacs/zara.el"
       - "emacs/zara-conversation.el"
+      - "emacs/zara-conversation-symbolic.el"
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
       - "emacs/zara-conversation-strict-test.el"
       - "emacs/zara-conversation-context-test.el"
+      - "emacs/zara-conversation-replay-test.el"
+      - "emacs/zara-conversation-symbolic-replay-test.el"
+      - "emacs/zara-conversation-unified-replay-test.el"
       - ".github/workflows/emacs-conversation.yml"
   push:
     branches:
@@ -16,10 +20,14 @@ on:
     paths:
       - "emacs/zara.el"
       - "emacs/zara-conversation.el"
+      - "emacs/zara-conversation-symbolic.el"
       - "emacs/zara-conversation-test.el"
       - "emacs/zara-conversation-recovery-test.el"
       - "emacs/zara-conversation-strict-test.el"
       - "emacs/zara-conversation-context-test.el"
+      - "emacs/zara-conversation-replay-test.el"
+      - "emacs/zara-conversation-symbolic-replay-test.el"
+      - "emacs/zara-conversation-unified-replay-test.el"
       - ".github/workflows/emacs-conversation.yml"
 
 permissions:
@@ -43,4 +51,7 @@ jobs:
             -L emacs \
             -l emacs/zara-conversation-strict-test.el \
             -l emacs/zara-conversation-context-test.el \
+            -l emacs/zara-conversation-replay-test.el \
+            -l emacs/zara-conversation-symbolic-replay-test.el \
+            -l emacs/zara-conversation-unified-replay-test.el \
             -f ert-run-tests-batch-and-exit
