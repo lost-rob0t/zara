@@ -124,6 +124,58 @@ class SymbolicVerifiedOutcomeFreshnessTest {
         }
     }
 
+    @Test
+    fun `same turn verified promotion rejects reused current generation v2 evidence`() {
+        val existing = v2Receipt(8, 1)
+        val pending = projection(
+            generation = 1,
+            runtimeGeneration = 8,
+            turnId = "turn-8",
+            receipts = listOf(existing),
+            outcome = "pending",
+            dialogueAct = "pending",
+        )
+        SymbolicProjectionContract.validateWrite(null, pending, expectedGeneration = 0)
+        val verified = projection(
+            generation = 2,
+            runtimeGeneration = 8,
+            turnId = "turn-8",
+            receipts = listOf(existing),
+        )
+
+        assertRejected("verified projection requires fresh outcome evidence") {
+            SymbolicProjectionContract.validateWrite(pending, verified, expectedGeneration = 1)
+        }
+    }
+
+    @Test
+    fun `same turn verified promotion accepts new current generation v2 evidence`() {
+        val existing = v2Receipt(8, 1)
+        val fresh = v2Receipt(8, 2)
+        val pending = projection(
+            generation = 1,
+            runtimeGeneration = 8,
+            turnId = "turn-8",
+            receipts = listOf(existing),
+            outcome = "pending",
+            dialogueAct = "pending",
+        )
+        SymbolicProjectionContract.validateWrite(null, pending, expectedGeneration = 0)
+        val verified = projection(
+            generation = 2,
+            runtimeGeneration = 8,
+            turnId = "turn-8",
+            receipts = listOf(existing, fresh),
+        )
+
+        SymbolicProjectionContract.validateWrite(pending, verified, expectedGeneration = 1)
+        verified.assertPureSymbolic()
+        assertTrue(verified.verifiedOutcomeRefs == listOf(existing, fresh))
+        assertTrue(verified.maxModelCalls == 0L)
+        assertTrue(verified.providerCalls == 0L)
+        assertTrue(verified.modelCalls == 0L)
+    }
+
     private fun projection(
         generation: Long,
         runtimeGeneration: Long,

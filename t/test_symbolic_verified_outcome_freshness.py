@@ -227,3 +227,78 @@ def test_same_turn_verified_promotion_requires_current_generation_v2_evidence(tm
             ),
             expected_generation=pending.projection_generation,
         )
+
+
+def test_same_turn_verified_promotion_rejects_reused_current_generation_v2_evidence(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "verified-freshness-same-turn-reuse.db"))
+    conversation = store.create_conversation(
+        "Same turn current-generation receipt reuse",
+        conversation_id="conv-verified-freshness-same-turn-reuse",
+    )
+    existing = _v2_receipt(8, 1)
+    pending = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=1,
+            runtime_generation=8,
+            turn_id="turn-8",
+            receipts=[existing],
+            outcome="pending",
+            dialogue_act="pending",
+        ),
+        expected_generation=0,
+    )
+
+    with pytest.raises(RuntimeError, match="verified projection requires fresh outcome evidence"):
+        store.save_symbolic_projection(
+            replace(
+                pending,
+                projection_generation=2,
+                outcome="success",
+                dialogue_act="verified",
+                dialogue_state={"act": "verified"},
+                updated_at="",
+            ),
+            expected_generation=pending.projection_generation,
+        )
+
+
+def test_same_turn_verified_promotion_accepts_new_current_generation_v2_evidence(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "verified-freshness-same-turn-new.db"))
+    conversation = store.create_conversation(
+        "Same turn fresh current-generation receipt",
+        conversation_id="conv-verified-freshness-same-turn-new",
+    )
+    existing = _v2_receipt(8, 1)
+    fresh = _v2_receipt(8, 2)
+    pending = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=1,
+            runtime_generation=8,
+            turn_id="turn-8",
+            receipts=[existing],
+            outcome="pending",
+            dialogue_act="pending",
+        ),
+        expected_generation=0,
+    )
+
+    verified = store.save_symbolic_projection(
+        replace(
+            pending,
+            projection_generation=2,
+            outcome="success",
+            dialogue_act="verified",
+            dialogue_state={"act": "verified"},
+            verified_outcome_refs=[existing, fresh],
+            updated_at="",
+        ),
+        expected_generation=pending.projection_generation,
+    )
+
+    verified.assert_pure_symbolic()
+    assert verified.verified_outcome_refs == [existing, fresh]
+    assert verified.max_model_calls == 0
+    assert verified.provider_calls == 0
+    assert verified.model_calls == 0
