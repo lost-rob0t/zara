@@ -472,6 +472,8 @@ class SettingsWindow(QWidget):
         self._line_setting(form, "stt.model", "Speech model", "small")
         self._combo_setting(form, "stt.device", "Speech device", [("CPU", "cpu"), ("CUDA", "cuda"), ("Vulkan", "vulkan")], "cpu")
         self._combo_setting(form, "tts.provider", "Voice provider", [("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")], "qwen3")
+        self._line_setting(form, "tts.endpoint", "Voice endpoint", "http://localhost:7860")
+        self._line_setting(form, "tts.voice", "Default voice", "zara")
         self._check_setting(form, "wake.acknowledgement.enabled", "Immediate acknowledgement", True)
         self._line_setting(form, "wake.acknowledgement.voice", "Acknowledgement voice", "en-US-AriaNeural")
         return page
@@ -484,6 +486,13 @@ class SettingsWindow(QWidget):
             ("tools.query_prolog", "Query Prolog", True),
             ("tools.remember", "Remember", True),
             ("tools.recall", "Recall", True),
+            ("tools.youtube_search", "YouTube search", True),
+            ("tools.voice_list", "Voice inventory", True),
+            ("tools.voice_plan", "Voice planning", True),
+            ("tools.voice_speak", "Voice speak", True),
+            ("tools.voice_narrate", "Multi-voice narration", True),
+            ("tools.voice_clone_from_youtube", "Authorized voice cloning", True),
+            ("tools.voice_delete", "Voice deletion", True),
             ("tools.file_tools", "File tools", False),
             ("memory.enabled", "Long-term memory", True),
             ("latency.enabled", "Latency metrics", True),
