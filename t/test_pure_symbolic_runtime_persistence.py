@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from zara.database import DatabaseManager
@@ -76,3 +78,55 @@ async def test_pure_symbolic_dialogue_context_survives_backend_restart(tmp_path)
     assert second_projection.max_model_calls == 0
     assert second_projection.provider_calls == 0
     assert second_projection.model_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_project_switch_fences_stale_pure_symbolic_dialogue_context(tmp_path) -> None:
+    """A new project must not inherit a clarification frame from the old project."""
+    store = ConversationStore(DatabaseManager(tmp_path / "symbolic-project-fence.db"))
+    conversation = store.create_conversation(
+        "Symbolic project fence",
+        conversation_id="conv-symbolic-project-fence",
+    )
+    adapter = PureSymbolicProjectionAdapter(store)
+    backend = PureSymbolicRuntimeBackend(projection_adapter=adapter)
+    await backend.start()
+    try:
+        first = await backend.submit_turn(
+            "timer",
+            turn_id="turn-project-a",
+            conversation_id=conversation.id,
+        )
+        backend.commit_turn_result(
+            first,
+            turn_id="turn-project-a",
+            conversation_id=conversation.id,
+        )
+    finally:
+        await backend.stop()
+
+    project_a = store.load_symbolic_projection(conversation.id)
+    assert project_a is not None
+    project_a.assert_pure_symbolic()
+    assert "partial_frame" in project_a.dialogue_state["prolog_context_term"]
+
+    switched = store.save_symbolic_projection(
+        replace(
+            project_a,
+            projection_generation=project_a.projection_generation + 1,
+            runtime_generation=project_a.runtime_generation + 1,
+            turn_id="turn-project-switch",
+            outcome="cancelled",
+            project_id="project-b",
+            project_generation=project_a.project_generation + 1,
+            dialogue_act="cancelled",
+        ),
+        expected_generation=project_a.projection_generation,
+    )
+    switched.assert_pure_symbolic()
+    assert "partial_frame" in switched.dialogue_state["prolog_context_term"]
+
+    context_term, generation = adapter.load_dialogue_context(conversation.id)
+
+    assert generation == switched.projection_generation
+    assert context_term == "[]"
