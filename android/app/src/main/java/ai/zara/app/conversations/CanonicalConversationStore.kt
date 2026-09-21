@@ -172,16 +172,30 @@ class CanonicalConversationStore(
     ): ConversationState {
         val id = requireConversation(conversationId)
         val response = normalizeText(assistantText, "Assistant text", allowBlank = true)
-        val pending = history.loadMessages(id).lastOrNull {
+        val messages = history.loadMessages(id)
+        val pending = messages.lastOrNull {
             it.role == HistoryMessageRole.Assistant && it.status.isRunning()
-        } ?: error("Conversation has no running turn")
-        history.saveMessage(
-            pending.copy(
-                content = response,
-                status = if (success) HistoryMessageStatus.Complete else HistoryMessageStatus.Error,
-                error = if (success) "" else response,
+        }
+        if (pending != null) {
+            history.saveMessage(
+                pending.copy(
+                    content = response,
+                    status = if (success) HistoryMessageStatus.Complete else HistoryMessageStatus.Error,
+                    error = if (success) "" else response,
+                )
             )
-        )
+        } else {
+            val terminal = messages.lastOrNull { it.role == HistoryMessageRole.Assistant }
+                ?: error("Conversation has no assistant turn")
+            val expectedStatus = if (success) {
+                HistoryMessageStatus.Complete
+            } else {
+                HistoryMessageStatus.Error
+            }
+            check(terminal.status == expectedStatus && terminal.content == response) {
+                "Conversation has no matching running or terminal turn"
+            }
+        }
         val cleanRemoteId = normalizeOptionalId(remoteConversationId, MAX_ID_CHARS, "Remote conversation id")
         if (cleanRemoteId != null) {
             updateMetadata(id) { it.copy(remoteConversationId = cleanRemoteId) }
