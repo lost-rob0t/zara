@@ -106,11 +106,11 @@ def test_full_legacy_window_cuts_over_to_generation_bound_v2_and_survives_restar
     assert advanced.model_calls == 0
 
 
-def test_v2_cutover_rejects_retired_legacy_and_generation_replay(tmp_path):
-    store = ConversationStore(DatabaseManager(tmp_path / "verified-v2-replay.db"))
+def test_v2_cutover_rejects_retired_legacy_receipt(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "verified-v2-legacy-replay.db"))
     conversation = store.create_conversation(
-        "Verified v2 replay fence",
-        conversation_id="conv-verified-v2-replay",
+        "Verified v2 legacy replay fence",
+        conversation_id="conv-verified-v2-legacy-replay",
     )
     legacy = [_legacy_receipt(index) for index in range(1, _WINDOW + 1)]
     current = store.save_symbolic_projection(
@@ -123,14 +123,13 @@ def test_v2_cutover_rejects_retired_legacy_and_generation_replay(tmp_path):
         ),
         expected_generation=0,
     )
-    cutover_receipt = _v2_receipt(2, _WINDOW + 1)
     cutover = store.save_symbolic_projection(
         _projection(
             conversation.id,
             projection_generation=2,
             runtime_generation=2,
             turn_id="turn-65",
-            receipts=legacy[1:] + [cutover_receipt],
+            receipts=legacy[1:] + [_v2_receipt(2, _WINDOW + 1)],
         ),
         expected_generation=current.projection_generation,
     )
@@ -148,30 +147,45 @@ def test_v2_cutover_rejects_retired_legacy_and_generation_replay(tmp_path):
             expected_generation=cutover.projection_generation,
         )
 
-    next_receipt = _v2_receipt(3, _WINDOW + 2)
-    advanced = store.save_symbolic_projection(
-        replace(
-            cutover,
-            projection_generation=3,
-            runtime_generation=3,
-            turn_id="turn-66",
-            verified_outcome_refs=cutover.verified_outcome_refs[1:] + [next_receipt],
-            updated_at="",
+
+def test_retired_v2_receipt_cannot_reenter_as_fresh(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "verified-v2-generation-replay.db"))
+    conversation = store.create_conversation(
+        "Verified v2 generation replay fence",
+        conversation_id="conv-verified-v2-generation-replay",
+    )
+    initial = [_v2_receipt(index, index) for index in range(1, _WINDOW + 1)]
+    current = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            projection_generation=1,
+            runtime_generation=_WINDOW,
+            turn_id="turn-64",
+            receipts=initial,
         ),
-        expected_generation=cutover.projection_generation,
+        expected_generation=0,
+    )
+    compacted = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            projection_generation=2,
+            runtime_generation=_WINDOW + 1,
+            turn_id="turn-65",
+            receipts=initial[1:] + [_v2_receipt(_WINDOW + 1, _WINDOW + 1)],
+        ),
+        expected_generation=current.projection_generation,
     )
 
     with pytest.raises(RuntimeError, match="retired verified outcome replay rejected"):
         store.save_symbolic_projection(
-            replace(
-                advanced,
-                projection_generation=4,
-                runtime_generation=4,
-                turn_id="turn-67-v2-replay",
-                verified_outcome_refs=advanced.verified_outcome_refs[1:] + [cutover_receipt],
-                updated_at="",
+            _projection(
+                conversation.id,
+                projection_generation=3,
+                runtime_generation=_WINDOW + 2,
+                turn_id="turn-66-replay",
+                receipts=compacted.verified_outcome_refs[1:] + [initial[0]],
             ),
-            expected_generation=advanced.projection_generation,
+            expected_generation=compacted.projection_generation,
         )
 
 
