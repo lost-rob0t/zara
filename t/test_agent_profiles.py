@@ -1,6 +1,7 @@
 from langchain_core.tools import StructuredTool
 
 from zara.agent.profiles import AgentProfileResolver
+from zara.agent.tools.philosophy_tools import build_philosophy_tool
 from zara.agent.tools.registry import ToolRegistry
 
 
@@ -71,3 +72,27 @@ def test_scoped_registry_enforces_profile_tool_allowlist():
     assert [tool.name for tool in scoped.to_langchain_tools()] == ["read_file", "query_prolog"]
     assert scoped.get_tool("calculator") is None
     assert scoped.requires_approval("calculator") is False
+
+
+def test_philosophy_tool_uses_narrow_expert_predicate():
+    engine = FakeProlog(
+        {"Canonical": "virtue_ethics", "Summary": "Character matters."}
+    )
+    tool = build_philosophy_tool(engine)
+
+    result = tool.invoke({"mode": "concept", "subject": "virtue ethics"})
+
+    assert engine.goals == [
+        'philosophy_expert:concept_summary("virtue ethics", Canonical, Summary)'
+    ]
+    assert "Canonical: virtue_ethics" in result
+
+
+def test_philosophy_compare_requires_topic_and_second_philosopher():
+    engine = FakeProlog({})
+    tool = build_philosophy_tool(engine)
+
+    result = tool.invoke({"mode": "compare", "subject": "kant"})
+
+    assert "requires topic and other" in result
+    assert engine.goals == []
