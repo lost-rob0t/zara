@@ -62,6 +62,11 @@ data class DonationLedger(
                 throw DonationDocumentException("donation document must be an object")
             }
             val document = root.asJsonObject
+            rejectUnknown(
+                document,
+                setOf("version", "campaigns", "summary"),
+                "donation document",
+            )
             if (requiredString(document, "version", "version", 64) != DOCUMENT_VERSION) {
                 throw DonationDocumentException("version must be $DOCUMENT_VERSION")
             }
@@ -80,6 +85,19 @@ data class DonationLedger(
                 throw DonationDocumentException("campaign[$index] must be an object")
             }
             val value = element.asJsonObject
+            rejectUnknown(
+                value,
+                setOf(
+                    "id",
+                    "title",
+                    "goal_usd",
+                    "raised_usd",
+                    "remaining_usd",
+                    "active",
+                    "wallets",
+                ),
+                "campaign",
+            )
             val id = requiredString(value, "id", "campaign id", 64)
             if (!campaignId.matches(id)) {
                 throw DonationDocumentException(
@@ -111,6 +129,11 @@ data class DonationLedger(
                 )
             }
             val value = element.asJsonObject
+            rejectUnknown(
+                value,
+                setOf("chain", "network", "asset", "address", "label"),
+                "wallet",
+            )
             return DonationWallet(
                 chain = requiredString(value, "chain", "wallet chain", 40),
                 network = requiredString(value, "network", "wallet network", 40),
@@ -118,6 +141,19 @@ data class DonationLedger(
                 address = requiredString(value, "address", "wallet address", 256),
                 label = optionalString(value, "label", "wallet label", 80),
             )
+        }
+
+        private fun rejectUnknown(
+            value: JsonObject,
+            allowed: Set<String>,
+            label: String,
+        ) {
+            val unknown = value.keySet().filterNot(allowed::contains).sorted()
+            if (unknown.isNotEmpty()) {
+                throw DonationDocumentException(
+                    "$label contains unsupported fields: ${unknown.joinToString(", ")}",
+                )
+            }
         }
 
         private fun array(value: JsonObject, key: String): List<JsonElement> {
