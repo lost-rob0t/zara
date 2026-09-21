@@ -11,7 +11,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -51,7 +51,7 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
         )
         first.create()
         first.beginTurn(CONVERSATION_ID, "timer")
-        val oldTurnId = assertNotNull(first.runningTurnId(CONVERSATION_ID))
+        val oldTurnId = checkNotNull(first.runningTurnId(CONVERSATION_ID))
         firstHistory.close()
 
         val reopenedHistory = PortableConversationStore(context)
@@ -68,7 +68,7 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
             assertEquals(HistoryMessageStatus.Cancelled, interruptedOld.status)
 
             reopened.beginTurn(CONVERSATION_ID, "5 minutes")
-            val newTurnId = assertNotNull(reopened.runningTurnId(CONVERSATION_ID))
+            val newTurnId = checkNotNull(reopened.runningTurnId(CONVERSATION_ID))
             assertNotEquals(oldTurnId, newTurnId)
 
             val stale = runCatching {
@@ -109,7 +109,7 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
             }
             assertEquals(HistoryMessageStatus.Complete, newTerminal.status)
             assertEquals("new generation output", newTerminal.content)
-            assertEquals(null, reopened.runningTurnId(CONVERSATION_ID))
+            assertNull(reopened.runningTurnId(CONVERSATION_ID))
         } finally {
             reopenedHistory.close()
         }
