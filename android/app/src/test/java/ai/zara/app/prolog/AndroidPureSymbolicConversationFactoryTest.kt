@@ -13,8 +13,8 @@ class AndroidPureSymbolicConversationFactoryTest {
             "  set a timer for \"five\"\\minutes\nplease  ",
         )
 
-        assertTrue(query.contains("term_string(Context0, \"[]\")"))
-        assertFalse(query.contains("term_string(Context0, \"[]\", [quoted(true)])"))
+        assertTrue(query.contains("read_term_from_atom(\"[]\", Context0, [])"))
+        assertFalse(query.contains("term_string("))
         assertTrue(query.contains("symbolic_dialogue_turn:valid_dialogue_context(Context0)"))
         assertTrue(query.contains("symbolic_dialogue_turn:dialogue_turn("))
         assertTrue(query.contains("conversation, Context0, turn(_Frames, Act, Context1)"))
@@ -52,6 +52,14 @@ class AndroidPureSymbolicConversationFactoryTest {
         assertFalse(
             "internal natural-turn query must not use once/1 because the canonical bounded mobile query policy forbids it",
             query.contains("once("),
+        )
+        assertFalse(
+            "Android's pinned Trealla runtime does not provide term_string/2",
+            query.contains("term_string("),
+        )
+        assertTrue(
+            "persisted Context0 must cross the SWI/Trealla read_term_from_atom/3 boundary",
+            query.contains("read_term_from_atom("),
         )
         assertTrue(
             "ISO if-then-else must commit the router/renderer condition before Result enumeration",
