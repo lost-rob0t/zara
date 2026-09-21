@@ -357,7 +357,7 @@ class PrologHighlighter(QSyntaxHighlighter):
 
     CATEGORY_PROPERTY = int(QTextFormat.Property.UserProperty) + 1
 
-    def __init__(self, document: QTextDocument, theme_key: str = "signal-cabin") -> None:
+    def __init__(self, document: QTextDocument, theme_key: str = "outrun") -> None:
         super().__init__(document)
         self._patterns = [
             ("string", QRegularExpression(r'"(?:\\.|[^"\\])*"'), False),
