@@ -100,5 +100,24 @@
     (setq-local zara-chat--busy t)
     (should-error (zara-conversation-symbolic-inspect) :type 'user-error)))
 
+(ert-deftest zara-conversation-symbolic-switch-fences-stale-project-evidence ()
+  "Project/conversation switching cannot leak stale refs or symbolic evidence."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-context-ids '("context:flake.nix" "context:host"))
+    (setq-local zara-conversation-symbolic-projection
+                (zara-conversation-symbolic-inspect-test--projection))
+    (should (equal (zara-conversation-switch "emacs-project-b") "emacs-project-b"))
+    (should (equal zara-conversation-id "emacs-project-b"))
+    (should (null zara-conversation-context-ids))
+    (should (null zara-conversation-symbolic-projection))
+    (let ((status (zara-conversation-symbolic-status)))
+      (should (equal (plist-get status :conversation-id) "emacs-project-b"))
+      (should (null (plist-get status :expert-evidence)))
+      (should (null (plist-get status :dialogue-state)))
+      (should (null (plist-get status :provider-calls)))
+      (should (null (plist-get status :model-calls))))))
+
 (provide 'zara-conversation-symbolic-inspect-test)
 ;;; zara-conversation-symbolic-inspect-test.el ends here
