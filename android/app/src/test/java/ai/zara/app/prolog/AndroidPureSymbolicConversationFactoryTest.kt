@@ -13,7 +13,8 @@ class AndroidPureSymbolicConversationFactoryTest {
             "  set a timer for \"five\"\\minutes\nplease  ",
         )
 
-        assertTrue(query.contains("term_string(Context0, \"[]\", [quoted(true)])"))
+        assertTrue(query.contains("term_string(Context0, \"[]\")"))
+        assertFalse(query.contains("term_string(Context0, \"[]\", [quoted(true)])"))
         assertTrue(query.contains("symbolic_dialogue_turn:valid_dialogue_context(Context0)"))
         assertTrue(query.contains("symbolic_dialogue_turn:dialogue_turn("))
         assertTrue(query.contains("conversation, Context0, turn(_Frames, Act, Context1)"))
