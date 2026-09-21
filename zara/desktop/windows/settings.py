@@ -430,7 +430,7 @@ class SettingsWindow(QWidget):
             "desktop.theme",
             "Theme",
             [(definition.label, key) for key, definition in THEME_REGISTRY.items()],
-            "signal-cabin",
+            "outrun",
         )
         swatches = QWidget()
         swatches.setMinimumHeight(84)
@@ -518,7 +518,7 @@ class SettingsWindow(QWidget):
         self.prolog_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.prolog_highlighter = PrologHighlighter(
             self.prolog_editor.document(),
-            str(self._value("desktop.theme", "signal-cabin")),
+            str(self._value("desktop.theme", "outrun")),
         )
         self.save_prolog_button = QPushButton("Save source")
         self.save_prolog_button.setObjectName("zaraPrimaryAction")
