@@ -56,7 +56,8 @@
 (ert-deftest zara-conversation-symbolic-rejects-model-call-ledger-use ()
   "Pure-symbolic inspection refuses any model-call ledger activity."
   (let ((projection (zara-conversation-symbolic-inspect-test--projection)))
-    (puthash "max_model_calls" 1 projection)
+    ;; Keep max_model_calls at the valid pure-symbolic value so this regression
+    ;; can only pass by rejecting model_calls itself, not the budget first.
     (puthash "model_calls" 1 projection)
     (should-error
      (zara-conversation-symbolic--validate-projection projection))))
