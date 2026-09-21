@@ -476,8 +476,13 @@ def create_runtime_backend(config=None, *, semantic_first: bool = False) -> Runt
 
     def manager_factory():
         from zara.agent import AgentManager
+        from zara.prolog_engine import PrologEngine, locate_main_pl
 
-        return AgentManager(config=config)
+        prolog_engine = PrologEngine(main_file=locate_main_pl())
+        return AgentManager(
+            config=config,
+            prolog_engine=prolog_engine,
+        )
 
     return LangGraphRuntimeBackend(
         manager_factory,
