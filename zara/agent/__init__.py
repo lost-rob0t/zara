@@ -271,9 +271,10 @@ class AgentManager:
         logger.info("[AgentManager] user_input=%r", user_input)
         logger.info("[AgentManager] user_input_length=%d", len(user_input))
 
+        profile_resolver = getattr(self, "profile_resolver", None)
         selected_profile = (
-            self.profile_resolver.resolve(user_input)
-            if self.profile_resolver is not None
+            profile_resolver.resolve(user_input)
+            if profile_resolver is not None
             else None
         )
         effective_user_input = (
