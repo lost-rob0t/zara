@@ -296,7 +296,7 @@
                 # Create wrapper with correct Python interpreter and environment
                 makeWrapper ${pythonLibs}/bin/python3 $out/bin/${binaryName} \
                   --add-flags "${addFlags}" \
-                  --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv ] ++ extraPath)} \
+                  --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv pkgs.yt-dlp ] ++ extraPath)} \
                   --set PYTHONPATH $out/lib/python${if withProlog then ":$out/share/zarathushtra" else ""}:${pythonLibs}/${python.sitePackages} \
                   --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
                   ${if withProlog then "--set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl" else ""} \
