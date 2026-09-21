@@ -7,6 +7,7 @@ import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.SymbolicConversationProjection
 import ai.zara.app.history.SymbolicProjectScopeContract
 import ai.zara.app.history.completeSymbolicTurnAtomically
+import ai.zara.app.history.failSymbolicTurnBeforeProjection
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.history.saveSymbolicProjection
 import ai.zara.app.runtime.LocalQueryResult
@@ -51,7 +52,7 @@ internal object AndroidPureSymbolicConversationFactory {
                     projectionStore = projectionStore,
                     utterance = utterance,
                     conversationId = conversationId,
-                    requestedProjectId = projectIdForConversation(conversationId),
+                    requestedProjectId = { projectIdForConversation(conversationId) },
                 )
             },
         )
@@ -71,31 +72,64 @@ internal object AndroidPureSymbolicConversationFactory {
         projectionStore: PortableConversationStore,
         utterance: String,
         conversationId: String,
-        requestedProjectId: String?,
+        requestedProjectId: () -> String?,
     ): PureSymbolicResolution {
-        val current = projectionStore.loadSymbolicProjection(conversationId)
-        current?.assertPureSymbolic()
-        val projectScope = SymbolicProjectScopeContract.next(current, requestedProjectId)
-        val expectedGeneration = current?.projectionGeneration ?: 0L
-        val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
         val turnId = requireRunningTurnId(projectionStore, conversationId)
-        val pendingProjection = pendingProjection(
-            current = current,
-            conversationId = conversationId,
-            expectedGeneration = expectedGeneration,
-            context0 = context0,
-            turnId = turnId,
-            projectId = projectScope.projectId,
-            projectGeneration = projectScope.projectGeneration,
-        )
-        projectionStore.saveSymbolicProjection(
-            projection = pendingProjection,
-            expectedGeneration = expectedGeneration,
-        )
+        val prepared = try {
+            val current = projectionStore.loadSymbolicProjection(conversationId)
+            current?.assertPureSymbolic()
+            val projectScope = SymbolicProjectScopeContract.next(current, requestedProjectId())
+            val expectedGeneration = current?.projectionGeneration ?: 0L
+            val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
+            PreparedTurn(
+                current = current,
+                expectedGeneration = expectedGeneration,
+                context0 = context0,
+                projectId = projectScope.projectId,
+                projectGeneration = projectScope.projectGeneration,
+            )
+        } catch (error: Throwable) {
+            return PureSymbolicResolution(
+                turnId = turnId,
+                future = failBeforePendingProjection(
+                    projectionStore = projectionStore,
+                    conversationId = conversationId,
+                    turnId = turnId,
+                    error = error,
+                ),
+            )
+        }
+
+        val pendingProjection = try {
+            pendingProjection(
+                current = prepared.current,
+                conversationId = conversationId,
+                expectedGeneration = prepared.expectedGeneration,
+                context0 = prepared.context0,
+                turnId = turnId,
+                projectId = prepared.projectId,
+                projectGeneration = prepared.projectGeneration,
+            ).also { pending ->
+                projectionStore.saveSymbolicProjection(
+                    projection = pending,
+                    expectedGeneration = prepared.expectedGeneration,
+                )
+            }
+        } catch (error: Throwable) {
+            return PureSymbolicResolution(
+                turnId = turnId,
+                future = failBeforePendingProjection(
+                    projectionStore = projectionStore,
+                    conversationId = conversationId,
+                    turnId = turnId,
+                    error = error,
+                ),
+            )
+        }
         val pendingGeneration = pendingProjection.projectionGeneration
 
         val turnFuture = try {
-            session.queryLocalProlog(dialogueTurnEnvelopeQuery(utterance, context0))
+            session.queryLocalProlog(dialogueTurnEnvelopeQuery(utterance, prepared.context0))
         } catch (error: Throwable) {
             return PureSymbolicResolution(
                 turnId = turnId,
@@ -103,7 +137,7 @@ internal object AndroidPureSymbolicConversationFactory {
                     projectionStore = projectionStore,
                     pendingProjection = pendingProjection,
                     pendingGeneration = pendingGeneration,
-                    context0 = context0,
+                    context0 = prepared.context0,
                     error = error,
                 ),
             )
@@ -112,7 +146,7 @@ internal object AndroidPureSymbolicConversationFactory {
             projectionStore.completeSymbolicTurnAtomically(
                 projection = terminalProjection(
                     pending = pendingProjection,
-                    contextTerm = context0,
+                    contextTerm = prepared.context0,
                     outcome = "cancelled",
                 ),
                 expectedGeneration = pendingGeneration,
@@ -132,7 +166,7 @@ internal object AndroidPureSymbolicConversationFactory {
                     projectionStore = projectionStore,
                     pendingProjection = pendingProjection,
                     pendingGeneration = pendingGeneration,
-                    context0 = context0,
+                    context0 = prepared.context0,
                     error = failure,
                 )
                 return@whenComplete
@@ -143,7 +177,7 @@ internal object AndroidPureSymbolicConversationFactory {
                     projectionStore = projectionStore,
                     pendingProjection = pendingProjection,
                     pendingGeneration = pendingGeneration,
-                    context0 = context0,
+                    context0 = prepared.context0,
                     result = result,
                 )
                 return@whenComplete
@@ -172,13 +206,21 @@ internal object AndroidPureSymbolicConversationFactory {
                     projectionStore = projectionStore,
                     pendingProjection = pendingProjection,
                     pendingGeneration = pendingGeneration,
-                    context0 = context0,
+                    context0 = prepared.context0,
                     error = error,
                 )
             }
         }
         return PureSymbolicResolution(turnId = turnId, future = output)
     }
+
+    private data class PreparedTurn(
+        val current: SymbolicConversationProjection?,
+        val expectedGeneration: Long,
+        val context0: String,
+        val projectId: String?,
+        val projectGeneration: Long,
+    )
 
     private fun requireRunningTurnId(
         projectionStore: PortableConversationStore,
@@ -192,6 +234,23 @@ internal object AndroidPureSymbolicConversationFactory {
         return requireNotNull(assistant.turnId) {
             "Pure-symbolic running turn is missing canonical turn identity"
         }
+    }
+
+    private fun failBeforePendingProjection(
+        projectionStore: PortableConversationStore,
+        conversationId: String,
+        turnId: String,
+        error: Throwable,
+    ): CompletableFuture<LocalQueryResult> = try {
+        projectionStore.failSymbolicTurnBeforeProjection(
+            conversationId = conversationId,
+            turnId = turnId,
+            assistantContent = RUNTIME_FAILURE_TEXT,
+            assistantError = RUNTIME_FAILURE_TEXT,
+        )
+        CompletableFuture.failedFuture(error)
+    } catch (fenceError: Throwable) {
+        CompletableFuture.failedFuture(fenceError)
     }
 
     private fun failBeforeAsyncEvaluation(
