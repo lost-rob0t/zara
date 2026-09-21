@@ -55,6 +55,11 @@ async def test_langgraph_backend_projects_prolog_commerce_policy_into_doordash_p
         "commerce_provider": "doordash",
         "commerce_confirmation": "always",
         "policy_source": "prolog",
+        "compose_capabilities": [
+            "browser.tab.open",
+            "memory.preference.observe",
+            "memory.preference.patterns",
+        ],
         "max_url_chars": 4096,
     }
 
