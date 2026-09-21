@@ -93,9 +93,10 @@ class AndroidPureSymbolicConversationInstrumentedTest {
         val acknowledgement = runNaturalTurn(history, "thanks")
         assertTrue(acknowledgement.turn.text.contains("welcome", ignoreCase = true))
         assertZeroModel(acknowledgement)
-        val finalProjection = checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID)
-        assertNotNull(finalProjection)
-        finalProjection!!.assertPureSymbolic()
+        val finalProjection = checkNotNull(
+            checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID),
+        )
+        finalProjection.assertPureSymbolic()
         assertTrue(
             "social follow-up must preserve the completed prior frame across recreation",
             SymbolicDialogueContextCodec.decode(finalProjection.dialogueStateJson)
