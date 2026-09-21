@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.ZaraApplication
 import ai.zara.app.conversations.CanonicalConversationStore
 import ai.zara.app.history.ConversationHistoryContract
 import ai.zara.app.history.HistoryMessageRole
@@ -34,14 +35,16 @@ class AndroidPureSymbolicConversationInstrumentedTest {
         metadataFile = File(context.cacheDir, "pure-symbolic-conversation-ui.bin")
         metadataFile.delete()
         File(metadataFile.parentFile, "${metadataFile.name}.migrated").delete()
-        session = AndroidAppSession(context)
+        session = (context.applicationContext as ZaraApplication).appSession
         awaitLocalServerReady()
     }
 
     @After
     fun tearDown() {
         store?.close()
-        session.close()
+        // ZaraApplication owns the process-wide AndroidAppSession/Trealla runtime. Do not close
+        // and recreate that singleton between instrumentation methods; doing so can race native
+        // teardown with SQLite/test cleanup and does not match the production lifecycle.
         context.deleteDatabase(ConversationHistoryContract.databaseName)
         metadataFile.delete()
         File(metadataFile.parentFile, "${metadataFile.name}.migrated").delete()
@@ -64,7 +67,7 @@ class AndroidPureSymbolicConversationInstrumentedTest {
         }
 
         val evidence = "raw_terms=${result.terms}\n${session.exportDiagnostics()}"
-        assertEquals(evidence, 3, result.terms.size)
+        assertEquals(evidence, 4, result.terms.size)
         assertTrue(
             evidence,
             result.terms.first().contains("How long should I set the timer for?"),
@@ -74,6 +77,11 @@ class AndroidPureSymbolicConversationInstrumentedTest {
             result.terms[1].startsWith("__zara_context__:partial_frame("),
         )
         assertEquals(evidence, "__zara_act__:clarify", result.terms[2])
+        assertEquals(
+            "non-expert clarification must carry an explicit empty expert-evidence wire\n$evidence",
+            "__zara_expert_evidence__:",
+            result.terms[3],
+        )
     }
 
     @Test
