@@ -1,6 +1,7 @@
 package ai.zara.app
 
-import ai.zara.app.conversations.ConversationStore
+import ai.zara.app.conversations.CanonicalConversationStore
+import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.ConversationExecutionPolicy
@@ -72,13 +73,21 @@ class MainActivity : ComponentActivity() {
         var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
         val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
         var projectState by mutableStateOf(projectStore.state())
-        val conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
+        val portableConversationStore = PortableConversationStore(this)
+        val conversationStore = CanonicalConversationStore(
+            history = portableConversationStore,
+            metadataFile = File(filesDir, "conversation-ui.bin"),
+            legacyFile = File(filesDir, "conversations.bin"),
+        )
         var conversationState by mutableStateOf(conversationStore.state())
         val executionPolicyController = ConversationExecutionPolicyController(
             store = ConversationExecutionPolicyStore(
                 File(filesDir, "conversation-execution-policy.bin"),
             ),
-            pureSymbolicSubmit = AndroidPureSymbolicConversationFactory.create(appSession)::submit,
+            pureSymbolicSubmit = AndroidPureSymbolicConversationFactory.create(
+                appSession,
+                portableConversationStore,
+            )::submit,
         )
         if (conversationState.loadFailure == null && conversationState.selectedConversation == null) {
             try {
@@ -173,7 +182,7 @@ class MainActivity : ComponentActivity() {
                 },
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
-                    embeddingPreferenceStore.save(localEmbedding)
+                    embeddingPreferenceStore.save(enabled)
                 },
                 onCreateIdentity = {
                     operationError = null
@@ -300,9 +309,10 @@ class MainActivity : ComponentActivity() {
                             )
                             operationBusy = false
                         } else {
+                            val executionPolicy = executionPolicyController.policy()
                             val future = executionPolicyController.submit(
                                 text = text,
-                                conversationId = conversation.localConversationId,
+                                conversationId = conversation.id,
                                 standardTurn = {
                                     if (project == null) {
                                         appSession.submitText(
@@ -332,8 +342,13 @@ class MainActivity : ComponentActivity() {
                                             operationError = UiOperationFailure.summarize(storeError)
                                         }
                                     } else if (result != null) {
-                                        val remoteConversationId = result.conversationId
-                                            ?.takeUnless { it.startsWith("local-") }
+                                        val remoteConversationId = if (
+                                            executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
+                                        ) {
+                                            null
+                                        } else {
+                                            result.conversationId?.takeUnless { it.startsWith("local-") }
+                                        }
                                         try {
                                             conversationState = conversationStore.completeTurn(
                                                 conversationId = conversationId,
