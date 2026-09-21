@@ -89,7 +89,7 @@ parity_dialogue_envelope :-
               ),
               symbolic_dialogue_turn:valid_dialogue_context(Context1),
               symbolic_dialogue:render_response(Act, Response),
-              write_term_to_atom(ContextAtom, Context1, [quoted(true)]),
+              with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)])),
               atom_concat('__zara_context__:', ContextAtom, ContextTagged),
               atom_codes(ContextTagged, ContextWireCodes),
               string_codes(ContextWire, ContextWireCodes),
