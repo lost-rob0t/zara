@@ -35,6 +35,21 @@ class SymbolicConversationEdgeSnapshotTest {
     }
 
     @Test
+    fun roundTripsCanonicalMaxLengthVerifiedOutcomeReference() {
+        val receipt = "zara.verified-outcome/v2:9:outcome:" + "a".repeat(384)
+        val snapshot = fixture().copy(
+            dialogueAct = "verified",
+            verifiedOutcomeRefs = listOf(receipt),
+        )
+
+        val encoded = SymbolicConversationEdgeCodec.encode(snapshot)
+        val decoded = SymbolicConversationEdgeCodec.decode(encoded)
+
+        assertEquals(listOf(receipt), decoded.verifiedOutcomeRefs)
+        decoded.assertPureSymbolic()
+    }
+
+    @Test
     fun pureSymbolicRequiresProvidersDisabledAndZeroModelBudget() {
         assertFails("providers enabled") { fixture().copy(providersEnabled = true).assertPureSymbolic() }
         assertFails("max model calls must be 0") { fixture().copy(maxModelCalls = 1).assertPureSymbolic() }
