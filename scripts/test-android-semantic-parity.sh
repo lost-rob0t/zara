@@ -72,8 +72,9 @@ parity_main :-
 % This keeps the parity gate honest: semantic_core.pl imports the canonical
 % dialogue modules, Context0 is bridged from persisted string data to the atom
 % input required by pinned Trealla read_term_from_atom/3, the router/renderer
-% is committed once, and canonical Context1 is rendered with the shared
-% SWI/Trealla output-capture surface before tagging it for the Android ABI.
+% is committed once, and canonical Context1 plus the canonical dialogue-act
+% token are rendered through the same SWI/Trealla output-capture surface used
+% by Android before crossing JNI as inert strings.
 parity_dialogue_envelope :-
     string_codes("[]", Context0Codes),
     atom_codes(Context0Atom, Context0Codes),
@@ -91,16 +92,23 @@ parity_dialogue_envelope :-
               with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)])),
               atom_concat('__zara_context__:', ContextAtom, ContextTagged),
               atom_codes(ContextTagged, ContextWireCodes),
-              string_codes(ContextWire, ContextWireCodes)
+              string_codes(ContextWire, ContextWireCodes),
+              (Act = answer(expert, _, _) -> ActName = expert_answer ; functor(Act, ActName, _)),
+              atom_concat('__zara_act__:', ActName, ActTagged),
+              atom_codes(ActTagged, ActWireCodes),
+              string_codes(ActWire, ActWireCodes)
             ) -> true ; fail
           ),
-          ( Result = Response ; Result = ContextWire )
+          ( Result = Response ; Result = ContextWire ; Result = ActWire )
         ),
         Results),
-    Results = [Rendered, ContextWire],
+    Results = [Rendered, ContextWire, ActWire],
     string_codes(Rendered, RenderedCodes),
     string_codes("How long should I set the timer for?", ExpectedCodes),
     RenderedCodes == ExpectedCodes,
+    string_codes(ActWire, ActWireCodes),
+    string_codes("__zara_act__:clarify", ExpectedActWireCodes),
+    ActWireCodes == ExpectedActWireCodes,
     string_codes(ContextWire, ContextWireCodes),
     string_codes("__zara_context__:", PrefixCodes),
     append(PrefixCodes, ContextAtomCodes, ContextWireCodes),
