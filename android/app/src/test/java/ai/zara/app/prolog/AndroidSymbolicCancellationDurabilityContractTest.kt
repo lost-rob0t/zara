@@ -19,11 +19,18 @@ class AndroidSymbolicCancellationDurabilityContractTest {
         val factory = File(
             "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
         ).readText()
-        val cancellation = factory
-            .substringAfter("override fun cancel(mayInterruptIfRunning: Boolean): Boolean = synchronized(fence) {", "")
-            .substringBefore("}\n    }\n\n    /**\n     * Render one canonical dialogue turn", "")
+        val startMarker =
+            "override fun cancel(mayInterruptIfRunning: Boolean): Boolean = synchronized(fence) {"
+        val cancelStart = factory.indexOf(startMarker)
+        val nextMethod = factory.indexOf(
+            "\n    internal fun dialogueTurnQuery(",
+            startIndex = cancelStart.coerceAtLeast(0),
+        )
 
-        assertTrue("persistence-fenced cancellation implementation disappeared", cancellation.isNotEmpty())
+        assertTrue("persistence-fenced cancellation implementation disappeared", cancelStart >= 0)
+        assertTrue("cancellation contract could not find the next factory method boundary", nextMethod > cancelStart)
+        val cancellation = factory.substring(cancelStart, nextMethod)
+
         assertFalse(
             "cancellation must not swallow arbitrary zara.db terminalization failures",
             cancellation.contains("runCatching(onCancel)"),
