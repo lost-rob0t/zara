@@ -21,6 +21,7 @@ class ImmediateBackend(RuntimeBackend):
         self.turn_thread_id = None
         self.stop_thread_id = None
         self.cancelled: list[str] = []
+        self.committed: list[tuple[str | None, str, RuntimeTurnResult]] = []
 
     async def start(self) -> None:
         self.start_thread_id = threading.get_ident()
@@ -36,6 +37,15 @@ class ImmediateBackend(RuntimeBackend):
     ) -> RuntimeTurnResult:
         self.turn_thread_id = threading.get_ident()
         return RuntimeTurnResult(response=f"{self.response}:{text}")
+
+    def commit_turn_result(
+        self,
+        result: RuntimeTurnResult,
+        *,
+        turn_id: str,
+        conversation_id=None,
+    ) -> None:
+        self.committed.append((conversation_id, turn_id, result))
 
     async def cancel_turn(self, turn_id: str) -> None:
         self.cancelled.append(turn_id)
@@ -131,6 +141,11 @@ def test_runtime_host_executes_backend_off_caller_thread():
         assert all(event.conversation_id == "conversation-1" for event in correlated)
         assert isinstance(correlated[2], events.ResponseText)
         assert correlated[2].text == "done:hello"
+        assert len(backend.committed) == 1
+        committed_conversation, committed_turn, committed_result = backend.committed[0]
+        assert committed_conversation == "conversation-1"
+        assert committed_turn == receipt.turn_id
+        assert committed_result.response == "done:hello"
     finally:
         stop_host(host)
 
@@ -197,6 +212,7 @@ def test_cancelled_turn_suppresses_backend_that_returns_stale_result():
             and isinstance(event, (events.ResponseText, events.OutputReady))
         ]
         assert stale == []
+        assert getattr(backend, "committed", []) == []
     finally:
         stop_host(host)
 
