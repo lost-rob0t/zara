@@ -80,8 +80,16 @@ data class SymbolicConversationEdgeSnapshot(
         check(rendererProvenance == ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER) {
             "pure-symbolic edge projection rendererProvenance must be $ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER: $rendererProvenance"
         }
-        check(dialogueAct != "verified" || verifiedOutcomeRefs.isNotEmpty()) {
-            "pure-symbolic verified edge projection requires verified outcome evidence"
+        check(
+            dialogueAct != "verified" ||
+                verifiedOutcomeRefs.any { reference ->
+                    VERIFIED_OUTCOME_V2_REF.matchEntire(reference)
+                        ?.groupValues
+                        ?.get(1)
+                        ?.toLongOrNull() == runtimeGeneration
+                }
+        ) {
+            "pure-symbolic verified edge projection requires fresh current-generation v2 outcome evidence"
         }
         check(dialogueAct != "expert_answer" || expertEvidenceRefs.isNotEmpty()) {
             "pure-symbolic expert_answer edge projection requires expert evidence"
