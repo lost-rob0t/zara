@@ -1,0 +1,55 @@
+name: Android ROM contract
+
+on:
+  push:
+    branches:
+      - fork/android-rom
+    paths:
+      - 'rom/**'
+      - '.github/workflows/android-rom-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate shell entrypoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in rom/scripts/*.sh; do
+            bash -n "$script"
+          done
+
+      - name: Validate local manifest XML
+        run: |
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          tree = ET.parse("rom/manifest/zara.xml")
+          project = tree.find(".//project")
+          assert project is not None
+          assert project.attrib["name"] == "lost-rob0t/zara"
+          assert project.attrib["path"] == "vendor/zara-fork"
+          assert project.attrib["revision"] == "refs/heads/fork/android-rom"
+
+          link = project.find("linkfile")
+          assert link is not None
+          assert link.attrib["dest"] == "vendor/extra/product.mk"
+          PY
+
+      - name: Validate ROM product contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'Zara' rom/aosp/vendor/extra/product.mk
+          grep -q 'StarIntelCompanion' rom/aosp/vendor/extra/product.mk
+          grep -q 'StarIntelQuasar' rom/aosp/vendor/extra/product.mk
+          grep -q 'vendor/zara-gapps/product.mk' rom/aosp/vendor/extra/product.mk
+          test -f rom/aosp/prebuilts/Android.bp
+          test -f rom/patches/series
