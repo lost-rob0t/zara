@@ -90,8 +90,9 @@
 - goal :: bind implementation claims to machine-checkable verification evidence.
 
 ** Lane 14 — Versioned release verification
-- PR :: #1060
-- title :: ci(release): verify every versioned release and publish canonical changelog
+- PR :: #1407
+- supersedes :: #1060 (auto-merge was removed because its exact head CI failed)
+- title :: [0.3.x lane 14] verify every versioned release and canonical changelog
 - goal :: prove immutable release provenance and canonical changelog generation.
 
 ** Lane 15 — Android updater
@@ -113,7 +114,7 @@ These remain on =master= unless they become blockers:
 2. Runtime/transport correctness: #1397 #1405 #1399 #1049
 3. Android semantic/local stack: #1384 #1282 #1381
 4. Product surfaces: #1387 #1383
-5. Release/update path: #1060 #943
+5. Release/update path: #1407 #943
 6. Resolve strict version context, promote target/current version on the integrated candidate, rerun every exact-head release gate, then consider tagging.
 
 * Release gate
