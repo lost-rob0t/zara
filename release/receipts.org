@@ -1,0 +1,71 @@
+#+title: Autonomous Zara Release Receipts
+
+* Purpose
+
+The autonomous release train never asks an LLM whether a RAGE slice is done.
+Completion is represented by small machine-readable receipts committed with the
+slice that they describe.
+
+* RAGE slice receipt
+
+Path:
+
+#+begin_example
+release/rage-receipts/<slice-id>.json
+#+end_example
+
+Schema:
+
+#+begin_src json
+{
+  "schema": 1,
+  "slice_id": "pairing-e2e",
+  "issue": 1358,
+  "result": "passed",
+  "verified_sha": "40-lowercase-hex",
+  "verifier": "verification/rage/pairing_e2e.pl",
+  "goal": "verify"
+}
+#+end_src
+
+Release CI requires:
+- the slice ID and issue to match =release/autonomous-plan.json=;
+- =result= to be =passed=;
+- =verified_sha= to be an ancestor of the release candidate;
+- =verifier= to remain under =verification/= and end in =.pl=;
+- the declared Prolog goal to pass again against the candidate checkout.
+
+A receipt therefore cannot make a failed or absent verifier green by prose.
+
+* Gate receipt
+
+Non-workflow gates such as real-device evidence can use:
+
+#+begin_example
+release/gate-receipts/<gate>.json
+#+end_example
+
+#+begin_src json
+{
+  "schema": 1,
+  "gate": "on_device_jev",
+  "result": "passed",
+  "verified_sha": "40-lowercase-hex"
+}
+#+end_src
+
+The receipt SHA must be an ancestor of the candidate. CI-owned gates such as core
+tests and APK build are supplied directly by the exact workflow run instead.
+
+* Release proof
+
+=scripts/build-autonomous-release-evidence.py= derives evidence from the plan,
+receipts and live CI gate results.
+
+=scripts/generate-autonomous-release-facts.py= compiles that evidence into Prolog
+facts.
+
+=verification/autonomous_release_verify.pl= is the final deterministic proof.
+
+Only after that proof passes may =.github/workflows/autonomous-rage-release.yml=
+create a version branch. Model calls are not part of this path.
