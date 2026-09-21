@@ -104,11 +104,13 @@ if ! gradle --no-daemon \
   :editor-core:testDebugUnitTest \
   :code-editor:testDebugUnitTest \
   :termux-bridge:testDebugUnitTest \
+  :llm-serve:testDebugUnitTest \
   :wear-app:testDebugUnitTest \
   :wear-voice:testDebugUnitTest \
   :app:assembleDebug \
   :code-editor:assembleDebug \
   :termux-bridge:assembleDebug \
+  :llm-serve:assembleDebug \
   :wear-app:assembleDebug \
   :wear-voice:assembleDebug 2>&1 | tee "$gradle_log"; then
   diagnostics_dir="app/build/reports/semantic-parity"
@@ -135,19 +137,22 @@ unset ZARA_RECOVERY_FIXTURE
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 code_apk="code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 termux_bridge_apk="termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk"
+llm_serve_apk="llm-serve/build/outputs/apk/debug/llm-serve-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 voice_apk="wear-voice/build/outputs/apk/debug/wear-voice-debug.apk"
 test -f "$phone_apk"
 test -f "$code_apk"
 test -f "$termux_bridge_apk"
+test -f "$llm_serve_apk"
 test -f "$wear_apk"
 test -f "$voice_apk"
 
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$phone_apk" "ai.zara.app"
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$code_apk" "ai.zara.code.editor"
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$termux_bridge_apk" "ai.zara.termux.bridge"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$llm_serve_apk" "ai.zara.llmserve"
 
-for apk in "$phone_apk" "$code_apk" "$termux_bridge_apk" "$wear_apk" "$voice_apk"; do
+for apk in "$phone_apk" "$code_apk" "$termux_bridge_apk" "$llm_serve_apk" "$wear_apk" "$voice_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
@@ -174,4 +179,10 @@ if grep -Fq "android.permission.INTERNET" <<<"$voice_permissions"; then
   exit 1
 fi
 
-echo "android/wear/code/termux gate ok: $phone_apk $code_apk $termux_bridge_apk $wear_apk $voice_apk"
+llm_serve_permissions="$($aapt2 dump permissions "$llm_serve_apk")"
+if ! grep -Fq "android.permission.INTERNET" <<<"$llm_serve_permissions"; then
+  echo "LLM Serve permission gate FAILED: loopback HTTP service requires INTERNET" >&2
+  exit 1
+fi
+
+echo "android/wear/code/termux/llm-serve gate ok: $phone_apk $code_apk $termux_bridge_apk $llm_serve_apk $wear_apk $voice_apk"
