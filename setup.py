@@ -110,6 +110,7 @@ setup(
         "sentence-transformers>=2.5",
         "pykka>=3.1",
         "pysilero-vad>=3.0",
+        "sherpa-onnx>=1.10.28",
         "pyside6>=6.5",
         "pillow>=10.0",
         "pyzmq>=25.0",
