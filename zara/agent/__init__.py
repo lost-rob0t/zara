@@ -346,7 +346,7 @@ class AgentManager:
         memory_context = (
             None
             if selected_profile is not None
-            and selected_profile.profile.memory_scope == "none"
+            and selected_profile.profile.memory_scope in {"none", "session"}
             else self._build_memory_context(effective_user_input)
         )
         if memory_context:
