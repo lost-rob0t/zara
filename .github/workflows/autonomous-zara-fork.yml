@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fork/autonomous-zara-20260920
+      - master
   pull_request:
     paths:
       - release/autonomous-plan.json
