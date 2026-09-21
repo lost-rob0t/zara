@@ -66,9 +66,7 @@ class CanonicalConversationStore(
     init {
         if (metadataLoadFailure == null) {
             migrateLegacyIfNeeded(legacyFile)
-        }
-        recoverInterruptedTurns()
-        if (metadataLoadFailure == null) {
+            recoverInterruptedTurns()
             pruneMetadata()
         }
     }
