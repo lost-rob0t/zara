@@ -257,7 +257,6 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
         metadata = {
             "route": "pure_symbolic",
             "response_act": symbolic.act_term,
-            "dialogue_act": dialogue_act,
             "dialogue_context": symbolic.context_term,
             "renderer": symbolic.renderer,
             "providers_enabled": False,
@@ -267,6 +266,7 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             "model_calls": 0,
         }
         if expert_evidence_ref is not None:
+            metadata["dialogue_act"] = dialogue_act
             metadata["expert_evidence_ref"] = expert_evidence_ref
         if self._projection_adapter is not None and conversation_id is not None:
             metadata["projection_base_generation"] = base_generation
@@ -307,7 +307,8 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             response_act,
             metadata.get("expert_evidence_ref"),
         )
-        if metadata.get("dialogue_act") != dialogue_act:
+        metadata_dialogue_act = metadata.get("dialogue_act")
+        if metadata_dialogue_act is not None and metadata_dialogue_act != dialogue_act:
             raise RuntimeError("pure symbolic commit has mismatched dialogue act")
         context_term = _bounded_context_term(metadata.get("dialogue_context"))
         adapter.commit_turn(
