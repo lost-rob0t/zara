@@ -21,9 +21,6 @@ from zara.prolog_engine import PrologEngine, locate_main_pl
 from .backend import RuntimeBackend, RuntimeTurnResult, UnsupportedRuntimeCommand
 
 PURE_SYMBOLIC_RENDERER = "symbolic-dcg/v1"
-PURE_SYMBOLIC_RENDER_ERROR = (
-    "I couldn't render that symbolic response. No model or provider was used."
-)
 _MAX_CONTEXT_TERM_CHARS = 8192
 _MAX_EXPERT_EVIDENCE_CHARS = 128
 _DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\(|$)")
@@ -153,11 +150,7 @@ def _resolve_turn(
     )
     row = engine.query_once(goal)
     if row is None:
-        return PureSymbolicTurn(
-            response=PURE_SYMBOLIC_RENDER_ERROR,
-            act_term="error(renderer_unavailable)",
-            context_term="[]",
-        )
+        raise RuntimeError("canonical symbolic dialogue result is missing")
     raw_evidence = _as_text(row.get("EvidenceRef", ""))
     return PureSymbolicTurn(
         response=_as_text(row["Response"]),
