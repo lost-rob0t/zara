@@ -13,6 +13,13 @@ def _receipt(index: int) -> str:
     return f"zara.verified-outcome/v1:outcome:postcondition/tool-run-{index}"
 
 
+def _v2_receipt(runtime_generation: int, index: int) -> str:
+    return (
+        "zara.verified-outcome/v2:"
+        f"{runtime_generation}:outcome:postcondition/tool-run-{index}"
+    )
+
+
 def _projection(
     conversation_id: str,
     *,
@@ -64,7 +71,7 @@ def test_verified_effect_conversation_advances_past_bounded_receipt_window(tmp_p
         conversation_id="conv-verified-window",
     )
 
-    next_receipts = initial_receipts[1:] + [_receipt(_WINDOW + 1)]
+    next_receipts = initial_receipts[1:] + [_v2_receipt(2, _WINDOW + 1)]
     advanced = store.save_symbolic_projection(
         _projection(
             conversation.id,
@@ -90,7 +97,7 @@ def test_retired_receipt_cannot_reenter_as_fresh_after_window_compaction(tmp_pat
         conversation_id="conv-verified-window-replay",
     )
 
-    compacted_receipts = initial_receipts[1:] + [_receipt(_WINDOW + 1)]
+    compacted_receipts = initial_receipts[1:] + [_v2_receipt(2, _WINDOW + 1)]
     compacted = store.save_symbolic_projection(
         _projection(
             conversation.id,
