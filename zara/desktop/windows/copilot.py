@@ -227,8 +227,8 @@ class CopilotWindow(QuickCopilotWindow):
     def _apply_presentation(self) -> None:
         expanded = self._presentation is CopilotPresentation.EXPANDED
         self.setProperty("presentation", self._presentation.value)
-        self.expand_button.setText("Compact" if expanded else "Expand")
-        self.expand_button.setToolTip("Use compact view" if expanded else "Use expanded view")
+        self.expand_button.setText("Chat" if expanded else "History")
+        self.expand_button.setToolTip("Return to chat" if expanded else "Show conversation history")
         self.history_panel.setVisible(expanded)
         self.new_chat_button.setVisible(not expanded)
         self._apply_header_density()
