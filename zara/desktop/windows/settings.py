@@ -474,6 +474,27 @@ class SettingsWindow(QWidget):
         self._combo_setting(form, "tts.provider", "Voice provider", [("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")], "qwen3")
         self._line_setting(form, "tts.endpoint", "Voice endpoint", "http://localhost:7860")
         self._line_setting(form, "tts.voice", "Default voice", "zara")
+        self._line_setting(
+            form,
+            "voice_expert.diarization_segmentation_model",
+            "Speaker segmentation model",
+            "",
+        )
+        self._line_setting(
+            form,
+            "voice_expert.diarization_embedding_model",
+            "Speaker embedding model",
+            "",
+        )
+        self._double_setting(
+            form,
+            "voice_expert.diarization_cluster_threshold",
+            "Speaker clustering threshold",
+            0.5,
+            0.01,
+            2.0,
+            0.05,
+        )
         self._check_setting(form, "wake.acknowledgement.enabled", "Immediate acknowledgement", True)
         self._line_setting(form, "wake.acknowledgement.voice", "Acknowledgement voice", "en-US-AriaNeural")
         return page
@@ -491,6 +512,7 @@ class SettingsWindow(QWidget):
             ("tools.voice_plan", "Voice planning", True),
             ("tools.voice_speak", "Voice speak", True),
             ("tools.voice_narrate", "Multi-voice narration", True),
+            ("tools.voice_analyze_youtube", "YouTube speaker analysis", True),
             ("tools.voice_clone_from_youtube", "Authorized voice cloning", True),
             ("tools.voice_delete", "Voice deletion", True),
             ("tools.file_tools", "File tools", False),
