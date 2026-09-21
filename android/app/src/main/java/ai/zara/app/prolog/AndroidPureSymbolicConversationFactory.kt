@@ -5,6 +5,7 @@ import ai.zara.app.history.HistoryMessageRole
 import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.SymbolicConversationProjection
+import ai.zara.app.history.completeSymbolicTurnAtomically
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.history.saveSymbolicProjection
 import ai.zara.app.runtime.LocalQueryResult
@@ -97,14 +98,16 @@ internal object AndroidPureSymbolicConversationFactory {
             )
         }
         val output = PersistenceFencedFuture(turnFuture) {
-            val cancelledProjection = terminalProjection(
-                pending = pendingProjection,
-                contextTerm = context0,
-                outcome = "cancelled",
-            )
-            projectionStore.saveSymbolicProjection(
-                projection = cancelledProjection,
+            projectionStore.completeSymbolicTurnAtomically(
+                projection = terminalProjection(
+                    pending = pendingProjection,
+                    contextTerm = context0,
+                    outcome = "cancelled",
+                ),
                 expectedGeneration = pendingGeneration,
+                turnId = turnId,
+                assistantContent = "",
+                assistantStatus = HistoryMessageStatus.Cancelled,
             )
         }
 
@@ -143,9 +146,12 @@ internal object AndroidPureSymbolicConversationFactory {
                     outcome = "success",
                 )
                 output.commitOrCancel {
-                    projectionStore.saveSymbolicProjection(
+                    projectionStore.completeSymbolicTurnAtomically(
                         projection = completedProjection,
                         expectedGeneration = pendingGeneration,
+                        turnId = turnId,
+                        assistantContent = renderedResponse,
+                        assistantStatus = HistoryMessageStatus.Complete,
                     )
                     output.complete(result.copy(terms = listOf(renderedResponse)))
                 }
@@ -190,9 +196,13 @@ internal object AndroidPureSymbolicConversationFactory {
             outcome = "error",
         )
         return try {
-            projectionStore.saveSymbolicProjection(
+            projectionStore.completeSymbolicTurnAtomically(
                 projection = terminal,
                 expectedGeneration = pendingGeneration,
+                turnId = requireNotNull(pendingProjection.turnId),
+                assistantContent = RUNTIME_FAILURE_TEXT,
+                assistantStatus = HistoryMessageStatus.Error,
+                assistantError = RUNTIME_FAILURE_TEXT,
             )
             CompletableFuture.failedFuture(error)
         } catch (fenceError: Throwable) {
@@ -210,13 +220,17 @@ internal object AndroidPureSymbolicConversationFactory {
     ) {
         try {
             output.commitOrCancel {
-                projectionStore.saveSymbolicProjection(
+                projectionStore.completeSymbolicTurnAtomically(
                     projection = terminalProjection(
                         pending = pendingProjection,
                         contextTerm = context0,
                         outcome = "error",
                     ),
                     expectedGeneration = pendingGeneration,
+                    turnId = requireNotNull(pendingProjection.turnId),
+                    assistantContent = RUNTIME_FAILURE_TEXT,
+                    assistantStatus = HistoryMessageStatus.Error,
+                    assistantError = RUNTIME_FAILURE_TEXT,
                 )
                 output.completeExceptionally(error)
             }
@@ -235,13 +249,17 @@ internal object AndroidPureSymbolicConversationFactory {
     ) {
         try {
             output.commitOrCancel {
-                projectionStore.saveSymbolicProjection(
+                projectionStore.completeSymbolicTurnAtomically(
                     projection = terminalProjection(
                         pending = pendingProjection,
                         contextTerm = context0,
                         outcome = "error",
                     ),
                     expectedGeneration = pendingGeneration,
+                    turnId = requireNotNull(pendingProjection.turnId),
+                    assistantContent = NO_MATCH_TEXT,
+                    assistantStatus = HistoryMessageStatus.Error,
+                    assistantError = NO_MATCH_TEXT,
                 )
                 output.complete(result)
             }
@@ -315,10 +333,11 @@ internal object AndroidPureSymbolicConversationFactory {
      * Serialize cancellation against the canonical projection terminal commit.
      *
      * Cancellation and completion hold the same monitor. If cancellation wins, it records a
-     * terminal cancelled projection (when this process still owns the pending generation), marks
-     * the returned future cancelled, and cancels the upstream local query. If restart recovery has
-     * already advanced the generation to interrupted, the stale cancellation write is ignored and
-     * the old turn still cannot commit Context1.
+     * terminal cancelled projection and the canonical assistant row in one transaction (when this
+     * process still owns the pending generation), marks the returned future cancelled, and cancels
+     * the upstream local query. If restart recovery has already advanced the generation to
+     * interrupted, the stale cancellation write is ignored and the old turn still cannot commit
+     * Context1 or assistant output.
      */
     private class PersistenceFencedFuture(
         private val upstream: CompletableFuture<*>,
@@ -398,5 +417,7 @@ internal object AndroidPureSymbolicConversationFactory {
     }
 
     private const val DIALOGUE_CONTEXT_PREFIX = "dialogue_context("
+    private const val RUNTIME_FAILURE_TEXT = "The symbolic runtime could not complete this turn."
+    private const val NO_MATCH_TEXT = "I don't have a deterministic symbolic answer for that yet."
     private const val MAX_UTTERANCE_CHARS = 8_192
 }
