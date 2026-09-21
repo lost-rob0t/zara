@@ -19,9 +19,14 @@ _OUTCOMES = frozenset({"unknown", "pending", "success", "cancelled", "interrupte
 _TERMINAL_OUTCOMES = frozenset({"success", "cancelled", "interrupted", "error"})
 _SYMBOLIC_RENDERER_ID = "symbolic-dcg/v1"
 _DIALOGUE_ACT_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
-_VERIFIED_OUTCOME_REF_RE = re.compile(
+_VERIFIED_OUTCOME_V1_REF_RE = re.compile(
     r"^zara\.verified-outcome/v1:(?:effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
 )
+_VERIFIED_OUTCOME_V2_REF_RE = re.compile(
+    r"^zara\.verified-outcome/v2:(?P<runtime_generation>[1-9][0-9]*):"
+    r"(?:effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
+)
+_VERIFIED_OUTCOME_WINDOW = 64
 
 
 def _require_exact_integer(name: str, value: object, *, minimum: int = 0) -> int:
@@ -98,17 +103,95 @@ def _validate_dialogue_act(value: str) -> str:
     return value
 
 
+def _verified_outcome_runtime_generation(reference: str) -> Optional[int]:
+    if _VERIFIED_OUTCOME_V1_REF_RE.fullmatch(reference) is not None:
+        return None
+    match = _VERIFIED_OUTCOME_V2_REF_RE.fullmatch(reference)
+    if match is None:
+        raise ValueError(f"invalid verified outcome reference: {reference!r}")
+    return int(match.group("runtime_generation"))
+
+
 def _validate_verified_outcome_refs(value: list[str]) -> list[str]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise TypeError("verified_outcome_refs must be a list of strings")
-    if len(value) > 64:
+    if len(value) > _VERIFIED_OUTCOME_WINDOW:
         raise ValueError("verified_outcome_refs exceeds 64 entries")
     if len(set(value)) != len(value):
         raise ValueError("verified_outcome_refs must be unique")
     for item in value:
-        if _VERIFIED_OUTCOME_REF_RE.fullmatch(item) is None:
-            raise ValueError(f"invalid verified outcome reference: {item!r}")
+        _verified_outcome_runtime_generation(item)
     return value
+
+
+def _validate_verified_outcome_transition(
+    current_refs: list[str],
+    proposed_refs: list[str],
+    *,
+    runtime_generation: int,
+    is_new_turn: bool,
+) -> set[str]:
+    """Fence bounded evidence compaction without retaining an unbounded tombstone set.
+
+    V1 receipts remain valid for pre-cutover conversations, but once a
+    generation-bound v2 receipt appears the transition is one-way: a newly
+    introduced v1 receipt can only be a replay because fresh receipts must be
+    v2 and bind to the runtime generation that observed the postcondition.
+    When the 64-entry window is full, compaction is a deterministic left shift
+    and every appended receipt must be fresh v2 evidence for the new turn.
+    """
+
+    current_set = set(current_refs)
+    proposed_set = set(proposed_refs)
+    removed = current_set.difference(proposed_set)
+    added = proposed_set.difference(current_set)
+    current_has_v2 = any(
+        _verified_outcome_runtime_generation(reference) is not None
+        for reference in current_refs
+    )
+
+    if current_has_v2:
+        for reference in added:
+            if _verified_outcome_runtime_generation(reference) is None:
+                raise RuntimeError("retired verified outcome replay rejected")
+
+    for reference in added:
+        evidence_generation = _verified_outcome_runtime_generation(reference)
+        if evidence_generation is not None and evidence_generation != runtime_generation:
+            if removed:
+                raise RuntimeError("retired verified outcome replay rejected")
+            raise RuntimeError("verified outcome generation mismatch rejected")
+
+    if not is_new_turn:
+        if removed:
+            raise RuntimeError("verified outcome evidence rewind rejected")
+        return added
+
+    if removed:
+        if (
+            len(current_refs) != _VERIFIED_OUTCOME_WINDOW
+            or len(proposed_refs) != _VERIFIED_OUTCOME_WINDOW
+            or len(removed) != len(added)
+            or not added
+        ):
+            raise RuntimeError("verified outcome evidence rewind rejected")
+        drop_count = len(removed)
+        retained_count = _VERIFIED_OUTCOME_WINDOW - drop_count
+        if proposed_refs[:retained_count] != current_refs[drop_count:]:
+            raise RuntimeError("verified outcome evidence rewind rejected")
+        appended_refs = proposed_refs[retained_count:]
+        if set(appended_refs) != added:
+            raise RuntimeError("verified outcome evidence rewind rejected")
+        for reference in appended_refs:
+            if _verified_outcome_runtime_generation(reference) is None:
+                if current_has_v2:
+                    raise RuntimeError("retired verified outcome replay rejected")
+                raise RuntimeError(
+                    "verified outcome compaction requires generation-bound evidence"
+                )
+        return added
+
+    return added
 
 
 def _encode_verified_outcome_refs(value: list[str]) -> str:
@@ -171,6 +254,15 @@ class SymbolicConversationProjection:
         _validate_verified_outcome_refs(self.verified_outcome_refs)
         if self.dialogue_act == "verified" and not self.verified_outcome_refs:
             raise ValueError("verified projection requires verified outcome evidence")
+        for reference in self.verified_outcome_refs:
+            evidence_generation = _verified_outcome_runtime_generation(reference)
+            if (
+                evidence_generation is not None
+                and evidence_generation > self.runtime_generation
+            ):
+                raise ValueError(
+                    "verified outcome generation must not exceed runtime_generation"
+                )
         if self.renderer_provenance not in ("", _SYMBOLIC_RENDERER_ID):
             raise ValueError(
                 "renderer_provenance must be empty or the canonical symbolic renderer"
@@ -326,6 +418,17 @@ class SymbolicProjectionMixin:
                     raise RuntimeError(
                         "stale symbolic projection write: projection does not exist"
                     )
+                if projection.dialogue_act == "verified":
+                    v2_generations = {
+                        generation
+                        for reference in projection.verified_outcome_refs
+                        if (generation := _verified_outcome_runtime_generation(reference))
+                        is not None
+                    }
+                    if projection.runtime_generation not in v2_generations:
+                        raise RuntimeError(
+                            "verified projection requires fresh outcome evidence"
+                        )
             else:
                 current_generation = _decode_sqlite_integer(
                     "projection_generation", current["projection_generation"], minimum=1
@@ -335,6 +438,9 @@ class SymbolicProjectionMixin:
                 )
                 current_turn_id = current["turn_id"]
                 current_outcome = current["outcome"]
+                current_verified_outcome_refs = _decode_verified_outcome_refs(
+                    current["verified_outcome_refs"]
+                )
                 if current_generation != expected_generation:
                     raise RuntimeError(
                         "stale symbolic projection write: "
@@ -344,21 +450,38 @@ class SymbolicProjectionMixin:
                     raise RuntimeError("runtime_generation regression rejected")
                 if current_turn_id is not None and projection.turn_id is None:
                     raise RuntimeError("turn_id rewind rejected")
+                is_new_turn = projection.turn_id != current_turn_id
+                fresh_verified_outcome_refs = _validate_verified_outcome_transition(
+                    current_verified_outcome_refs,
+                    projection.verified_outcome_refs,
+                    runtime_generation=projection.runtime_generation,
+                    is_new_turn=is_new_turn,
+                )
                 if projection.turn_id == current_turn_id:
                     if current_turn_id is not None and projection.runtime_generation != current_runtime_generation:
                         raise RuntimeError("same turn must preserve runtime_generation")
+                    if projection.dialogue_act == "verified":
+                        has_fresh_current_generation_v2 = any(
+                            _verified_outcome_runtime_generation(reference)
+                            == projection.runtime_generation
+                            for reference in fresh_verified_outcome_refs
+                        )
+                        if not has_fresh_current_generation_v2:
+                            raise RuntimeError(
+                                "verified projection requires fresh outcome evidence"
+                            )
                     if current_outcome in _TERMINAL_OUTCOMES:
                         raise RuntimeError("terminal turn projection is immutable")
                 else:
                     if projection.runtime_generation <= current_runtime_generation:
                         raise RuntimeError("new turn must advance runtime_generation")
                     if projection.dialogue_act == "verified":
-                        current_verified_outcome_refs = set(
-                            _decode_verified_outcome_refs(current["verified_outcome_refs"])
+                        has_fresh_current_generation_v2 = any(
+                            _verified_outcome_runtime_generation(reference)
+                            == projection.runtime_generation
+                            for reference in fresh_verified_outcome_refs
                         )
-                        if not set(projection.verified_outcome_refs).difference(
-                            current_verified_outcome_refs
-                        ):
+                        if not has_fresh_current_generation_v2:
                             raise RuntimeError(
                                 "verified projection requires fresh outcome evidence"
                             )
