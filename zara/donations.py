@@ -38,6 +38,14 @@ def _bounded_text(value: Any, label: str, *, maximum: int) -> str:
     return text
 
 
+def _reject_unknown(value: Mapping[str, Any], allowed: set[str], label: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise DonationConfigError(
+            f"{label} contains unsupported fields: {', '.join(unknown)}"
+        )
+
+
 def _usd(value: Any, label: str) -> Decimal:
     if isinstance(value, bool) or value is None:
         raise DonationConfigError(f"{label} must be a USD amount")
@@ -72,6 +80,11 @@ class DonationWallet:
     def from_mapping(cls, value: Mapping[str, Any]) -> "DonationWallet":
         if not isinstance(value, Mapping):
             raise DonationConfigError("wallet must be an object")
+        _reject_unknown(
+            value,
+            {"chain", "network", "asset", "address", "label"},
+            "wallet",
+        )
         label = value.get("label")
         if label is not None:
             label = _bounded_text(label, "wallet label", maximum=80)
@@ -112,6 +125,19 @@ class DonationCampaign:
     def from_mapping(cls, value: Mapping[str, Any]) -> "DonationCampaign":
         if not isinstance(value, Mapping):
             raise DonationConfigError("campaign must be an object")
+        _reject_unknown(
+            value,
+            {
+                "id",
+                "title",
+                "goal_usd",
+                "raised_usd",
+                "remaining_usd",
+                "active",
+                "wallets",
+            },
+            "campaign",
+        )
         campaign_id = _bounded_text(value.get("id"), "campaign id", maximum=64)
         if not _CAMPAIGN_ID.fullmatch(campaign_id):
             raise DonationConfigError(
@@ -167,6 +193,7 @@ class DonationLedger:
     def from_mapping(cls, value: Mapping[str, Any]) -> "DonationLedger":
         if not isinstance(value, Mapping):
             raise DonationConfigError("donation document must be an object")
+        _reject_unknown(value, {"version", "campaigns", "summary"}, "donation document")
         if value.get("version") != DONATION_DOCUMENT_VERSION:
             raise DonationConfigError(
                 f"version must be {DONATION_DOCUMENT_VERSION}"
