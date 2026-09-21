@@ -161,22 +161,23 @@ internal object AndroidPureSymbolicConversationFactory {
             }
 
             try {
-                val (renderedResponse, context1, dialogueAct) = splitDialogueEnvelope(result)
+                val envelope = splitDialogueEnvelope(result)
                 val completedProjection = terminalProjection(
                     pending = pendingProjection,
-                    contextTerm = context1,
+                    contextTerm = envelope.contextTerm,
                     outcome = "success",
-                    dialogueAct = dialogueAct,
+                    dialogueAct = envelope.dialogueAct,
+                    expertEvidenceRef = envelope.expertEvidenceRef,
                 )
                 output.commitOrCancel {
                     projectionStore.completeSymbolicTurnAtomically(
                         projection = completedProjection,
                         expectedGeneration = pendingGeneration,
                         turnId = turnId,
-                        assistantContent = renderedResponse,
+                        assistantContent = envelope.renderedResponse,
                         assistantStatus = HistoryMessageStatus.Complete,
                     )
-                    output.complete(result.copy(terms = listOf(renderedResponse)))
+                    output.complete(result.copy(terms = listOf(envelope.renderedResponse)))
                 }
             } catch (error: Throwable) {
                 completeFailure(
@@ -199,6 +200,13 @@ internal object AndroidPureSymbolicConversationFactory {
         val projectId: String?,
         val projectGeneration: Long,
         val resetProjectKnowledge: Boolean,
+    )
+
+    private data class DialogueEnvelope(
+        val renderedResponse: String,
+        val contextTerm: String,
+        val dialogueAct: String,
+        val expertEvidenceRef: String?,
     )
 
     private fun requireRunningTurnId(
@@ -392,6 +400,7 @@ internal object AndroidPureSymbolicConversationFactory {
         contextTerm: String,
         outcome: String,
         dialogueAct: String? = null,
+        expertEvidenceRef: String? = null,
     ): SymbolicConversationProjection = pending.copy(
         projectionGeneration = Math.addExact(pending.projectionGeneration, 1L),
         outcome = outcome,
@@ -404,6 +413,13 @@ internal object AndroidPureSymbolicConversationFactory {
             else -> error("Unsupported symbolic terminal outcome: $outcome")
         },
         dialogueStateJson = SymbolicDialogueContextCodec.encode(contextTerm),
+        expertEvidenceJson = if (outcome == "success" && dialogueAct == "expert_answer") {
+            expertEvidenceJson(requireNotNull(expertEvidenceRef) {
+                "Canonical expert answer is missing expert evidence"
+            })
+        } else {
+            pending.expertEvidenceJson
+        },
         rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
         maxModelCalls = 0L,
@@ -411,25 +427,39 @@ internal object AndroidPureSymbolicConversationFactory {
         modelCalls = 0L,
     ).also(SymbolicConversationProjection::assertPureSymbolic)
 
-    private fun splitDialogueEnvelope(result: LocalQueryResult): Triple<String, String, String> {
-        check(result.terms.size == 3) {
-            "Symbolic dialogue must return one rendered response, one canonical Context1 term, and one dialogue act"
+    private fun splitDialogueEnvelope(result: LocalQueryResult): DialogueEnvelope {
+        check(result.terms.size == 4) {
+            "Symbolic dialogue must return one rendered response, one canonical Context1 term, one dialogue act, and one expert-evidence wire"
         }
         val renderedResponse = result.terms[0]
         val contextWire = result.terms[1]
         val actWire = result.terms[2]
+        val expertEvidenceWire = result.terms[3]
         check(contextWire.startsWith(DIALOGUE_CONTEXT_WIRE_PREFIX)) {
             "Symbolic dialogue Context1 result has an invalid wire prefix"
         }
         check(actWire.startsWith(DIALOGUE_ACT_WIRE_PREFIX)) {
             "Symbolic dialogue act result has an invalid wire prefix"
         }
+        check(expertEvidenceWire.startsWith(DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX)) {
+            "Symbolic dialogue expert-evidence result has an invalid wire prefix"
+        }
         val contextTerm = contextWire.removePrefix(DIALOGUE_CONTEXT_WIRE_PREFIX)
         val dialogueAct = requireDialogueActName(actWire.removePrefix(DIALOGUE_ACT_WIRE_PREFIX))
-        return Triple(
-            renderedResponse,
-            SymbolicDialogueContextCodec.requireContextTerm(contextTerm),
-            dialogueAct,
+        val rawExpertEvidence = expertEvidenceWire.removePrefix(DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX)
+        val expertEvidenceRef = if (dialogueAct == "expert_answer") {
+            requireExpertEvidenceRef(rawExpertEvidence)
+        } else {
+            require(rawExpertEvidence.isEmpty()) {
+                "Non-expert symbolic dialogue returned expert evidence"
+            }
+            null
+        }
+        return DialogueEnvelope(
+            renderedResponse = renderedResponse,
+            contextTerm = SymbolicDialogueContextCodec.requireContextTerm(contextTerm),
+            dialogueAct = dialogueAct,
+            expertEvidenceRef = expertEvidenceRef,
         )
     }
 
@@ -440,6 +470,37 @@ internal object AndroidPureSymbolicConversationFactory {
             "Symbolic dialogue act contains invalid characters"
         }
         return raw
+    }
+
+    private fun requireExpertEvidenceRef(raw: String): String {
+        require(raw.isNotBlank()) { "Canonical expert answer requires expert evidence" }
+        require(raw.length <= MAX_EXPERT_EVIDENCE_CHARS) { "Expert evidence reference is too large" }
+        require(raw.none(Char::isISOControl)) { "Expert evidence reference contains control characters" }
+        return raw
+    }
+
+    private fun expertEvidenceJson(reference: String): String = buildString(reference.length + 16) {
+        append("[{\"ref\":\"")
+        reference.forEach { character ->
+            when (character) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\b' -> append("\\b")
+                '\u000c' -> append("\\f")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> {
+                    if (character.code < 0x20) {
+                        append("\\u")
+                        append(character.code.toString(16).padStart(4, '0'))
+                    } else {
+                        append(character)
+                    }
+                }
+            }
+        }
+        append("\"}]")
     }
 
     private class PersistenceFencedFuture(
@@ -476,11 +537,18 @@ internal object AndroidPureSymbolicConversationFactory {
         "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
         "atom_codes(ContextTagged, ContextWireCodes), " +
         "string_codes(ContextWire, ContextWireCodes), " +
-        "(Act = answer(expert, _, _) -> ActName = expert_answer ; functor(Act, ActName, _)), " +
+        "(Act = answer(expert, _, evidence(EvidenceRef)) -> " +
+        "ActName = expert_answer, " +
+        "(atom(EvidenceRef) -> atom_codes(EvidenceRef, EvidenceCodes) ; " +
+        "string(EvidenceRef) -> string_codes(EvidenceRef, EvidenceCodes) ; fail) ; " +
+        "functor(Act, ActName, _), EvidenceCodes = []), " +
         "atom_concat('$DIALOGUE_ACT_WIRE_PREFIX', ActName, ActTagged), " +
         "atom_codes(ActTagged, ActWireCodes), " +
-        "string_codes(ActWire, ActWireCodes)) -> true ; fail), " +
-        "(Result = Response ; Result = ContextWire ; Result = ActWire)"
+        "string_codes(ActWire, ActWireCodes), " +
+        "string_codes(\"$DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX\", EvidencePrefixCodes), " +
+        "append(EvidencePrefixCodes, EvidenceCodes, EvidenceWireCodes), " +
+        "string_codes(EvidenceWire, EvidenceWireCodes)) -> true ; fail), " +
+        "(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)"
 
     private fun dialogueTurnPrelude(utterance: String, contextTerm: String): String {
         val text = utterance.trim()
@@ -513,8 +581,10 @@ internal object AndroidPureSymbolicConversationFactory {
 
     private const val DIALOGUE_CONTEXT_WIRE_PREFIX = "__zara_context__:"
     private const val DIALOGUE_ACT_WIRE_PREFIX = "__zara_act__:"
+    private const val DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX = "__zara_expert_evidence__:"
     private const val RUNTIME_FAILURE_TEXT = "The symbolic runtime could not complete this turn."
     private const val NO_MATCH_TEXT = "I don't have a deterministic symbolic answer for that yet."
     private const val MAX_DIALOGUE_ACT_CHARS = 64
+    private const val MAX_EXPERT_EVIDENCE_CHARS = 128
     private const val MAX_UTTERANCE_CHARS = 8_192
 }
