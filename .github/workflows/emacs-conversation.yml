@@ -12,6 +12,7 @@ on:
       - "emacs/zara-conversation-context-test.el"
       - "emacs/zara-conversation-replay-test.el"
       - "emacs/zara-conversation-symbolic-replay-test.el"
+      - "emacs/zara-conversation-symbolic-inspect-test.el"
       - "emacs/zara-conversation-unified-replay-test.el"
       - ".github/workflows/emacs-conversation.yml"
   push:
@@ -27,6 +28,7 @@ on:
       - "emacs/zara-conversation-context-test.el"
       - "emacs/zara-conversation-replay-test.el"
       - "emacs/zara-conversation-symbolic-replay-test.el"
+      - "emacs/zara-conversation-symbolic-inspect-test.el"
       - "emacs/zara-conversation-unified-replay-test.el"
       - ".github/workflows/emacs-conversation.yml"
 
@@ -53,5 +55,6 @@ jobs:
             -l emacs/zara-conversation-context-test.el \
             -l emacs/zara-conversation-replay-test.el \
             -l emacs/zara-conversation-symbolic-replay-test.el \
+            -l emacs/zara-conversation-symbolic-inspect-test.el \
             -l emacs/zara-conversation-unified-replay-test.el \
             -f ert-run-tests-batch-and-exit
