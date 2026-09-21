@@ -48,6 +48,26 @@ class WearFoundationContractTest {
     }
 
     @Test
+    fun wearApplicationsKeepApi30CompatibilityFloor() {
+        val wearAppGradle = File("../wear-app/build.gradle.kts").readText()
+        val wearVoiceGradle = File("../wear-voice/build.gradle.kts").readText()
+        val sharedUiGradle = File("../shared-ui/build.gradle.kts").readText()
+
+        assertTrue(
+            "Zara Wear must remain installable on the Galaxy Watch5 Pro / API 30 baseline",
+            wearAppGradle.contains("minSdk = 30"),
+        )
+        assertTrue(
+            "Zara Wear Voice must remain installable on the same API 30 watch baseline",
+            wearVoiceGradle.contains("minSdk = 30"),
+        )
+        assertTrue(
+            "Shared UI must not raise the effective Wear minimum above API 30",
+            Regex("""minSdk\\s*=\\s*(2[0-9]|30)""").containsMatchIn(sharedUiGradle),
+        )
+    }
+
+    @Test
     fun wearClientDeclaresStandaloneWatchContract() {
         val manifest = File("../wear-app/src/main/AndroidManifest.xml")
         assertTrue("Wear manifest must exist", manifest.isFile)
