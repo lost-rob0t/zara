@@ -63,7 +63,7 @@ class WearFoundationContractTest {
         )
         assertTrue(
             "Shared UI must not raise the effective Wear minimum above API 30",
-            Regex("""minSdk\\s*=\\s*(2[0-9]|30)""").containsMatchIn(sharedUiGradle),
+            Regex("""minSdk\s*=\s*(2[0-9]|30)""").containsMatchIn(sharedUiGradle),
         )
     }
 
