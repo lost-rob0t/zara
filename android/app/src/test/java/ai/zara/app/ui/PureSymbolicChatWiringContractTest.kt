@@ -8,6 +8,14 @@ import org.junit.Test
 class PureSymbolicChatWiringContractTest {
     private fun activity(): String = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
 
+    private fun submitChatTextBlock(source: String): String {
+        val marker =
+            "val submitChatText: (String, ConversationRecord, ProjectContext?) -> Unit = { text, conversation, project ->"
+        check(source.contains(marker)) { "MainActivity must define the canonical submitChatText helper" }
+        return source.substringAfter(marker)
+            .substringBefore("\n\n            ZaraApp(")
+    }
+
     @Test
     fun realChatOwnsPersistedExecutionPolicyAndCanonicalPureSymbolicController() {
         val source = activity()
@@ -18,14 +26,18 @@ class PureSymbolicChatWiringContractTest {
         assertTrue(source.contains("AndroidPureSymbolicConversationFactory.create("))
         assertTrue(source.contains("portableConversationStore,"))
         assertTrue(source.contains("ConversationExecutionPolicyController("))
+        assertTrue(
+            source.contains(
+                "onSendText = { text, conversation, project -> submitChatText(text, conversation, project) }"
+            )
+        )
         assertFalse(source.contains("ConversationStore(File(filesDir, \"conversations.bin\"))"))
     }
 
     @Test
     fun pureSymbolicRouteUsesCanonicalConversationIdAndFencesProviderSubmitBehindLazySupplier() {
         val source = activity()
-        val send = source.substringAfter("onSendText = { text, conversation, project ->")
-            .substringBefore("onCreateProject = { name ->")
+        val send = submitChatTextBlock(source)
         val policySubmit = send.substringAfter("executionPolicyController.submit(")
 
         assertTrue(policySubmit.contains("conversationId = conversation.id"))
@@ -40,8 +52,7 @@ class PureSymbolicChatWiringContractTest {
     @Test
     fun chatCanEnableAndDisablePersistedPureSymbolicPolicyWithoutProviderTurn() {
         val source = activity()
-        val send = source.substringAfter("onSendText = { text, conversation, project ->")
-            .substringBefore("onCreateProject = { name ->")
+        val send = submitChatTextBlock(source)
 
         assertTrue(send.contains("\"/symbolic on\" -> ConversationExecutionPolicy.PURE_SYMBOLIC"))
         assertTrue(send.contains("\"/symbolic off\" -> ConversationExecutionPolicy.STANDARD"))
