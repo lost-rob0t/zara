@@ -52,15 +52,26 @@ class AndroidSymbolicAtomicTerminalCommitContractTest {
             "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
         ).readText()
         val successPath = factory
-            .substringAfter("val (renderedResponse, context1, dialogueAct) = splitDialogueEnvelope(result)", "")
+            .substringAfter("val envelope = splitDialogueEnvelope(result)", "")
             .substringBefore("} catch (error: Throwable)", "")
 
         assertTrue("symbolic success path disappeared", successPath.isNotEmpty())
+        assertTrue(
+            "the terminal projection must consume Context1, canonical dialogue act, and expert " +
+                "evidence from the same single dialogue envelope before persistence",
+            successPath.contains("contextTerm = envelope.contextTerm") &&
+                successPath.contains("dialogueAct = envelope.dialogueAct") &&
+                successPath.contains("expertEvidenceRef = envelope.expertEvidenceRef"),
+        )
         assertTrue(
             "the same persistence owner that fenced the pending generation must atomically commit " +
                 "assistant output plus Context1 before the result future can complete",
             successPath.contains("completeSymbolicTurnAtomically(") &&
                 successPath.indexOf("completeSymbolicTurnAtomically(") < successPath.indexOf("output.complete("),
+        )
+        assertTrue(
+            "the canonical rendered response must be the assistant content committed with Context1",
+            successPath.contains("assistantContent = envelope.renderedResponse"),
         )
         assertFalse(
             "projection-only success commit leaves a process-death split-brain window",
