@@ -119,6 +119,32 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             firstStore.loadMessages(CONVERSATION_ID).single { it.role == HistoryMessageRole.Assistant }.status,
         )
         assertEquals(PROJECT_B, checkNotNull(firstStore.loadSymbolicProjection(CONVERSATION_ID)).projectId)
+
+        assertFalse(
+            "project switch must terminalize the old assistant immediately; recreation is not required",
+            firstStore.loadMessages(CONVERSATION_ID).any { message ->
+                message.role == HistoryMessageRole.Assistant && message.status.isRunning()
+            },
+        )
+        conversations.beginTurn(CONVERSATION_ID, "project B follow-up")
+        val projectBAssistant = firstStore.loadMessages(CONVERSATION_ID).last { message ->
+            message.role == HistoryMessageRole.Assistant
+        }
+        assertTrue(
+            "a new project-B turn must start immediately after the project switch",
+            projectBAssistant.status.isRunning(),
+        )
+        assertTrue(
+            "the project-B turn must have a new canonical turn id",
+            projectBAssistant.turnId != turnId,
+        )
+        conversations.failTurn(CONVERSATION_ID, "project B deterministic local stop")
+        assertFalse(
+            "the follow-up terminalization must leave no running assistant before recreation",
+            firstStore.loadMessages(CONVERSATION_ID).any { message ->
+                message.role == HistoryMessageRole.Assistant && message.status.isRunning()
+            },
+        )
         firstStore.close()
 
         val reopenedStore = PortableConversationStore(context)
@@ -150,7 +176,7 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             assertZeroModel(recovered)
 
             val recoveredAssistant = reopenedStore.loadMessages(CONVERSATION_ID).single { message ->
-                message.role == HistoryMessageRole.Assistant
+                message.role == HistoryMessageRole.Assistant && message.turnId == turnId
             }
             assertEquals(HistoryMessageStatus.Cancelled, recoveredAssistant.status)
 
