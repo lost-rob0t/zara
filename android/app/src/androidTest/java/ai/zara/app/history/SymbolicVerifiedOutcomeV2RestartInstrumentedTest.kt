@@ -76,6 +76,16 @@ class SymbolicVerifiedOutcomeV2RestartInstrumentedTest {
             assertEquals(0L, recovered.providerCalls)
             assertEquals(0L, recovered.modelCalls)
 
+            val edge = reopened.loadSymbolicEdgeSnapshot(CONVERSATION_ID)
+            assertNotNull(edge)
+            requireNotNull(edge)
+            edge.assertPureSymbolic()
+            assertEquals(WINDOW, edge.verifiedOutcomeRefs.size)
+            assertEquals(recovered.verifiedOutcomeRefs, edge.verifiedOutcomeRefs)
+            assertEquals(0L, edge.maxModelCalls)
+            assertEquals(0L, edge.providerCalls)
+            assertEquals(0L, edge.modelCalls)
+
             val fresh = reopened.saveSymbolicProjection(
                 projection(
                     generation = 81,
