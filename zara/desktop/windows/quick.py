@@ -22,7 +22,7 @@ from zara.desktop.conversation import ConversationService, ConversationUpdate
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
 from zara.desktop.theme import refresh_dynamic_style
-from zara.runtime.commands import CancelTurn, SubmitTurn
+from zara.runtime.commands import ApproveTool, CancelTurn, RejectTool, SubmitTurn
 
 _DEFAULT_SIZE = QSize(680, 460)
 _GEOMETRY_KEY = "desktop/quick-copilot/geometry"
@@ -119,6 +119,7 @@ class QuickCopilotWindow(QWidget):
         self._cancel_request_id: Optional[str] = None
         self._cancel_conversation_id: Optional[str] = None
         self._submit_request_id: Optional[str] = None
+        self._tool_action_request_ids: set[str] = set()
 
         self.setObjectName("zaraQuickCopilot")
         self.setWindowTitle("Ask Zara")
@@ -128,9 +129,10 @@ class QuickCopilotWindow(QWidget):
         self.setMinimumSize(480, 320)
         self.resize(_DEFAULT_SIZE)
 
-        self.brand_label = QLabel("ZARA")
+        self.brand_label = QLabel()
         self.brand_label.setObjectName("zaraBrandName")
-        self.title_label = QLabel("Quick Copilot")
+        self.brand_label.hide()
+        self.title_label = QLabel("New chat")
         self.title_label.setObjectName("zaraQuickTitle")
         self.provider_label = QLabel()
         self.provider_label.setObjectName("zaraQuickProvider")
@@ -138,7 +140,7 @@ class QuickCopilotWindow(QWidget):
         self.new_chat_button.setObjectName("zaraSecondaryAction")
         self.new_chat_button.setAccessibleName("Start a new chat")
         self.new_chat_button.setToolTip("Start a new chat")
-        self.expand_button = QPushButton("Full chat")
+        self.expand_button = QPushButton("History")
         self.expand_button.setObjectName("zaraSecondaryAction")
         self.expand_button.setAccessibleName("Change conversation view")
         self.settings_button = QPushButton("Settings")
@@ -321,6 +323,26 @@ class QuickCopilotWindow(QWidget):
         )
         self.bridge.submit(command)
 
+    def submit_tool_action(self, tool_run_id: str, action: str) -> None:
+        if action == "approve":
+            command = ApproveTool(tool_run_id=tool_run_id)
+        elif action == "reject":
+            command = RejectTool(
+                tool_run_id=tool_run_id,
+                reason="Rejected from Zara desktop",
+            )
+        else:
+            raise ValueError(f"unsupported tool action: {action!r}")
+
+        self.command_error_label.hide()
+        self._tool_action_request_ids.add(command.request_id)
+        try:
+            self.bridge.submit(command)
+        except Exception as error:
+            self._tool_action_request_ids.discard(command.request_id)
+            self.command_error_label.setText(str(error) or "Tool action failed")
+            self.command_error_label.show()
+
     def set_status(self, status: DesktopStatus) -> None:
         self._status = status
         self.status_lamp.setProperty("runtimeState", status.state.value)
@@ -353,6 +375,7 @@ class QuickCopilotWindow(QWidget):
             self._clear_owned_cancellation()
         if request_id == self._submit_request_id:
             self._submit_request_id = None
+        self._tool_action_request_ids.discard(request_id)
         self.sync_from_shared_state()
 
     def handle_command_failed(self, request_id: str, message: str) -> None:
@@ -362,6 +385,9 @@ class QuickCopilotWindow(QWidget):
             relevant = True
         if request_id == self._submit_request_id:
             self._submit_request_id = None
+            relevant = True
+        if request_id in self._tool_action_request_ids:
+            self._tool_action_request_ids.discard(request_id)
             relevant = True
         if relevant:
             self.command_error_label.setText(message or "Runtime command failed")
@@ -424,10 +450,10 @@ class QuickCopilotWindow(QWidget):
 
     def _apply_header_density(self) -> None:
         narrow = self.width() < 560
-        self.brand_label.setVisible(not narrow)
+        self.brand_label.hide()
         self.runtime_status_label.setVisible(not narrow)
         self.new_chat_button.setText("New" if narrow else "New chat")
-        self.settings_button.setText("..." if narrow else "Settings")
+        self.settings_button.setText("…" if narrow else "Settings")
 
     def _request_expand(self) -> None:
         self.expand_requested.emit(self.current_conversation_id)
@@ -463,6 +489,7 @@ class QuickCopilotWindow(QWidget):
             self.empty_state.hide()
         for message in messages:
             widget = MessageWidget(message)
+            widget.tool_action_requested.connect(self.submit_tool_action)
             self._message_widgets[message.id] = widget
             self.message_layout.addWidget(widget)
         self._rendered_message_ids = tuple(message.id for message in messages)
