@@ -115,7 +115,74 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
         }
     }
 
+    @Test
+    fun failedExactTurnRemainsTerminalAcrossRecreationAndRejectsLateSuccess() {
+        val firstHistory = PortableConversationStore(context)
+        val first = CanonicalConversationStore(
+            history = firstHistory,
+            metadataFile = metadataFile,
+            legacyFile = null,
+            idFactory = { CONVERSATION_ID },
+        )
+        first.create()
+        first.beginTurn(CONVERSATION_ID, "timer")
+        val failedTurnId = checkNotNull(first.runningTurnId(CONVERSATION_ID))
+        first.failTurn(
+            conversationId = CONVERSATION_ID,
+            message = FAILURE_TEXT,
+            expectedTurnId = failedTurnId,
+        )
+        assertNull(first.runningTurnId(CONVERSATION_ID))
+        firstHistory.close()
+
+        val reopenedHistory = PortableConversationStore(context)
+        try {
+            val reopened = CanonicalConversationStore(
+                history = reopenedHistory,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            val persisted = reopenedHistory.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == failedTurnId
+            }
+            assertEquals(HistoryMessageStatus.Error, persisted.status)
+            assertEquals(FAILURE_TEXT, persisted.content)
+            assertEquals(FAILURE_TEXT, persisted.error)
+            assertNull(reopened.runningTurnId(CONVERSATION_ID))
+            assertEquals(
+                ConversationStatus.Failed,
+                checkNotNull(reopened.state().conversation(CONVERSATION_ID)).status,
+            )
+
+            val staleSuccess = runCatching {
+                reopened.completeTurn(
+                    conversationId = CONVERSATION_ID,
+                    assistantText = "late success must not replace durable failure",
+                    success = true,
+                    expectedTurnId = failedTurnId,
+                )
+            }
+            assertTrue("a durable failed turn must reject late success", staleSuccess.isFailure)
+
+            val afterStale = reopenedHistory.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == failedTurnId
+            }
+            assertEquals(HistoryMessageStatus.Error, afterStale.status)
+            assertEquals(FAILURE_TEXT, afterStale.content)
+            assertEquals(FAILURE_TEXT, afterStale.error)
+            assertFalse(
+                reopenedHistory.loadMessages(CONVERSATION_ID).any {
+                    it.content == "late success must not replace durable failure"
+                },
+            )
+        } finally {
+            reopenedHistory.close()
+        }
+    }
+
     private companion object {
         const val CONVERSATION_ID = "android-stale-ui-completion-fence"
+        const val FAILURE_TEXT = "symbolic turn failed durably"
     }
 }
