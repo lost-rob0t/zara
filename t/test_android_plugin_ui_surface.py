@@ -75,3 +75,5 @@ def test_device_evidence_matrix_already_captures_plugins_settings_tab():
     acceptance = (ROOT / "android/integration/device_acceptance.py").read_text()
     assert '"Plugins",' in acceptance
     assert 'device.capture(f"settings-{tab.lower()}")' in acceptance
+    assert 'device.capture("settings-plugins-narrow-large-font")' in acceptance
+    assert '"plugins-narrow-large-font", target_width_dp=320, font_scale=1.30' in acceptance
