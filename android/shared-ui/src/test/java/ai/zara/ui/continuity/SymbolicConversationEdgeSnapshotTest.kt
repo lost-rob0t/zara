@@ -17,6 +17,39 @@ class SymbolicConversationEdgeSnapshotTest {
     }
 
     @Test
+    fun roundTripsFullCanonicalVerifiedOutcomeWindow() {
+        val receipts = List(64) { index ->
+            "zara.verified-outcome/v2:${index + 1}:outcome:postcondition/tool-run-${index + 1}"
+        }
+        val snapshot = fixture().copy(
+            dialogueAct = "verified",
+            verifiedOutcomeRefs = receipts,
+        )
+
+        val encoded = SymbolicConversationEdgeCodec.encode(snapshot)
+        val decoded = SymbolicConversationEdgeCodec.decode(encoded)
+
+        assertEquals(receipts, decoded.verifiedOutcomeRefs)
+        decoded.assertPureSymbolic()
+        assertTrue(encoded.size <= SymbolicConversationEdgeCodec.MAX_WIRE_BYTES)
+    }
+
+    @Test
+    fun roundTripsCanonicalMaxLengthVerifiedOutcomeReference() {
+        val receipt = "zara.verified-outcome/v2:9:outcome:" + "a".repeat(384)
+        val snapshot = fixture().copy(
+            dialogueAct = "verified",
+            verifiedOutcomeRefs = listOf(receipt),
+        )
+
+        val encoded = SymbolicConversationEdgeCodec.encode(snapshot)
+        val decoded = SymbolicConversationEdgeCodec.decode(encoded)
+
+        assertEquals(listOf(receipt), decoded.verifiedOutcomeRefs)
+        decoded.assertPureSymbolic()
+    }
+
+    @Test
     fun pureSymbolicRequiresProvidersDisabledAndZeroModelBudget() {
         assertFails("providers enabled") { fixture().copy(providersEnabled = true).assertPureSymbolic() }
         assertFails("max model calls must be 0") { fixture().copy(maxModelCalls = 1).assertPureSymbolic() }
