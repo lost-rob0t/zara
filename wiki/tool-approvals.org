@@ -41,6 +41,17 @@ The principal runtime bus publishes =UserResponded= followed by
 rejection, timeout and pre-execution cancellation. =ToolFailed= contains a
 bounded reason and never a raw provider exception.
 
+* Desktop approval surface
+
+The native Desktop Copilot consumes the same lifecycle.  A
+=ToolWaitingForUser= event becomes an activity card that preserves the bounded
+runtime prompt and exposes one =Approve= and one =Reject= action.  The card
+emits only its opaque =tool_run_id= plus the decision; the Copilot submits the
+existing =ApproveTool= or =RejectTool= command through =QtRuntimeBridge=.
+Buttons disable after the first choice, while stale/replayed decision handling
+remains server/runtime-owned.  Desktop never receives a direct LangChain tool
+callable or creates a second executor.
+
 * Authenticated ZARA/1 clients
 
 The closed client commands are =tool.approve= and =tool.reject=. They map only
