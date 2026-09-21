@@ -4,6 +4,7 @@
 :- use_module('../modules/philosophy_expert').
 :- use_module('../kb/agent_profiles').
 :- use_module('../modules/agent_profiles').
+:- use_module('../modules/config_loader').
 
 test(concept_lookup_normalizes_spaces) :-
     philosophy_expert:concept_summary("virtue ethics", virtue_ethics, Summary),
@@ -55,6 +56,23 @@ test(ci_worker_profile_resolves_hyphenated_mention) :-
     ),
     member(read_file, Tools),
     member(query_prolog, Tools).
+
+test(prolog_config_accepts_profile_overrides) :-
+    config_loader:validate_user_fact(
+        agent_profile(test_worker, "Test Worker"),
+        kb_agent_profiles,
+        agent_profile(test_worker, "Test Worker")
+    ),
+    config_loader:validate_user_fact(
+        agent_profile_tools(test_worker, [query_prolog, calculator]),
+        kb_agent_profiles,
+        agent_profile_tools(test_worker, [query_prolog, calculator])
+    ),
+    config_loader:validate_user_fact(
+        agent_profile_kbs(test_worker, [philosophy]),
+        kb_agent_profiles,
+        agent_profile_kbs(test_worker, [philosophy])
+    ).
 
 test(unknown_profile_fails, [fail]) :-
     agent_profiles:resolve_mention("@nobody", _, _, _, _, _, _).
