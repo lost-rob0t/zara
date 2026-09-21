@@ -185,9 +185,11 @@ class MainActivity : ComponentActivity() {
                 operationError = null
                 operationBusy = true
                 val conversationId = conversation.id
+                var expectedTurnId: String? = null
                 try {
                     appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
                     conversationState = conversationStore.beginTurn(conversationId, text)
+                    expectedTurnId = conversationStore.runningTurnId(conversationId)
                     val requestedPolicy = when (text.trim().lowercase()) {
                         "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
                         "/symbolic off" -> ConversationExecutionPolicy.STANDARD
@@ -204,6 +206,7 @@ class MainActivity : ComponentActivity() {
                                 "Pure symbolic mode disabled. Standard execution policy restored."
                             },
                             success = true,
+                            expectedTurnId = requireNotNull(expectedTurnId),
                             remoteConversationId = null,
                         )
                         operationBusy = false
@@ -235,9 +238,9 @@ class MainActivity : ComponentActivity() {
                                 if (error != null) {
                                     if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
                                         operationError = UiOperationFailure.summarize(error)
-                                        recordTurnFailure(conversationId, error)
+                                        recordTurnFailure(conversationId, expectedTurnId, error)
                                     } else {
-                                        recordTurnFailure(conversationId, error)
+                                        recordTurnFailure(conversationId, expectedTurnId, error)
                                     }
                                 } else if (result != null) {
                                     turnFailure = null
@@ -250,6 +253,7 @@ class MainActivity : ComponentActivity() {
                                                 conversationId = conversationId,
                                                 assistantText = result.text,
                                                 success = result.success,
+                                                expectedTurnId = requireNotNull(expectedTurnId),
                                                 remoteConversationId = null,
                                             )
                                         } else {
@@ -259,6 +263,7 @@ class MainActivity : ComponentActivity() {
                                                 conversationId = conversationId,
                                                 assistantText = result.text,
                                                 success = result.success,
+                                                expectedTurnId = requireNotNull(expectedTurnId),
                                                 remoteConversationId = remoteConversationId,
                                             )
                                             if (project != null && remoteConversationId != null &&
@@ -281,9 +286,9 @@ class MainActivity : ComponentActivity() {
                     operationBusy = false
                     if (executionPolicyController.policy() == ConversationExecutionPolicy.PURE_SYMBOLIC) {
                         operationError = UiOperationFailure.summarize(error)
-                        recordTurnFailure(conversationId, error)
+                        recordTurnFailure(conversationId, expectedTurnId, error)
                     } else {
-                        recordTurnFailure(conversationId, error)
+                        recordTurnFailure(conversationId, expectedTurnId, error)
                     }
                 }
             }
@@ -771,7 +776,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun recordTurnFailure(conversationId: String, error: Throwable) {
+    private fun recordTurnFailure(
+        conversationId: String,
+        expectedTurnId: String?,
+        error: Throwable,
+    ) {
         val classified = ZaraFailures.classify(error, ZaraOperation.SUBMIT)
         appSession.recordChatBreadcrumb("chat.turn.failed code=${classified.code}", conversationId)
         val connected = appSession.state().server is ServerConnection.Connected
@@ -782,10 +791,15 @@ class MainActivity : ComponentActivity() {
         )
         turnFailure = TurnFailures.mostSpecific(turnFailure, candidate)
         val summary = TurnFailures.renderSummary(turnFailure ?: candidate)
+        if (expectedTurnId == null) return
         try {
             val selected = conversationStore.state().conversation(conversationId)
             if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
-                conversationState = conversationStore.failTurn(conversationId, summary)
+                conversationState = conversationStore.failTurn(
+                    conversationId = conversationId,
+                    message = summary,
+                    expectedTurnId = expectedTurnId,
+                )
             }
         } catch (_: Exception) {
         }
