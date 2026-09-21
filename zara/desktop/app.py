@@ -112,7 +112,7 @@ def create_application(
     app.setOrganizationName("Zara")
     app.setQuitOnLastWindowClosed(False)
     active_config = config or get_config()
-    apply_desktop_theme(app, str(active_config.get("desktop", "theme", "signal-cabin")))
+    apply_desktop_theme(app, str(active_config.get("desktop", "theme", "outrun")))
 
     existing = getattr(app, _CONTROLLER_ATTR, None)
     if existing is not None:
