@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,6 +27,29 @@ class AndroidSymbolicRestartCommitFenceContractTest {
         assertTrue(
             "the pending projection must be committed through the canonical CAS store before query",
             beforeQuery.contains("saveSymbolicProjection("),
+        )
+    }
+
+    @Test
+    fun `pending projection reuses canonical history turn identity`() {
+        val factory = File(
+            "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
+        ).readText()
+        val persistedTurn = factory
+            .substringAfter("private fun resolvePersistedTurn(")
+            .substringBefore("private fun failBeforeAsyncEvaluation(")
+
+        assertTrue(
+            "the projection must derive turn identity from the already-persisted canonical history turn",
+            persistedTurn.contains("requireRunningTurnId(projectionStore, conversationId)"),
+        )
+        assertTrue(
+            "canonical history turn identity must be threaded into the pending projection",
+            persistedTurn.contains("turnId = turnId"),
+        )
+        assertFalse(
+            "symbolic projection must not mint a competing Android-only turn identity",
+            factory.contains("UUID.randomUUID"),
         )
     }
 
