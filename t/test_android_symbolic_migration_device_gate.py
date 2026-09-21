@@ -5,6 +5,9 @@ ROOT = Path(__file__).resolve().parents[1]
 EMULATOR_GATE = ROOT / "scripts" / "test-android-emulator-install.sh"
 ANDROID_BUILD = ROOT / "android" / "build.gradle.kts"
 STOCK_SERVER_FIXTURE = ROOT / "android" / "integration" / "stock_zara_server_fixture.py"
+PURE_SYMBOLIC_INSTALLED_ACCEPTANCE = (
+    ROOT / "android" / "integration" / "device_pure_symbolic_acceptance.py"
+)
 MIGRATION_TEST = (
     ROOT
     / "android"
@@ -125,6 +128,29 @@ def test_emulator_gate_runs_real_native_pure_symbolic_multiturn_continuity() -> 
     assert "capability-checked execution" in e2e
 
 
+def test_emulator_gate_runs_installed_pure_symbolic_process_recreation() -> None:
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+    installed = PURE_SYMBOLIC_INSTALLED_ACCEPTANCE.read_text(encoding="utf-8")
+
+    compile(installed, str(PURE_SYMBOLIC_INSTALLED_ACCEPTANCE), "exec")
+    assert "android/integration/device_pure_symbolic_acceptance.py" in gate
+    assert 'device.adb("shell", "pm", "clear", APP_PACKAGE)' in installed
+    assert 'send_chat(device, "/symbolic on", "Pure symbolic mode enabled")' in installed
+    assert 'send_chat(device, "timer", "How long should I set the timer for?")' in installed
+    assert '"5 minutes"' in installed
+    assert 'send_chat(device, "thanks", "welcome")' in installed
+    assert installed.count("device.recreate()") >= 3
+    assert "capability-checked execution" in installed
+    assert 'projection["providers_enabled"] != 0' in installed
+    assert 'projection["max_model_calls"] != 0' in installed
+    assert 'projection["provider_calls"] != 0' in installed
+    assert 'projection["model_calls"] != 0' in installed
+    assert 'projection["renderer_provenance"] != "symbolic-dcg/v1"' in installed
+    assert 'context_term.startswith("completed_frame(")' in installed
+    assert 'projection["conversation_id"]' in installed
+    assert "Projection turn id does not match canonical terminal history" in installed
+
+
 def test_symbolic_emulator_gate_preserves_current_master_device_acceptance() -> None:
     gate = EMULATOR_GATE.read_text(encoding="utf-8")
     fixture = STOCK_SERVER_FIXTURE.read_text(encoding="utf-8")
@@ -133,6 +159,7 @@ def test_symbolic_emulator_gate_preserves_current_master_device_acceptance() -> 
     # for the symbolic migration/restart suite. Keep both fail-closed gates.
     assert "com.google.android.apps.nexuslauncher" in gate
     assert "android/integration/device_acceptance.py" in gate
+    assert "android/integration/device_pure_symbolic_acceptance.py" in gate
     assert "android/integration/stock_zara_server_fixture.py" in gate
     assert "android/integration/device_remote_acceptance.py" in gate
     assert 'data.get("passed") is not True' in gate
