@@ -16,8 +16,9 @@ from zara.runtime import bridge, events
 from zara.runtime.commands import CommandReceipt
 from zara.security import Capability
 from zara.security_state import PersistentSecurityState
+from zara.security_transport import CurveClientConfig
 from zara.server import ServerState, ZaraServer
-from zara.zmq_transport import TransportConfig
+from zara.zmq_transport import TransportConfig, ZmqZaraClient
 
 
 def _trace(phase: str, outcome: str) -> None:
@@ -166,6 +167,31 @@ def _write_fixture(path: Path, values: dict[str, str]) -> None:
         raise
 
 
+def _wait_for_transport_ready(
+    *,
+    endpoint: str,
+    server_public: str,
+    client_public: str,
+    client_secret: str,
+    config: TransportConfig,
+) -> None:
+    """Prove authenticated ZARA/1 hello before exposing the Android fixture."""
+    probe = ZmqZaraClient(
+        endpoint,
+        config=config,
+        curve_client=CurveClientConfig(
+            public_key=client_public,
+            secret_key=client_secret,
+            server_public_key=server_public,
+        ),
+    )
+    try:
+        probe.start().result(timeout=5.0)
+        _trace("transport.probe", "ready")
+    finally:
+        probe.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture-file", required=True)
@@ -174,6 +200,7 @@ def main() -> int:
     fixture_file = Path(args.fixture_file).resolve()
     endpoint = _tcp_endpoint()
     client_public, client_secret = zmq.curve_keypair()
+    probe_public, probe_secret = zmq.curve_keypair()
     barrier = _AcceptanceBarrier()
 
     with tempfile.TemporaryDirectory(prefix="zara-android-stock-") as temporary:
@@ -185,27 +212,41 @@ def main() -> int:
             principal=PrincipalContext.local_owner(),
             capabilities={Capability.SESSION_BASIC, Capability.TURN_SUBMIT},
         )
+        state.enroll_client(
+            probe_public,
+            device_id="android-jvm-readiness-probe",
+            principal=PrincipalContext.local_owner(),
+            capabilities={Capability.SESSION_BASIC},
+        )
+        transport_config = TransportConfig(
+            sndhwm=8,
+            rcvhwm=8,
+            heartbeat_interval_ms=100,
+            heartbeat_timeout_ms=500,
+            linger_ms=0,
+            request_timeout=2.0,
+            poll_interval_ms=5,
+            event_queue_size=16,
+            pending_request_limit=16,
+        )
         server = ZaraServer(
             supervisor=_Supervisor(barrier),
             endpoint=endpoint,
             runtime_dir=Path(temporary) / "runtime",
             security_state=state,
-            gateway_transport_config=TransportConfig(
-                sndhwm=8,
-                rcvhwm=8,
-                heartbeat_interval_ms=100,
-                heartbeat_timeout_ms=500,
-                linger_ms=0,
-                request_timeout=2.0,
-                poll_interval_ms=5,
-                event_queue_size=16,
-                pending_request_limit=16,
-            ),
+            gateway_transport_config=transport_config,
             shutdown_timeout=1.0,
         )
         server.start()
         _trace("server", "ready")
         try:
+            _wait_for_transport_ready(
+                endpoint=endpoint,
+                server_public=server_curve.public_key.decode("ascii"),
+                client_public=probe_public.decode("ascii"),
+                client_secret=probe_secret.decode("ascii"),
+                config=transport_config,
+            )
             _write_fixture(
                 fixture_file,
                 {
@@ -215,6 +256,7 @@ def main() -> int:
                     "client_secret": client_secret.decode("ascii"),
                     "acceptance_host": barrier.host,
                     "acceptance_port": str(barrier.port),
+                    "security_admin_path": os.fspath(state.control_socket_path),
                 },
             )
             print("READY", flush=True)

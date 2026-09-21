@@ -22,6 +22,7 @@ from zara.desktop.controller import DesktopController
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
 from zara.runtime.host import RuntimeHost
+from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
 from zara.server import ServerLease
 
 _CONTROLLER_ATTR = "_zara_desktop_controller"
@@ -60,8 +61,31 @@ def _desktop_control_runtime_dir() -> Path:
     return ServerLease()._runtime_dir()
 
 
+def _configured_conversation_policy(config: Optional[ZaraConfig]) -> str:
+    """Read Desktop's conversation execution policy without hijacking agent loops."""
+    active_config = config or get_config()
+    getter = getattr(active_config, "get", None)
+    if not callable(getter):
+        return "standard"
+    return str(
+        getter("conversation", "execution_policy", "standard")
+    ).strip().lower()
+
+
 def _default_desktop_client(config: Optional[ZaraConfig] = None) -> ZaraClient:
-    """Construct the canonical configured daemon-backed desktop client."""
+    """Construct the configured canonical Desktop client boundary.
+
+    Standard mode remains daemon-backed. A conversation execution policy of
+    ``pure_symbolic`` runs the same RuntimeHost boundary in-process so no
+    daemon/provider runtime has to initialize before the hard-zero symbolic
+    contract is active. This policy is deliberately separate from
+    ``[agent].backend``, which remains the canonical AgentLoopRegistry selector.
+    """
+    if _configured_conversation_policy(config) == "pure_symbolic":
+        return InProcessZaraClient(
+            backend_factory=PureSymbolicRuntimeBackend,
+            config=config,
+        )
     return create_daemon_client(_default_daemon_endpoint(config), config=config)
 
 

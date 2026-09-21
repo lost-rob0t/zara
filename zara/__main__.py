@@ -5,6 +5,7 @@ Wraps console (text), voice, and dictate modes
 """
 
 import argparse
+import json
 import queue
 import sys
 import time
@@ -37,6 +38,8 @@ GPU_ERROR_MARKERS = (
     "gfx",
 )
 CLI_TURN_TIMEOUT_SECONDS = 30.0
+CLI_IDENTIFIER_MAX_CHARS = 128
+CLI_REPLAY_VERSION = "ZARA-CONVERSATION-REPLAY/1"
 
 
 def normalize_stt_device(device: str, provider: str | None = None) -> str:
@@ -103,6 +106,71 @@ def _resolve_stt_runtime(args):
     return stt_provider, stt_device, stt_model
 
 
+def _validate_cli_identifier(value: str, label: str) -> str:
+    """Return a bounded opaque CLI identifier or fail closed."""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError(f"{label} must not be empty")
+    if "\x00" in normalized:
+        raise ValueError(f"{label} must not contain NUL")
+    if len(normalized) > CLI_IDENTIFIER_MAX_CHARS:
+        raise ValueError(
+            f"{label} exceeds maximum length {CLI_IDENTIFIER_MAX_CHARS}"
+        )
+    return normalized
+
+
+def _conversation_replay_payload(store, conversation_id: str) -> dict:
+    """Project canonical durable history into a deterministic read surface."""
+    normalized = _validate_cli_identifier(conversation_id, "conversation id")
+    conversation = store.get_conversation(normalized)
+    if conversation is None:
+        raise ValueError(f"unknown conversation {normalized!r}")
+    messages = store.load_messages(normalized)
+    from .desktop.conversation.replay_status import symbolic_projection_payload
+
+    symbolic_projection = symbolic_projection_payload(
+        store.load_symbolic_projection(normalized)
+    )
+    return {
+        "version": CLI_REPLAY_VERSION,
+        "conversation": {
+            "id": conversation.id,
+            "title": conversation.title,
+            "created_at": conversation.created_at,
+            "updated_at": conversation.updated_at,
+        },
+        "messages": [
+            {
+                "sequence": message.sequence,
+                "role": message.role.value,
+                "content": message.content,
+                "status": message.status.value,
+                "turn_id": message.turn_id,
+                "error": message.error,
+                "tool_run_id": message.tool_run_id,
+            }
+            for message in messages
+        ],
+        "symbolic_projection": symbolic_projection,
+    }
+
+
+def _run_conversation_replay(conversation_id: str) -> int:
+    """Print canonical durable history without entering a provider/runtime path."""
+    from .desktop.conversation import ConversationStore
+
+    try:
+        payload = _conversation_replay_payload(ConversationStore(), conversation_id)
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return 0
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
+
+
 def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
     from .runtime import events
 
@@ -134,9 +202,30 @@ def _wait_for_daemon_turn(subscription, turn_id: str) -> str:
             raise RuntimeError(event.reason or "daemon turn cancelled")
 
 
-def _run_connected_text(endpoint: str, command_text: str) -> int:
+def _emit_cli_event(event_type: str, *, turn_id: str, conversation_id, **body) -> None:
+    """Emit one deterministic JSON event for native clients such as Emacs."""
+    payload = {
+        "type": event_type,
+        "turn_id": turn_id,
+        "conversation_id": conversation_id,
+        **body,
+    }
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+def _run_connected_text(
+    endpoint: str,
+    command_text: str,
+    *,
+    conversation_id: str | None = None,
+    context_ids=(),
+    emit_json: bool = False,
+) -> int:
     from .daemon_client import create_daemon_client
     from .runtime.commands import SubmitTurn
+
+    if conversation_id is not None:
+        conversation_id = _validate_cli_identifier(conversation_id, "conversation id")
 
     client = None
     subscription = None
@@ -147,9 +236,29 @@ def _run_connected_text(endpoint: str, command_text: str) -> int:
         # Subscribe before submit so an immediately-completing daemon turn
         # cannot publish its terminal event before this CLI is listening.
         subscription = client.subscribe()
-        receipt = client.submit(SubmitTurn(text=command_text)).result()
-        response = _wait_for_daemon_turn(subscription, receipt.turn_id)
-        if response:
+        receipt = client.submit(
+            SubmitTurn(
+                text=command_text,
+                conversation_id=conversation_id,
+                context_ids=context_ids,
+            )
+        ).result()
+        turn_id = _validate_cli_identifier(receipt.turn_id, "turn id")
+        if emit_json:
+            _emit_cli_event(
+                "turn.accepted",
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+            )
+        response = _wait_for_daemon_turn(subscription, turn_id)
+        if emit_json:
+            _emit_cli_event(
+                "assistant.complete",
+                turn_id=turn_id,
+                conversation_id=conversation_id,
+                text=response,
+            )
+        elif response:
             print(response)
     except Exception as error:
         print(f"Error: {error}", file=sys.stderr)
@@ -162,6 +271,32 @@ def _run_connected_text(endpoint: str, command_text: str) -> int:
                 if exit_code == 0:
                     print(f"Error: {error}", file=sys.stderr)
                     exit_code = 2
+        if client is not None:
+            try:
+                client.close()
+            except Exception as error:
+                if exit_code == 0:
+                    print(f"Error: {error}", file=sys.stderr)
+                    exit_code = 2
+    return exit_code
+
+
+def _run_connected_cancel(endpoint: str, turn_id: str) -> int:
+    """Cancel TURN_ID through Zara's canonical runtime command boundary."""
+    from .daemon_client import create_daemon_client
+    from .runtime.commands import CancelTurn
+
+    normalized_turn_id = _validate_cli_identifier(turn_id, "turn id")
+    client = None
+    exit_code = 0
+    try:
+        client = create_daemon_client(endpoint)
+        client.start().result()
+        client.submit(CancelTurn(turn_id=normalized_turn_id)).result()
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        exit_code = 2
+    finally:
         if client is not None:
             try:
                 client.close()
@@ -222,6 +357,9 @@ def main():
                "  zara 'open firefox'           # Execute text command\n"
                "  zara --standalone 'hello'     # Explicit private local runtime\n"
                "  zara --connect ipc:///run/user/1000/zara.sock 'hello'\n"
+               "  zara --conversation-id emacs-main --context-id doc:alpha --json-events 'continue'\n"
+               "  zara --replay-conversation emacs-main  # Replay durable history\n"
+               "  zara --cancel-turn TURN_ID    # Cancel through ZARA/1\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
                "  zara --console                # Interactive REPL\n"
@@ -278,6 +416,11 @@ def main():
         action="store_true",
         help="Direct conversation mode with agent"
     )
+    mode_group.add_argument(
+        "--replay-conversation",
+        metavar="CONVERSATION_ID",
+        help="Render one canonical durable conversation as strict JSON"
+    )
 
     client_group = parser.add_mutually_exclusive_group()
     client_group.add_argument(
@@ -289,6 +432,28 @@ def main():
         "--standalone",
         action="store_true",
         help="Use the private in-process compatibility path for a text command"
+    )
+
+    parser.add_argument(
+        "--conversation-id",
+        help="Reuse one canonical daemon conversation for this text turn"
+    )
+    parser.add_argument(
+        "--context-id",
+        action="append",
+        default=[],
+        metavar="CONTEXT_ID",
+        help="Attach one canonical context reference; repeat for additional refs",
+    )
+    parser.add_argument(
+        "--json-events",
+        action="store_true",
+        help="Emit bounded turn.accepted/assistant.complete JSON events"
+    )
+    parser.add_argument(
+        "--cancel-turn",
+        metavar="TURN_ID",
+        help="Cancel one daemon turn through the canonical runtime boundary"
     )
 
     parser.add_argument(
@@ -313,7 +478,6 @@ def main():
         action="store_true",
         help="Enable verbose logging"
     )
-
     parser.add_argument(
         "--stt-provider",
         default=default_stt_provider,
@@ -354,6 +518,42 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.replay_conversation:
+        if args.command:
+            parser.error("--replay-conversation cannot be combined with a text command")
+        if args.connect or args.standalone:
+            parser.error("--replay-conversation reads the local canonical store directly")
+        if args.cancel_turn:
+            parser.error("--cancel-turn is not used with --replay-conversation")
+        if args.conversation_id:
+            parser.error("--conversation-id is not used with --replay-conversation")
+        if args.context_id:
+            parser.error("--context-id is not used with --replay-conversation")
+        if args.json_events:
+            parser.error("--json-events is not used with --replay-conversation")
+        if args.pets or args.pets_settings:
+            parser.error("pet modes are not used with --replay-conversation")
+    elif args.cancel_turn:
+        if args.command:
+            parser.error("--cancel-turn cannot be combined with a text command")
+        if args.standalone:
+            parser.error("--cancel-turn requires the daemon/ZARA/1 path")
+        if args.conversation_id:
+            parser.error("--conversation-id is not used with --cancel-turn")
+        if args.context_id:
+            parser.error("--context-id is not used with --cancel-turn")
+        if args.json_events:
+            parser.error("--json-events is not used with --cancel-turn")
+    elif args.conversation_id or args.context_id or args.json_events:
+        if not args.command:
+            parser.error(
+                "--conversation-id/--context-id/--json-events require a text command"
+            )
+        if args.standalone:
+            parser.error(
+                "--conversation-id/--context-id/--json-events require the daemon/ZARA/1 path"
+            )
 
     if args.desktop:
         from .desktop.app import main as desktop_main
@@ -437,6 +637,9 @@ def main():
         from .agent_cli import main as agent_main
         sys.exit(agent_main())
 
+    elif args.replay_conversation:
+        sys.exit(_run_conversation_replay(args.replay_conversation))
+
     elif args.pets_settings:
         from .pets.cli import main_settings
         sys.exit(main_settings())
@@ -445,12 +648,30 @@ def main():
         from .pets.cli import main_overlay
         sys.exit(main_overlay())
 
+    elif args.cancel_turn:
+        endpoint = args.connect or _default_daemon_endpoint()
+        sys.exit(_run_connected_cancel(endpoint, args.cancel_turn))
+
     elif args.command:
         command_text = " ".join(args.command)
 
         if not args.standalone:
             endpoint = args.connect or _default_daemon_endpoint()
-            sys.exit(_run_connected_text(endpoint, command_text))
+            if (
+                args.conversation_id is None
+                and not args.context_id
+                and not args.json_events
+            ):
+                sys.exit(_run_connected_text(endpoint, command_text))
+            sys.exit(
+                _run_connected_text(
+                    endpoint,
+                    command_text,
+                    conversation_id=args.conversation_id,
+                    context_ids=args.context_id,
+                    emit_json=args.json_events,
+                )
+            )
 
         from .console import ZaraConsole
 

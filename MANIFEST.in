@@ -9,6 +9,7 @@ include flake.lock
 include docker-compose.yml
 recursive-include kb *
 recursive-include modules *.pl
+recursive-include contracts *
 recursive-include assets *
 recursive-include scripts *.sh
 recursive-include scripts *.py

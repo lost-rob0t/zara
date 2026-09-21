@@ -12,6 +12,7 @@ on:
       - scripts/version-context.py
       - setup.py
       - android/app/build.gradle.kts
+      - android/code-editor/build.gradle.kts
       - android/wear-app/build.gradle.kts
       - .github/workflows/release.yml
       - scripts/release-changelog.py
@@ -218,8 +219,11 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           apk="dist/zara-android-${VERSION}.apk"
+          code_editor_apk="dist/zara-code-editor-${VERSION}.apk"
           cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
+          cp android/code-editor/build/outputs/apk/debug/code-editor-debug.apk "$code_editor_apk"
           sha256sum "$apk" > "${apk}.sha256"
+          sha256sum "$code_editor_apk" > "${code_editor_apk}.sha256"
           {
             echo "schema=1"
             echo "source_sha=${GITHUB_SHA}"
@@ -228,13 +232,26 @@ jobs:
             echo "apk=$(basename "$apk")"
             echo "apk_sha256=$(sha256sum "$apk" | awk '{print $1}')"
           } > "dist/zara-android-${VERSION}.manifest.txt"
+          {
+            echo "schema=1"
+            echo "source_sha=${GITHUB_SHA}"
+            echo "version_name=${VERSION}"
+            echo "version_code=${VERSION_CODE}"
+            echo "apk=$(basename "$code_editor_apk")"
+            echo "apk_sha256=$(sha256sum "$code_editor_apk" | awk '{print $1}')"
+          } > "dist/zara-code-editor-${VERSION}.manifest.txt"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
+          echo "code_editor_apk=$code_editor_apk" >> "$GITHUB_OUTPUT"
+          echo "code_editor_manifest=dist/zara-code-editor-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
 
-      - name: Verify update-compatible Android signing certificate
+      - name: Verify update-compatible Android signing certificates
         env:
           APK: ${{ steps.artifact.outputs.apk }}
-        run: nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
+          CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
+        run: |
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
 
       - name: Enable KVM access for released-APK acceptance
         shell: bash
@@ -300,7 +317,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: bash -euo pipefail -c 'serial="emulator-5554"; adb -s "$serial" wait-for-device; test "$(adb -s "$serial" get-state)" = "device"; adb -s "$serial" install -r "$APK"; python android/integration/device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output artifacts/versioned-release-device'
+          script: bash -euo pipefail -c 'serial="emulator-5554"; adb -s "$serial" wait-for-device; test "$(adb -s "$serial" get-state)" = "device"; adb -s "$serial" install -r "$APK"; nix develop ./android -c python3 android/integration/device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output artifacts/versioned-release-device'
 
       - name: Upload exact release APK acceptance evidence
         if: always()
@@ -318,6 +335,8 @@ jobs:
           VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
+          CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
+          CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
           NOTES: ${{ steps.notes.outputs.notes }}
         shell: bash
         run: |
@@ -336,6 +355,9 @@ jobs:
                 "$(basename "$APK")" \
                 "$(basename "${APK}.sha256")" \
                 "$(basename "$MANIFEST")" \
+                "$(basename "$CODE_EDITOR_APK")" \
+                "$(basename "${CODE_EDITOR_APK}.sha256")" \
+                "$(basename "$CODE_EDITOR_MANIFEST")" \
                 "$(basename "$NOTES")"
               do
                 if ! grep -Fxq "$required" <<< "$assets"; then
@@ -349,7 +371,11 @@ jobs:
               gh release download "$TAG" \
                 --dir "$existing_dir" \
                 --pattern "$(basename "$MANIFEST")"
+              gh release download "$TAG" \
+                --dir "$existing_dir" \
+                --pattern "$(basename "$CODE_EDITOR_MANIFEST")"
               existing_manifest="$existing_dir/$(basename "$MANIFEST")"
+              existing_code_editor_manifest="$existing_dir/$(basename "$CODE_EDITOR_MANIFEST")"
               grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
                 echo "Release $TAG manifest source_sha does not match $GITHUB_SHA." >&2
                 exit 1
@@ -360,6 +386,19 @@ jobs:
               }
               grep -Fxq "version_code=${VERSION_CODE}" "$existing_manifest" || {
                 echo "Release $TAG manifest version_code does not match $VERSION_CODE." >&2
+                exit 1
+              }
+
+              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_code_editor_manifest" || {
+                echo "Release $TAG Code Editor manifest source_sha does not match $GITHUB_SHA." >&2
+                exit 1
+              }
+              grep -Fxq "version_name=${VERSION}" "$existing_code_editor_manifest" || {
+                echo "Release $TAG Code Editor manifest version_name does not match $VERSION." >&2
+                exit 1
+              }
+              grep -Fxq "version_code=${VERSION_CODE}" "$existing_code_editor_manifest" || {
+                echo "Release $TAG Code Editor manifest version_code does not match $VERSION_CODE." >&2
                 exit 1
               }
 
@@ -394,6 +433,9 @@ jobs:
             "$APK" \
             "${APK}.sha256" \
             "$MANIFEST" \
+            "$CODE_EDITOR_APK" \
+            "${CODE_EDITOR_APK}.sha256" \
+            "$CODE_EDITOR_MANIFEST" \
             "$NOTES" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
@@ -408,6 +450,8 @@ jobs:
           VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
+          CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
+          CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
           NOTES: ${{ steps.notes.outputs.notes }}
         shell: bash
         run: |
@@ -421,29 +465,46 @@ jobs:
             --pattern "$(basename "$APK")" \
             --pattern "$(basename "${APK}.sha256")" \
             --pattern "$(basename "$MANIFEST")" \
+            --pattern "$(basename "$CODE_EDITOR_APK")" \
+            --pattern "$(basename "${CODE_EDITOR_APK}.sha256")" \
+            --pattern "$(basename "$CODE_EDITOR_MANIFEST")" \
             --pattern "$(basename "$NOTES")"
 
           published_apk="$verify_dir/$(basename "$APK")"
           published_checksum="$verify_dir/$(basename "${APK}.sha256")"
           published_manifest="$verify_dir/$(basename "$MANIFEST")"
+          published_code_editor_apk="$verify_dir/$(basename "$CODE_EDITOR_APK")"
+          published_code_editor_checksum="$verify_dir/$(basename "${CODE_EDITOR_APK}.sha256")"
+          published_code_editor_manifest="$verify_dir/$(basename "$CODE_EDITOR_MANIFEST")"
           published_notes="$verify_dir/$(basename "$NOTES")"
 
           cmp "$APK" "$published_apk"
           cmp "$MANIFEST" "$published_manifest"
+          cmp "$CODE_EDITOR_APK" "$published_code_editor_apk"
+          cmp "$CODE_EDITOR_MANIFEST" "$published_code_editor_manifest"
           cmp "$NOTES" "$published_notes"
 
           expected_sha="$(awk '{print $1}' "$published_checksum")"
           actual_sha="$(sha256sum "$published_apk" | awk '{print $1}')"
           test "$actual_sha" = "$expected_sha"
+          expected_code_editor_sha="$(awk '{print $1}' "$published_code_editor_checksum")"
+          actual_code_editor_sha="$(sha256sum "$published_code_editor_apk" | awk '{print $1}')"
+          test "$actual_code_editor_sha" = "$expected_code_editor_sha"
 
           grep -Fxq "source_sha=${GITHUB_SHA}" "$published_manifest"
           grep -Fxq "version_name=${VERSION}" "$published_manifest"
           grep -Fxq "version_code=${VERSION_CODE}" "$published_manifest"
           grep -Fxq "apk=$(basename "$published_apk")" "$published_manifest"
           grep -Fxq "apk_sha256=${actual_sha}" "$published_manifest"
+          grep -Fxq "source_sha=${GITHUB_SHA}" "$published_code_editor_manifest"
+          grep -Fxq "version_name=${VERSION}" "$published_code_editor_manifest"
+          grep -Fxq "version_code=${VERSION_CODE}" "$published_code_editor_manifest"
+          grep -Fxq "apk=$(basename "$published_code_editor_apk")" "$published_code_editor_manifest"
+          grep -Fxq "apk_sha256=${actual_code_editor_sha}" "$published_code_editor_manifest"
 
           release_body="$RUNNER_TEMP/published-release-body.md"
           gh release view "$TAG" --json body --jq '.body' > "$release_body"
           diff -u "$NOTES" "$release_body"
 
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$published_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$published_code_editor_apk"

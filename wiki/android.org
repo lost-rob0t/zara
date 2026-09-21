@@ -102,6 +102,27 @@ The debug APK is produced at the standard Gradle location:
 android/app/build/outputs/apk/debug/app-debug.apk
 #+end_example
 
+The dedicated Zara Code Editor APK is produced at:
+
+#+begin_example
+android/code-editor/build/outputs/apk/debug/code-editor-debug.apk
+#+end_example
+
+The Android gate verifies the APK signature and manifest/package identity, and
+CI installs and launches =ai.zara.code.editor= on an emulator. The rolling
+=android-latest= publication path additionally verifies that Zara Code carries
+the repository's update-compatible signing certificate before publishing
+=zara-code-editor-latest.apk=.
+
+If Android asks to update an older Zara Code development build and then reports
+that the package appears invalid, the installed development build may have been
+signed with a different ephemeral debug certificate. Android cannot replace an
+installed package with the same application id under a different signing key.
+Uninstall the old =ai.zara.code.editor= build once (Settings > Apps > Zara Code
+> Uninstall, or =adb uninstall ai.zara.code.editor=), then install the current
+=zara-code-editor-latest.apk=. Rolling and immutable publication keep signer
+continuity after that migration.
+
 Zara product/version state is centralized in the repository-root
 =version.properties=. =zara.version= and =android.versionCode= identify the
 source currently being built; =release.target= and
