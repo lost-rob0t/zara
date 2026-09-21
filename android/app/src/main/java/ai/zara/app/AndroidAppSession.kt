@@ -18,6 +18,8 @@ import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
+import ai.zara.app.localai.LocalModelMetadata
+import ai.zara.app.localai.LocalModelSpec
 import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
@@ -69,6 +71,7 @@ import ai.zara.app.voice.VoiceStreamState
 import android.content.Context
 import android.content.Intent
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
@@ -240,6 +243,20 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
+
+    fun localAiModels(): CompletableFuture<List<LocalModelSpec>> = localAi.models()
+
+    fun installLocalModel(
+        source: InputStream,
+        metadata: LocalModelMetadata,
+    ): CompletableFuture<LocalModelSpec> = localAi.installModel(source, metadata)
+
+    fun selectLocalModel(
+        id: String,
+        version: String,
+    ): CompletableFuture<LocalAiState> = localAi.selectModel(id, version)
+
+    fun unloadLocalModel(): CompletableFuture<LocalAiState> = localAi.unloadModel()
 
     fun exportDiagnostics(): String {
         val server = localServer.state()
