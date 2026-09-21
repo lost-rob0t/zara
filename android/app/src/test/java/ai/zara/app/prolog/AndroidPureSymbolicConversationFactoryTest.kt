@@ -41,17 +41,22 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
-    fun dialogueContextQueryReturnsContextThroughExistingResultBinding() {
+    fun persistedDialogueEnvelopeReturnsResponseAndContextFromOneDialogueTurn() {
         val context = "completed_frame(frame(intent(ns(device),name('timer.set')),[],complete))"
-        val query = AndroidPureSymbolicConversationFactory.dialogueContextQuery(
+        val query = AndroidPureSymbolicConversationFactory.dialogueTurnEnvelopeQuery(
             "actually ten minutes",
             context,
         )
 
-        assertTrue(query.endsWith("Result = Context1"))
+        assertEquals(
+            "one user turn must execute canonical dialogue_turn exactly once",
+            1,
+            Regex("symbolic_dialogue_turn:dialogue_turn\\(").findAll(query).count(),
+        )
+        assertTrue(query.contains("symbolic_dialogue:render_response(Act, Response)"))
+        assertTrue(query.endsWith("(Result = Response ; Result = dialogue_context(Context1))"))
         assertTrue(query.contains("valid_dialogue_context(Context0)"))
         assertTrue(query.contains("valid_dialogue_context(Context1)"))
-        assertFalse(query.contains("render_response"))
     }
 
     @Test
