@@ -48,6 +48,10 @@ class AndroidPureSymbolicConversationFactoryTest {
             context,
         )
 
+        assertTrue(
+            "persisted dialogue must commit one router/renderer solution before Result enumeration",
+            query.startsWith("once(("),
+        )
         assertEquals(
             "one user turn must execute canonical dialogue_turn exactly once",
             1,
