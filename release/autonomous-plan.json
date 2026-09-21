@@ -5,13 +5,46 @@
   "target_version": "0.3.0",
   "target_android_version_code": 6,
   "slices": [
-    {"id": "pairing-e2e", "issue": 1358, "required": true},
-    {"id": "prolog-rlm-coder", "issue": 1359, "required": true},
-    {"id": "mara-mother", "issue": 1360, "required": true},
-    {"id": "symbolic-jev-local-ai", "issue": 1327, "required": true},
-    {"id": "kb-factory", "issue": 1362, "required": true},
-    {"id": "expert-repair", "issue": 1363, "required": true},
-    {"id": "deterministic-release", "issue": 1361, "required": true}
+    {
+      "id": "pairing-e2e",
+      "issue": 1358,
+      "required": true
+    },
+    {
+      "id": "prolog-rlm-coder",
+      "issue": 1359,
+      "required": true
+    },
+    {
+      "id": "mara-mother",
+      "issue": 1360,
+      "required": true
+    },
+    {
+      "id": "symbolic-jev-local-ai",
+      "issue": 1364,
+      "required": true
+    },
+    {
+      "id": "kb-factory",
+      "issue": 1362,
+      "required": true
+    },
+    {
+      "id": "expert-repair",
+      "issue": 1363,
+      "required": true
+    },
+    {
+      "id": "cross-surface-parity",
+      "issue": 1365,
+      "required": true
+    },
+    {
+      "id": "deterministic-release",
+      "issue": 1361,
+      "required": true
+    }
   ],
   "required_gates": [
     "core_tests",
