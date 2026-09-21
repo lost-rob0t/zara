@@ -69,6 +69,15 @@ class VoiceCloneYouTubeArgs(BaseModel):
     start_seconds: float = Field(0.0, ge=0.0, le=86_400.0)
     duration_seconds: float = Field(15.0, ge=3.0, le=45.0)
     reference_text: str = Field("", max_length=2000)
+    speaker_id: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_SPEAKER_CHARS,
+        description=(
+            "Optional diarized speaker label such as speaker_01. When set, Zara "
+            "selects that speaker's longest VAD-confirmed segment automatically."
+        ),
+    )
     rights_basis: Literal[
         "self",
         "explicit_permission",
@@ -353,16 +362,68 @@ class VoiceExpert:
         start_seconds: float = 0.0,
         duration_seconds: float = 15.0,
         reference_text: str = "",
+        speaker_id: Optional[str] = None,
     ) -> str:
         self._validate_clone_rights(rights_basis, subject_is_public_figure)
         self._validate_voice_name(voice_name)
         self._youtube_url(url)
-        ytdlp = self._ytdlp_command()
         ffmpeg = self._require_binary("ffmpeg")
 
+        selected_segment = None
         with tempfile.TemporaryDirectory(prefix="zara-voice-ref-") as temp_dir:
             root = Path(temp_dir)
             source = self._download_youtube_audio(url, root)
+            if speaker_id:
+                speaker_id = self._speaker(speaker_id)
+                analysis_wav = root / "speaker-analysis.wav"
+                self._run(
+                    [
+                        ffmpeg,
+                        "-nostdin",
+                        "-hide_banner",
+                        "-loglevel",
+                        "error",
+                        "-i",
+                        str(source),
+                        "-t",
+                        f"{self._analysis_max_source_seconds():.3f}",
+                        "-vn",
+                        "-ac",
+                        "1",
+                        "-ar",
+                        "16000",
+                        "-c:a",
+                        "pcm_s16le",
+                        "-y",
+                        str(analysis_wav),
+                    ],
+                    timeout=DOWNLOAD_TIMEOUT_SECONDS,
+                )
+                analyzer = VoiceAnalyzer(
+                    config=self.config,
+                    prolog_engine=self.prolog_engine,
+                )
+                analyzed = analyzer.analyze_wav(
+                    analysis_wav,
+                    source_id=url,
+                    persist_to_kb=True,
+                )
+                matches = [
+                    segment for segment in analyzed
+                    if segment.speaker == speaker_id
+                ]
+                if not matches:
+                    raise RuntimeError(
+                        f"speaker {speaker_id!r} was not found in the analyzed source"
+                    )
+                selected_segment = max(matches, key=lambda segment: segment.duration)
+                if selected_segment.duration < 3.0:
+                    raise RuntimeError(
+                        f"speaker {speaker_id!r} has no VAD-confirmed segment at least 3 seconds long"
+                    )
+                start_seconds = selected_segment.start
+                duration_seconds = min(45.0, selected_segment.duration)
+
             wav_path = root / "reference.wav"
             self._run(
                 [
@@ -405,6 +466,14 @@ class VoiceExpert:
                 "voice": voice_name,
                 "rights_basis": rights_basis,
                 "provider_result": result,
+                "source_segment": (
+                    selected_segment.to_dict()
+                    if selected_segment is not None
+                    else {
+                        "start": float(start_seconds),
+                        "duration": float(duration_seconds),
+                    }
+                ),
             },
             ensure_ascii=False,
         )
@@ -753,7 +822,9 @@ def build_voice_tools(prolog_engine: Any, config: Any) -> list[StructuredTool]:
             name="voice_clone_from_youtube",
             description=(
                 "Create a Qwen3-TTS reference voice from a short authorized YouTube clip. "
-                "Requires an explicit rights basis and does not support public-figure cloning."
+                "Optionally select a diarized speaker_id so Zara automatically uses that "
+                "speaker's longest VAD-confirmed segment. Requires explicit rights and "
+                "public-figure attestations."
             ),
             args_schema=VoiceCloneYouTubeArgs,
             metadata={"zara_requires_approval": True},
