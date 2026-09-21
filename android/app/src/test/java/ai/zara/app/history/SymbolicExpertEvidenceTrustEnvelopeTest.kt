@@ -53,6 +53,17 @@ class SymbolicExpertEvidenceTrustEnvelopeTest {
         }
     }
 
+    @Test
+    fun `untyped legacy model usage metadata fails closed`() {
+        assertFailsWithMessage("expertEvidenceJson") {
+            SymbolicProjectionContract.validatePayload(
+                projection(
+                    """[{"legacy_fact":"python inspected project","model_calls":0}]"""
+                )
+            )
+        }
+    }
+
     private fun assertFailsWithMessage(fragment: String, block: () -> Unit) {
         try {
             block()
