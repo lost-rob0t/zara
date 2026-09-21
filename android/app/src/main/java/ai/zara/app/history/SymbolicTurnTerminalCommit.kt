@@ -133,3 +133,66 @@ fun PortableConversationStore.completeSymbolicTurnAtomically(
     }
     stored
 }
+
+/**
+ * Fail a canonical pure-symbolic assistant turn before a pending projection was installed.
+ *
+ * MainActivity creates the user and pending-assistant rows before the runtime factory enters its
+ * context/project preflight. If that preflight fails, the same [PortableConversationStore] must
+ * terminalize the already-owned assistant row so the conversation cannot remain wedged in running
+ * state and the controller cannot invent a replacement turn identity. This path is deliberately
+ * unavailable once a pending symbolic projection exists; after that boundary callers must use
+ * [completeSymbolicTurnAtomically] and its projection-generation CAS.
+ */
+fun PortableConversationStore.failSymbolicTurnBeforeProjection(
+    conversationId: String,
+    turnId: String,
+    assistantContent: String,
+    assistantError: String = assistantContent,
+) = synchronized(this) {
+    require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+    require(turnId.isNotBlank()) { "turnId must not be blank" }
+
+    val current = loadSymbolicProjection(conversationId)
+    check(current == null || current.turnId != turnId || current.outcome != "pending") {
+        "symbolic preflight failure cannot bypass pending projection CAS"
+    }
+
+    val now = PortableConversationStore.nowIso()
+    val db = writableDatabase
+    db.beginTransaction()
+    try {
+        val messageChanged = db.update(
+            "desktop_messages",
+            ContentValues().apply {
+                put("content", assistantContent)
+                put("status", HistoryMessageStatus.Error.wireName)
+                put("error", assistantError)
+                put("updated_at", now)
+            },
+            "conversation_id = ? AND principal_id = ? AND turn_id = ? AND role = ? " +
+                "AND status IN (?, ?)",
+            arrayOf(
+                conversationId,
+                ConversationHistoryContract.localPrincipalId,
+                turnId,
+                HistoryMessageRole.Assistant.wireName,
+                HistoryMessageStatus.Pending.wireName,
+                HistoryMessageStatus.Streaming.wireName,
+            ),
+        )
+        check(messageChanged == 1) {
+            "stale symbolic preflight assistant update rejected"
+        }
+
+        db.update(
+            "desktop_conversations",
+            ContentValues().apply { put("updated_at", now) },
+            "id = ? AND principal_id = ?",
+            arrayOf(conversationId, ConversationHistoryContract.localPrincipalId),
+        )
+        db.setTransactionSuccessful()
+    } finally {
+        db.endTransaction()
+    }
+}
