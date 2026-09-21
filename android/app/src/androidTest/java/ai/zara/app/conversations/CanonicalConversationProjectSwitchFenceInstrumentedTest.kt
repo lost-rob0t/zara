@@ -23,9 +23,10 @@ import org.junit.Test
  *
  * A project switch is a logical context switch, not UI-only decoration. If a pure-symbolic turn is
  * still pending under project A when the canonical conversation is moved to project B, the project
- * switch must atomically cancel that canonical running assistant turn and advance the existing
- * symbolic projection before a late project-A callback can publish output or Context1. The fence
- * must remain durable across process/store recreation and preserve exact zero-provider/model policy.
+ * switch must atomically cancel that canonical running assistant turn, advance the existing
+ * symbolic projection, and clear project-scoped dialogue knowledge before the new project becomes
+ * visible. A late project-A callback must never publish output or Context1. The fence must remain
+ * durable across process/store recreation and preserve exact zero-provider/model policy.
  *
  * This test intentionally uses the existing CanonicalConversationStore + PortableConversationStore
  * owners. It must not be satisfied by a second project, conversation, or symbolic state store.
@@ -49,7 +50,7 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
     }
 
     @Test
-    fun projectSwitchCancelsPendingProjectATurnAndSurvivesRecreation() {
+    fun projectSwitchCancelsPendingProjectATurnClearsScopedKnowledgeAndSurvivesRecreation() {
         val firstStore = PortableConversationStore(context)
         val conversations = CanonicalConversationStore(
             history = firstStore,
@@ -83,6 +84,11 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
         assertEquals(2L, fencedB.projectGeneration)
         assertEquals(2L, fencedB.projectionGeneration)
         assertEquals(RUNTIME_GENERATION, fencedB.runtimeGeneration)
+        assertEquals("{}", fencedB.dialogueStateJson)
+        assertEquals("[]", fencedB.discourseEntitiesJson)
+        assertEquals("[]", fencedB.unresolvedQuestionsJson)
+        assertEquals("[]", fencedB.expertEvidenceJson)
+        assertEquals("[]", fencedB.verifiedFactsJson)
         assertZeroModel(fencedB)
         assertEquals(
             HistoryMessageStatus.Cancelled,
@@ -136,6 +142,11 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             assertEquals(2L, recovered.projectGeneration)
             assertEquals(2L, recovered.projectionGeneration)
             assertEquals(RUNTIME_GENERATION, recovered.runtimeGeneration)
+            assertEquals("{}", recovered.dialogueStateJson)
+            assertEquals("[]", recovered.discourseEntitiesJson)
+            assertEquals("[]", recovered.unresolvedQuestionsJson)
+            assertEquals("[]", recovered.expertEvidenceJson)
+            assertEquals("[]", recovered.verifiedFactsJson)
             assertZeroModel(recovered)
 
             val recoveredAssistant = reopenedStore.loadMessages(CONVERSATION_ID).single { message ->
@@ -177,10 +188,10 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             projectGeneration = 1L,
             dialogueAct = "clarify",
             dialogueStateJson = "{\"context\":\"project-a\"}",
-            discourseEntitiesJson = "[]",
+            discourseEntitiesJson = "[{\"id\":\"project-a-entity\"}]",
             unresolvedQuestionsJson = "[{\"slot\":\"duration\"}]",
-            expertEvidenceJson = "[]",
-            verifiedFactsJson = "[]",
+            expertEvidenceJson = "[{\"ref\":\"project-a-expert\"}]",
+            verifiedFactsJson = "[{\"fact\":\"project-a-fact\"}]",
             rendererProvenance = "",
             providersEnabled = false,
             maxModelCalls = 0L,
