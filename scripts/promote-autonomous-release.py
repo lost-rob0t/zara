@@ -54,11 +54,39 @@ def promoted_text(plan: dict, current: dict[str, str]) -> str:
     )
 
 
+def promote_changelog(text: str, target: str) -> str:
+    marker = "## Unreleased\n"
+    target_marker = f"## {target}\n"
+    if marker not in text:
+        raise ValueError("CHANGELOG.md has no Unreleased section")
+    if target_marker in text:
+        raise ValueError("target changelog section already exists")
+
+    start = text.index(marker) + len(marker)
+    next_section = text.find("\n## ", start)
+    if next_section < 0:
+        raise ValueError("CHANGELOG.md has no section after Unreleased")
+    body = text[start:next_section].strip("\n")
+    if not body.strip():
+        raise ValueError("Unreleased changelog is empty")
+
+    return (
+        text[:start]
+        + "\n"
+        + target_marker
+        + "\n"
+        + body
+        + "\n"
+        + text[next_section:]
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--version-file", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--changelog", type=Path)
     args = parser.parse_args()
 
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
@@ -68,6 +96,10 @@ def main() -> int:
     text = promoted_text(plan, current)
     target = args.output or args.version_file
     target.write_text(text, encoding="utf-8")
+    if args.changelog is not None:
+        changelog = args.changelog.read_text(encoding="utf-8")
+        promoted = promote_changelog(changelog, str(plan["target_version"]))
+        args.changelog.write_text(promoted, encoding="utf-8")
     return 0
 
 
