@@ -34,9 +34,25 @@ class LlmServeEngine(context: Context) : AutoCloseable {
         require(metadata.format == LocalModelFormat.LITERT_LM) {
             "LLM Serve currently accepts only litert-lm models"
         }
+        check(runtime.state().phase != LocalAiPhase.GENERATING) {
+            "Cannot replace the active model during generation"
+        }
+        val previous = modelStore.activeModel()
         val spec = modelStore.install(source, metadata)
-        runtime.load(spec).get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        return spec
+        try {
+            runtime.load(spec).get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            return spec
+        } catch (error: Throwable) {
+            if (previous == null) {
+                modelStore.clear()
+            } else {
+                modelStore.activate(previous)
+                runCatching {
+                    runtime.load(previous).get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                }
+            }
+            throw error
+        }
     }
 
     fun selectModel(name: String?): LocalModelSpec {
