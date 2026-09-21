@@ -8,6 +8,7 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPushButton
 
@@ -20,7 +21,13 @@ from zara.desktop.conversation import (
     MessageRole,
     MessageStatus,
 )
-from zara.desktop.theme import ANDROID_THEME_TOKENS, THEME_REGISTRY, resolve_theme
+from zara.desktop.theme import (
+    ANDROID_THEME_TOKENS,
+    MIN_TEXT_CONTRAST,
+    THEME_REGISTRY,
+    contrast_ratio,
+    resolve_theme,
+)
 from zara.desktop.windows import CopilotPresentation, CopilotWindow, QuickCopilotWindow
 from zara.runtime import events
 from zara.runtime.commands import ApproveTool, RejectTool
@@ -103,11 +110,37 @@ def test_android_parity_themes_are_first_class_and_outrun_is_default() -> None:
     assert THEME_REGISTRY["outrun"].colors["primary"] == "#E21CF2"
 
 
+def test_android_parity_themes_pass_raw_wcag_conformance_without_repair() -> None:
+    for key in ("outrun", "starintel", "midnight", "terminal", "light"):
+        colors = THEME_REGISTRY[key].colors
+        for foreground, background in (
+            ("text", "ground"),
+            ("text", "panel_deep"),
+            ("text", "panel"),
+            ("text", "panel_lift"),
+            ("text_muted", "panel_deep"),
+            ("on_primary", "primary"),
+        ):
+            assert (
+                contrast_ratio(
+                    QColor(colors[foreground]),
+                    QColor(colors[background]),
+                )
+                >= MIN_TEXT_CONTRAST
+            ), f"{key}: {foreground} on {background}"
+
+
 def test_desktop_design_expert_explains_android_token_mapping() -> None:
     goal = (
         f"use_module('{REPO_ROOT / 'modules/desktop_design_expert.pl'}'), "
         "desktop_design_expert:desktop_role_source(outrun, ground, background), "
         "desktop_design_expert:desktop_role_source(outrun, panel_lift, surfaceElevated), "
+        "desktop_design_expert:desktop_role_derivation("
+        "outrun, on_primary, contrast_text(primary)), "
+        "desktop_design_expert:desktop_role_derivation("
+        "outrun, danger_deep, mix(surfaceInput, error, 18)), "
+        "findall(Role, desktop_design_expert:desktop_role_derivation("
+        "outrun, Role, _), Roles), sort(Roles, UniqueRoles), length(UniqueRoles, 15), "
         "desktop_design_expert:theme_provenance("
         "outrun, 'android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt'), "
         "halt."
