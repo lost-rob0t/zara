@@ -216,11 +216,7 @@ class MainActivity : ComponentActivity() {
                                 if (error != null) {
                                     if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
                                         operationError = UiOperationFailure.summarize(error)
-                                        try {
-                                            conversationState = conversationStore.state()
-                                        } catch (storeError: Exception) {
-                                            operationError = UiOperationFailure.summarize(storeError)
-                                        }
+                                        recordTurnFailure(conversationId, error)
                                     } else {
                                         recordTurnFailure(conversationId, error)
                                     }
@@ -228,7 +224,15 @@ class MainActivity : ComponentActivity() {
                                     turnFailure = null
                                     try {
                                         if (executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
-                                            conversationState = conversationStore.state()
+                                            // Natural symbolic turns are already terminalized by the persisted resolver;
+                                            // completeTurn is an exact idempotence check there and is the canonical
+                                            // terminal write for explicit /prolog, /expert, ?-, and ? routes.
+                                            conversationState = conversationStore.completeTurn(
+                                                conversationId = conversationId,
+                                                assistantText = result.text,
+                                                success = result.success,
+                                                remoteConversationId = null,
+                                            )
                                         } else {
                                             val remoteConversationId = result.conversationId
                                                 ?.takeUnless { it.startsWith("local-") }
@@ -258,10 +262,7 @@ class MainActivity : ComponentActivity() {
                     operationBusy = false
                     if (executionPolicyController.policy() == ConversationExecutionPolicy.PURE_SYMBOLIC) {
                         operationError = UiOperationFailure.summarize(error)
-                        try {
-                            conversationState = conversationStore.state()
-                        } catch (_: Exception) {
-                        }
+                        recordTurnFailure(conversationId, error)
                     } else {
                         recordTurnFailure(conversationId, error)
                     }
