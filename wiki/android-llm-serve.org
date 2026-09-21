@@ -1,0 +1,55 @@
+#+title: Android LLM Serve APK
+
+* What it is
+
+=llm-serve= is a separate Android APK that exposes Zara's existing on-device
+LiteRT-LM runtime through a small Ollama-compatible loopback HTTP surface.
+
+It is compatibility, not a bundled copy of upstream Ollama. The server binds
+only =127.0.0.1:11434= and implements the subset Zara needs:
+
+- =GET /api/version=
+- =GET /api/tags=
+- =GET /api/ps=
+- =POST /api/chat=
+- =POST /api/generate=
+
+Both buffered JSON and NDJSON streaming are supported for generation.
+
+* Runtime ownership
+
+The APK reuses Zara Android's canonical =LocalModelStore=,
+=LocalAiRuntime=, and =LiteRtLocalLlmBackend=. The runtime remains
+single-thread actor-owned. There is no second model scheduler, model catalog,
+or inference policy implementation.
+
+Model installation is app-private and SHA-256 verified. The user supplies model
+id, version, backend, context size, and an explicit declared quantization.
+Unknown or omitted quantization is not guessed.
+
+* Zara configuration
+
+A Zara process on the same Android device can use the service as an Ollama
+provider:
+
+#+begin_src toml
+[client_profiles.phone-local.llm]
+provider = "ollama"
+endpoint = "http://127.0.0.1:11434/api/chat"
+model = "zara-local"
+#+end_src
+
+Select that profile locally with =ZARA_CLIENT_PROFILE=phone-local=, or bind a
+known client id through =[client_pins]=.
+
+A different profile can pin the mobile client to OpenRouter while desktop or
+another local process remains on this loopback service.
+
+* Security boundary
+
+- no wildcard/LAN bind;
+- service component is not exported;
+- request body/header/message sizes are bounded;
+- model bytes stay in app-private storage;
+- model output has no device-action authority;
+- API credentials are not stored in client profile tables.
