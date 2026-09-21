@@ -23,3 +23,17 @@
   fails ("Shared UI must not raise the effective Wear minimum above
   API 30") — surfaced by the #1391 area; flagged for reviewers, gated
   by the repo's authoritative android+wear lane.
+
+** Gate (reconciliation head)
+
+- Full Android gate green: =nix develop ./android -c bash
+  scripts/test-android.sh= (stock-server interop with real runtime
+  events, all module JVM suites, emulator-free contracts, APK builds,
+  installability + secret inspection).
+- Gate repair included: WearFoundationContractTest raw-string regex
+  broken by #1391 failed on pure master too; single-backslash fix,
+  test green. Blocks the =:app= lane for everyone otherwise.
+- Python focused suites green (44 security/transport/pairing tests).
+- Remaining exact-head authority: PR CI lanes (test, android+wear,
+  deep regression, dual-surface, agentic live app) — merge on green
+  via auto-merge.
