@@ -27,6 +27,7 @@ from .conversation import ConversationManager
 from .graph import run_conversation_loop, validate_and_clean_messages
 from .hooks import AgentLoopAdviceRegistry, HookDiagnostic
 from .loops import AgentLoopBackendOverrideDisabled, AgentLoopDiagnostic, AgentLoopRegistry
+from .profiles import AgentProfileResolver
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
@@ -62,6 +63,7 @@ class AgentManager:
         self.config = config if config is not None else get_config()
         self.prolog_engine = prolog_engine
         self.principal = principal
+        self.profile_resolver = AgentProfileResolver(prolog_engine) if prolog_engine is not None else None
 
         llm_config = self.config.get_llm_config()
         self.llm_client = self._create_llm_client(llm_config)
@@ -269,6 +271,27 @@ class AgentManager:
         logger.info("[AgentManager] user_input=%r", user_input)
         logger.info("[AgentManager] user_input_length=%d", len(user_input))
 
+        selected_profile = (
+            self.profile_resolver.resolve(user_input)
+            if self.profile_resolver is not None
+            else None
+        )
+        effective_user_input = (
+            selected_profile.request
+            if selected_profile is not None and selected_profile.request
+            else user_input
+        )
+        active_tool_registry = self.tool_registry
+        if selected_profile is not None:
+            logger.info(
+                "[AgentManager] profile=%s",
+                selected_profile.profile.profile_id,
+            )
+            if selected_profile.profile.tools is not None:
+                active_tool_registry = self.tool_registry.scoped(
+                    selected_profile.profile.tools
+                )
+
         provided_history = conversation_history is not None
         if provided_history:
             cleaned_history = list(conversation_history)
@@ -292,7 +315,7 @@ class AgentManager:
         state: Dict[str, Any] = {
             "turn_id": turn_id,
             "conversation_id": conversation_id,
-            "user_input": user_input,
+            "user_input": effective_user_input,
             "messages": cleaned_history,
             "tool_calls": [],
             "tool_results": [],
@@ -311,8 +334,21 @@ class AgentManager:
             else:
                 logger.info("[AgentManager] System prompt already present")
 
+        profile_context_message = None
+        if selected_profile is not None:
+            profile_context_message = SystemMessage(
+                content=selected_profile.profile.system_context(),
+                id=f"profile-context-{uuid.uuid4()}",
+            )
+            state["messages"].insert(1, profile_context_message)
+
         memory_context_message = None
-        memory_context = self._build_memory_context(user_input)
+        memory_context = (
+            None
+            if selected_profile is not None
+            and selected_profile.profile.memory_scope == "none"
+            else self._build_memory_context(effective_user_input)
+        )
         if memory_context:
             memory_context_message = SystemMessage(
                 content=memory_context,
@@ -329,21 +365,21 @@ class AgentManager:
                 ),
             )
 
-        state["messages"].append(HumanMessage(content=user_input))
+        state["messages"].append(HumanMessage(content=effective_user_input))
         logger.info(
             "[AgentManager] Message types=%s",
             [type(m).__name__ for m in state["messages"][-6:]],
         )
         logger.info(
             "[AgentManager] Last user message=%r",
-            user_input,
+            effective_user_input,
         )
 
         principal_id = getattr(self.principal, "principal_id", "local")
         result = await advice_registry.invoke(
             backend.callback,
             self.llm_client,
-            self.tool_registry,
+            active_tool_registry,
             state,
             approval_controller=self.approval_controller,
             publisher=self.approval_controller.publisher,
@@ -352,11 +388,16 @@ class AgentManager:
         )
 
         result_messages = result.get("messages", [])
-        if memory_context_message is not None:
+        transient_context_ids = {
+            message.id
+            for message in (memory_context_message, profile_context_message)
+            if message is not None
+        }
+        if transient_context_ids:
             result_messages = [
                 message
                 for message in result_messages
-                if getattr(message, "id", None) != memory_context_message.id
+                if getattr(message, "id", None) not in transient_context_ids
             ]
         if not provided_history:
             self.conversation_manager.conversation_history = result_messages
