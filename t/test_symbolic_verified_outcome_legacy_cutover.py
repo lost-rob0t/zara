@@ -96,7 +96,7 @@ def test_migrated_legacy_projection_cannot_mint_new_v1_and_cuts_over_after_resta
         receipt=legacy_a,
     )
 
-    with pytest.raises(RuntimeError, match="retired verified outcome replay rejected"):
+    with pytest.raises(RuntimeError, match="verified projection requires fresh outcome evidence"):
         first.save_symbolic_projection(
             _projection(
                 conversation.id,
