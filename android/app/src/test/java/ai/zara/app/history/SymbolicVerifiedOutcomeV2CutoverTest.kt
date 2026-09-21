@@ -120,17 +120,48 @@ class SymbolicVerifiedOutcomeV2CutoverTest {
         }
     }
 
+    @Test
+    fun `same turn v2 mode rejects legacy and old generation additions`() {
+        val current = projection(
+            generation = 1,
+            runtimeGeneration = 7,
+            turnId = "turn-7",
+            receipts = listOf(v2Receipt(7, 7)),
+            outcome = "pending",
+        )
+        val legacyReplay = projection(
+            generation = 2,
+            runtimeGeneration = 7,
+            turnId = "turn-7",
+            receipts = current.verifiedOutcomeRefs + legacyReceipt(1),
+        )
+        assertRejected("retired verified outcome replay rejected") {
+            SymbolicProjectionContract.validateWrite(current, legacyReplay, expectedGeneration = 1)
+        }
+
+        val oldGenerationReplay = projection(
+            generation = 2,
+            runtimeGeneration = 7,
+            turnId = "turn-7",
+            receipts = current.verifiedOutcomeRefs + v2Receipt(6, 6),
+        )
+        assertRejected("verified outcome generation mismatch rejected") {
+            SymbolicProjectionContract.validateWrite(current, oldGenerationReplay, expectedGeneration = 1)
+        }
+    }
+
     private fun projection(
         generation: Long,
         runtimeGeneration: Long,
         turnId: String,
         receipts: List<String>,
+        outcome: String = "success",
     ) = SymbolicConversationProjection(
         conversationId = "conv-verified-v2-cutover",
         projectionGeneration = generation,
         runtimeGeneration = runtimeGeneration,
         turnId = turnId,
-        outcome = "success",
+        outcome = outcome,
         dialogueAct = "verified",
         dialogueStateJson = "{\"act\":\"verified\"}",
         verifiedOutcomeRefs = receipts,
