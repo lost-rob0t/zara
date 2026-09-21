@@ -23,7 +23,7 @@ class SymbolicVerifiedOutcomeLegacyCutoverTest {
             turnId = "turn-v1-rejected",
             receipts = listOf(legacyA, legacyB),
         )
-        assertRejected("retired verified outcome replay rejected") {
+        assertRejected("verified projection requires fresh outcome evidence") {
             SymbolicProjectionContract.validateWrite(
                 current,
                 illegalV1Advance,
