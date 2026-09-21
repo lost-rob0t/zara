@@ -101,9 +101,9 @@ class VoiceExpert:
         if len(query) > MAX_QUERY_CHARS:
             raise ValueError(f"YouTube query exceeds {MAX_QUERY_CHARS} characters")
         limit = max(1, min(int(limit), MAX_YOUTUBE_RESULTS))
-        ytdlp = self._require_binary("yt-dlp")
+        ytdlp = self._ytdlp_command()
         command = [
-            ytdlp,
+            *ytdlp,
             "--dump-single-json",
             "--skip-download",
             "--flat-playlist",
@@ -111,12 +111,6 @@ class VoiceExpert:
             "--quiet",
             "--playlist-end",
             str(limit),
-            "--sleep-requests",
-            "1",
-            "--sleep-interval",
-            "1",
-            "--max-sleep-interval",
-            "3",
             f"ytsearch{limit}:{query}",
         ]
         completed = self._run(command, timeout=SEARCH_TIMEOUT_SECONDS)
@@ -296,7 +290,7 @@ class VoiceExpert:
         self._validate_clone_rights(rights_basis, subject_is_public_figure)
         self._validate_voice_name(voice_name)
         self._youtube_url(url)
-        ytdlp = self._require_binary("yt-dlp")
+        ytdlp = self._ytdlp_command()
         ffmpeg = self._require_binary("ffmpeg")
 
         with tempfile.TemporaryDirectory(prefix="zara-voice-ref-") as temp_dir:
@@ -304,16 +298,10 @@ class VoiceExpert:
             output_template = str(root / "source.%(ext)s")
             self._run(
                 [
-                    ytdlp,
+                    *ytdlp,
                     "--no-playlist",
                     "--no-warnings",
                     "--quiet",
-                    "--sleep-requests",
-                    "1",
-                    "--sleep-interval",
-                    "1",
-                    "--max-sleep-interval",
-                    "3",
                     "-f",
                     "bestaudio/best",
                     "-o",
@@ -555,6 +543,30 @@ class VoiceExpert:
     @staticmethod
     def _prolog_string_list(values: list[str]) -> str:
         return "[" + ",".join(_prolog_string(str(value)) for value in values) + "]"
+
+    @staticmethod
+    def _ytdlp_command() -> list[str]:
+        wrapper = shutil.which("zara-ytdlp")
+        if wrapper is not None:
+            return [wrapper]
+        repo_wrapper = Path(__file__).resolve().parents[1] / "scripts" / "zara-ytdlp"
+        if repo_wrapper.is_file():
+            bash = shutil.which("bash")
+            if bash is None:
+                raise RuntimeError("bash is required to run scripts/zara-ytdlp")
+            return [bash, str(repo_wrapper)]
+        ytdlp = shutil.which("yt-dlp")
+        if ytdlp is None:
+            raise RuntimeError("zara-ytdlp/yt-dlp is not installed or not on PATH")
+        return [
+            ytdlp,
+            "--sleep-requests",
+            "1",
+            "--sleep-interval",
+            "1",
+            "--max-sleep-interval",
+            "3",
+        ]
 
     @staticmethod
     def _require_binary(name: str) -> str:
