@@ -55,10 +55,15 @@ class ConversationHistoryWiringContractTest {
         assertTrue(host.contains("remoteConversationId = conversation.remoteConversationId"))
     }
 
-    @Test fun `host persists lifecycle mutations through the conversation store`() {
+    @Test fun `host persists lifecycle mutations through canonical portable history facade`() {
         val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val facade = File(
+            "src/main/java/ai/zara/app/conversations/CanonicalConversationStore.kt"
+        ).readText()
 
-        assertTrue(source.contains("ConversationStore(File(filesDir, \"conversations.bin\"))"))
+        assertTrue(source.contains("PortableConversationStore(this)"))
+        assertTrue(source.contains("CanonicalConversationStore("))
+        assertFalse(source.contains("ConversationStore(File(filesDir, \"conversations.bin\"))"))
         assertTrue(source.contains("conversationStore.create()"))
         assertTrue(source.contains("conversationStore.select(conversationId)"))
         assertTrue(source.contains("conversationStore.setPinned(conversationId, pinned)"))
@@ -67,5 +72,8 @@ class ConversationHistoryWiringContractTest {
         assertTrue(source.contains("conversationStore.beginTurn(conversationId, text)"))
         assertTrue(source.contains("conversationStore.completeTurn("))
         assertTrue(source.contains("conversationStore.failTurn(conversationId, failure)"))
+        assertTrue(facade.contains("history.saveMessage("))
+        assertTrue(facade.contains("history.loadState(conversation.id)"))
+        assertFalse(facade.contains("assistantText" + " = DataOutput"))
     }
 }
