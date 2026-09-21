@@ -15,7 +15,7 @@ class SymbolicVerifiedOutcomeBoundedWindowTest {
             turnId = "turn-64",
             receipts = initialReceipts,
         )
-        val nextReceipts = initialReceipts.drop(1) + receipt(WINDOW + 1)
+        val nextReceipts = initialReceipts.drop(1) + v2Receipt(2, WINDOW + 1)
         val proposed = projection(
             generation = 2,
             runtimeGeneration = 2,
@@ -42,7 +42,7 @@ class SymbolicVerifiedOutcomeBoundedWindowTest {
             turnId = "turn-64",
             receipts = initialReceipts,
         )
-        val compactedReceipts = initialReceipts.drop(1) + receipt(WINDOW + 1)
+        val compactedReceipts = initialReceipts.drop(1) + v2Receipt(2, WINDOW + 1)
         val compacted = projection(
             generation = 2,
             runtimeGeneration = 2,
@@ -92,6 +92,9 @@ class SymbolicVerifiedOutcomeBoundedWindowTest {
 
     private fun receipt(index: Int): String =
         "zara.verified-outcome/v1:outcome:postcondition/tool-run-$index"
+
+    private fun v2Receipt(runtimeGeneration: Int, index: Int): String =
+        "zara.verified-outcome/v2:$runtimeGeneration:outcome:postcondition/tool-run-$index"
 
     private companion object {
         const val WINDOW = 64
