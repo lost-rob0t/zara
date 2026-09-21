@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -208,9 +209,9 @@ private fun PluginInstallSettings() {
         SectionCard(if (state.phase == PluginInstallPhase.INSTALLED) "LAST INSTALLATION" else "REVIEW APK") {
             KeyValueRow("package", candidate.packageName)
             KeyValueRow("version", candidate.version)
-            KeyValueRow("APK SHA-256", candidate.sha256)
+            PluginDigestRow("APK SHA-256", candidate.sha256)
             candidate.certificates.forEachIndexed { index, certificate ->
-                KeyValueRow("signer ${index + 1} SHA-256", certificate)
+                PluginDigestRow("signer ${index + 1} SHA-256", certificate)
             }
             MutedNotice(
                 "The checksum proves the selected bytes match the value you supplied. " +
@@ -260,6 +261,21 @@ private fun PluginInstallSettings() {
     uiError?.let { ErrorBanner(it) }
     if (state.phase != PluginInstallPhase.IDLE && state.phase != PluginInstallPhase.VERIFYING) {
         SecondaryAction("Dismiss installation", true, installer::dismiss)
+    }
+}
+
+@Composable
+private fun PluginDigestRow(label: String, value: String) {
+    val tokens = LocalZaraTokens.current
+    Text(label, color = tokens.textMuted, fontSize = 11.sp)
+    SelectionContainer {
+        Text(
+            value,
+            modifier = Modifier.fillMaxWidth(),
+            color = tokens.text,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+        )
     }
 }
 
