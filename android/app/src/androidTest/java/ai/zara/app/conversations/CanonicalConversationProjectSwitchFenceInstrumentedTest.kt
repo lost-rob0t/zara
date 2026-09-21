@@ -23,9 +23,9 @@ import org.junit.Test
  *
  * A project switch is a logical context switch, not UI-only decoration. If a pure-symbolic turn is
  * still pending under project A when the canonical conversation is moved to project B, the project
- * switch must advance the existing symbolic projection before a late project-A callback can publish
- * output or Context1. The fence must remain durable across process/store recreation and must preserve
- * the exact zero-provider / zero-model policy.
+ * switch must atomically cancel that canonical running assistant turn and advance the existing
+ * symbolic projection before a late project-A callback can publish output or Context1. The fence
+ * must remain durable across process/store recreation and preserve exact zero-provider/model policy.
  *
  * This test intentionally uses the existing CanonicalConversationStore + PortableConversationStore
  * owners. It must not be satisfied by a second project, conversation, or symbolic state store.
@@ -49,7 +49,7 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
     }
 
     @Test
-    fun projectSwitchFencesPendingProjectACompletionAndSurvivesRecreation() {
+    fun projectSwitchCancelsPendingProjectATurnAndSurvivesRecreation() {
         val firstStore = PortableConversationStore(context)
         val conversations = CanonicalConversationStore(
             history = firstStore,
@@ -77,13 +77,17 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
 
         val fencedB = checkNotNull(firstStore.loadSymbolicProjection(CONVERSATION_ID))
         fencedB.assertPureSymbolic()
-        assertEquals("pending", fencedB.outcome)
+        assertEquals("cancelled", fencedB.outcome)
         assertEquals(turnId, fencedB.turnId)
         assertEquals(PROJECT_B, fencedB.projectId)
         assertEquals(2L, fencedB.projectGeneration)
         assertEquals(2L, fencedB.projectionGeneration)
         assertEquals(RUNTIME_GENERATION, fencedB.runtimeGeneration)
         assertZeroModel(fencedB)
+        assertEquals(
+            HistoryMessageStatus.Cancelled,
+            firstStore.loadMessages(CONVERSATION_ID).single { it.role == HistoryMessageRole.Assistant }.status,
+        )
 
         val staleProjectACompletion = pendingA.copy(
             projectionGeneration = 2L,
@@ -105,7 +109,7 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             staleBeforeRestart.isFailure,
         )
         assertEquals(
-            HistoryMessageStatus.Pending,
+            HistoryMessageStatus.Cancelled,
             firstStore.loadMessages(CONVERSATION_ID).single { it.role == HistoryMessageRole.Assistant }.status,
         )
         assertEquals(PROJECT_B, checkNotNull(firstStore.loadSymbolicProjection(CONVERSATION_ID)).projectId)
@@ -126,11 +130,11 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
 
             val recovered = checkNotNull(reopenedStore.loadSymbolicProjection(CONVERSATION_ID))
             recovered.assertPureSymbolic()
-            assertEquals("interrupted", recovered.outcome)
+            assertEquals("cancelled", recovered.outcome)
             assertEquals(turnId, recovered.turnId)
             assertEquals(PROJECT_B, recovered.projectId)
             assertEquals(2L, recovered.projectGeneration)
-            assertEquals(3L, recovered.projectionGeneration)
+            assertEquals(2L, recovered.projectionGeneration)
             assertEquals(RUNTIME_GENERATION, recovered.runtimeGeneration)
             assertZeroModel(recovered)
 
