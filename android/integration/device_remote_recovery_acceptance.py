@@ -64,6 +64,7 @@ def endpoint_port(endpoint: str) -> int:
 
 def send_chat_turn(device: Device, text: str, expect: str, timeout: float = 25.0) -> None:
     open_menu(device, "Chat")
+    device.tap_tab("Chat")
     device.await_label("Ask anything…", timeout=10.0)
     device.tap("Ask anything…")
     type_printable_ascii(device, text)
