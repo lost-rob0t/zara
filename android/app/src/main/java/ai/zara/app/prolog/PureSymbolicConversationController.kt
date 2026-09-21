@@ -35,6 +35,26 @@ data class PureSymbolicTurnResult(
 }
 
 /**
+ * One natural-language resolution bound to the canonical turn already owned by the durable
+ * conversation store.
+ *
+ * The controller must not mint a second turn id for a natural turn after the factory has fenced
+ * and persisted the real turn. Explicit Prolog/query routes do not use this wrapper because they
+ * do not cross the natural conversation persistence path.
+ */
+data class PureSymbolicResolution(
+    val turnId: String,
+    val future: CompletableFuture<LocalQueryResult>,
+) {
+    init {
+        require(turnId.isNotBlank()) { "Canonical pure-symbolic turn id is required" }
+        require(turnId.none(Char::isISOControl)) {
+            "Canonical pure-symbolic turn id contains control characters"
+        }
+    }
+}
+
+/**
  * Android pure-symbolic conversation boundary.
  *
  * This controller intentionally has no model client, provider client, socket fallback, or
@@ -53,7 +73,7 @@ data class PureSymbolicTurnResult(
 class PureSymbolicConversationController(
     private val catalog: () -> PrologWorkspaceCatalog,
     private val query: (String) -> CompletableFuture<LocalQueryResult>,
-    private val resolve: (String, String) -> CompletableFuture<LocalQueryResult>,
+    private val resolve: (String, String) -> PureSymbolicResolution,
     private val turnIds: Iterator<String> = generateSequence {
         UUID.randomUUID().toString()
     }.iterator(),
@@ -105,16 +125,18 @@ class PureSymbolicConversationController(
                         conversationId = normalizedConversationId,
                         route = routed.route,
                         runtimeFailure = true,
+                        turnId = routed.turnId,
                     )
                     result.terms.isEmpty() -> failure(
                         conversationId = normalizedConversationId,
                         route = routed.route,
                         runtimeFailure = false,
+                        turnId = routed.turnId,
                     )
                     else -> PureSymbolicTurnResult(
                         turn = TextTurnResult(
                             conversationId = normalizedConversationId,
-                            turnId = nextTurnId(),
+                            turnId = routed.turnId ?: nextTurnId(),
                             text = result.terms.joinToString("\n"),
                             success = true,
                         ),
@@ -138,10 +160,14 @@ class PureSymbolicConversationController(
             val command = LocalPrologCommand.parse(input, catalog())
             RoutedQuery(PureSymbolicRoute.EXPLICIT_COMMAND, query(command.query))
         }
-        PureSymbolicRoute.FRAME_RESOLVER -> RoutedQuery(
-            PureSymbolicRoute.FRAME_RESOLVER,
-            resolve(input, conversationId),
-        )
+        PureSymbolicRoute.FRAME_RESOLVER -> {
+            val resolution = resolve(input, conversationId)
+            RoutedQuery(
+                route = PureSymbolicRoute.FRAME_RESOLVER,
+                future = resolution.future,
+                turnId = resolution.turnId,
+            )
+        }
     }
 
     private fun routeKind(input: String): PureSymbolicRoute = when {
@@ -155,10 +181,11 @@ class PureSymbolicConversationController(
         conversationId: String,
         route: PureSymbolicRoute,
         runtimeFailure: Boolean,
+        turnId: String? = null,
     ): PureSymbolicTurnResult = PureSymbolicTurnResult(
         turn = TextTurnResult(
             conversationId = conversationId,
-            turnId = nextTurnId(),
+            turnId = turnId ?: nextTurnId(),
             text = if (runtimeFailure) {
                 "The symbolic runtime could not complete this turn."
             } else {
@@ -188,6 +215,7 @@ class PureSymbolicConversationController(
     private data class RoutedQuery(
         val route: PureSymbolicRoute,
         val future: CompletableFuture<LocalQueryResult>,
+        val turnId: String? = null,
     )
 
     private class LinkedTurnFuture<T>(
