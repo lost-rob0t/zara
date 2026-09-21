@@ -149,7 +149,9 @@
   "Adopt symbolic state from canonical conversation replay PAYLOAD.
 
 EXPECTED-CONVERSATION-ID is revalidated so this helper remains fail-closed
-when called independently of the transcript parser."
+when called independently of the transcript parser.  Replay version 1 predates
+the optional symbolic projection member, so an absent member is treated as no
+persisted projection while any present non-null value is validated strictly."
   (unless (hash-table-p payload)
     (error "conversation replay payload must be a JSON object"))
   (let* ((expected
@@ -161,11 +163,11 @@ when called independently of the transcript parser."
       (error "conversation replay conversation must be a JSON object"))
     (unless (equal (gethash "id" conversation :missing) expected)
       (error "conversation replay conversation id mismatch"))
-    (when (eq projection :missing)
-      (error "conversation replay missing symbolic_projection"))
     (setq-local
      zara-conversation-symbolic-projection
-     (zara-conversation-symbolic--validate-projection projection))))
+     (if (eq projection :missing)
+         nil
+       (zara-conversation-symbolic--validate-projection projection)))))
 
 (defun zara-conversation-symbolic--projection-value (key)
   "Return KEY from the cached projection, normalizing JSON null to nil."
