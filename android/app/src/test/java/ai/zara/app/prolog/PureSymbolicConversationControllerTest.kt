@@ -28,11 +28,12 @@ class PureSymbolicConversationControllerTest {
             },
             resolve = { text, conversationId ->
                 resolves += text to conversationId
-                CompletableFuture.completedFuture(
-                    LocalQueryResult("symbolic_dialogue_turn", listOf("Hello from symbols."), 4),
+                resolution(
+                    turnId = "turn-natural",
+                    result = LocalQueryResult("symbolic_dialogue_turn", listOf("Hello from symbols."), 4),
                 )
             },
-            turnIds = listOf("turn-natural").iterator(),
+            turnIds = listOf("synthetic-turn-must-not-be-used").iterator(),
         )
 
         val result = controller.submit("help me", "chat-a").get()
@@ -46,7 +47,31 @@ class PureSymbolicConversationControllerTest {
         assertEquals(0, result.modelCalls)
         assertEquals("symbolic-dcg/v1", result.renderer)
         assertEquals("Hello from symbols.", result.turn.text)
+        assertEquals("turn-natural", result.turn.turnId)
         assertTrue(result.turn.success)
+    }
+
+    @Test
+    fun `natural result preserves canonical durable turn identity without minting a second id`() {
+        val syntheticIds = listOf("synthetic-turn-must-remain-unused").iterator()
+        val controller = PureSymbolicConversationController(
+            catalog = { emptyCatalog },
+            query = { error("query path must not run") },
+            resolve = { _, _ ->
+                resolution(
+                    turnId = "canonical-persisted-turn",
+                    result = LocalQueryResult("symbolic_dialogue_turn", listOf("ok"), 7),
+                )
+            },
+            turnIds = syntheticIds,
+        )
+
+        val result = controller.submit("hello", "chat-a").get()
+
+        assertEquals("canonical-persisted-turn", result.turn.turnId)
+        assertTrue("natural route must not allocate a second turn identity", syntheticIds.hasNext())
+        assertEquals(0, result.providerCalls)
+        assertEquals(0, result.modelCalls)
     }
 
     @Test
@@ -57,17 +82,19 @@ class PureSymbolicConversationControllerTest {
             query = { error("query path must not run") },
             resolve = { _, conversationId ->
                 resolvedConversationId = conversationId
-                CompletableFuture.completedFuture(
-                    LocalQueryResult("symbolic_dialogue_turn", listOf("ok"), 1),
+                resolution(
+                    turnId = "turn-normalized-conversation",
+                    result = LocalQueryResult("symbolic_dialogue_turn", listOf("ok"), 1),
                 )
             },
-            turnIds = listOf("turn-normalized-conversation").iterator(),
+            turnIds = listOf("synthetic-turn-must-not-be-used").iterator(),
         )
 
         val result = controller.submit("hello", "  chat-a  ").get()
 
         assertEquals("chat-a", resolvedConversationId)
         assertEquals("chat-a", result.turn.conversationId)
+        assertEquals("turn-normalized-conversation", result.turn.turnId)
         assertEquals(0, result.providerCalls)
         assertEquals(0, result.modelCalls)
     }
@@ -75,14 +102,18 @@ class PureSymbolicConversationControllerTest {
     @Test
     fun `no symbolic match returns deterministic unsupported result without fallback`() {
         var calls = 0
+        val syntheticIds = listOf("synthetic-turn-must-remain-unused").iterator()
         val controller = PureSymbolicConversationController(
             catalog = { emptyCatalog },
             query = { error("query path must not run") },
             resolve = { text, _ ->
                 calls += 1
-                CompletableFuture.completedFuture(LocalQueryResult(text, emptyList(), 9))
+                resolution(
+                    turnId = "turn-unknown",
+                    result = LocalQueryResult(text, emptyList(), 9),
+                )
             },
-            turnIds = listOf("turn-unknown").iterator(),
+            turnIds = syntheticIds,
         )
 
         val result = controller.submit("make up something", "chat-a").get()
@@ -93,19 +124,27 @@ class PureSymbolicConversationControllerTest {
             "I don't have a deterministic symbolic answer for that yet.",
             result.turn.text,
         )
+        assertEquals("turn-unknown", result.turn.turnId)
+        assertTrue(syntheticIds.hasNext())
         assertEquals(0, result.providerCalls)
         assertEquals(0, result.modelCalls)
     }
 
     @Test
-    fun `symbolic runtime error remains zero-model and never becomes provider fallback`() {
+    fun `symbolic runtime error remains zero-model and preserves canonical turn identity`() {
+        val syntheticIds = listOf("synthetic-turn-must-remain-unused").iterator()
         val controller = PureSymbolicConversationController(
             catalog = { emptyCatalog },
             query = { error("query path must not run") },
             resolve = { _, _ ->
-                CompletableFuture.failedFuture(IllegalStateException("fixture resolver failure"))
+                PureSymbolicResolution(
+                    turnId = "turn-error",
+                    future = CompletableFuture.failedFuture(
+                        IllegalStateException("fixture resolver failure"),
+                    ),
+                )
             },
-            turnIds = listOf("turn-error").iterator(),
+            turnIds = syntheticIds,
         )
 
         val result = controller.submit("hello", "chat-a").get()
@@ -116,6 +155,8 @@ class PureSymbolicConversationControllerTest {
             "The symbolic runtime could not complete this turn.",
             result.turn.text,
         )
+        assertEquals("turn-error", result.turn.turnId)
+        assertTrue(syntheticIds.hasNext())
         assertEquals(0, result.providerCalls)
         assertEquals(0, result.modelCalls)
     }
@@ -123,11 +164,11 @@ class PureSymbolicConversationControllerTest {
     @Test
     fun `cancelling submitted symbolic turn cancels resolver and fences late output`() {
         val resolver = CompletableFuture<LocalQueryResult>()
-        val turnIds = listOf("turn-cancelled").iterator()
+        val turnIds = listOf("synthetic-turn-must-remain-unused").iterator()
         val controller = PureSymbolicConversationController(
             catalog = { emptyCatalog },
             query = { error("query path must not run") },
-            resolve = { _, _ -> resolver },
+            resolve = { _, _ -> PureSymbolicResolution("turn-cancelled", resolver) },
             turnIds = turnIds,
         )
 
@@ -149,11 +190,11 @@ class PureSymbolicConversationControllerTest {
     @Test
     fun `upstream symbolic cancellation stays cancelled instead of rendering runtime failure`() {
         val resolver = CompletableFuture<LocalQueryResult>()
-        val turnIds = listOf("turn-upstream-cancelled").iterator()
+        val turnIds = listOf("synthetic-turn-must-remain-unused").iterator()
         val controller = PureSymbolicConversationController(
             catalog = { emptyCatalog },
             query = { error("query path must not run") },
-            resolve = { _, _ -> resolver },
+            resolve = { _, _ -> PureSymbolicResolution("turn-upstream-cancelled", resolver) },
             turnIds = turnIds,
         )
 
@@ -183,6 +224,7 @@ class PureSymbolicConversationControllerTest {
         assertEquals(PureSymbolicRoute.EXPLICIT_QUERY, result.route)
         assertEquals("symbolic-term/v1", result.renderer)
         assertEquals("Result = ok", result.turn.text)
+        assertEquals("turn-query", result.turn.turnId)
         assertEquals(0, result.modelCalls)
     }
 
@@ -201,4 +243,12 @@ class PureSymbolicConversationControllerTest {
             assertTrue(error.message.orEmpty().contains("required"))
         }
     }
+
+    private fun resolution(
+        turnId: String,
+        result: LocalQueryResult,
+    ): PureSymbolicResolution = PureSymbolicResolution(
+        turnId = turnId,
+        future = CompletableFuture.completedFuture(result),
+    )
 }
