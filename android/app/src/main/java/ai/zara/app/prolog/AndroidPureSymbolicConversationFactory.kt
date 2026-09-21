@@ -41,7 +41,7 @@ internal object AndroidPureSymbolicConversationFactory {
     fun create(
         session: AndroidAppSession,
         projectionStore: PortableConversationStore,
-        projectIdForConversation: (String) -> String?,
+        projectIdForConversation: (String) -> String? = { null },
     ): PureSymbolicConversationController =
         controller(
             session = session,
