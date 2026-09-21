@@ -225,9 +225,26 @@ With prefix argument REFRESH, read a fresh canonical projection first."
                  (or (plist-get status :max-model-calls) "-")))
       status)))
 
+(defun zara-conversation-symbolic--json-ready (value)
+  "Convert validated symbolic VALUE to `json-serialize' container types."
+  (cond
+   ((hash-table-p value)
+    (let ((copy (make-hash-table :test (hash-table-test value))))
+      (maphash
+       (lambda (key member)
+         (puthash key (zara-conversation-symbolic--json-ready member) copy))
+       value)
+      copy))
+   ((listp value)
+    (vconcat (mapcar #'zara-conversation-symbolic--json-ready value)))
+   (t value)))
+
 (defun zara-conversation-symbolic--json (value)
   "Serialize validated symbolic VALUE for deterministic inspection output."
-  (json-serialize value :null-object :null :false-object :false))
+  (json-serialize
+   (zara-conversation-symbolic--json-ready value)
+   :null-object :null
+   :false-object :false))
 
 (defun zara-conversation-symbolic--insert-inspection (label value)
   "Insert inspection LABEL and validated symbolic VALUE in the current buffer."
