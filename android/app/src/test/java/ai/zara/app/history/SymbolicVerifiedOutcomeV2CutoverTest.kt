@@ -71,40 +71,32 @@ class SymbolicVerifiedOutcomeV2CutoverTest {
     }
 
     @Test
-    fun `v2 cutover rejects retired v2 receipt replay`() {
-        val legacy = (1..WINDOW).map(::legacyReceipt)
+    fun `retired v2 receipt cannot reenter as fresh`() {
+        val initial = (1..WINDOW).map { generation ->
+            v2Receipt(runtimeGeneration = generation, index = generation)
+        }
         val current = projection(
             generation = 1,
-            runtimeGeneration = 1,
+            runtimeGeneration = WINDOW.toLong(),
             turnId = "turn-64",
-            receipts = legacy,
+            receipts = initial,
         )
-        val firstV2 = v2Receipt(2, WINDOW + 1)
-        val cutover = projection(
+        val compacted = projection(
             generation = 2,
-            runtimeGeneration = 2,
+            runtimeGeneration = (WINDOW + 1).toLong(),
             turnId = "turn-65",
-            receipts = legacy.drop(1) + firstV2,
+            receipts = initial.drop(1) + v2Receipt(WINDOW + 1, WINDOW + 1),
         )
-        SymbolicProjectionContract.validateWrite(current, cutover, expectedGeneration = 1)
-
-        val secondV2 = v2Receipt(3, WINDOW + 2)
-        val advanced = projection(
-            generation = 3,
-            runtimeGeneration = 3,
-            turnId = "turn-66",
-            receipts = cutover.verifiedOutcomeRefs.drop(1) + secondV2,
-        )
-        SymbolicProjectionContract.validateWrite(cutover, advanced, expectedGeneration = 2)
+        SymbolicProjectionContract.validateWrite(current, compacted, expectedGeneration = 1)
 
         val replay = projection(
-            generation = 4,
-            runtimeGeneration = 4,
-            turnId = "turn-67-replay",
-            receipts = advanced.verifiedOutcomeRefs.drop(1) + firstV2,
+            generation = 3,
+            runtimeGeneration = (WINDOW + 2).toLong(),
+            turnId = "turn-66-replay",
+            receipts = compacted.verifiedOutcomeRefs.drop(1) + initial.first(),
         )
         assertRejected("retired verified outcome replay rejected") {
-            SymbolicProjectionContract.validateWrite(advanced, replay, expectedGeneration = 3)
+            SymbolicProjectionContract.validateWrite(compacted, replay, expectedGeneration = 2)
         }
     }
 
