@@ -182,7 +182,7 @@ class MainActivity : ComponentActivity() {
                 },
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
-                    embeddingPreferenceStore.save(enabled)
+                    embeddingPreferenceStore.save(localEmbedding)
                 },
                 onCreateIdentity = {
                     operationError = null
