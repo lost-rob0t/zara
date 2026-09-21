@@ -85,8 +85,11 @@ class MainActivity : ComponentActivity() {
                 File(filesDir, "conversation-execution-policy.bin"),
             ),
             pureSymbolicSubmit = AndroidPureSymbolicConversationFactory.create(
-                appSession,
-                portableConversationStore,
+                session = appSession,
+                projectionStore = portableConversationStore,
+                projectIdForConversation = { conversationId ->
+                    conversationStore.state().conversation(conversationId)?.projectId
+                },
             )::submit,
         )
         if (conversationState.loadFailure == null && conversationState.selectedConversation == null) {
