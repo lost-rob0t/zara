@@ -40,6 +40,10 @@ class AndroidPureSymbolicContextRoundTripInstrumentedTest {
             evidence("clarification", clarification, context1),
             context1.startsWith("partial_frame("),
         )
+        assertTrue(
+            "canonical Context1 must preserve quoting for dotted atoms: $context1",
+            context1.contains("name('timer.set')"),
+        )
 
         // Cross the same bounded JSON/text boundary used by the durable projection before
         // feeding Context0 back to native Trealla. This isolates runtime/ABI continuation from
@@ -62,6 +66,10 @@ class AndroidPureSymbolicContextRoundTripInstrumentedTest {
         assertTrue(
             completionEvidence,
             completionContext.startsWith("completed_frame("),
+        )
+        assertTrue(
+            "completed Context1 must remain readable after native Trealla serialization: $completionContext",
+            completionContext.contains("name('timer.set')"),
         )
     }
 
@@ -92,12 +100,12 @@ class AndroidPureSymbolicContextRoundTripInstrumentedTest {
     private fun extractContext(result: LocalQueryResult): String {
         val evidence = evidence("envelope", result, null)
         assertEquals(evidence, 2, result.terms.size)
-        val wrapped = result.terms.singleOrNull { term ->
-            term.trim().startsWith(DIALOGUE_CONTEXT_PREFIX)
-        } ?: throw AssertionError("missing canonical dialogue context envelope\n$evidence")
-        val canonical = wrapped.trim()
-        assertTrue(evidence, canonical.endsWith(')'))
-        return canonical.removePrefix(DIALOGUE_CONTEXT_PREFIX).dropLast(1)
+        val wire = result.terms.singleOrNull { term ->
+            term.startsWith(DIALOGUE_CONTEXT_WIRE_PREFIX)
+        } ?: throw AssertionError("missing canonical dialogue context wire\n$evidence")
+        return SymbolicDialogueContextCodec.requireContextTerm(
+            wire.removePrefix(DIALOGUE_CONTEXT_WIRE_PREFIX),
+        )
     }
 
     private fun evidence(
@@ -127,7 +135,7 @@ class AndroidPureSymbolicContextRoundTripInstrumentedTest {
     private companion object {
         const val EXPECTED_CAPABILITY_GATE =
             "That action needs capability-checked execution before I can report success."
-        const val DIALOGUE_CONTEXT_PREFIX = "dialogue_context("
+        const val DIALOGUE_CONTEXT_WIRE_PREFIX = "__zara_context__:"
         const val TURN_TIMEOUT_SECONDS = 15L
         const val SERVER_TIMEOUT_MILLIS = 20_000L
     }
