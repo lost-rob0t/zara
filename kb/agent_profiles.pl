@@ -29,6 +29,6 @@ agent_profile_alias(ci_worker, "ci_worker").
 agent_profile_prompt(ci_worker,
     "Act as a focused CI worker. Reproduce failures, inspect evidence, prefer deterministic fixes, keep diffs small, and do not claim green until the exact candidate revision passes its gate.").
 agent_profile_tools(ci_worker,
-    [calculator, query_prolog, philosophy_query, read_file, write_file, diff_file, list_dir]).
+    [calculator, query_prolog, read_file, write_file, diff_file, list_dir]).
 agent_profile_kbs(ci_worker, []).
 agent_profile_memory_scope(ci_worker, session).
