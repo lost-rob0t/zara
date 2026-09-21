@@ -19,6 +19,10 @@ class PureSymbolicExplicitRoutePersistenceContractTest {
             "Every pure-symbolic result must terminalize the canonical turn; explicit /prolog, /expert, ?-, and ? routes bypass the persisted natural-language resolver.",
             pureSymbolicBranch.contains("conversationStore.completeTurn("),
         )
+        assertTrue(
+            "Explicit pure-symbolic completion must carry the captured canonical turn fence.",
+            pureSymbolicBranch.contains("expectedTurnId = requireNotNull(expectedTurnId)"),
+        )
         assertFalse(
             "Reloading state without terminalizing leaves explicit pure-symbolic assistant history Pending.",
             pureSymbolicBranch.contains("conversationStore.state()"),
@@ -26,7 +30,7 @@ class PureSymbolicExplicitRoutePersistenceContractTest {
     }
 
     @Test
-    fun exceptionalPureSymbolicCompletionCannotAbandonExplicitPendingHistory() {
+    fun exceptionalPureSymbolicCompletionCannotAbandonOrRetargetPendingHistory() {
         val errorBranch = activity()
             .substringAfter("if (error != null) {")
             .substringBefore("} else if (result != null) {")
@@ -35,8 +39,8 @@ class PureSymbolicExplicitRoutePersistenceContractTest {
             .substringBefore("} else {")
 
         assertTrue(
-            "Exceptional explicit pure-symbolic routes must terminalize a still-Running canonical assistant row.",
-            pureSymbolicBranch.contains("recordTurnFailure(conversationId, error)"),
+            "Exceptional explicit pure-symbolic routes must terminalize only the captured canonical assistant row.",
+            pureSymbolicBranch.contains("recordTurnFailure(conversationId, expectedTurnId, error)"),
         )
         assertFalse(
             "Reloading canonical state is not terminalization and would preserve a Pending assistant row.",
