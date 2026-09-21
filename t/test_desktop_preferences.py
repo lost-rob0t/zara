@@ -82,7 +82,7 @@ def test_string_serialization_cannot_escape_its_toml_value(tmp_path):
 def test_unknown_legacy_theme_loads_and_visually_falls_back(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
-        DEFAULT_CONFIG_TOML.replace('theme = "signal-cabin"', 'theme = "old-custom-theme"'),
+        DEFAULT_CONFIG_TOML.replace('theme = "outrun"', 'theme = "old-custom-theme"'),
         encoding="utf-8",
     )
     config = ZaraConfig(str(path))
@@ -92,4 +92,4 @@ def test_unknown_legacy_theme_loads_and_visually_falls_back(tmp_path):
     qt_app = instance or QApplication([])
     apply_desktop_theme(qt_app, config.get("desktop", "theme"))
 
-    assert qt_app.property("zaraTheme") == "signal-cabin"
+    assert qt_app.property("zaraTheme") == "outrun"
