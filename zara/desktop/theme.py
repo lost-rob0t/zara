@@ -547,7 +547,7 @@ QLabel#zaraTitle {{
 
 QFrame#zaraRuntimeRail {{
     background: {colors["panel"]};
-    border: none;
+    border: 1px solid {colors["line"]};
     border-radius: 12px;
 }}
 
