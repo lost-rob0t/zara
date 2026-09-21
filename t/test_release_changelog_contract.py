@@ -143,7 +143,7 @@ def test_versioned_release_uses_canonical_notes_and_exact_green_source() -> None
     assert 'gh release create "$TAG"' in workflow
     assert '--notes-file "$NOTES"' in workflow
     assert "Wait for exact-source CI" in workflow
-    assert 'conclusion != "success"' in workflow
+    assert 'if [[ "$conclusion" != "success" ]]; then' in workflow
     assert "versioned-release-${{ needs.validate-version-context.outputs.tag }}" in workflow
     assert "sync existing release page from tagged changelog" in workflow
     assert 'git show "${TAG}:CHANGELOG.md"' in workflow
