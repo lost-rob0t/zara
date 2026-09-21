@@ -16,6 +16,9 @@ data class TurnFailure(
     val incidentId: String?,
     val retryPossible: Boolean,
     val reconnectPossible: Boolean,
+    val attempt: Int = 1,
+    val maxAttempts: Int = TurnRetryPolicy.MAX_ATTEMPTS,
+    val autoRetrying: Boolean = false,
 )
 
 object TurnFailures {
@@ -65,6 +68,10 @@ object TurnFailures {
         append(failure.connectionState)
         append("\nRecovery: ")
         append(failure.recovery)
+        append("\nAttempt: ")
+        append(failure.attempt)
+        append('/')
+        append(failure.maxAttempts)
         if (failure.incidentId != null) {
             append("\nIncident: ")
             append(failure.incidentId)
