@@ -74,7 +74,7 @@ parity_main :-
 % router/renderer is committed once, and response + Context1 are then exposed
 % as the two Result solutions consumed by the bounded native adapter.
 parity_dialogue_envelope :-
-    term_string(Context0, "[]", [quoted(true)]),
+    term_string(Context0, "[]"),
     findall(Result,
         ( ( ( symbolic_dialogue_turn:valid_dialogue_context(Context0),
               symbolic_dialogue_turn:dialogue_turn(
