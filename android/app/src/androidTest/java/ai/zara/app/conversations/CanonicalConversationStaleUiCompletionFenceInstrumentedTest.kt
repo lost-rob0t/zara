@@ -182,6 +182,50 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
     }
 
     @Test
+    fun corruptUiMetadataDoesNotRecoverPendingTurnBeforeProjectScopeIsHealthy() {
+        val firstHistory = PortableConversationStore(context)
+        val first = CanonicalConversationStore(
+            history = firstHistory,
+            metadataFile = metadataFile,
+            legacyFile = null,
+            idFactory = { CONVERSATION_ID },
+        )
+        first.create(projectId = "project-a")
+        first.beginTurn(CONVERSATION_ID, "timer")
+        val pendingTurnId = checkNotNull(first.runningTurnId(CONVERSATION_ID))
+        firstHistory.close()
+
+        metadataFile.writeText("corrupt-ui-metadata")
+
+        val reopenedHistory = PortableConversationStore(context)
+        try {
+            val reopened = CanonicalConversationStore(
+                history = reopenedHistory,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            assertEquals(
+                "Conversation UI metadata is corrupt or unsupported",
+                reopened.state().loadFailure,
+            )
+
+            val pendingAfterCorruptReopen = reopenedHistory.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == pendingTurnId
+            }
+            assertEquals(
+                "startup recovery must not mutate canonical zara.db until project metadata is healthy",
+                HistoryMessageStatus.Pending,
+                pendingAfterCorruptReopen.status,
+            )
+            assertEquals("", pendingAfterCorruptReopen.content)
+            assertEquals("", pendingAfterCorruptReopen.error)
+        } finally {
+            reopenedHistory.close()
+        }
+    }
+
+    @Test
     fun fullWidthProjectIdRoundTripsAcrossConversationStoreRecreation() {
         val fullWidthProjectId = "p".repeat(512)
         val firstHistory = PortableConversationStore(context)
