@@ -45,7 +45,7 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
-    fun persistedDialogueEnvelopeReturnsResponseAndCanonicalContextWireFromOneDialogueTurn() {
+    fun persistedDialogueEnvelopeReturnsResponseCanonicalContextAndActWireFromOneDialogueTurn() {
         val context = "completed_frame(frame(intent(ns(device),name('timer.set')),[],complete))"
         val query = AndroidPureSymbolicConversationFactory.dialogueTurnEnvelopeQuery(
             "actually ten minutes",
@@ -82,6 +82,12 @@ class AndroidPureSymbolicConversationFactoryTest {
             query.contains("__zara_context__:"),
         )
         assertTrue(
+            "canonical response act must cross JNI as a bounded tagged string from the same dialogue turn",
+            query.contains("functor(Act, ActName, _)") &&
+                query.contains("__zara_act__:") &&
+                query.contains("string_codes(ActWire, ActWireCodes)"),
+        )
+        assertTrue(
             "ISO if-then-else must commit the router/renderer/context serialization condition before Result enumeration",
             query.startsWith("((") && query.contains(") -> true ; fail), "),
         )
@@ -96,7 +102,7 @@ class AndroidPureSymbolicConversationFactoryTest {
             Regex("symbolic_dialogue_turn:dialogue_turn\\(").findAll(query).count(),
         )
         assertTrue(query.contains("symbolic_dialogue:render_response(Act, Response)"))
-        assertTrue(query.endsWith("(Result = Response ; Result = ContextWire)"))
+        assertTrue(query.endsWith("(Result = Response ; Result = ContextWire ; Result = ActWire)"))
         assertTrue(query.contains("valid_dialogue_context(Context0)"))
         assertTrue(query.contains("valid_dialogue_context(Context1)"))
     }

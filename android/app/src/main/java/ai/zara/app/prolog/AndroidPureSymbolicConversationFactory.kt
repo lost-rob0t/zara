@@ -161,11 +161,12 @@ internal object AndroidPureSymbolicConversationFactory {
             }
 
             try {
-                val (renderedResponse, context1) = splitDialogueEnvelope(result)
+                val (renderedResponse, context1, dialogueAct) = splitDialogueEnvelope(result)
                 val completedProjection = terminalProjection(
                     pending = pendingProjection,
                     contextTerm = context1,
                     outcome = "success",
+                    dialogueAct = dialogueAct,
                 )
                 output.commitOrCancel {
                     projectionStore.completeSymbolicTurnAtomically(
@@ -390,9 +391,18 @@ internal object AndroidPureSymbolicConversationFactory {
         pending: SymbolicConversationProjection,
         contextTerm: String,
         outcome: String,
+        dialogueAct: String? = null,
     ): SymbolicConversationProjection = pending.copy(
         projectionGeneration = Math.addExact(pending.projectionGeneration, 1L),
         outcome = outcome,
+        dialogueAct = when (outcome) {
+            "success" -> requireNotNull(dialogueAct) {
+                "Successful symbolic terminal projection is missing its canonical dialogue act"
+            }
+            "error" -> "error"
+            "cancelled" -> "cancelled"
+            else -> error("Unsupported symbolic terminal outcome: $outcome")
+        },
         dialogueStateJson = SymbolicDialogueContextCodec.encode(contextTerm),
         rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
@@ -401,17 +411,35 @@ internal object AndroidPureSymbolicConversationFactory {
         modelCalls = 0L,
     ).also(SymbolicConversationProjection::assertPureSymbolic)
 
-    private fun splitDialogueEnvelope(result: LocalQueryResult): Pair<String, String> {
-        check(result.terms.size == 2) {
-            "Symbolic dialogue must return one rendered response and one canonical Context1 term"
+    private fun splitDialogueEnvelope(result: LocalQueryResult): Triple<String, String, String> {
+        check(result.terms.size == 3) {
+            "Symbolic dialogue must return one rendered response, one canonical Context1 term, and one dialogue act"
         }
         val renderedResponse = result.terms[0]
         val contextWire = result.terms[1]
+        val actWire = result.terms[2]
         check(contextWire.startsWith(DIALOGUE_CONTEXT_WIRE_PREFIX)) {
             "Symbolic dialogue Context1 result has an invalid wire prefix"
         }
+        check(actWire.startsWith(DIALOGUE_ACT_WIRE_PREFIX)) {
+            "Symbolic dialogue act result has an invalid wire prefix"
+        }
         val contextTerm = contextWire.removePrefix(DIALOGUE_CONTEXT_WIRE_PREFIX)
-        return renderedResponse to SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
+        val dialogueAct = requireDialogueActName(actWire.removePrefix(DIALOGUE_ACT_WIRE_PREFIX))
+        return Triple(
+            renderedResponse,
+            SymbolicDialogueContextCodec.requireContextTerm(contextTerm),
+            dialogueAct,
+        )
+    }
+
+    private fun requireDialogueActName(raw: String): String {
+        require(raw.isNotEmpty()) { "Symbolic dialogue act is required" }
+        require(raw.length <= MAX_DIALOGUE_ACT_CHARS) { "Symbolic dialogue act is too large" }
+        require(raw.all { character -> character.isLetterOrDigit() || character == '_' }) {
+            "Symbolic dialogue act contains invalid characters"
+        }
+        return raw
     }
 
     private class PersistenceFencedFuture(
@@ -447,8 +475,12 @@ internal object AndroidPureSymbolicConversationFactory {
         "write_term_to_atom(ContextAtom, Context1, [quoted(true)]), " +
         "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
         "atom_codes(ContextTagged, ContextWireCodes), " +
-        "string_codes(ContextWire, ContextWireCodes)) -> true ; fail), " +
-        "(Result = Response ; Result = ContextWire)"
+        "string_codes(ContextWire, ContextWireCodes), " +
+        "functor(Act, ActName, _), " +
+        "atom_concat('$DIALOGUE_ACT_WIRE_PREFIX', ActName, ActTagged), " +
+        "atom_codes(ActTagged, ActWireCodes), " +
+        "string_codes(ActWire, ActWireCodes)) -> true ; fail), " +
+        "(Result = Response ; Result = ContextWire ; Result = ActWire)"
 
     private fun dialogueTurnPrelude(utterance: String, contextTerm: String): String {
         val text = utterance.trim()
@@ -480,7 +512,9 @@ internal object AndroidPureSymbolicConversationFactory {
     }
 
     private const val DIALOGUE_CONTEXT_WIRE_PREFIX = "__zara_context__:"
+    private const val DIALOGUE_ACT_WIRE_PREFIX = "__zara_act__:"
     private const val RUNTIME_FAILURE_TEXT = "The symbolic runtime could not complete this turn."
     private const val NO_MATCH_TEXT = "I don't have a deterministic symbolic answer for that yet."
+    private const val MAX_DIALOGUE_ACT_CHARS = 64
     private const val MAX_UTTERANCE_CHARS = 8_192
 }
