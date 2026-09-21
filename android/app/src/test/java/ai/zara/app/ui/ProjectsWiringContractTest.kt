@@ -33,14 +33,21 @@ class ProjectsWiringContractTest {
         assertTrue(source.contains("ErrorBanner"))
     }
 
-    @Test fun `host persists full conversations and turn status instead of a last turn projection`() {
+    @Test fun `host persists full conversations and turn status through canonical portable history`() {
         val source = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val facade = File(
+            "src/main/java/ai/zara/app/conversations/CanonicalConversationStore.kt"
+        ).readText()
 
-        assertTrue(source.contains("ConversationStore(File(filesDir, \"conversations.bin\"))"))
+        assertTrue(source.contains("PortableConversationStore(this)"))
+        assertTrue(source.contains("CanonicalConversationStore("))
+        assertFalse(source.contains("ConversationStore(File(filesDir, \"conversations.bin\"))"))
         assertTrue(source.contains("conversationState by mutableStateOf"))
         assertTrue(source.contains("conversationStore.beginTurn("))
         assertTrue(source.contains("conversationStore.completeTurn("))
         assertTrue(source.contains("conversationStore.failTurn("))
+        assertTrue(facade.contains("HistoryMessageStatus.Pending"))
+        assertTrue(facade.contains("history.loadState(conversation.id)"))
     }
 
     @Test fun `project selection and chat project assignment share one durable association`() {
