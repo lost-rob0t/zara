@@ -88,6 +88,16 @@ def test_expert_model_calls_must_be_exact_integer_zero_before_write(tmp_path) ->
             )
 
 
+def test_untyped_legacy_model_usage_metadata_fails_closed() -> None:
+    projection = _projection(
+        "conversation:legacy-model-usage",
+        [{"legacy_fact": "python inspected project", "model_calls": 0}],
+    )
+
+    with pytest.raises((TypeError, ValueError, AssertionError)):
+        projection.assert_pure_symbolic()
+
+
 def test_restart_rejects_corrupted_provider_metadata_inside_expert_evidence(tmp_path) -> None:
     path = tmp_path / "restart-provider-shaped.db"
     database = DatabaseManager(path)
