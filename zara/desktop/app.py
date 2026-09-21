@@ -19,7 +19,7 @@ from zara.desktop.control import (
     send_desktop_control,
 )
 from zara.desktop.controller import DesktopController
-from zara.desktop.conversation import ConversationStore
+from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.conversation.symbolic_runtime import PureSymbolicProjectionAdapter
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
@@ -131,10 +131,28 @@ def create_application(
     # standalone tests/embedders. Normal desktop construction always owns a
     # ZaraClient, so transport selection remains outside Qt surfaces.
     service = client if client is not None else host
+    conversation_service = None
     if service is None:
-        service = _default_desktop_client(active_config)
+        if _configured_conversation_policy(active_config) == "pure_symbolic":
+            # Pure-symbolic dialogue state and the visible transcript must be two
+            # views of one canonical ConversationStore. Do not let the runtime
+            # adapter and UI independently construct owners for the same SQLite
+            # history/projection ABI.
+            conversation_store = ConversationStore()
+            service = _default_desktop_client(
+                active_config,
+                conversation_store=conversation_store,
+            )
+            conversation_service = ConversationService(conversation_store)
+        else:
+            service = _default_desktop_client(active_config)
     bridge = QtRuntimeBridge(service, parent=app)
-    controller = DesktopController(app, service, bridge)
+    controller = DesktopController(
+        app,
+        service,
+        bridge,
+        conversation_service=conversation_service,
+    )
     setattr(app, _CONTROLLER_ATTR, controller)
     return app, controller
 
