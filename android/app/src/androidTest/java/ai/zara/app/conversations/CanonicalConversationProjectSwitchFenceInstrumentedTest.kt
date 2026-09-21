@@ -15,6 +15,7 @@ import java.io.File
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -205,6 +206,81 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
                     message.content.contains("stale project A output")
                 },
             )
+        } finally {
+            reopenedStore.close()
+        }
+    }
+
+    @Test
+    fun projectSwitchBeforePendingProjectionCancelsRunningTurnAndRejectsLateProjectionInstall() {
+        val firstStore = PortableConversationStore(context)
+        val conversations = CanonicalConversationStore(
+            history = firstStore,
+            metadataFile = metadataFile,
+            legacyFile = null,
+            idFactory = { CONVERSATION_ID },
+        )
+        assertEquals(CONVERSATION_ID, conversations.create(PROJECT_A).id)
+        conversations.beginTurn(CONVERSATION_ID, "timer")
+
+        val assistant = firstStore.loadMessages(CONVERSATION_ID).single { message ->
+            message.role == HistoryMessageRole.Assistant
+        }
+        val turnId = checkNotNull(assistant.turnId)
+        assertEquals(HistoryMessageStatus.Pending, assistant.status)
+        assertNull(
+            "the pre-projection race must begin before the symbolic pending CAS is installed",
+            firstStore.loadSymbolicProjection(CONVERSATION_ID),
+        )
+
+        val moved = conversations.moveToProject(CONVERSATION_ID, PROJECT_B)
+        assertEquals(PROJECT_B, checkNotNull(moved.conversation(CONVERSATION_ID)).projectId)
+        assertEquals(
+            HistoryMessageStatus.Cancelled,
+            firstStore.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == turnId
+            }.status,
+        )
+        assertFalse(
+            "project switch must fence the canonical running row even before a projection exists",
+            firstStore.loadMessages(CONVERSATION_ID).any { message ->
+                message.role == HistoryMessageRole.Assistant && message.status.isRunning()
+            },
+        )
+
+        val lateProjectionInstall = runCatching {
+            firstStore.saveSymbolicProjection(
+                projection = pendingProjection(turnId),
+                expectedGeneration = 0L,
+            )
+        }
+        assertTrue(
+            "a late project-A pending projection must not resurrect a turn cancelled by project switch",
+            lateProjectionInstall.isFailure,
+        )
+        assertNull(
+            "failed stale projection install must leave the canonical projection absent",
+            firstStore.loadSymbolicProjection(CONVERSATION_ID),
+        )
+        firstStore.close()
+
+        val reopenedStore = PortableConversationStore(context)
+        try {
+            val reopenedConversations = CanonicalConversationStore(
+                history = reopenedStore,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            assertEquals(
+                PROJECT_B,
+                checkNotNull(reopenedConversations.state().conversation(CONVERSATION_ID)).projectId,
+            )
+            val reopenedAssistant = reopenedStore.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == turnId
+            }
+            assertEquals(HistoryMessageStatus.Cancelled, reopenedAssistant.status)
+            assertNull(reopenedStore.loadSymbolicProjection(CONVERSATION_ID))
         } finally {
             reopenedStore.close()
         }
