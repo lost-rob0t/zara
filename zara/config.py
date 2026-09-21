@@ -297,7 +297,6 @@ class ZaraConfig:
                 self.config_dir = Path(xdg_config) / "zarathushtra"
             else:
                 self.config_dir = Path.home() / ".config" / "zarathushtra"
-
             self.config_file = self.config_dir / "config.toml"
 
         # Initialize config if needed
@@ -597,8 +596,7 @@ class ZaraConfig:
 
         Environment variables take precedence over config file.
 
-        Returns:
-            LLM configuration dict
+        Returns:            LLM configuration dict
         """
         llm_config = self.get_section("llm")
 
