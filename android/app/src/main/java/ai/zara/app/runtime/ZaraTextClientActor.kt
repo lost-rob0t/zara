@@ -100,7 +100,7 @@ class ZaraTextClientActor(
                 active.send(ZaraTextCodec.encodeHello(requestId, nextTimestamp()))
                 val response = receiveMessage(active)
                 if (response is TextServerMessage.ProtocolError) {
-                    throw ZaraWireException("hello failed: ${response.code}")
+                    throw ZaraWireException("hello failed: ${response.code}", code = response.code)
                 }
                 val hello = response as? TextServerMessage.HelloOk
                     ?: throw ZaraWireException("expected hello.ok")
@@ -185,7 +185,10 @@ class ZaraTextClientActor(
             if (first is TextServerMessage.ProtocolError) {
                 verifySession(first.sessionId, sessionId)
                 correlations.complete(requestId, generation, sessionId)
-                throw ZaraWireException("turn submit failed: ${first.code}")
+                throw ZaraWireException(
+                    "turn submit failed: ${first.code}",
+                    code = first.code,
+                )
             }
             val accepted = first as? TextServerMessage.TurnAccepted
                 ?: throw ZaraWireException("expected turn.accepted")
@@ -265,7 +268,10 @@ class ZaraTextClientActor(
                     }
                     is TextServerMessage.ProtocolError -> {
                         verifySession(event.sessionId, sessionId)
-                        throw ZaraWireException("turn failed: ${event.code}")
+                        throw ZaraWireException(
+                            "turn failed: ${event.code}",
+                            code = event.code,
+                        )
                     }
                     is TextServerMessage.HelloOk, is TextServerMessage.TurnAccepted ->
                         throw ZaraWireException("unexpected response during assistant turn")

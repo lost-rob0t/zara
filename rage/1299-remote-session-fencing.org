@@ -1,0 +1,89 @@
+* Run identity
+- Consumed issue :: #1299
+- Branch :: =rage/1299-remote-session-fencing=
+- RAGE start commit :: =9d57493bd913bd838983efc90fe5d66aa777a8b6=
+- Mode :: Auto-RAGE (explicit =/auto-rage= invocation; repo RAGE protocol defines no human approval gate)
+
+* Iteration 1
+
+** Research (live incident + code)
+
+Live incident (this host, 2026-09-21):
+
+- Desktop zara-server restarted 03:33 EDT onto a freshly pinned build while
+  the phone app (0.2.2-alpha) held an authenticated session.
+- Phone diagnostic export after restart: repeated
+  =text.submit ... mode=auto remote_connected=true= /
+  =auto.remote_preferred remote_connected=true= (07:47 UTC) with no
+  intervening failure event.
+- Server journal after restart: zero =[TurnCoordinator] started turn= lines;
+  every phone turn vanished.
+- Phone UI: =protocol_error= then =operation_failed= error cards while the
+  footer stayed =REMOTE • AUTHENTICATED • SYMBOLIC=.
+- Transport: TCP =ESTAB 10.50.50.28:6060 <- 10.50.50.69= present throughout
+  (ZMQ DEALER auto-reconnect).
+
+Code findings:
+
+- Server =zara/zmq_transport.py:717= — a non-hello frame from a route with
+  no registered state (exactly the post-restart condition) is answered with
+  a typed, =retryable=True= protocol error =handshake_required=. A frame
+  carrying a mismatched session id is answered =stale_session=
+  (=zara/zmq_transport.py:605=). The server behaves correctly and loudly.
+- Client =android/.../runtime/ZaraTextClientActor.kt= — =submitText= throws
+  =ZaraWireException("turn submit failed: ${first.code}")= with the code
+  only embedded in the message string (no typed accessor).
+- Client =android/.../runtime/AndroidTextSessionController.kt:120= — the
+  submit completion handler calls =connectionLost(...)= only for
+  =TextRequestTimeoutException=. A =handshake_required= /
+  =stale_session= wire error leaves =runtimeState.server == Connected=
+  with the dead pre-restart session id.
+- Consequence: no re-hello is ever attempted; =Auto= chat backend keeps
+  =remote_preferred= (state is a stale boolean, not liveness); every turn
+  fails against the server's =handshake_required= reply. This is exactly
+  issue #1299's "one failed frame cannot leave the client in a
+  fake-connected state".
+
+Separate defect observed (NOT this issue): =FATAL EXCEPTION= in
+=ai.zara.app:voice= via =LocalEmbeddingPreferenceStore.save= —
+"Embedding preference directory is unavailable" (crash buffer 2026-09-20
+23:30). Filed as evidence for a follow-up; does not block this slice.
+
+** Design
+
+Smallest coherent fix — make the existing state machine tell the truth:
+
+1. =ZaraWireException= gains =val code: String? = null=.
+2. =ZaraTextClientActor= threads the server's protocol =code= into the
+   exception at the hello and turn protocol-error sites.
+3. =AndroidTextSessionController.submitTextInternal= treats a failed turn
+   whose root cause is =ZaraWireException(code in {"handshake_required",
+   "stale_session"})= exactly like a timeout: when =requestIsCurrent()=,
+   call =connectionLost("server requires re-handshake (<code>)")=. The
+   existing bounded reconnect (attempt backoff, generation fencing) then
+   performs a fresh hello + capability negotiation.
+4. The failed turn itself still surfaces its error to the caller once (no
+   automatic turn replay; the server idempotency keys differ across
+   sessions, so replay would not be a resume).
+
+Invariants: only current-generation requests may invalidate the session;
+non-session protocol errors (=invalid_message= etc.) stay per-turn errors;
+reconnect stays bounded.
+
+** Adversarial review
+
+- Race: superseded-generation completions cannot clobber a newer session —
+  guarded by =requestIsCurrent()= (same pattern as the timeout path).
+- Retry storm: =handshake_required= is =retryable=True=; reconnect budget
+  is the existing bounded scheduler; a hard-down server ends in
+  =OfflineDegraded= as before.
+- Echo/reject loops: re-hello happens at most once per =connectionLost=;
+  =RuntimeEvent.ConnectionLost= dedupe already collapses duplicates.
+- Non-goals: desktop client twin (#1353), full telemetry vocabulary
+  (#1301), error-card UI truth (#1303).
+
+** Decision (Auto-RAGE)
+
+Implement the four-point design above. Gate: focused Kotlin unit tests
+(controller RED first, actor code-propagation test) plus the repository
+gate at the exact candidate head.

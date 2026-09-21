@@ -119,8 +119,16 @@ class AndroidTextSessionController(
         val resultFuture = CompletableFuture<TextTurnResult>()
         clientFuture.whenComplete { result, error ->
             if (error != null) {
-                if (rootCause(error) is TextRequestTimeoutException && requestIsCurrent(request)) {
-                    connectionLost("text request timed out")
+                val cause = rootCause(error)
+                if (requestIsCurrent(request)) {
+                    val staleSessionCode = (cause as? ZaraWireException)?.code
+                        ?.takeIf { it in STALE_SESSION_PROTOCOL_CODES }
+                    when {
+                        cause is TextRequestTimeoutException ->
+                            connectionLost("text request timed out")
+                        staleSessionCode != null ->
+                            connectionLost("server requires re-handshake ($staleSessionCode)")
+                    }
                 }
                 resultFuture.completeExceptionally(error)
                 return@whenComplete
@@ -396,6 +404,10 @@ class AndroidTextSessionController(
         val conversationId: String?,
         val adoptConversation: Boolean,
     )
+
+    companion object {
+        private val STALE_SESSION_PROTOCOL_CODES = setOf("handshake_required", "stale_session")
+    }
 
     private data class ReconnectRequest(
         val profile: ServerProfile,

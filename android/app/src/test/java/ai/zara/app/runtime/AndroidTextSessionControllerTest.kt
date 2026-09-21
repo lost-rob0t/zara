@@ -71,6 +71,105 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun handshake_required_turn_failure_invalidates_session_and_schedules_bounded_reconnect() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        val future = controller.submitText("hello")
+        client.turnFuture.completeExceptionally(
+            ZaraWireException(
+                "turn submit failed: handshake_required",
+                code = "handshake_required",
+            ),
+        )
+        try {
+            future.get()
+        } catch (_: Exception) {
+        }
+
+        assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
+        assertEquals(2L, controller.state().generation)
+        assertEquals(null, controller.state().sessionId)
+        assertEquals(1, client.disconnectCalls)
+        assertEquals(listOf(250L), scheduler.delays)
+
+        scheduler.runNext()
+        client.completeConnect(1, ConnectedTextSession(2, "session-2"))
+        assertEquals(ServerConnection.Connected(2), controller.state().server)
+        assertEquals("session-2", controller.state().sessionId)
+    }
+
+    @Test
+    fun stale_session_turn_failure_invalidates_session_and_schedules_bounded_reconnect() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        val future = controller.submitText("hello")
+        client.turnFuture.completeExceptionally(
+            ZaraWireException("turn failed: stale_session", code = "stale_session"),
+        )
+        try {
+            future.get()
+        } catch (_: Exception) {
+        }
+
+        assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
+        assertEquals(2L, controller.state().generation)
+        assertEquals(1, client.disconnectCalls)
+    }
+
+    @Test
+    fun per_turn_protocol_error_does_not_invalidate_a_current_session() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        val future = controller.submitText("hello")
+        client.turnFuture.completeExceptionally(
+            ZaraWireException("turn failed: invalid_message", code = "invalid_message"),
+        )
+        try {
+            future.get()
+        } catch (_: Exception) {
+        }
+
+        assertEquals(ServerConnection.Connected(1), controller.state().server)
+        assertEquals("session-1", controller.state().sessionId)
+        assertEquals(0, client.disconnectCalls)
+        assertEquals(emptyList<Long>(), scheduler.delays)
+    }
+
+    @Test
+    fun stale_generation_handshake_failure_cannot_invalidate_a_newer_session() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        val staleFuture = controller.submitText("stale turn")
+        controller.connectionLost("network drop")
+        scheduler.runNext()
+        client.completeConnect(1, ConnectedTextSession(2, "session-2"))
+        assertEquals(ServerConnection.Connected(2), controller.state().server)
+
+        client.turnFuture.completeExceptionally(
+            ZaraWireException(
+                "turn submit failed: handshake_required",
+                code = "handshake_required",
+            ),
+        )
+        try {
+            staleFuture.get()
+        } catch (_: Exception) {
+        }
+
+        assertEquals(ServerConnection.Connected(2), controller.state().server)
+        assertEquals("session-2", controller.state().sessionId)
+        assertEquals(1, client.disconnectCalls)
+    }
+
+    @Test
     fun stale_turn_completion_cannot_mutate_new_generation() {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()
