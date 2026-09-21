@@ -181,6 +181,19 @@ persisted projection while any present non-null value is validated strictly."
          nil
        (zara-conversation-symbolic--validate-projection projection)))))
 
+(defun zara-conversation-symbolic--validate-before-replay-render (payload)
+  "Validate PAYLOAD's symbolic projection before transcript presentation mutates.
+
+Validation reuses the canonical replay-adoption contract but restores the
+current ephemeral projection on every path.  The real adoption still happens
+after a successful transcript render, so this guard adds no competing state
+owner and invalid pure-symbolic state fails before visible replay changes."
+  (let ((previous zara-conversation-symbolic-projection))
+    (unwind-protect
+        (zara-conversation-symbolic--adopt-replay-payload
+         payload (zara-conversation--current-id))
+      (setq-local zara-conversation-symbolic-projection previous))))
+
 (defun zara-conversation-symbolic--projection-value (key)
   "Return KEY from the cached projection, normalizing JSON null to nil."
   (when zara-conversation-symbolic-projection
@@ -328,6 +341,8 @@ model, expert, effect executor, or alternate history/state owner."
   "Fence cached project/discourse status after a conversation switch."
   (setq-local zara-conversation-symbolic-projection nil))
 
+(advice-add 'zara-conversation--render-replay :before
+            #'zara-conversation-symbolic--validate-before-replay-render)
 (advice-add 'zara-conversation-switch :after
             #'zara-conversation-symbolic--clear-after-switch)
 
