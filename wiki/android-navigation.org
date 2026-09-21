@@ -16,7 +16,7 @@ Tabs scroll horizontally. Selecting a menu restores that menu's last tab. Logic 
 
 * Settings organization
 
-Runtime contains the existing local-server status, Auto/Local/Remote routing selection, and on-device embedding toggle. It does not change provider or model selection implicitly.
+Runtime contains the existing local-server status, Auto/Local/Remote routing selection, on-device embedding toggle, and the receive-only donation campaign projection. Donation import validates =ZARA-DONATIONS/1= through the shared contract and stores the accepted copy in app-private storage; it does not add a fourth primary menu or any spend authority. Runtime does not change provider or model selection implicitly.
 
 Connection contains client identity creation, public-key enrollment guidance, trusted-server pinning/replacement, endpoint entry, and Connect in one place. Previously these controls were split between Settings and Remote. Existing trust validation, connection lifecycle gates, and explicit user actions are unchanged.
 
