@@ -106,6 +106,13 @@ class _Supervisor:
     def publish(self, principal: PrincipalContext, event):
         return self.bus.publish(event)
 
+    def _publish_traced(self, event: events.RuntimeEvent) -> None:
+        envelope = self.bus.publish(event)
+        _trace(
+            "runtime.event",
+            f"published:{event.__class__.__name__}:seq={envelope.sequence}",
+        )
+
     def submit(self, principal: PrincipalContext, command):
         _trace("turn.submit", "received")
         self._turn += 1
@@ -115,13 +122,13 @@ class _Supervisor:
 
         def publish() -> None:
             _trace("runtime.events", "publishing")
-            self.bus.publish(
+            self._publish_traced(
                 events.TurnStarted(turn_id=turn_id, conversation_id=conversation_id)
             )
-            self.bus.publish(
+            self._publish_traced(
                 events.AssistantStarted(turn_id=turn_id, conversation_id=conversation_id)
             )
-            self.bus.publish(
+            self._publish_traced(
                 events.AssistantComplete(
                     turn_id=turn_id,
                     conversation_id=conversation_id,
@@ -129,7 +136,7 @@ class _Supervisor:
                     success=True,
                 )
             )
-            self.bus.publish(
+            self._publish_traced(
                 events.AgentCompleted(
                     turn_id=turn_id,
                     conversation_id=conversation_id,
