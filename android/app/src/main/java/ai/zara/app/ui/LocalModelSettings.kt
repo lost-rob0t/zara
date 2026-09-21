@@ -67,7 +67,7 @@ internal fun LocalModelSettingsCard(
             KeyValueRow("backend", active.backend.name.lowercase())
             KeyValueRow("context", active.maxContextTokens.toString())
         }
-        state.failure?.let(::ErrorBanner)
+        state.failure?.let { failure -> ErrorBanner(failure) }
 
         Text(
             "INSTALLED MODELS",
