@@ -190,6 +190,26 @@ def test_retired_v2_receipt_cannot_reenter_as_fresh(tmp_path):
         )
 
 
+def test_first_verified_v2_projection_requires_current_generation_evidence(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "verified-v2-first-write.db"))
+    conversation = store.create_conversation(
+        "Verified v2 first-write fence",
+        conversation_id="conv-verified-v2-first-write",
+    )
+
+    with pytest.raises(RuntimeError, match="verified projection requires fresh outcome evidence"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                projection_generation=1,
+                runtime_generation=8,
+                turn_id="turn-8",
+                receipts=[_v2_receipt(7, 7)],
+            ),
+            expected_generation=0,
+        )
+
+
 def test_new_v2_receipt_must_bind_to_the_new_runtime_generation(tmp_path):
     store = ConversationStore(DatabaseManager(tmp_path / "verified-v2-generation.db"))
     conversation = store.create_conversation(
