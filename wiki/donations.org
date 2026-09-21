@@ -1,0 +1,81 @@
+#+title: Donation campaigns
+
+* Purpose
+
+Zara's donation library is a receive-only display and accounting surface for
+public cryptocurrency wallets.  It defines campaigns, declared USD goals and
+declared USD raised totals without adding signing, custody, exchange access, or
+implicit chain/network calls.
+
+The portable document version is =ZARA-DONATIONS/1=.
+
+* Desktop location
+
+By default Zara reads:
+
+#+begin_example
+$XDG_CONFIG_HOME/zarathushtra/donations.json
+#+end_example
+
+When =XDG_CONFIG_HOME= is unset this resolves under =~/.config/zarathushtra/=.
+A missing file is a healthy empty ledger.
+
+* Document
+
+#+begin_src json
+{
+  "version": "ZARA-DONATIONS/1",
+  "campaigns": [
+    {
+      "id": "example",
+      "title": "Example campaign",
+      "goal_usd": "1000.00",
+      "raised_usd": "125.00",
+      "active": true,
+      "wallets": [
+        {
+          "chain": "bitcoin",
+          "network": "mainnet",
+          "asset": "BTC",
+          "address": "PUBLIC_RECEIVE_ADDRESS",
+          "label": "BTC"
+        }
+      ]
+    }
+  ]
+}
+#+end_src
+
+USD values are decimal amounts with at most two fractional digits.  The library
+derives =remaining_usd= and aggregate goal/raised/remaining values.  Values are
+recorded accounting values: Zara does not guess a fiat conversion from a token
+balance.
+
+The schema is intentionally closed.  Unsupported fields fail validation.  Do
+not put seed phrases, private keys, signing material, wallet passwords, exchange
+credentials, or other spend authority in this file.
+
+* Python library and CLI
+
+=zara.donations.DonationLedger= is the reusable parser/validator/aggregator.
+=zara.donations.DonationWallet= and =DonationCampaign= are immutable typed
+records.
+
+Useful read surfaces:
+
+#+begin_example
+zara --donations
+zara --donations-json
+#+end_example
+
+The JSON form is intended for small local UI clients such as Qtile and Emacs.
+
+* Android
+
+Android consumes the same =ZARA-DONATIONS/1= shape.  Settings > Runtime contains
+the donation card; the three-menu navigation remains unchanged.
+
+"Import donation campaigns" uses Android's document picker, validates the full
+document before replacing any prior data, then stores the accepted copy in
+app-private storage.  The APK displays aggregate totals, campaign totals, and
+public receive addresses.  It never imports spend authority.
