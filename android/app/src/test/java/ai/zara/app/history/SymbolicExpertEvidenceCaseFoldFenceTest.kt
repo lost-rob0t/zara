@@ -23,24 +23,19 @@ class SymbolicExpertEvidenceCaseFoldFenceTest {
     )
 
     @Test
-    fun `mixed case root model calls metadata fails closed`() {
-        assertFailsWithMessage("expertEvidenceJson") {
-            SymbolicProjectionContract.validatePayload(
-                projection(
-                    """[{"expert_id":"zara:expert/python","model_calls":0,"MODEL_CALLS":7}]"""
-                )
-            )
-        }
-    }
+    fun `normalized provider and model metadata aliases fail closed`() {
+        val poisoned = listOf(
+            """[{"expert_id":"zara:expert/python","model_calls":0,"MODEL_CALLS":7}]""",
+            """[{"expert_id":"zara:expert/python","model_calls":0,"explanation":{"MoDeL_CaLlS":7}}]""",
+            """[{"expert_id":"zara:expert/python","model_calls":0,"providerCalls":1}]""",
+            """[{"expert_id":"zara:expert/python","model_calls":0,"explanation":{"max-model-calls":1}}]""",
+            """[{"expert_id":"zara:expert/python","model_calls":0,"explanation":{"TokenUsage":{"inputTokens":12}}}]""",
+        )
 
-    @Test
-    fun `mixed case nested model calls metadata fails closed`() {
-        assertFailsWithMessage("expertEvidenceJson") {
-            SymbolicProjectionContract.validatePayload(
-                projection(
-                    """[{"expert_id":"zara:expert/python","model_calls":0,"explanation":{"MoDeL_CaLlS":7}}]"""
-                )
-            )
+        poisoned.forEach { encoded ->
+            assertFailsWithMessage("expertEvidenceJson") {
+                SymbolicProjectionContract.validatePayload(projection(encoded))
+            }
         }
     }
 
