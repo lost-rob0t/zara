@@ -72,8 +72,8 @@ parity_main :-
 % This keeps the parity gate honest: semantic_core.pl imports the canonical
 % dialogue modules, Context0 is bridged from persisted string data to the atom
 % input required by pinned Trealla read_term_from_atom/3, the router/renderer
-% is committed once, and canonical Context1 is serialized to an atom before
-% tagging and converting it back to a real Prolog string for the Android ABI.
+% is committed once, and canonical Context1 is rendered with the shared
+% SWI/Trealla output-capture surface before tagging it for the Android ABI.
 parity_dialogue_envelope :-
     string_codes("[]", Context0Codes),
     atom_codes(Context0Atom, Context0Codes),
@@ -88,7 +88,7 @@ parity_dialogue_envelope :-
               ),
               symbolic_dialogue_turn:valid_dialogue_context(Context1),
               symbolic_dialogue:render_response(Act, Response),
-              write_term_to_atom(ContextAtom, Context1, [quoted(true)]),
+              with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)])),
               atom_concat('__zara_context__:', ContextAtom, ContextTagged),
               atom_codes(ContextTagged, ContextWireCodes),
               string_codes(ContextWire, ContextWireCodes)
