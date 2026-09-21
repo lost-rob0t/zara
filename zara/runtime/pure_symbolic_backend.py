@@ -13,7 +13,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Protocol
 
 from zara.latency import LatencyTrace
 from zara.prolog_engine import PrologEngine, locate_main_pl
@@ -26,6 +26,25 @@ PURE_SYMBOLIC_RENDER_ERROR = (
 )
 _MAX_CONTEXT_TERM_CHARS = 8192
 _DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\(|$)")
+
+
+class SymbolicProjectionPort(Protocol):
+    """Runtime-neutral persistence port supplied by a product composition root."""
+
+    def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]: ...
+
+    def commit_turn(
+        self,
+        *,
+        conversation_id: str,
+        expected_generation: int,
+        turn_id: str,
+        response: str,
+        dialogue_act: str,
+        response_act_term: str,
+        context_term: str,
+        renderer_provenance: str,
+    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -74,7 +93,12 @@ def _dialogue_act_token(value: object) -> str:
         raise ValueError("symbolic response act is not a normalized term")
     return match.group(1)
 
-def _resolve_turn(engine: PrologEngine, text: str, context_term: str = "[]") -> PureSymbolicTurn:
+
+def _resolve_turn(
+    engine: PrologEngine,
+    text: str,
+    context_term: str = "[]",
+) -> PureSymbolicTurn:
     """Run one turn through the canonical Prolog dialogue adapter."""
     text_term = json.dumps(text, ensure_ascii=False)
     context_text = json.dumps(_bounded_context_term(context_term), ensure_ascii=False)
@@ -117,13 +141,13 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
         *,
         module_path: Optional[Path] = None,
         turn_resolver: Optional[Callable[[Any, str], PureSymbolicTurn]] = None,
-        projection_store: Any = None,
+        projection_adapter: Optional[SymbolicProjectionPort] = None,
     ) -> None:
         self._engine_factory = engine_factory or _engine_factory
         self._module_path = module_path
         self._turn_resolver = turn_resolver or _resolve_turn
         self._uses_default_turn_resolver = turn_resolver is None
-        self._projection_store = projection_store
+        self._projection_adapter = projection_adapter
         self._engine: Any = None
 
     async def start(self) -> None:
@@ -138,15 +162,13 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
         self,
         conversation_id: Optional[str],
     ) -> tuple[str, int]:
-        store = self._projection_store
-        if store is None or conversation_id is None:
+        adapter = self._projection_adapter
+        if adapter is None or conversation_id is None:
             return "[]", 0
-        projection = store.load_symbolic_projection(conversation_id)
-        if projection is None:
-            return "[]", 0
-        projection.assert_pure_symbolic()
-        context = projection.dialogue_state.get("prolog_context_term", "[]")
-        return _bounded_context_term(context), projection.projection_generation
+        context, generation = adapter.load_dialogue_context(conversation_id)
+        if type(generation) is not int or generation < 0:
+            raise RuntimeError("symbolic projection returned an invalid generation")
+        return _bounded_context_term(context), generation
 
     async def submit_turn(
         self,
@@ -174,7 +196,10 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
         context_term, base_generation = self._load_dialogue_context(conversation_id)
         if self._uses_default_turn_resolver:
             symbolic = await asyncio.to_thread(
-                self._turn_resolver, self._engine, text, context_term
+                self._turn_resolver,
+                self._engine,
+                text,
+                context_term,
             )
         else:
             symbolic = await asyncio.to_thread(self._turn_resolver, self._engine, text)
@@ -197,7 +222,7 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             "provider_calls": 0,
             "model_calls": 0,
         }
-        if self._projection_store is not None and conversation_id is not None:
+        if self._projection_adapter is not None and conversation_id is not None:
             metadata["projection_base_generation"] = base_generation
         return RuntimeTurnResult(response=symbolic.response, metadata=metadata)
 
@@ -208,9 +233,9 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
         turn_id: str,
         conversation_id: Optional[str] = None,
     ) -> None:
-        """CAS one accepted symbolic turn into Zara\'s canonical projection."""
-        store = self._projection_store
-        if store is None or conversation_id is None:
+        """Commit one accepted turn through the injected canonical projection port."""
+        adapter = self._projection_adapter
+        if adapter is None or conversation_id is None:
             return
         metadata = result.metadata
         if metadata.get("route") != "pure_symbolic":
@@ -222,65 +247,28 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             raise RuntimeError("pure symbolic commit has invalid renderer")
         if metadata.get("providers_enabled") is not False:
             raise RuntimeError("pure symbolic commit has providers enabled")
-        for key in ("max_model_calls", "provider_calls", "model_calls"):
+        for key in (
+            "max_provider_calls",
+            "max_model_calls",
+            "provider_calls",
+            "model_calls",
+        ):
             if not _is_exact_zero(metadata.get(key)):
                 raise RuntimeError(f"pure symbolic commit has nonzero {key}")
 
         response_act = metadata.get("response_act")
         dialogue_act = _dialogue_act_token(response_act)
         context_term = _bounded_context_term(metadata.get("dialogue_context"))
-        current = store.load_symbolic_projection(conversation_id)
-        current_generation = current.projection_generation if current is not None else 0
-        if current_generation != base_generation:
-            raise RuntimeError(
-                "stale symbolic projection result: "
-                f"read generation {base_generation}, current {current_generation}"
-            )
-        if current is not None:
-            current.assert_pure_symbolic()
-
-        from zara.desktop.conversation import SymbolicConversationProjection
-
-        dialogue_state = dict(current.dialogue_state) if current is not None else {}
-        dialogue_state["prolog_context_term"] = context_term
-        dialogue_state["response_act_term"] = response_act
-        prior_questions = list(current.unresolved_questions) if current is not None else []
-        unresolved_questions = [
-            item for item in prior_questions
-            if item.get("source") != "symbolic_dialogue"
-        ]
-        if dialogue_act == "clarify":
-            unresolved_questions.append({
-                "id": f"turn:{turn_id}:clarification",
-                "text": result.response,
-                "source": "symbolic_dialogue",
-            })
-
-        projection = SymbolicConversationProjection(
+        adapter.commit_turn(
             conversation_id=conversation_id,
-            projection_generation=base_generation + 1,
-            runtime_generation=(current.runtime_generation if current else 0) + 1,
+            expected_generation=base_generation,
             turn_id=turn_id,
-            outcome="success",
-            project_id=current.project_id if current else None,
-            project_generation=current.project_generation if current else 0,
+            response=result.response,
             dialogue_act=dialogue_act,
-            dialogue_state=dialogue_state,
-            discourse_entities=list(current.discourse_entities) if current else [],
-            unresolved_questions=unresolved_questions,
-            expert_evidence=list(current.expert_evidence) if current else [],
-            verified_facts=list(current.verified_facts) if current else [],
-            verified_outcome_refs=list(current.verified_outcome_refs) if current else [],
+            response_act_term=response_act,
+            context_term=context_term,
             renderer_provenance=PURE_SYMBOLIC_RENDERER,
-            providers_enabled=False,
-            max_model_calls=0,
-            provider_calls=0,
-            model_calls=0,
         )
-        stored = store.save_symbolic_projection(
-            projection, expected_generation=base_generation
-        )
-        stored.assert_pure_symbolic()
 
     async def cancel_turn(self, turn_id: str) -> None:
         # The canonical Prolog turn has no effects. RuntimeHost owns the task
@@ -295,4 +283,5 @@ __all__ = [
     "PURE_SYMBOLIC_RENDERER",
     "PureSymbolicRuntimeBackend",
     "PureSymbolicTurn",
+    "SymbolicProjectionPort",
 ]
