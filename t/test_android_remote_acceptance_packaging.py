@@ -29,17 +29,15 @@ def test_emulator_gate_packages_remote_acceptance_helper() -> None:
 def test_stock_fixture_traces_every_canonical_runtime_event() -> None:
     fixture = STOCK_FIXTURE.read_text(encoding="utf-8")
 
-    assert "def _publish_traced(self, event: events.RuntimeEvent) -> None:" in fixture
-    assert "envelope = self.bus.publish(event)" in fixture
-    assert '"runtime.event"' in fixture
-    assert 'f"published:{event.__class__.__name__}:seq={envelope.sequence}"' in fixture
-
-    for event_type in (
+    expected = (
         "TurnStarted",
         "AssistantStarted",
         "AssistantComplete",
         "AgentCompleted",
-    ):
+    )
+    for event_type in expected:
         assert f"events.{event_type}(" in fixture
+        assert f'_trace("runtime.event", "published:{event_type}")' in fixture
 
-    assert fixture.count("self._publish_traced(") == 4
+    assert fixture.count('self.bus.publish(\n                events.') == len(expected)
+    assert fixture.count('_trace("runtime.event", "published:') == len(expected)
