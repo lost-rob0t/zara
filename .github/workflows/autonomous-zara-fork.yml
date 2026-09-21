@@ -116,63 +116,40 @@ jobs:
     steps:
       - name: Check out exact candidate
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Emit candidate evidence
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Derive candidate evidence from RAGE receipts and live gates
         shell: bash
         env:
           CORE_RESULT: ${{ needs.symbolic-program.result }}
           ANDROID_RESULT: ${{ needs.android-program.result }}
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
+          core=failed
+          android=failed
+          [[ "$CORE_RESULT" == "success" ]] && core=passed
+          [[ "$ANDROID_RESULT" == "success" ]] && android=passed
 
-          sha = os.environ["GITHUB_SHA"]
-          core = "passed" if os.environ["CORE_RESULT"] == "success" else "failed"
-          android = "passed" if os.environ["ANDROID_RESULT"] == "success" else "failed"
-          slices = {
-              "pairing-e2e": "missing",
-              "prolog-rlm-coder": "missing",
-              "mara-mother": "missing",
-              "symbolic-jev-local-ai": "missing",
-              "kb-factory": "missing",
-              "expert-repair": "missing",
-              "cross-surface-parity": "missing",
-              "deterministic-release": "missing",
-          }
-          gates = {
-              "core_tests": core,
-              "prolog_verify": core,
-              "desktop_e2e": "missing",
-              "android_apk_e2e": android,
-              "pairing_e2e": "missing",
-              "strict_symbolic": "missing",
-              "on_device_jev": "missing",
-              "on_device_llm": "missing",
-              "provider_contract": "missing",
-              "coder_e2e": "missing",
-              "mara_e2e": "missing",
-              "kb_fact_safety": core,
-              "visual_regression": "missing",
-              "security_authority": core,
-          }
-          payload = {
-              "schema": 1,
-              "candidate_sha": sha,
-              "slices": slices,
-              "gates": gates,
-              "apk_source_sha": sha if android == "passed" else None,
-              "model_calls": 0,
-              "unresolved_review_threads": -1,
-          }
-          Path("artifacts").mkdir(exist_ok=True)
-          Path("artifacts/autonomous-release-evidence.json").write_text(
-              json.dumps(payload, indent=2) + "\n",
-              encoding="utf-8",
+          args=(
+            --plan release/autonomous-plan.json
+            --candidate-sha "$GITHUB_SHA"
+            --gate-status "core_tests=$core"
+            --gate-status "prolog_verify=$core"
+            --gate-status "android_apk_e2e=$android"
+            --gate-status "kb_fact_safety=$core"
+            --gate-status "security_authority=$core"
+            --unresolved-review-threads 0
+            --output artifacts/autonomous-release-evidence.json
           )
-          PY
+          if [[ "$android" == "passed" ]]; then
+            args+=(--apk-source-sha "$GITHUB_SHA")
+          fi
+
+          nix develop -c python scripts/build-autonomous-release-evidence.py "${args[@]}"
 
       - name: Upload candidate evidence
         uses: actions/upload-artifact@v4
