@@ -225,7 +225,7 @@ class AndroidAdbPlugin(ServicePlugin):
         adb_value = str(configuration.get("adb_path", "adb")).strip()
         adb = self._resolve_adb(adb_value)
         if adb is None:
-            return StartupUnavailable("adb executable is not available")
+            return StartupUnavailable("adb_unavailable")
         serial_raw = configuration.get("serial")
         serial = str(serial_raw).strip() if serial_raw is not None else None
         if serial == "":
