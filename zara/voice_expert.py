@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 from zara.prolog_engine import _prolog_string
 from zara.speech_activity import speech_activity
 from zara.tts import Qwen3TTSClient, TTSEngine
+from zara.voice_analysis import VoiceAnalyzer
 
 
 MAX_YOUTUBE_RESULTS = 10
@@ -79,6 +80,12 @@ class VoiceCloneYouTubeArgs(BaseModel):
         ...,
         description="Explicit attestation. Must be false; public-figure voice cloning is unsupported.",
     )
+
+
+class VoiceAnalyzeYouTubeArgs(BaseModel):
+    url: str = Field(..., min_length=1, max_length=2048)
+    num_speakers: Optional[int] = Field(default=None, ge=1, le=64)
+    persist_to_kb: bool = True
 
 
 class VoiceDeleteArgs(BaseModel):
@@ -186,6 +193,7 @@ class VoiceExpert:
                 voice = speaker_voices[speaker]
             else:
                 voice = self._resolve_voice(
+                    speaker=speaker,
                     role=role,
                     requested_voice=requested,
                     available=available,
@@ -277,6 +285,65 @@ class VoiceExpert:
             ensure_ascii=False,
         )
 
+    def analyze_youtube(
+        self,
+        url: str,
+        num_speakers: Optional[int] = None,
+        persist_to_kb: bool = True,
+    ) -> str:
+        self._youtube_url(url)
+        ffmpeg = self._require_binary("ffmpeg")
+        max_source_seconds = self._analysis_max_source_seconds()
+
+        with tempfile.TemporaryDirectory(prefix="zara-voice-analysis-") as temp_dir:
+            root = Path(temp_dir)
+            source = self._download_youtube_audio(url, root)
+            wav_path = root / "analysis.wav"
+            self._run(
+                [
+                    ffmpeg,
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    str(source),
+                    "-t",
+                    f"{max_source_seconds:.3f}",
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "16000",
+                    "-c:a",
+                    "pcm_s16le",
+                    "-y",
+                    str(wav_path),
+                ],
+                timeout=DOWNLOAD_TIMEOUT_SECONDS,
+            )
+            analyzer = VoiceAnalyzer(
+                config=self.config,
+                prolog_engine=self.prolog_engine,
+            )
+            segments = analyzer.analyze_wav(
+                wav_path,
+                source_id=url,
+                num_speakers=num_speakers,
+                persist_to_kb=bool(persist_to_kb),
+            )
+
+        speakers = sorted({segment.speaker for segment in segments})
+        return json.dumps(
+            {
+                "source": url,
+                "speakers": speakers,
+                "segments": [segment.to_dict() for segment in segments],
+                "persisted_to_kb": bool(persist_to_kb),
+            },
+            ensure_ascii=False,
+        )
+
     def clone_from_youtube(
         self,
         url: str,
@@ -295,25 +362,7 @@ class VoiceExpert:
 
         with tempfile.TemporaryDirectory(prefix="zara-voice-ref-") as temp_dir:
             root = Path(temp_dir)
-            output_template = str(root / "source.%(ext)s")
-            self._run(
-                [
-                    *ytdlp,
-                    "--no-playlist",
-                    "--no-warnings",
-                    "--quiet",
-                    "-f",
-                    "bestaudio/best",
-                    "-o",
-                    output_template,
-                    url,
-                ],
-                timeout=DOWNLOAD_TIMEOUT_SECONDS,
-            )
-            candidates = sorted(path for path in root.glob("source.*") if path.is_file())
-            if len(candidates) != 1:
-                raise RuntimeError("yt-dlp did not produce exactly one reference file")
-            source = candidates[0]
+            source = self._download_youtube_audio(url, root)
             wav_path = root / "reference.wav"
             self._run(
                 [
@@ -376,6 +425,7 @@ class VoiceExpert:
     def _resolve_voice(
         self,
         *,
+        speaker: str,
         role: str,
         requested_voice: str,
         available: list[str],
@@ -383,6 +433,7 @@ class VoiceExpert:
     ) -> str:
         goal = (
             "kb_voice_expert:resolve_voice("
+            f"{_prolog_string(speaker)},"
             f"{_prolog_string(role)},"
             f"{_prolog_string(requested_voice)},"
             f"{self._prolog_string_list(available)},"
@@ -472,6 +523,43 @@ class VoiceExpert:
             connect_timeout=float(tts.get("connect_timeout", 5.0)),
             read_timeout=float(tts.get("read_timeout", 20.0)),
         )
+
+    def _download_youtube_audio(self, url: str, root: Path) -> Path:
+        ytdlp = self._ytdlp_command()
+        output_template = str(root / "source.%(ext)s")
+        self._run(
+            [
+                *ytdlp,
+                "--no-playlist",
+                "--no-warnings",
+                "--quiet",
+                "-f",
+                "bestaudio/best",
+                "-o",
+                output_template,
+                url,
+            ],
+            timeout=DOWNLOAD_TIMEOUT_SECONDS,
+        )
+        candidates = sorted(path for path in root.glob("source.*") if path.is_file())
+        if len(candidates) != 1:
+            raise RuntimeError("yt-dlp did not produce exactly one source audio file")
+        return candidates[0]
+
+    def _analysis_max_source_seconds(self) -> float:
+        config = {}
+        if hasattr(self.config, "get_section"):
+            config = dict(self.config.get_section("voice_expert") or {})
+        elif isinstance(self.config, dict):
+            config = dict(self.config.get("voice_expert", {}) or {})
+        value = config.get("max_source_seconds", 1800.0)
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            parsed = 1800.0
+        if not 5.0 <= parsed <= 14_400.0:
+            parsed = 1800.0
+        return parsed
 
     def _provider(self) -> str:
         provider = str(self._tts_config().get("provider", "qwen3"))
@@ -649,6 +737,16 @@ def build_voice_tools(prolog_engine: Any, config: Any) -> list[StructuredTool]:
                 "policy or an explicit request calls for it."
             ),
             args_schema=VoicePlanArgs,
+        ),
+        StructuredTool.from_function(
+            expert.analyze_youtube,
+            name="voice_analyze_youtube",
+            description=(
+                "Download bounded YouTube audio, gate it with Zara's Silero VAD, "
+                "diarize speakers with configured sherpa-onnx models, and optionally "
+                "assert who-spoke-when segments into the live Prolog Voice Expert KB."
+            ),
+            args_schema=VoiceAnalyzeYouTubeArgs,
         ),
         StructuredTool.from_function(
             expert.clone_from_youtube,
