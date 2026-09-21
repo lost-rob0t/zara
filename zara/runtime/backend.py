@@ -69,6 +69,15 @@ class RuntimeBackend:
     async def cancel_turn(self, turn_id: str) -> None:
         pass
 
+    def plugin_configuration(
+        self,
+        plugin_name: str,
+        base: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise UnsupportedRuntimeCommand(
+            "host-owned plugin policy is not available in this runtime backend"
+        )
+
     def register_tools(self, tools) -> None:
         raise UnsupportedRuntimeCommand(
             "tool registration is not available in this runtime backend"
@@ -381,6 +390,44 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             raise UnsupportedRuntimeCommand("tool rejection is not available in this runtime backend")
         await reject(tool_run_id, reason)
 
+    def plugin_configuration(
+        self,
+        plugin_name: str,
+        base: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(base, dict):
+            raise TypeError("base plugin configuration must be a dict")
+        projected = dict(base)
+        if plugin_name != "zara-doordash":
+            return projected
+        manager = self._manager
+        if manager is None:
+            raise RuntimeError("runtime backend is not started")
+        prolog = getattr(manager, "prolog_engine", None)
+        if prolog is None:
+            raise UnsupportedRuntimeCommand(
+                "Prolog commerce policy is unavailable in this runtime backend"
+            )
+        policy = prolog.get_commerce_policy()
+        if not isinstance(policy, dict):
+            raise RuntimeError("Prolog commerce policy returned invalid data")
+        projected.update(
+            {
+                "commerce_provider": policy["provider"],
+                "commerce_confirmation": policy["confirmation"],
+                "learning_enabled": policy["preference_learning"],
+                "preference_min_observations": policy[
+                    "preference_min_observations"
+                ],
+                "preference_limit": policy["preference_max_patterns"],
+                "preference_min_confidence": policy[
+                    "preference_min_confidence"
+                ],
+                "policy_source": "prolog",
+            }
+        )
+        return projected
+
     def register_tools(self, tools) -> None:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
@@ -547,6 +594,13 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     async def cancel_turn(self, turn_id: str) -> None:
         await self._delegate.cancel_turn(turn_id)
+
+    def plugin_configuration(
+        self,
+        plugin_name: str,
+        base: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._delegate.plugin_configuration(plugin_name, base)
 
     def register_tools(self, tools) -> None:
         self._delegate.register_tools(tools)
