@@ -80,13 +80,19 @@ internal object AndroidPureSymbolicConversationFactory {
             current?.assertPureSymbolic()
             val projectScope = SymbolicProjectScopeContract.next(current, requestedProjectId())
             val expectedGeneration = current?.projectionGeneration ?: 0L
-            val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
+            val resetProjectKnowledge = current != null && projectScope.projectId != current.projectId
+            val context0 = if (resetProjectKnowledge) {
+                SymbolicDialogueContextCodec.emptyContextTerm
+            } else {
+                SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
+            }
             PreparedTurn(
                 current = current,
                 expectedGeneration = expectedGeneration,
                 context0 = context0,
                 projectId = projectScope.projectId,
                 projectGeneration = projectScope.projectGeneration,
+                resetProjectKnowledge = resetProjectKnowledge,
             )
         } catch (error: Throwable) {
             return PureSymbolicResolution(
@@ -109,6 +115,7 @@ internal object AndroidPureSymbolicConversationFactory {
                 turnId = turnId,
                 projectId = prepared.projectId,
                 projectGeneration = prepared.projectGeneration,
+                resetProjectKnowledge = prepared.resetProjectKnowledge,
             ).also { pending ->
                 projectionStore.saveSymbolicProjection(
                     projection = pending,
@@ -220,6 +227,7 @@ internal object AndroidPureSymbolicConversationFactory {
         val context0: String,
         val projectId: String?,
         val projectGeneration: Long,
+        val resetProjectKnowledge: Boolean,
     )
 
     private fun requireRunningTurnId(
@@ -346,6 +354,7 @@ internal object AndroidPureSymbolicConversationFactory {
         turnId: String,
         projectId: String?,
         projectGeneration: Long,
+        resetProjectKnowledge: Boolean,
     ): SymbolicConversationProjection {
         val runtimeGeneration = current?.runtimeGeneration?.let { Math.addExact(it, 1L) } ?: 1L
         val base = current ?: SymbolicConversationProjection(
@@ -363,6 +372,10 @@ internal object AndroidPureSymbolicConversationFactory {
             projectGeneration = projectGeneration,
             dialogueAct = "conversation",
             dialogueStateJson = SymbolicDialogueContextCodec.encode(context0),
+            discourseEntitiesJson = if (resetProjectKnowledge) "[]" else base.discourseEntitiesJson,
+            unresolvedQuestionsJson = if (resetProjectKnowledge) "[]" else base.unresolvedQuestionsJson,
+            expertEvidenceJson = if (resetProjectKnowledge) "[]" else base.expertEvidenceJson,
+            verifiedFactsJson = if (resetProjectKnowledge) "[]" else base.verifiedFactsJson,
             rendererProvenance = "",
             providersEnabled = false,
             maxModelCalls = 0L,
