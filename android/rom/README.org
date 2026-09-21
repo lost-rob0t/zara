@@ -1,0 +1,66 @@
+#+title: Zara / StarIntel Android ROM lane
+
+* Purpose
+The =android-rom= branch is the long-lived Android distribution lane.
+
+It tracks upstream LineageOS as a source dependency while keeping Zara/StarIntel
+integration, product overlays, APK staging, custom patches, and build profiles in
+this repository.
+
+Normal Zara Android app development stays on =master=. Do not merge this branch
+back into =master= wholesale.
+
+* Upstream
+Default bootstrap branch: =lineage-23.2=.
+
+Override per device when LineageOS supports a different branch:
+
+#+begin_src sh
+LINEAGE_BRANCH=lineage-22.2 ./android/rom/scripts/bootstrap-lineage.sh ~/android/zara-lineage
+#+end_src
+
+* Images
+- =core=: LineageOS + Zara + StarIntel Companion + Quasar.
+- =gapps=: core image plus an external Google-apps provider hook.
+- future device profiles may layer kernel, boot, SELinux, radio, or hardware patches.
+
+Google proprietary APKs are intentionally not committed here. The ROM build can
+consume a separately supplied provider tree or add-on package. LineageOS itself
+documents Google Apps as an optional add-on installed before first boot.
+
+* Signing
+System prebuilts are =presigned=.
+
+That is intentional:
+- Zara keeps a stable app identity across ROM and normal APK updates.
+- StarIntel Companion must keep the same signing identity as the Wear app for
+  Google Play Services Data Layer pairing.
+- production signing keys remain outside git and are supplied only by the release
+  pipeline/environment, OS wallet/keyring, or other approved secret source.
+
+* Layout
+- =local_manifests/= repo manifests for Lineage source trees.
+- =product/= product make fragments.
+- =prebuilts/= staged APK imports and privileged-permission XML.
+- =scripts/= reproducible bootstrap/staging helpers.
+- =patches/= future upstream patch queues, grouped by repo.
+
+* Bootstrap
+#+begin_src sh
+./android/rom/scripts/bootstrap-lineage.sh ~/android/zara-lineage
+cd ~/android/zara-lineage
+vendor/zara/android/rom/scripts/stage-apks.sh
+source build/envsetup.sh
+breakfast DEVICE_CODENAME
+brunch DEVICE_CODENAME
+#+end_src
+
+The bootstrap script installs the Zara local manifest, syncs LineageOS, and adds
+the product hook idempotently.
+
+* Branch policy
+- =android-rom= is permanent and is not auto-deleted.
+- periodically merge selected =master= changes needed by Android runtime/app work.
+- keep LineageOS changes as small patch queues or overlays; do not vendor giant
+  upstream source snapshots into this repository.
+- pin production APK versions/checksums in release automation before shipping.

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="zara-github" fetch="https://github.com/lost-rob0t" />
+
+  <project
+      name="zara"
+      path="vendor/zara"
+      remote="zara-github"
+      revision="android-rom"
+      clone-depth="1" />
+
+  <project
+      name="starintel-wearos"
+      path="vendor/starintel-wearos"
+      remote="zara-github"
+      revision="main"
+      clone-depth="1" />
+</manifest>

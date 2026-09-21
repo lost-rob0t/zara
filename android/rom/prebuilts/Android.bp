@@ -1,0 +1,30 @@
+android_app_import {
+    name: "ZaraSystem",
+    apk: "Zara.apk",
+    presigned: true,
+    privileged: true,
+    product_specific: true,
+    required: ["zara_privapp_permissions"],
+}
+
+android_app_import {
+    name: "StarIntelCompanion",
+    apk: "StarIntelCompanion.apk",
+    presigned: true,
+    product_specific: true,
+}
+
+android_app_import {
+    name: "StarIntelQuasar",
+    apk: "StarIntelQuasar.apk",
+    presigned: true,
+    product_specific: true,
+}
+
+prebuilt_etc {
+    name: "zara_privapp_permissions",
+    src: "permissions/privapp-permissions-ai.zara.app.xml",
+    filename_from_src: true,
+    sub_dir: "permissions",
+    product_specific: true,
+}
