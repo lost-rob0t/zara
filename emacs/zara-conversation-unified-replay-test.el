@@ -79,7 +79,8 @@
   (with-temp-buffer
     (zara-chat-mode)
     (setq-local zara-conversation-id "emacs-main")
-    (insert "existing presentation")
+    (let ((inhibit-read-only t))
+      (insert "existing presentation"))
     (let* ((before (buffer-string))
            (previous (make-hash-table :test 'equal))
            (payload
