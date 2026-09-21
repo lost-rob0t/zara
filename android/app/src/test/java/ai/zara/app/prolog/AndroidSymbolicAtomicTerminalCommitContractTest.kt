@@ -69,18 +69,27 @@ class AndroidSymbolicAtomicTerminalCommitContractTest {
     }
 
     @Test
-    fun `ui refreshes canonical history after pure symbolic completion instead of writing it twice`() {
-        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
-        val completion = activity
-            .substringAfter("future.whenComplete { result, error ->", "")
-            .substringBefore("onCreateProject =", "")
+    fun `ui completion facade accepts already terminal canonical history without rewriting it`() {
+        val store = File(
+            "src/main/java/ai/zara/app/conversations/CanonicalConversationStore.kt"
+        ).readText()
+        val completion = store
+            .substringAfter("fun completeTurn(", "")
+            .substringBefore("fun failTurn(", "")
 
-        assertTrue("chat completion callback disappeared", completion.isNotEmpty())
+        assertTrue("canonical completion facade disappeared", completion.isNotEmpty())
         assertTrue(
-            "pure-symbolic completion must only refresh the canonical store because the factory/store " +
-                "transaction already terminalized the assistant message with Context1",
-            completion.contains("executionPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC") &&
-                completion.contains("conversationStore.state()"),
+            "UI callback must tolerate a success/error row that the atomic runtime/store boundary " +
+                "already committed instead of trying to overwrite an immutable terminal message",
+            completion.contains("if (pending != null)") &&
+                completion.contains("terminal.status") &&
+                completion.contains("Conversation has no matching running or terminal turn"),
+        )
+        assertTrue(
+            "a cancelled pure-symbolic future may arrive at the UI after the canonical transaction " +
+                "has already terminalized the assistant row; that late callback must refresh, not " +
+                "rewrite cancellation as an error",
+            completion.contains("HistoryMessageStatus.Cancelled"),
         )
     }
 
