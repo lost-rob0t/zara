@@ -8,7 +8,7 @@ PARITY = ROOT / "scripts/test-android-semantic-parity.sh"
 def test_pinned_trealla_parity_executes_the_production_dialogue_act_and_expert_evidence_wire() -> None:
     source = PARITY.read_text(encoding="utf-8")
 
-    assert "write_term_to_atom(ContextAtom, Context1, [quoted(true)])" in source
+    assert "with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)]))" in source
     assert "__zara_act__:" in source
     assert "Act = answer(expert, _, evidence(EvidenceRef))" in source
     assert "ActName = expert_answer" in source
