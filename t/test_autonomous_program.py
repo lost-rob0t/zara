@@ -24,6 +24,10 @@ brave_facts = _load_script(
     "brave_results_to_prolog",
     "scripts/brave-results-to-prolog.py",
 )
+promote_release = _load_script(
+    "promote_autonomous_release",
+    "scripts/promote-autonomous-release.py",
+)
 
 
 def test_release_plan_generates_candidate_bound_prolog_facts():
@@ -145,3 +149,43 @@ def test_committed_autonomous_plan_is_valid_json():
     assert plan["program_issue"] == 1357
     assert plan["target_version"] == "0.3.0"
     assert len(plan["slices"]) >= 7
+
+
+def test_release_promotion_uses_declared_target_only():
+    plan = {
+        "schema": 1,
+        "target_version": "0.3.0",
+        "target_android_version_code": 6,
+    }
+    current = {
+        "schema": "1",
+        "zara.version": "0.2.2-alpha",
+        "android.versionCode": "4",
+        "release.target": "0.2.2-alpha",
+        "release.targetAndroidVersionCode": "4",
+    }
+
+    output = promote_release.promoted_text(plan, current)
+
+    assert "zara.version=0.3.0" in output
+    assert "android.versionCode=6" in output
+    assert "release.target=0.3.0" in output
+    assert "release.targetAndroidVersionCode=6" in output
+
+
+def test_release_promotion_rejects_android_code_regression():
+    plan = {
+        "schema": 1,
+        "target_version": "0.3.0",
+        "target_android_version_code": 3,
+    }
+    current = {
+        "schema": "1",
+        "zara.version": "0.2.2-alpha",
+        "android.versionCode": "4",
+        "release.target": "0.2.2-alpha",
+        "release.targetAndroidVersionCode": "4",
+    }
+
+    with pytest.raises(ValueError, match="regresses"):
+        promote_release.promoted_text(plan, current)
