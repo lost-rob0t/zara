@@ -23,7 +23,8 @@ def test_terminal_symbolic_projection_does_not_publish_pending_conversation_act(
     assert "dialogueAct =" in terminal
     assert "dialogueAct = pending.dialogueAct" not in terminal
     assert "ActWire" in envelope
-    assert "__zara_act__:" in envelope
+    assert "DIALOGUE_ACT_WIRE_PREFIX" in envelope
+    assert 'private const val DIALOGUE_ACT_WIRE_PREFIX = "__zara_act__:"' in source
     assert "Result = ActWire" in envelope
 
 
