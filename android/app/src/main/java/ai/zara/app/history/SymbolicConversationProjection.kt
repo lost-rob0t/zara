@@ -420,7 +420,7 @@ internal object SymbolicProjectionContract {
                 val v2Generations = proposed.verifiedOutcomeRefs
                     .mapNotNull(::verifiedOutcomeRuntimeGeneration)
                     .toSet()
-                check(v2Generations.isEmpty() || proposed.runtimeGeneration in v2Generations) {
+                check(proposed.runtimeGeneration in v2Generations) {
                     "verified projection requires fresh outcome evidence"
                 }
             }
@@ -447,6 +447,15 @@ internal object SymbolicProjectionContract {
             if (current.turnId != null) {
                 check(proposed.runtimeGeneration == current.runtimeGeneration) {
                     "same turn must preserve runtimeGeneration"
+                }
+            }
+            if (proposed.dialogueAct == "verified") {
+                check(
+                    proposed.verifiedOutcomeRefs.any { reference ->
+                        verifiedOutcomeRuntimeGeneration(reference) == proposed.runtimeGeneration
+                    }
+                ) {
+                    "verified projection requires fresh outcome evidence"
                 }
             }
             check(current.outcome !in terminalOutcomes) {
