@@ -14,29 +14,15 @@ import java.util.concurrent.CompletableFuture
  * This does not own a runtime, conversation store, expert registry, or provider client. Explicit
  * queries stay on the bounded local-query path. Natural-language turns execute the canonical
  * symbolic_dialogue_turn -> symbolic_dialogue renderer chain through AndroidAppSession's already
- * started LocalZaraServer via queryLocalProlog(). The controller threads the canonical
- * conversation id into this resolver boundary so the durable projection can be composed here
- * without adding controller-local dialogue state.
+ * started LocalZaraServer via queryLocalProlog(). A durable [PortableConversationStore] is
+ * mandatory so there is no stateless factory path that can silently reset Context0 between turns.
  */
 internal object AndroidPureSymbolicConversationFactory {
-    fun create(session: AndroidAppSession): PureSymbolicConversationController =
-        controller(
-            session = session,
-            resolve = { utterance, _conversationId ->
-                session.queryLocalProlog(
-                    dialogueTurnQuery(
-                        utterance,
-                        SymbolicDialogueContextCodec.emptyContextTerm,
-                    ),
-                )
-            },
-        )
-
     /**
      * Compose natural turns with the canonical durable conversation projection.
      *
-     * The supplied [projectionStore] remains the sole persistence authority. This overload adds
-     * no Android-local context cache: every natural turn loads Context0 from the existing
+     * The supplied [projectionStore] remains the sole persistence authority. This factory adds no
+     * Android-local context cache: every natural turn loads Context0 from the existing
      * SymbolicConversationProjection, executes the canonical dialogue turn exactly once, receives
      * both the rendered response and Context1 through the existing Trealla Result-binding ABI,
      * and persists Context1 with the projection generation CAS.
