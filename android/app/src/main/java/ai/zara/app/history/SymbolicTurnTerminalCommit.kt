@@ -154,7 +154,7 @@ fun PortableConversationStore.failSymbolicTurnBeforeProjection(
     require(turnId.isNotBlank()) { "turnId must not be blank" }
 
     val current = loadSymbolicProjection(conversationId)
-    check(current == null || current.turnId != turnId || current.outcome != "pending") {
+    check(current == null || current.outcome != "pending") {
         "symbolic preflight failure cannot bypass pending projection CAS"
     }
 
