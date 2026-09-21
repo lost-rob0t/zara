@@ -29,13 +29,14 @@ def _projection(
     runtime_generation: int,
     turn_id: str,
     receipts: list[str],
+    outcome: str = "success",
 ) -> SymbolicConversationProjection:
     return SymbolicConversationProjection(
         conversation_id=conversation_id,
         projection_generation=projection_generation,
         runtime_generation=runtime_generation,
         turn_id=turn_id,
-        outcome="success",
+        outcome=outcome,
         dialogue_act="verified",
         dialogue_state={"act": "verified"},
         verified_outcome_refs=receipts,
@@ -214,6 +215,49 @@ def test_new_v2_receipt_must_bind_to_the_new_runtime_generation(tmp_path):
                 runtime_generation=8,
                 turn_id="turn-8",
                 receipts=current.verified_outcome_refs + [_v2_receipt(7, 8)],
+            ),
+            expected_generation=current.projection_generation,
+        )
+
+
+def test_same_turn_v2_mode_rejects_legacy_and_old_generation_additions(tmp_path):
+    store = ConversationStore(DatabaseManager(tmp_path / "verified-v2-same-turn.db"))
+    conversation = store.create_conversation(
+        "Verified v2 same turn fence",
+        conversation_id="conv-verified-v2-same-turn",
+    )
+    current = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            projection_generation=1,
+            runtime_generation=7,
+            turn_id="turn-7",
+            receipts=[_v2_receipt(7, 7)],
+            outcome="pending",
+        ),
+        expected_generation=0,
+    )
+
+    with pytest.raises(RuntimeError, match="retired verified outcome replay rejected"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                projection_generation=2,
+                runtime_generation=7,
+                turn_id="turn-7",
+                receipts=current.verified_outcome_refs + [_legacy_receipt(1)],
+            ),
+            expected_generation=current.projection_generation,
+        )
+
+    with pytest.raises(RuntimeError, match="verified outcome generation mismatch rejected"):
+        store.save_symbolic_projection(
+            _projection(
+                conversation.id,
+                projection_generation=2,
+                runtime_generation=7,
+                turn_id="turn-7",
+                receipts=current.verified_outcome_refs + [_v2_receipt(6, 6)],
             ),
             expected_generation=current.projection_generation,
         )
