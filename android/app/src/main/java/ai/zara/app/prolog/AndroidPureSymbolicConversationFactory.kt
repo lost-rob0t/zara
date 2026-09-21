@@ -394,7 +394,7 @@ internal object AndroidPureSymbolicConversationFactory {
         projectionGeneration = Math.addExact(pending.projectionGeneration, 1L),
         outcome = outcome,
         dialogueStateJson = SymbolicDialogueContextCodec.encode(contextTerm),
-        rendererProvenance = if (outcome == "success") "symbolic-dcg/v1" else "",
+        rendererProvenance = "symbolic-dcg/v1",
         providersEnabled = false,
         maxModelCalls = 0L,
         providerCalls = 0L,
