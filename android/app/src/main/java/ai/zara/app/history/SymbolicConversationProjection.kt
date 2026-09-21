@@ -296,6 +296,24 @@ internal object SymbolicProjectionContract {
         val added = proposedSet - currentSet
         val currentHasV2 = currentRefs.any { verifiedOutcomeRuntimeGeneration(it) != null }
 
+        if (currentHasV2) {
+            added.forEach { reference ->
+                check(verifiedOutcomeRuntimeGeneration(reference) != null) {
+                    "retired verified outcome replay rejected"
+                }
+            }
+        }
+
+        added.forEach { reference ->
+            val evidenceGeneration = verifiedOutcomeRuntimeGeneration(reference)
+            if (evidenceGeneration != null && evidenceGeneration != runtimeGeneration) {
+                if (removed.isNotEmpty()) {
+                    throw IllegalStateException("retired verified outcome replay rejected")
+                }
+                throw IllegalStateException("verified outcome generation mismatch rejected")
+            }
+        }
+
         if (!isNewTurn) {
             check(removed.isEmpty()) { "verified outcome evidence rewind rejected" }
             return added
@@ -327,29 +345,10 @@ internal object SymbolicProjectionContract {
                         "verified outcome compaction requires generation-bound evidence"
                     )
                 }
-                check(evidenceGeneration == runtimeGeneration) {
-                    "retired verified outcome replay rejected"
-                }
             }
             return added
         }
 
-        if (currentHasV2) {
-            added.forEach { reference ->
-                check(verifiedOutcomeRuntimeGeneration(reference) != null) {
-                    "retired verified outcome replay rejected"
-                }
-            }
-        }
-
-        added.forEach { reference ->
-            val evidenceGeneration = verifiedOutcomeRuntimeGeneration(reference)
-            if (evidenceGeneration != null) {
-                check(evidenceGeneration == runtimeGeneration) {
-                    "verified outcome generation mismatch rejected"
-                }
-            }
-        }
         return added
     }
 
