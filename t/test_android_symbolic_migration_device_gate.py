@@ -47,6 +47,19 @@ RESTART_FENCE_TEST = (
     / "history"
     / "PortableConversationRestartFenceInstrumentedTest.kt"
 )
+VERIFIED_V2_RESTART_TEST = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "androidTest"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "history"
+    / "SymbolicVerifiedOutcomeV2RestartInstrumentedTest.kt"
+)
 PURE_SYMBOLIC_E2E_TEST = (
     ROOT
     / "android"
@@ -68,13 +81,16 @@ def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations()
     test_source = MIGRATION_TEST.read_text(encoding="utf-8")
     v3_test_source = V3_MIGRATION_TEST.read_text(encoding="utf-8")
     restart_test_source = RESTART_FENCE_TEST.read_text(encoding="utf-8")
+    verified_v2_restart_source = VERIFIED_V2_RESTART_TEST.read_text(encoding="utf-8")
 
     assert ":app:connectedDebugAndroidTest" in gate
     assert (
         "android.testInstrumentationRunnerArguments.class="
         "ai.zara.app.history.PortableConversationMigrationInstrumentedTest,"
         "ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,"
-        "ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest"
+        "ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,"
+        "ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,"
+        "ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest"
     ) in gate
     assert 'testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"' in android_build
 
@@ -106,6 +122,17 @@ def test_android_emulator_gate_executes_real_v2_and_v3_to_v4_sqlite_migrations()
     assert "recovered.assertPureSymbolic()" in restart_test_source
     assert 'assertEquals("interrupted", recovered.outcome)' in restart_test_source
     assert "late same-turn completion must be rejected after restart interruption" in restart_test_source
+
+    assert "eightyVerifiedTurnsStayBoundedAndRejectRetiredReplayAfterProcessRecreation" in verified_v2_restart_source
+    assert "for (runtimeGeneration in 2L..80L)" in verified_v2_restart_source
+    assert "first.close()" in verified_v2_restart_source
+    assert "val reopened = PortableConversationStore(context)" in verified_v2_restart_source
+    assert "recovered.assertPureSymbolic()" in verified_v2_restart_source
+    assert '"retired verified outcome replay rejected"' in verified_v2_restart_source
+    assert '"stale symbolic projection write"' in verified_v2_restart_source
+    assert "assertEquals(0L, recovered.maxModelCalls)" in verified_v2_restart_source
+    assert "assertEquals(0L, recovered.providerCalls)" in verified_v2_restart_source
+    assert "assertEquals(0L, recovered.modelCalls)" in verified_v2_restart_source
 
 
 def test_emulator_gate_runs_real_native_pure_symbolic_multiturn_continuity() -> None:
@@ -179,9 +206,10 @@ def test_emulator_gate_executes_every_pure_symbolic_android_contract() -> None:
     gate = EMULATOR_GATE.read_text(encoding="utf-8")
 
     # connectedDebugAndroidTest is run with an explicit class filter. Keep every
-    # pure-symbolic acceptance class in that filter so a new androidTest cannot
-    # silently compile without ever executing on the emulator.
+    # acceptance class in that filter so a new androidTest cannot silently
+    # compile without ever executing on the emulator.
     required_classes = (
+        "ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest",
         "ai.zara.app.prolog.NativeTreallaResultBindingInstrumentedTest",
         "ai.zara.app.prolog.AndroidPureSymbolicContextRoundTripInstrumentedTest",
         "ai.zara.app.prolog.AndroidPureSymbolicPersistenceBoundaryInstrumentedTest",
