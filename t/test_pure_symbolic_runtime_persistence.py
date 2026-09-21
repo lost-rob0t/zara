@@ -4,6 +4,7 @@ import pytest
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationStore
+from zara.desktop.conversation.symbolic_runtime import PureSymbolicProjectionAdapter
 from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
 
 
@@ -15,7 +16,9 @@ async def test_pure_symbolic_dialogue_context_survives_backend_restart(tmp_path)
         conversation_id="conv-symbolic-continuity",
     )
 
-    first_backend = PureSymbolicRuntimeBackend(projection_store=store)
+    first_backend = PureSymbolicRuntimeBackend(
+        projection_adapter=PureSymbolicProjectionAdapter(store),
+    )
     await first_backend.start()
     try:
         first = await first_backend.submit_turn(
@@ -24,7 +27,7 @@ async def test_pure_symbolic_dialogue_context_survives_backend_restart(tmp_path)
             conversation_id=conversation.id,
         )
         assert first.response == "How long should I set the timer for?"
-        await first_backend.commit_turn_result(
+        first_backend.commit_turn_result(
             first,
             turn_id="turn-symbolic-1",
             conversation_id=conversation.id,
@@ -40,7 +43,9 @@ async def test_pure_symbolic_dialogue_context_survives_backend_restart(tmp_path)
     assert first_projection.dialogue_act == "clarify"
     assert "partial_frame" in first_projection.dialogue_state["prolog_context_term"]
 
-    restarted_backend = PureSymbolicRuntimeBackend(projection_store=store)
+    restarted_backend = PureSymbolicRuntimeBackend(
+        projection_adapter=PureSymbolicProjectionAdapter(store),
+    )
     await restarted_backend.start()
     try:
         second = await restarted_backend.submit_turn(
@@ -52,7 +57,7 @@ async def test_pure_symbolic_dialogue_context_survives_backend_restart(tmp_path)
             "That action needs capability-checked execution before I can report success."
         )
         assert second.metadata["response_act"].startswith("dispatch_required(")
-        await restarted_backend.commit_turn_result(
+        restarted_backend.commit_turn_result(
             second,
             turn_id="turn-symbolic-2",
             conversation_id=conversation.id,
