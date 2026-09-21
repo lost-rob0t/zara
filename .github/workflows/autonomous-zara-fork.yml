@@ -1,0 +1,104 @@
+name: Autonomous Zara fork
+
+on:
+  push:
+    branches:
+      - fork/autonomous-zara-20260920
+  pull_request:
+    paths:
+      - release/autonomous-plan.json
+      - verification/autonomous_release_verify.pl
+      - modules/mara_mother.pl
+      - scripts/generate-autonomous-release-facts.py
+      - scripts/brave-results-to-prolog.py
+      - t/mara_mother.pl
+      - t/test_autonomous_program.py
+      - main.pl
+      - android/**
+      - zara/**
+      - modules/**
+      - kb/**
+
+permissions:
+  contents: read
+
+jobs:
+  symbolic-program:
+    name: symbolic program + core regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Generate candidate-bound release-plan facts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          nix develop -c python scripts/generate-autonomous-release-facts.py \
+            --plan release/autonomous-plan.json \
+            --candidate-sha "$GITHUB_SHA" \
+            --output artifacts/autonomous-release-facts.pl
+
+      - name: Verify release-plan structure in Prolog
+        run: |
+          nix develop -c swipl -q \
+            -s verification/autonomous_release_verify.pl \
+            -- plan artifacts/autonomous-release-facts.pl
+
+      - name: Test Mara Mother symbolic scheduler
+        run: |
+          nix develop -c swipl -q \
+            -g "load_files('t/mara_mother.pl',[silent(true)]),run_tests,halt" \
+            -t "halt(1)"
+
+      - name: Test autonomous program tooling
+        run: nix develop -c python -m pytest -q t/test_autonomous_program.py
+
+      - name: Run full deterministic core gate
+        run: nix develop -c bash scripts/test-all.sh
+
+      - name: Upload generated Prolog facts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomous-release-facts-${{ github.sha }}
+          path: artifacts/autonomous-release-facts.pl
+
+  android-program:
+    name: Android APK/runtime gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run Android gate
+        run: nix develop ./android -c bash scripts/test-android.sh
+
+      - name: Require debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          sha256sum android/app/build/outputs/apk/debug/app-debug.apk > android-apk.sha256
+          printf 'source_sha=%s\n' "$GITHUB_SHA" > android-apk.manifest
+          cat android-apk.sha256 >> android-apk.manifest
+
+      - name: Upload exact-source APK evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomous-zara-apk-${{ github.sha }}
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android-apk.sha256
+            android-apk.manifest
