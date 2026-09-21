@@ -84,11 +84,13 @@ class AndroidSymbolicPersistenceCompositionContractTest {
         )
         assertTrue(
             "the pending canonical projection must carry the derived project id",
-            factory.contains("projectId = projectScope.projectId"),
+            factory.contains("projectId = projectScope.projectId") ||
+                factory.contains("projectId = prepared.projectId"),
         )
         assertTrue(
             "the pending canonical projection must carry the derived stale-project generation fence",
-            factory.contains("projectGeneration = projectScope.projectGeneration"),
+            factory.contains("projectGeneration = projectScope.projectGeneration") ||
+                factory.contains("projectGeneration = prepared.projectGeneration"),
         )
     }
 
@@ -101,7 +103,11 @@ class AndroidSymbolicPersistenceCompositionContractTest {
             .substringAfter("private fun resolvePersistedTurn(")
             .substringBefore("private fun splitDialogueEnvelope(")
 
-        assertTrue(persistedTurn.contains("dialogueTurnEnvelopeQuery(utterance, context0)"))
+        assertTrue(
+            "the single dialogue evaluation must consume the prepared durable Context0",
+            persistedTurn.contains("dialogueTurnEnvelopeQuery(utterance, prepared.context0)") ||
+                persistedTurn.contains("dialogueTurnEnvelopeQuery(utterance, context0)"),
+        )
         assertEquals(
             "response rendering and Context1 capture must share one local Prolog evaluation",
             1,
