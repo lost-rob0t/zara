@@ -42,7 +42,7 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
-    fun persistedDialogueEnvelopeReturnsResponseAndContextFromOneDialogueTurn() {
+    fun persistedDialogueEnvelopeReturnsResponseAndCanonicalContextWireFromOneDialogueTurn() {
         val context = "completed_frame(frame(intent(ns(device),name('timer.set')),[],complete))"
         val query = AndroidPureSymbolicConversationFactory.dialogueTurnEnvelopeQuery(
             "actually ten minutes",
@@ -62,7 +62,19 @@ class AndroidPureSymbolicConversationFactoryTest {
             query.contains("read_term_from_atom("),
         )
         assertTrue(
-            "ISO if-then-else must commit the router/renderer condition before Result enumeration",
+            "Context1 must be rendered as a canonical readable Prolog atom before JNI sees it",
+            query.contains("term_to_atom(Context1, ContextAtom)"),
+        )
+        assertTrue(
+            "canonical Context1 must cross JNI as a real string so Trealla's display printer cannot drop required atom quotes",
+            query.contains("atom_string(ContextTagged, ContextWire)"),
+        )
+        assertTrue(
+            "the dedicated wire tag must distinguish continuation state from the rendered response without a second dialogue turn",
+            query.contains("__zara_context__:"),
+        )
+        assertTrue(
+            "ISO if-then-else must commit the router/renderer/context serialization condition before Result enumeration",
             query.startsWith("((") && query.contains(") -> true ; fail), "),
         )
         assertEquals(
@@ -76,7 +88,7 @@ class AndroidPureSymbolicConversationFactoryTest {
             Regex("symbolic_dialogue_turn:dialogue_turn\\(").findAll(query).count(),
         )
         assertTrue(query.contains("symbolic_dialogue:render_response(Act, Response)"))
-        assertTrue(query.endsWith("(Result = Response ; Result = dialogue_context(Context1))"))
+        assertTrue(query.endsWith("(Result = Response ; Result = ContextWire)"))
         assertTrue(query.contains("valid_dialogue_context(Context0)"))
         assertTrue(query.contains("valid_dialogue_context(Context1)"))
     }
