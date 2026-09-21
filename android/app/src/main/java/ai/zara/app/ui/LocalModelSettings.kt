@@ -124,10 +124,9 @@ internal fun LocalModelSettingsCard(
             singleLine = true,
             label = { Text("Context tokens") },
         )
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Box {
                 SecondaryAction(
