@@ -50,37 +50,34 @@ def test_non_adjacent_verified_receipt_replay_is_rejected(tmp_path):
         ),
         expected_generation=0,
     )
+    second = store.save_symbolic_projection(
+        _projection(
+            conversation.id,
+            generation=2,
+            runtime_generation=2,
+            turn_id="turn-2",
+            receipts=[_R1, _R2],
+        ),
+        expected_generation=first.projection_generation,
+    )
 
-    rejected = False
     try:
-        second = store.save_symbolic_projection(
+        store.save_symbolic_projection(
             _projection(
                 conversation.id,
-                generation=2,
-                runtime_generation=2,
-                turn_id="turn-2",
-                receipts=[_R2],
+                generation=3,
+                runtime_generation=3,
+                turn_id="turn-3",
+                receipts=[_R1],
             ),
-            expected_generation=first.projection_generation,
+            expected_generation=second.projection_generation,
         )
-    except RuntimeError:
-        rejected = True
+    except RuntimeError as error:
+        assert "verified outcome evidence rewind rejected" in str(error)
     else:
-        try:
-            store.save_symbolic_projection(
-                _projection(
-                    conversation.id,
-                    generation=3,
-                    runtime_generation=3,
-                    turn_id="turn-3",
-                    receipts=[_R1],
-                ),
-                expected_generation=second.projection_generation,
-            )
-        except RuntimeError:
-            rejected = True
-
-    assert rejected, "R1 -> R2 -> R1 ABA replay was accepted as fresh postcondition evidence"
+        raise AssertionError(
+            "later verified turn dropped durable receipts and replayed old R1 as fresh evidence"
+        )
 
 
 def test_verified_receipts_remain_monotonic_and_zero_model(tmp_path):
