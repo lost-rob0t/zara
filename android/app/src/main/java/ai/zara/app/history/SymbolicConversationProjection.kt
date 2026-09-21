@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.database.Cursor
 
 private const val SYMBOLIC_RENDERER_ID = "symbolic-dcg/v1"
+private const val VERIFIED_OUTCOME_WINDOW = 64
 
 /**
  * Portable symbolic context projected over the canonical conversation history.
@@ -267,9 +268,90 @@ internal object SymbolicProjectionContract {
     )
     private val terminalOutcomes = setOf("success", "cancelled", "interrupted", "error")
     private val dialogueActPattern = Regex("^[a-z][a-z0-9_.-]{0,127}$")
-    private val verifiedOutcomeRefPattern = Regex(
+    private val verifiedOutcomeV1RefPattern = Regex(
         "^zara\\.verified-outcome/v1:(effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
     )
+    private val verifiedOutcomeV2RefPattern = Regex(
+        "^zara\\.verified-outcome/v2:([1-9][0-9]*):(effect|outcome):" +
+            "[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$"
+    )
+
+    private fun verifiedOutcomeRuntimeGeneration(reference: String): Long? {
+        if (verifiedOutcomeV1RefPattern.matches(reference)) return null
+        val match = verifiedOutcomeV2RefPattern.matchEntire(reference)
+            ?: throw IllegalArgumentException("invalid verified outcome reference: $reference")
+        return match.groupValues[1].toLongOrNull()
+            ?: throw IllegalArgumentException("invalid verified outcome reference: $reference")
+    }
+
+    private fun validateVerifiedOutcomeTransition(
+        currentRefs: List<String>,
+        proposedRefs: List<String>,
+        runtimeGeneration: Long,
+        isNewTurn: Boolean,
+    ): Set<String> {
+        val currentSet = currentRefs.toSet()
+        val proposedSet = proposedRefs.toSet()
+        val removed = currentSet - proposedSet
+        val added = proposedSet - currentSet
+        val currentHasV2 = currentRefs.any { verifiedOutcomeRuntimeGeneration(it) != null }
+
+        if (!isNewTurn) {
+            check(removed.isEmpty()) { "verified outcome evidence rewind rejected" }
+            return added
+        }
+
+        if (removed.isNotEmpty()) {
+            check(
+                currentRefs.size == VERIFIED_OUTCOME_WINDOW &&
+                    proposedRefs.size == VERIFIED_OUTCOME_WINDOW &&
+                    removed.size == added.size &&
+                    added.isNotEmpty()
+            ) { "verified outcome evidence rewind rejected" }
+            val dropCount = removed.size
+            val retainedCount = VERIFIED_OUTCOME_WINDOW - dropCount
+            check(proposedRefs.take(retainedCount) == currentRefs.drop(dropCount)) {
+                "verified outcome evidence rewind rejected"
+            }
+            val appendedRefs = proposedRefs.drop(retainedCount)
+            check(appendedRefs.toSet() == added) {
+                "verified outcome evidence rewind rejected"
+            }
+            appendedRefs.forEach { reference ->
+                val evidenceGeneration = verifiedOutcomeRuntimeGeneration(reference)
+                if (evidenceGeneration == null) {
+                    if (currentHasV2) {
+                        throw IllegalStateException("retired verified outcome replay rejected")
+                    }
+                    throw IllegalStateException(
+                        "verified outcome compaction requires generation-bound evidence"
+                    )
+                }
+                check(evidenceGeneration == runtimeGeneration) {
+                    "retired verified outcome replay rejected"
+                }
+            }
+            return added
+        }
+
+        if (currentHasV2) {
+            added.forEach { reference ->
+                check(verifiedOutcomeRuntimeGeneration(reference) != null) {
+                    "retired verified outcome replay rejected"
+                }
+            }
+        }
+
+        added.forEach { reference ->
+            val evidenceGeneration = verifiedOutcomeRuntimeGeneration(reference)
+            if (evidenceGeneration != null) {
+                check(evidenceGeneration == runtimeGeneration) {
+                    "verified outcome generation mismatch rejected"
+                }
+            }
+        }
+        return added
+    }
 
     fun validatePayload(projection: SymbolicConversationProjection) {
         require(projection.conversationId.isNotEmpty()) { "conversationId must not be empty" }
@@ -290,15 +372,16 @@ internal object SymbolicProjectionContract {
         require(dialogueActPattern.matches(projection.dialogueAct)) {
             "dialogueAct must be a normalized symbolic act token"
         }
-        require(projection.verifiedOutcomeRefs.size <= 64) {
+        require(projection.verifiedOutcomeRefs.size <= VERIFIED_OUTCOME_WINDOW) {
             "verifiedOutcomeRefs exceeds 64 entries"
         }
         require(projection.verifiedOutcomeRefs.distinct().size == projection.verifiedOutcomeRefs.size) {
             "verifiedOutcomeRefs must be unique"
         }
         projection.verifiedOutcomeRefs.forEach { ref ->
-            require(verifiedOutcomeRefPattern.matches(ref)) {
-                "invalid verified outcome reference: $ref"
+            val evidenceGeneration = verifiedOutcomeRuntimeGeneration(ref)
+            require(evidenceGeneration == null || evidenceGeneration <= projection.runtimeGeneration) {
+                "verified outcome generation must not exceed runtimeGeneration"
             }
         }
         require(projection.dialogueAct != "verified" || projection.verifiedOutcomeRefs.isNotEmpty()) {
@@ -346,11 +429,13 @@ internal object SymbolicProjectionContract {
         check(!(current.turnId != null && proposed.turnId == null)) {
             "turnId rewind rejected"
         }
-        val currentVerifiedOutcomeRefs = current.verifiedOutcomeRefs.toSet()
-        val proposedVerifiedOutcomeRefs = proposed.verifiedOutcomeRefs.toSet()
-        check(proposedVerifiedOutcomeRefs.containsAll(currentVerifiedOutcomeRefs)) {
-            "verified outcome evidence rewind rejected"
-        }
+        val isNewTurn = proposed.turnId != current.turnId
+        val freshVerifiedOutcomeRefs = validateVerifiedOutcomeTransition(
+            current.verifiedOutcomeRefs,
+            proposed.verifiedOutcomeRefs,
+            runtimeGeneration = proposed.runtimeGeneration,
+            isNewTurn = isNewTurn,
+        )
         if (proposed.turnId == current.turnId) {
             if (current.turnId != null) {
                 check(proposed.runtimeGeneration == current.runtimeGeneration) {
@@ -365,7 +450,7 @@ internal object SymbolicProjectionContract {
                 "new turn must advance runtimeGeneration"
             }
             if (proposed.dialogueAct == "verified") {
-                check(proposedVerifiedOutcomeRefs.any { it !in currentVerifiedOutcomeRefs }) {
+                check(freshVerifiedOutcomeRefs.isNotEmpty()) {
                     "verified projection requires fresh outcome evidence"
                 }
             }
