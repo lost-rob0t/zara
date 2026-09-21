@@ -1,11 +1,8 @@
-"""Signal Cabin visual system for Zara Desktop.
+"""Android-parity semantic visual system for Zara Desktop.
 
-THESIS: One conversation follows one visible route; the interface refuses generic AI-card chrome.
-OWN-WORLD: Charcoal enamel, warm ivory type, mint route lamps, amber activity, and signal red.
-STORY: Summon Zara, read the live route, work in place, then carry the same trace into Full Chat.
-FIRST VIEWPORT: A precise status rail anchors the top, conversation owns the field, and the composer forms the control bed.
-FORM: Railway signal cabin, second on the grounded list; seed 35e80c4d.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+Android's ZaraSemanticTokens are the product color authority.  Desktop projects
+those tokens into Qt-specific roles while keeping legacy themes available for
+existing users.
 """
 
 from __future__ import annotations
@@ -70,8 +67,179 @@ def _theme(
     return ThemeDefinition(key, label, description, MappingProxyType(colors))
 
 
+ANDROID_THEME_TOKENS: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        "outrun": MappingProxyType(
+            {
+                "background": "#02040B",
+                "surface": "#07101B",
+                "surfaceElevated": "#0A1324",
+                "surfaceInput": "#080F1E",
+                "border": "#1A2A49",
+                "borderActive": "#775CFF",
+                "primary": "#E21CF2",
+                "secondary": "#16D9FF",
+                "accentMagenta": "#F000FF",
+                "accentCyan": "#00D7FF",
+                "text": "#EAF2FF",
+                "textMuted": "#8D9DBA",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#B56DFF",
+                "ambientGlow": "#3A0D5E",
+            }
+        ),
+        "starintel": MappingProxyType(
+            {
+                "background": "#080807",
+                "surface": "#14130F",
+                "surfaceElevated": "#201D15",
+                "surfaceInput": "#10100D",
+                "border": "#4C4329",
+                "borderActive": "#E8C56A",
+                "primary": "#E8C56A",
+                "secondary": "#F1DA9A",
+                "accentMagenta": "#D4AF37",
+                "accentCyan": "#F1DA9A",
+                "text": "#F8F3E6",
+                "textMuted": "#BEB5A1",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#FFD971",
+                "ambientGlow": "#342A10",
+            }
+        ),
+        "midnight": MappingProxyType(
+            {
+                "background": "#080919",
+                "surface": "#11132A",
+                "surfaceElevated": "#1B1D3C",
+                "surfaceInput": "#0D1024",
+                "border": "#343B68",
+                "borderActive": "#9C92FF",
+                "primary": "#B3A4FF",
+                "secondary": "#8ABFFF",
+                "accentMagenta": "#B3A4FF",
+                "accentCyan": "#8ABFFF",
+                "text": "#EAF2FF",
+                "textMuted": "#8D9DBA",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#CEC4FF",
+                "ambientGlow": "#24204E",
+            }
+        ),
+        "terminal": MappingProxyType(
+            {
+                "background": "#030805",
+                "surface": "#08120C",
+                "surfaceElevated": "#102117",
+                "surfaceInput": "#050D08",
+                "border": "#294E36",
+                "borderActive": "#8EF0A8",
+                "primary": "#8EF0A8",
+                "secondary": "#ADEBC0",
+                "accentMagenta": "#8EF0A8",
+                "accentCyan": "#ADEBC0",
+                "text": "#E3F8E9",
+                "textMuted": "#9CBBA6",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#BFFFCC",
+                "ambientGlow": "#12321D",
+            }
+        ),
+        "light": MappingProxyType(
+            {
+                "background": "#F7F7FA",
+                "surface": "#FFFFFF",
+                "surfaceElevated": "#ECECF3",
+                "surfaceInput": "#F2F2F7",
+                "border": "#B8BAC8",
+                "borderActive": "#6450A8",
+                "primary": "#7A247D",
+                "secondary": "#006478",
+                "accentMagenta": "#88258C",
+                "accentCyan": "#006478",
+                "text": "#1C2030",
+                "textMuted": "#555C70",
+                "success": "#17623B",
+                "warning": "#765100",
+                "error": "#AC2044",
+                "focus": "#6034A0",
+                "ambientGlow": "#EAE1F3",
+            }
+        ),
+    }
+)
+
+
+def _android_theme(
+    key: str,
+    label: str,
+    description: str,
+    *,
+    on_primary: str,
+) -> ThemeDefinition:
+    tokens = ANDROID_THEME_TOKENS[key]
+    return _theme(
+        key,
+        label,
+        description,
+        ground=tokens["background"],
+        panel_deep=tokens["surfaceInput"],
+        panel=tokens["surface"],
+        panel_lift=tokens["surfaceElevated"],
+        line=tokens["border"],
+        line_strong=tokens["borderActive"],
+        text=tokens["text"],
+        text_muted=tokens["textMuted"],
+        primary=tokens["primary"],
+        primary_hover=tokens["focus"],
+        primary_deep=tokens["ambientGlow"],
+        on_primary=on_primary,
+        active=tokens["warning"],
+        danger=tokens["error"],
+        danger_deep=tokens["surfaceInput"],
+    )
+
+
 THEME_REGISTRY: Mapping[str, ThemeDefinition] = MappingProxyType(
     {
+        "outrun": _android_theme(
+            "outrun",
+            "Outrun",
+            "Canonical Zara neon-night theme shared with Android.",
+            on_primary="#160018",
+        ),
+        "starintel": _android_theme(
+            "starintel",
+            "StarIntel",
+            "Warm gold-on-charcoal Zara theme shared with Android.",
+            on_primary="#181306",
+        ),
+        "midnight": _android_theme(
+            "midnight",
+            "Midnight",
+            "Cool violet-blue Zara theme shared with Android.",
+            on_primary="#101020",
+        ),
+        "terminal": _android_theme(
+            "terminal",
+            "Terminal",
+            "Green terminal Zara theme shared with Android.",
+            on_primary="#031006",
+        ),
+        "light": _android_theme(
+            "light",
+            "Light",
+            "Accessible light Zara theme shared with Android.",
+            on_primary="#FFFFFF",
+        ),
         "signal-cabin": _theme(
             "signal-cabin",
             "Signal Cabin",
@@ -293,10 +461,10 @@ def apply_readable_palette(
 
 def resolve_theme(theme_key: str | None) -> ThemeDefinition:
     """Return a known theme, falling back to the durable default."""
-    return THEME_REGISTRY.get(theme_key or "", THEME_REGISTRY["signal-cabin"])
+    return THEME_REGISTRY.get(theme_key or "", THEME_REGISTRY["outrun"])
 
 
-def build_theme_palette(theme_key: str = "signal-cabin") -> QPalette:
+def build_theme_palette(theme_key: str = "outrun") -> QPalette:
     """Build one accessible palette from the semantic desktop registry."""
     colors = resolve_theme(theme_key).colors
     palette = QPalette()
@@ -323,7 +491,7 @@ def build_signal_cabin_palette() -> QPalette:
     return build_theme_palette("signal-cabin")
 
 
-def desktop_stylesheet(theme_key: str = "signal-cabin") -> str:
+def desktop_stylesheet(theme_key: str = "outrun") -> str:
     """Return Zara Desktop's complete stylesheet for one theme."""
     colors = resolve_theme(theme_key).colors
     return f"""
@@ -629,6 +797,23 @@ QPushButton {{
 
 QPushButton:hover {{ background: {colors["line"]}; }}
 QPushButton:focus {{ border-color: {colors["primary"]}; }}
+
+QPushButton#zaraToolApprove {{
+    color: {colors["on_primary"]};
+    background: {colors["primary"]};
+    border-color: {colors["primary"]};
+}}
+
+QPushButton#zaraToolApprove:hover {{
+    background: {colors["primary_hover"]};
+    border-color: {colors["primary_hover"]};
+}}
+
+QPushButton#zaraToolReject {{
+    color: {colors["danger"]};
+    background: {colors["panel_deep"]};
+    border-color: {colors["danger"]};
+}}
 QPushButton:disabled {{
     color: {colors["text_muted"]};
     background: {colors["panel"]};
