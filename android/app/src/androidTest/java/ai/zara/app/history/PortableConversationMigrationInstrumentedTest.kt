@@ -172,6 +172,6 @@ class PortableConversationMigrationInstrumentedTest {
     private companion object {
         const val CONVERSATION_ID = "legacy-v2-conversation"
         const val STAMP = "2026-09-20T00:00:00.000000"
-        const val VERIFIED_EFFECT_REF = "zara.verified-outcome/v1:effect:migrated-v2-turn"
+        const val VERIFIED_EFFECT_REF = "zara.verified-outcome/v2:7:effect:migrated-v2-turn"
     }
 }

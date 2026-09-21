@@ -311,7 +311,8 @@ class SymbolicConversationProjectionTest {
         assertTrue(source.contains("provider-call ledger rewind rejected"))
         assertTrue(source.contains("model-call ledger rewind rejected"))
         assertTrue(source.contains("SYMBOLIC_RENDERER_ID = \"symbolic-dcg/v1\""))
-        assertTrue(source.contains("verifiedOutcomeRefPattern"))
+        assertTrue(source.contains("verifiedOutcomeV1RefPattern"))
+        assertTrue(source.contains("verifiedOutcomeV2RefPattern"))
         assertTrue(source.contains("PortableJsonValidator"))
         assertTrue(source.contains("parseObjectArrayDocument"))
     }
