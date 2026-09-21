@@ -466,7 +466,11 @@ internal object SymbolicProjectionContract {
                 "new turn must advance runtimeGeneration"
             }
             if (proposed.dialogueAct == "verified") {
-                check(freshVerifiedOutcomeRefs.isNotEmpty()) {
+                check(
+                    freshVerifiedOutcomeRefs.any { reference ->
+                        verifiedOutcomeRuntimeGeneration(reference) == proposed.runtimeGeneration
+                    }
+                ) {
                     "verified projection requires fresh outcome evidence"
                 }
             }
