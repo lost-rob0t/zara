@@ -38,6 +38,24 @@ def send_chat(device: Device, text: str, expected: str) -> None:
     device.await_contains(expected, timeout=30.0)
 
 
+def airplane_mode_enabled(device: Device) -> bool:
+    observed = device.adb("shell", "settings", "get", "global", "airplane_mode_on").strip()
+    if observed not in {"0", "1"}:
+        raise AssertionError(f"Could not read emulator airplane-mode state: {observed!r}")
+    return observed == "1"
+
+
+def set_airplane_mode(device: Device, enabled: bool) -> None:
+    verb = "enable" if enabled else "disable"
+    device.adb("shell", "cmd", "connectivity", "airplane-mode", verb)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if airplane_mode_enabled(device) == enabled:
+            return
+        time.sleep(0.2)
+    raise AssertionError(f"Emulator airplane mode did not become {verb}d")
+
+
 def pull_app_file(device: Device, relative_path: str, destination: Path, *, required: bool) -> bool:
     try:
         data = device.adb(
@@ -185,39 +203,51 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
         raise AssertionError(f"Could not clear installed Zara state: {clear_result!r}")
 
     # A cleared app has no enrolled server/client identity or provider credentials.
-    # The command below selects Zara's existing hard-zero execution policy before
-    # any natural turn; subsequent messages therefore have no provider fallback.
-    device.start()
-    send_chat(device, "/symbolic on", "Pure symbolic mode enabled")
-    device.capture("pure-symbolic-enabled")
+    # The installed transcript now also runs with Android airplane mode asserted, so a
+    # parse miss, ambiguity, missing expert, renderer gap, or runtime error cannot hide
+    # a network/provider fallback behind otherwise-zero accounting.
+    original_airplane_mode = airplane_mode_enabled(device)
+    try:
+        set_airplane_mode(device, True)
+        if not airplane_mode_enabled(device):
+            raise AssertionError("Pure-symbolic acceptance requires verified offline execution")
 
-    send_chat(device, "timer", "How long should I set the timer for?")
-    device.capture("pure-symbolic-clarification")
+        device.start()
+        send_chat(device, "/symbolic on", "Pure symbolic mode enabled")
+        device.capture("pure-symbolic-enabled")
 
-    device.recreate()
-    device.await_contains("How long should I set the timer for?", timeout=30.0)
-    send_chat(
-        device,
-        "5 minutes",
-        "That action needs capability-checked execution before I can report success.",
-    )
-    device.capture("pure-symbolic-follow-up-after-restart")
+        send_chat(device, "timer", "How long should I set the timer for?")
+        device.capture("pure-symbolic-clarification")
 
-    device.recreate()
-    device.await_contains("capability-checked execution", timeout=30.0)
-    send_chat(device, "thanks", "welcome")
-    device.capture("pure-symbolic-social-follow-up")
+        device.recreate()
+        device.await_contains("How long should I set the timer for?", timeout=30.0)
+        send_chat(
+            device,
+            "5 minutes",
+            "That action needs capability-checked execution before I can report success.",
+        )
+        device.capture("pure-symbolic-follow-up-after-restart")
 
-    device.recreate()
-    device.await_contains("welcome", timeout=30.0)
-    send_chat(device, "frobnicate the moon", "handle that symbolically yet")
-    device.capture("pure-symbolic-unsupported-no-fallback")
+        device.recreate()
+        device.await_contains("capability-checked execution", timeout=30.0)
+        send_chat(device, "thanks", "welcome")
+        device.capture("pure-symbolic-social-follow-up")
 
-    device.recreate()
-    device.await_contains("handle that symbolically yet", timeout=30.0)
-    device.capture("pure-symbolic-final-recreated")
+        device.recreate()
+        device.await_contains("welcome", timeout=30.0)
+        send_chat(device, "frobnicate the moon", "handle that symbolically yet")
+        device.capture("pure-symbolic-unsupported-no-fallback")
 
-    return inspect_pure_symbolic_database(device, output)
+        device.recreate()
+        device.await_contains("handle that symbolically yet", timeout=30.0)
+        device.capture("pure-symbolic-final-recreated")
+
+        projection = inspect_pure_symbolic_database(device, output)
+        projection["offline_verified"] = True
+        return projection
+    finally:
+        if airplane_mode_enabled(device) != original_airplane_mode:
+            set_airplane_mode(device, original_airplane_mode)
 
 
 def main() -> None:
@@ -242,6 +272,7 @@ def main() -> None:
         "passed": False,
         "providers_disabled": True,
         "provider_credentials_required": False,
+        "offline_required": True,
         "screenshots": device.screenshots,
     }
     try:
