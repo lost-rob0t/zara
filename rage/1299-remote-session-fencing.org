@@ -87,3 +87,22 @@ reconnect stays bounded.
 Implement the four-point design above. Gate: focused Kotlin unit tests
 (controller RED first, actor code-propagation test) plus the repository
 gate at the exact candidate head.
+
+** Gate (candidate head =841e77b6=)
+
+- RED: =handshake_required_turn_failure_invalidates_session_and_schedules_bounded_reconnect=
+  failed at the assertion (state stayed =Connected=) before the fix; green after.
+- GREEN: =:app:testDebugUnitTest= full module suite (16 controller tests incl.
+  4 new: both stale-session codes, per-turn negative, stale-generation fence).
+- Full Android gate: =nix develop ./android -c bash scripts/test-android.sh=
+  green — semantic parity, JVM suites, stock secure-server interop fixture,
+  phone/Code/Termux-bridge/Wear/Wear-voice APK builds, installability and
+  secret inspection.
+- Deployed the candidate =app-debug.apk= to the operator's phone over
+  wireless adb (=install -r=, data preserved); on-device incident replay
+  deferred — the operator was mid-checkout on the device.
+
+** PR
+
+- =https://github.com/lost-rob0t/zara/pull/1389= (exact head =841e77b6=).
+- CI pending at time of writing; merge only on exact-head green.
