@@ -74,6 +74,81 @@ def pull_app_file(device: Device, relative_path: str, destination: Path, *, requ
     return True
 
 
+def inspect_hard_zero_accounting(device: Device, *, stage: str) -> dict[str, object]:
+    """Snapshot the durable per-turn counters before a later turn can reset them."""
+    device.adb("shell", "am", "force-stop", APP_PACKAGE)
+    time.sleep(0.3)
+
+    with tempfile.TemporaryDirectory(prefix=f"zara-pure-symbolic-{stage}-") as temporary:
+        root = Path(temporary)
+        database = root / "zara.db"
+        pull_app_file(device, DATABASE_PATH, database, required=True)
+        pull_app_file(device, f"{DATABASE_PATH}-wal", root / "zara.db-wal", required=False)
+        pull_app_file(device, f"{DATABASE_PATH}-shm", root / "zara.db-shm", required=False)
+
+        connection = sqlite3.connect(database)
+        connection.row_factory = sqlite3.Row
+        try:
+            projections = connection.execute(
+                """
+                SELECT conversation_id, turn_id, outcome, providers_enabled,
+                       max_model_calls, provider_calls, model_calls
+                FROM desktop_symbolic_projections
+                WHERE principal_id = 'local:owner'
+                ORDER BY updated_at DESC
+                """
+            ).fetchall()
+            if len(projections) != 1:
+                raise AssertionError(
+                    f"{stage}: expected exactly one local-owner symbolic projection; "
+                    f"found {len(projections)}"
+                )
+            projection = dict(projections[0])
+            if projection["outcome"] in {"unknown", "pending"}:
+                raise AssertionError(
+                    f"{stage}: hard-zero checkpoint observed nonterminal projection: {projection!r}"
+                )
+            if projection["providers_enabled"] != 0:
+                raise AssertionError(f"{stage}: pure-symbolic projection has providers enabled")
+            if projection["max_model_calls"] != 0:
+                raise AssertionError(f"{stage}: max_model_calls changed from zero")
+            if projection["provider_calls"] != 0:
+                raise AssertionError(f"{stage}: provider_calls is nonzero")
+            if projection["model_calls"] != 0:
+                raise AssertionError(f"{stage}: model_calls is nonzero")
+
+            conversations = connection.execute(
+                """
+                SELECT id, provider, model
+                FROM desktop_conversations
+                WHERE principal_id = 'local:owner'
+                """
+            ).fetchall()
+            if len(conversations) != 1:
+                raise AssertionError(
+                    f"{stage}: expected exactly one canonical local-owner conversation; "
+                    f"found {len(conversations)}"
+                )
+            conversation = conversations[0]
+            if conversation["provider"] or conversation["model"]:
+                raise AssertionError(
+                    f"{stage}: canonical conversation persisted provider/model selection"
+                )
+        finally:
+            connection.close()
+
+    return {
+        "stage": stage,
+        "conversation_id": projection["conversation_id"],
+        "turn_id": projection["turn_id"],
+        "outcome": projection["outcome"],
+        "providers_enabled": False,
+        "max_model_calls": 0,
+        "provider_calls": 0,
+        "model_calls": 0,
+    }
+
+
 def inspect_pure_symbolic_database(device: Device, output: Path) -> dict[str, object]:
     # Stop the process before copying SQLite files so the acceptance evidence is a
     # stable on-disk snapshot rather than a race against a live WAL writer.
@@ -207,6 +282,7 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
     # parse miss, ambiguity, missing expert, renderer gap, or runtime error cannot hide
     # a network/provider fallback behind otherwise-zero accounting.
     original_airplane_mode = airplane_mode_enabled(device)
+    accounting_checkpoints: list[dict[str, object]] = []
     try:
         set_airplane_mode(device, True)
         if not airplane_mode_enabled(device):
@@ -218,6 +294,9 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
 
         send_chat(device, "timer", "How long should I set the timer for?")
         device.capture("pure-symbolic-clarification")
+        accounting_checkpoints.append(
+            inspect_hard_zero_accounting(device, stage="clarification")
+        )
 
         device.recreate()
         device.await_contains("How long should I set the timer for?", timeout=30.0)
@@ -227,16 +306,25 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
             "That action needs capability-checked execution before I can report success.",
         )
         device.capture("pure-symbolic-follow-up-after-restart")
+        accounting_checkpoints.append(
+            inspect_hard_zero_accounting(device, stage="follow-up-after-restart")
+        )
 
         device.recreate()
         device.await_contains("capability-checked execution", timeout=30.0)
         send_chat(device, "thanks", "welcome")
         device.capture("pure-symbolic-social-follow-up")
+        accounting_checkpoints.append(
+            inspect_hard_zero_accounting(device, stage="social-follow-up")
+        )
 
         device.recreate()
         device.await_contains("welcome", timeout=30.0)
         send_chat(device, "frobnicate the moon", "handle that symbolically yet")
         device.capture("pure-symbolic-unsupported-no-fallback")
+        accounting_checkpoints.append(
+            inspect_hard_zero_accounting(device, stage="unsupported-no-fallback")
+        )
 
         device.recreate()
         device.await_contains("handle that symbolically yet", timeout=30.0)
@@ -244,6 +332,7 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
 
         projection = inspect_pure_symbolic_database(device, output)
         projection["offline_verified"] = True
+        projection["accounting_checkpoints"] = accounting_checkpoints
         return projection
     finally:
         if airplane_mode_enabled(device) != original_airplane_mode:
