@@ -246,8 +246,8 @@ dependencies {
     implementation(libs.bcpkix)
     implementation(libs.jgit)
     implementation(libs.litert.lm.android)
+    implementation(libs.gson)
     if (hasSamsungHealthSdk) {
-        implementation(libs.gson)
         implementation(samsungHealthAars)
     }
     testImplementation(libs.junit)
