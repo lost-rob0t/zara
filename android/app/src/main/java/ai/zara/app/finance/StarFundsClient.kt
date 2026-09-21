@@ -115,7 +115,7 @@ class StarFundsEndpoint private constructor(
 
     fun path(path: String): String {
         require(path.startsWith("/") && !path.startsWith("//"))
-        require(!path.contains('\'))
+        require(!path.contains('\\'))
         return "$baseUrl$path"
     }
 }
