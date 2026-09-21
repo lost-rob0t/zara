@@ -1,6 +1,12 @@
 package ai.zara.app.prolog
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.history.PortableConversationStore
+import ai.zara.app.history.SymbolicConversationProjection
+import ai.zara.app.history.loadSymbolicProjection
+import ai.zara.app.history.saveSymbolicProjection
+import ai.zara.app.runtime.LocalQueryResult
+import java.util.concurrent.CompletableFuture
 
 /**
  * Binds the zero-model conversation controller to Android's existing Prolog runtime owner.
@@ -14,9 +20,8 @@ import ai.zara.app.AndroidAppSession
  */
 internal object AndroidPureSymbolicConversationFactory {
     fun create(session: AndroidAppSession): PureSymbolicConversationController =
-        PureSymbolicConversationController(
-            catalog = { PrologWorkspaceCatalog.from(session.prologSources()) },
-            query = session::queryLocalProlog,
+        controller(
+            session = session,
             resolve = { utterance, _conversationId ->
                 session.queryLocalProlog(
                     dialogueTurnQuery(
@@ -26,6 +31,181 @@ internal object AndroidPureSymbolicConversationFactory {
                 )
             },
         )
+
+    /**
+     * Compose natural turns with the canonical durable conversation projection.
+     *
+     * The supplied [projectionStore] remains the sole persistence authority. This overload adds
+     * no Android-local context cache: every natural turn loads Context0 from the existing
+     * SymbolicConversationProjection, asks the already-running local Prolog runtime for both the
+     * rendered response and Context1, and persists Context1 with the projection generation CAS.
+     *
+     * Cancellation is fenced with the persistence commit. If cancellation wins the fence, no
+     * Context1 write occurs. If persistence wins, the resolver completes successfully before a
+     * later cancellation can claim the turn was cancelled.
+     */
+    fun create(
+        session: AndroidAppSession,
+        projectionStore: PortableConversationStore,
+    ): PureSymbolicConversationController =
+        controller(
+            session = session,
+            resolve = { utterance, conversationId ->
+                resolvePersistedTurn(
+                    session = session,
+                    projectionStore = projectionStore,
+                    utterance = utterance,
+                    conversationId = conversationId,
+                )
+            },
+        )
+
+    private fun controller(
+        session: AndroidAppSession,
+        resolve: (String, String) -> CompletableFuture<LocalQueryResult>,
+    ): PureSymbolicConversationController =
+        PureSymbolicConversationController(
+            catalog = { PrologWorkspaceCatalog.from(session.prologSources()) },
+            query = session::queryLocalProlog,
+            resolve = resolve,
+        )
+
+    private fun resolvePersistedTurn(
+        session: AndroidAppSession,
+        projectionStore: PortableConversationStore,
+        utterance: String,
+        conversationId: String,
+    ): CompletableFuture<LocalQueryResult> {
+        val current = projectionStore.loadSymbolicProjection(conversationId)
+        current?.assertPureSymbolic()
+        val expectedGeneration = current?.projectionGeneration ?: 0L
+        val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
+        val responseFuture = session.queryLocalProlog(dialogueTurnQuery(utterance, context0))
+        val output = PersistenceFencedFuture(responseFuture)
+
+        responseFuture.whenComplete { response, responseError ->
+            if (output.isDone) return@whenComplete
+            if (responseError != null || response == null) {
+                output.completeExceptionally(
+                    responseError ?: IllegalStateException("Symbolic dialogue response is missing"),
+                )
+                return@whenComplete
+            }
+            if (response.terms.isEmpty()) {
+                output.complete(response)
+                return@whenComplete
+            }
+
+            val contextFuture = session.queryLocalProlog(dialogueContextQuery(utterance, context0))
+            output.link(contextFuture)
+            contextFuture.whenComplete { contextResult, contextError ->
+                if (output.isDone) return@whenComplete
+                if (contextError != null || contextResult == null) {
+                    output.completeExceptionally(
+                        contextError ?: IllegalStateException("Symbolic dialogue context is missing"),
+                    )
+                    return@whenComplete
+                }
+                try {
+                    check(response.generation == contextResult.generation) {
+                        "Symbolic runtime generation changed while resolving one dialogue turn"
+                    }
+                    check(contextResult.terms.size == 1) {
+                        "Symbolic dialogue must return exactly one canonical Context1 term"
+                    }
+                    val context1 = SymbolicDialogueContextCodec.requireContextTerm(
+                        contextResult.terms.single(),
+                    )
+                    val next = nextProjection(
+                        current = current,
+                        conversationId = conversationId,
+                        expectedGeneration = expectedGeneration,
+                        runtimeGeneration = response.generation,
+                        context1 = context1,
+                    )
+                    output.commitOrCancel {
+                        projectionStore.saveSymbolicProjection(
+                            projection = next,
+                            expectedGeneration = expectedGeneration,
+                        )
+                        output.complete(response)
+                    }
+                } catch (error: Throwable) {
+                    output.completeExceptionally(error)
+                }
+            }
+        }
+        return output
+    }
+
+    private fun nextProjection(
+        current: SymbolicConversationProjection?,
+        conversationId: String,
+        expectedGeneration: Long,
+        runtimeGeneration: Long,
+        context1: String,
+    ): SymbolicConversationProjection {
+        val base = current ?: SymbolicConversationProjection(
+            conversationId = conversationId,
+            projectionGeneration = 1L,
+            runtimeGeneration = runtimeGeneration,
+            outcome = "unknown",
+            dialogueAct = "conversation",
+            dialogueStateJson = SymbolicDialogueContextCodec.encode(context1),
+            rendererProvenance = "symbolic-dcg/v1",
+            providersEnabled = false,
+            maxModelCalls = 0L,
+            providerCalls = 0L,
+            modelCalls = 0L,
+        )
+        return base.copy(
+            projectionGeneration = expectedGeneration + 1L,
+            runtimeGeneration = maxOf(base.runtimeGeneration, runtimeGeneration),
+            outcome = "unknown",
+            dialogueAct = "conversation",
+            dialogueStateJson = SymbolicDialogueContextCodec.encode(context1),
+            rendererProvenance = "symbolic-dcg/v1",
+            providersEnabled = false,
+            maxModelCalls = 0L,
+            providerCalls = 0L,
+            modelCalls = 0L,
+        ).also(SymbolicConversationProjection::assertPureSymbolic)
+    }
+
+    /**
+     * Serialize cancellation against the canonical projection commit.
+     *
+     * A normal CompletableFuture chain can be cancelled between the final cancellation check and
+     * saveSymbolicProjection(), which would allow a late callback to mutate durable dialogue state
+     * after the UI already observed cancellation. This small fence makes those outcomes mutually
+     * exclusive without introducing another scheduler or persistence owner.
+     */
+    private class PersistenceFencedFuture(
+        firstUpstream: CompletableFuture<*>,
+    ) : CompletableFuture<LocalQueryResult>() {
+        private val fence = Any()
+        private val upstreams = mutableListOf(firstUpstream)
+
+        fun link(upstream: CompletableFuture<*>) = synchronized(fence) {
+            if (isDone) {
+                upstream.cancel(false)
+            } else {
+                upstreams += upstream
+            }
+        }
+
+        fun commitOrCancel(commit: () -> Unit) = synchronized(fence) {
+            if (!isDone) commit()
+        }
+
+        override fun cancel(mayInterruptIfRunning: Boolean): Boolean = synchronized(fence) {
+            val cancelled = super.cancel(mayInterruptIfRunning)
+            if (cancelled) {
+                upstreams.forEach { it.cancel(mayInterruptIfRunning) }
+            }
+            cancelled
+        }
+    }
 
     /**
      * Render one canonical dialogue turn from an explicitly supplied continuation term.
