@@ -16,17 +16,14 @@ import org.junit.Test
 class AndroidSymbolicAtomicTerminalCommitContractTest {
     @Test
     fun `portable store owns one sqlite transaction for assistant plus projection terminal commit`() {
-        val projectionStore = File(
-            "src/main/java/ai/zara/app/history/SymbolicConversationProjection.kt"
+        val atomicCommit = File(
+            "src/main/java/ai/zara/app/history/SymbolicTurnTerminalCommit.kt"
         ).readText()
-
-        val atomicCommit = projectionStore
-            .substringAfter("fun PortableConversationStore.completeSymbolicTurnAtomically(", "")
 
         assertTrue(
             "pure-symbolic terminal commit must be owned by PortableConversationStore rather than " +
                 "a UI cache or second history owner",
-            atomicCommit.isNotEmpty(),
+            atomicCommit.contains("fun PortableConversationStore.completeSymbolicTurnAtomically("),
         )
         assertTrue(
             "assistant history and Context1 projection must share one SQLite transaction",
