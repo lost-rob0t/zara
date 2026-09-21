@@ -162,13 +162,37 @@ class SymbolicConversationContinuityGateTest {
     }
 
     @Test
-    fun refusesForgedOrFutureVerifiedOutcomeEvidence() {
+    fun refusesForgedStaleOrFutureVerifiedOutcomeEvidence() {
         assertFalse(
             accepts(
                 null,
                 fixture(
                     dialogueAct = "verified",
                     verifiedOutcomeRefs = listOf("outcome:postcondition:forged"),
+                ),
+            ),
+        )
+        assertFalse(
+            accepts(
+                null,
+                fixture(
+                    runtimeGeneration = 9,
+                    dialogueAct = "verified",
+                    verifiedOutcomeRefs = listOf(
+                        "zara.verified-outcome/v1:outcome:postcondition:legacy",
+                    ),
+                ),
+            ),
+        )
+        assertFalse(
+            accepts(
+                null,
+                fixture(
+                    runtimeGeneration = 9,
+                    dialogueAct = "verified",
+                    verifiedOutcomeRefs = listOf(
+                        "zara.verified-outcome/v2:8:outcome:postcondition:stale",
+                    ),
                 ),
             ),
         )
@@ -191,6 +215,7 @@ class SymbolicConversationContinuityGateTest {
                     runtimeGeneration = 9,
                     dialogueAct = "verified",
                     verifiedOutcomeRefs = listOf(
+                        "zara.verified-outcome/v1:outcome:postcondition:legacy",
                         "zara.verified-outcome/v2:9:outcome:postcondition:fresh",
                     ),
                 ),
