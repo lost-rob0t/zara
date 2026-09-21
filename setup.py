@@ -117,10 +117,12 @@ setup(
         "httpx2>=2.5",
         "pytest>=7.0",
         "pytest-asyncio>=0.23",
+        "yt-dlp>=2024.1.1",
     ],
     extras_require={
         "dev": ["pytest", "pytest-asyncio"],
     },
+    scripts=["scripts/zara-ytdlp"],
     entry_points={
         "console_scripts": [
             "zara=zara.__main__:main",
