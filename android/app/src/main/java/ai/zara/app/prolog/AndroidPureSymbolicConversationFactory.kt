@@ -431,15 +431,11 @@ internal object AndroidPureSymbolicConversationFactory {
             "Symbolic dialogue must return one rendered response and one canonical Context1 term"
         }
         val renderedResponse = result.terms[0]
-        val wrappedContext = result.terms[1].trim()
-        check(
-            wrappedContext.startsWith(DIALOGUE_CONTEXT_PREFIX) && wrappedContext.endsWith(')')
-        ) {
-            "Symbolic dialogue Context1 result has an invalid envelope"
+        val contextWire = result.terms[1]
+        check(contextWire.startsWith(DIALOGUE_CONTEXT_WIRE_PREFIX)) {
+            "Symbolic dialogue Context1 result has an invalid wire prefix"
         }
-        val contextTerm = wrappedContext
-            .removePrefix(DIALOGUE_CONTEXT_PREFIX)
-            .dropLast(1)
+        val contextTerm = contextWire.removePrefix(DIALOGUE_CONTEXT_WIRE_PREFIX)
         return renderedResponse to SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
     }
 
@@ -488,18 +484,22 @@ internal object AndroidPureSymbolicConversationFactory {
     /**
      * Execute one canonical dialogue turn and return both outputs as ordered Result solutions.
      *
-     * The first solution is exactly the renderer result used by the existing UI contract. The
-     * second wraps Context1 so Kotlin can distinguish continuation state without replaying the
-     * dialogue turn. ISO if-then-else commits the router+renderer condition to one deterministic
-     * solution before the two Result alternatives are enumerated. Unlike once/1, this form crosses
-     * the existing bounded mobile Prolog query policy without widening that policy.
+     * The first solution is exactly the renderer result used by the existing UI contract. Context1
+     * is canonicalized with term_to_atom/2 while it is still a Prolog term, tagged, then converted
+     * to a Prolog string. JNI returns Result strings through pl_atom_text rather than Trealla's
+     * display printer, so atoms such as 'timer.set' keep the quotes needed for restart-safe
+     * read_term_from_atom/3 round trips. ISO if-then-else still commits one deterministic turn
+     * before the two Result alternatives are enumerated.
      */
     internal fun dialogueTurnEnvelopeQuery(
         utterance: String,
         contextTerm: String,
     ): String = "((" + dialogueTurnPrelude(utterance, contextTerm) +
-        ", symbolic_dialogue:render_response(Act, Response)) -> true ; fail), " +
-        "(Result = Response ; Result = dialogue_context(Context1))"
+        ", symbolic_dialogue:render_response(Act, Response), " +
+        "term_to_atom(Context1, ContextAtom), " +
+        "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
+        "atom_string(ContextTagged, ContextWire)) -> true ; fail), " +
+        "(Result = Response ; Result = ContextWire)"
 
     private fun dialogueTurnPrelude(utterance: String, contextTerm: String): String {
         val text = utterance.trim()
@@ -528,7 +528,7 @@ internal object AndroidPureSymbolicConversationFactory {
         }
     }
 
-    private const val DIALOGUE_CONTEXT_PREFIX = "dialogue_context("
+    private const val DIALOGUE_CONTEXT_WIRE_PREFIX = "__zara_context__:"
     private const val RUNTIME_FAILURE_TEXT = "The symbolic runtime could not complete this turn."
     private const val NO_MATCH_TEXT = "I don't have a deterministic symbolic answer for that yet."
     private const val MAX_UTTERANCE_CHARS = 8_192
