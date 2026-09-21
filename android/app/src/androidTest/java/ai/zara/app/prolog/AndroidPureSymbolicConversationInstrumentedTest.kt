@@ -64,15 +64,16 @@ class AndroidPureSymbolicConversationInstrumentedTest {
         }
 
         val evidence = "raw_terms=${result.terms}\n${session.exportDiagnostics()}"
-        assertEquals(evidence, 2, result.terms.size)
+        assertEquals(evidence, 3, result.terms.size)
         assertTrue(
             evidence,
             result.terms.first().contains("How long should I set the timer for?"),
         )
         assertTrue(
             evidence,
-            result.terms.last().startsWith("dialogue_context(partial_frame("),
+            result.terms[1].startsWith("__zara_context__:partial_frame("),
         )
+        assertEquals(evidence, "__zara_act__:clarify", result.terms[2])
     }
 
     @Test
