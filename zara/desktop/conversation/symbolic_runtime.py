@@ -12,6 +12,7 @@ from .symbolic_projection import SymbolicConversationProjection
 
 _CONTEXT_PROJECT_ID = "prolog_context_project_id"
 _CONTEXT_PROJECT_GENERATION = "prolog_context_project_generation"
+_MAX_EXPERT_EVIDENCE_CHARS = 128
 
 
 def _dialogue_context_matches_project(projection: SymbolicConversationProjection) -> bool:
@@ -26,6 +27,18 @@ def _dialogue_context_matches_project(projection: SymbolicConversationProjection
         context_project_id == projection.project_id
         and context_project_generation == projection.project_generation
     )
+
+
+def _bounded_expert_evidence_ref(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("expert evidence reference must be text")
+    if not value or len(value) > _MAX_EXPERT_EVIDENCE_CHARS:
+        raise ValueError(
+            f"expert evidence reference must be 1..{_MAX_EXPERT_EVIDENCE_CHARS} characters"
+        )
+    if any(ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F for character in value):
+        raise ValueError("expert evidence reference contains control characters")
+    return value
 
 
 class PureSymbolicProjectionAdapter:
@@ -57,6 +70,7 @@ class PureSymbolicProjectionAdapter:
         response_act_term: str,
         context_term: str,
         renderer_provenance: str,
+        expert_evidence_ref: str | None = None,
     ) -> None:
         current = self.store.load_symbolic_projection(conversation_id)
         current_generation = current.projection_generation if current is not None else 0
@@ -83,6 +97,13 @@ class PureSymbolicProjectionAdapter:
             discourse_entities = []
             expert_evidence = []
             verified_facts = []
+
+        if dialogue_act == "expert_answer":
+            expert_evidence = [
+                {"ref": _bounded_expert_evidence_ref(expert_evidence_ref)}
+            ]
+        elif expert_evidence_ref is not None:
+            raise RuntimeError("non-expert symbolic dialogue returned expert evidence")
 
         dialogue_state["prolog_context_term"] = context_term
         dialogue_state["response_act_term"] = response_act_term
