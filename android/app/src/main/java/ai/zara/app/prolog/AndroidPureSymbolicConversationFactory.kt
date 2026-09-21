@@ -476,7 +476,7 @@ internal object AndroidPureSymbolicConversationFactory {
         "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
         "atom_codes(ContextTagged, ContextWireCodes), " +
         "string_codes(ContextWire, ContextWireCodes), " +
-        "functor(Act, ActName, _), " +
+        "(Act = answer(expert, _, _) -> ActName = expert_answer ; functor(Act, ActName, _)), " +
         "atom_concat('$DIALOGUE_ACT_WIRE_PREFIX', ActName, ActTagged), " +
         "atom_codes(ActTagged, ActWireCodes), " +
         "string_codes(ActWire, ActWireCodes)) -> true ; fail), " +
