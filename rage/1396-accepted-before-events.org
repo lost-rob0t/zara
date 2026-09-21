@@ -1,0 +1,4 @@
+* Run identity
+- Consumed issue :: #1396
+- Branch :: =rage/1396-accepted-before-events=
+- RAGE start commit :: =af7185ee48def384783002332262412e9674343e=

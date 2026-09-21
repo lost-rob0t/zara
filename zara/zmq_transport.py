@@ -307,6 +307,8 @@ class ZaraZmqGateway:
         self._route_outbound: OrderedDict[bytes, deque[_GatewayOutbound]] = OrderedDict()
         self._routes: dict[bytes, _RouteState] = {}
         self._turn_routes: dict[tuple[str, str], bytes] = {}
+        self._early_turn_events: OrderedDict[tuple[str, str], deque] = OrderedDict()
+        self._turns_awaiting_accept: set[tuple[str, str]] = set()
         self._approval_owners: dict[tuple[str, str], _ApprovalOwner] = {}
         self._replay: OrderedDict[tuple[str, str], _ReplayEntry] = OrderedDict()
         self._inflight: dict[tuple[str, str], _InflightEntry] = {}
@@ -594,6 +596,29 @@ class ZaraZmqGateway:
         ):
             return None
         return pending
+
+    def _buffer_early_turn_event(
+        self,
+        principal_id: str,
+        turn_id: str,
+        held: tuple[ProtocolMessage, tuple[bytes, ...]],
+    ) -> None:
+        key = (principal_id, turn_id)
+        with self._lock:
+            buffer = self._early_turn_events.get(key)
+            if buffer is None:
+                while len(self._early_turn_events) >= 64:
+                    self._early_turn_events.popitem(last=False)
+                buffer = self._early_turn_events[key] = deque(maxlen=128)
+            buffer.append(held)
+
+    def _take_early_turn_events(
+        self,
+        principal_id: str,
+        turn_id: str,
+    ) -> list[tuple[ProtocolMessage, tuple[bytes, ...]]]:
+        with self._lock:
+            return list(self._early_turn_events.pop((principal_id, turn_id), ()))
 
     def _handle_device_message(
         self,
@@ -1277,6 +1302,7 @@ class ZaraZmqGateway:
                 if response.turn_id and live_routes:
                     latest = live_routes[-1]
                     self._turn_routes[(latest.principal_id, response.turn_id)] = latest.route
+                    self._turns_awaiting_accept.add((latest.principal_id, response.turn_id))
                 self._remember_response(replay_key, command, response)
 
             for candidate in routes:
@@ -1286,6 +1312,21 @@ class ZaraZmqGateway:
                     candidate.route,
                     self._response_for_route(response, candidate.route),
                 )
+            if response.turn_id and live_routes:
+                latest = live_routes[-1]
+                key = (latest.principal_id, response.turn_id)
+                while True:
+                    with self._lock:
+                        held_batch = list(self._early_turn_events.pop(key, ()))
+                        if not held_batch:
+                            self._turns_awaiting_accept.discard(key)
+                            break
+                    for held_message, held_payloads in held_batch:
+                        self._enqueue_outbound(
+                            latest.route,
+                            self._response_for_route(held_message, latest.route),
+                            held_payloads,
+                        )
 
         future.add_done_callback(completed)
 
@@ -1309,9 +1350,13 @@ class ZaraZmqGateway:
         for envelope in subscription.drain(limit=32):
             route = None
             event = envelope.event
-            if event.turn_id:
+            awaiting_accept = (
+                event.turn_id is not None
+                and (principal_id, event.turn_id) in self._turns_awaiting_accept
+            )
+            if event.turn_id and not awaiting_accept:
                 route = self._turn_routes.get((principal_id, event.turn_id))
-            if route is None and event.conversation_id:
+            if route is None and event.conversation_id and not awaiting_accept:
                 matches = [
                     candidate
                     for candidate, state in self._routes.items()
@@ -1322,6 +1367,23 @@ class ZaraZmqGateway:
                 if len(matches) == 1:
                     route = matches[0]
             if route is None:
+                if event.turn_id is None:
+                    continue
+                # Unroutable turn event: hold it so a still-pending turn.accepted
+                # can flush it after its reply, instead of dropping it (#1396).
+                try:
+                    held_message = runtime_event_to_message(
+                        envelope,
+                        message_id=_message_id(),
+                        timestamp_ns=_now_ns(),
+                    )
+                except RuntimeCodecError:
+                    continue
+                self._buffer_early_turn_event(
+                    principal_id,
+                    event.turn_id,
+                    (held_message, ()),
+                )
                 continue
             try:
                 message = runtime_event_to_message(
@@ -1361,8 +1423,15 @@ class ZaraZmqGateway:
                     route=route,
                     session_id=state.session_id,
                 )
+            wire_message = self._response_for_route(message, route)
             try:
-                self._send(socket, route, self._response_for_route(message, route), payloads)
+                if event.turn_id is not None:
+                    # Turn-scoped events must ride the same per-route FIFO as the
+                    # turn.accepted reply, or a queued reply can be overtaken.
+                    encode_message(wire_message, payloads=payloads, limits=self._limits)
+                    self._enqueue_outbound(route, wire_message, payloads)
+                else:
+                    self._send(socket, route, wire_message, payloads)
             except ProtocolValidationError:
                 logger.warning(
                     "Dropping undeliverable %s event for route turn %s",
