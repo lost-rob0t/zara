@@ -37,11 +37,44 @@ class SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest {
         try {
             val recovered = checkNotNull(reopened.loadSymbolicProjection(CONVERSATION_ID))
             recovered.assertPureSymbolic()
+            assertEquals("expert_answer", recovered.dialogueAct)
+            assertEquals("success", recovered.outcome)
             assertEquals(CANONICAL_EVIDENCE, recovered.expertEvidenceJson)
             assertFalse(recovered.providersEnabled)
             assertEquals(0L, recovered.maxModelCalls)
             assertEquals(0L, recovered.providerCalls)
             assertEquals(0L, recovered.modelCalls)
+        } finally {
+            reopened.close()
+        }
+    }
+
+    @Test
+    fun emptyExpertEvidenceFailsClosedAfterStoreRecreation() {
+        val first = PortableConversationStore(context)
+        first.createConversation("missing expert evidence", conversationId = CONVERSATION_ID)
+        first.saveSymbolicProjection(
+            projection(CANONICAL_EVIDENCE),
+            expectedGeneration = 0,
+        ).assertPureSymbolic()
+
+        first.writableDatabase.execSQL(
+            "UPDATE desktop_symbolic_projections SET expert_evidence_json = '[]' WHERE conversation_id = ? AND principal_id = ?",
+            arrayOf(CONVERSATION_ID, ConversationHistoryContract.localPrincipalId),
+        )
+        first.close()
+
+        val reopened = PortableConversationStore(context)
+        try {
+            val rejected = runCatching { reopened.loadSymbolicProjection(CONVERSATION_ID) }
+            assertTrue(
+                "canonical expert_answer must fail closed after recreation when durable evidence is empty",
+                rejected.isFailure,
+            )
+            assertTrue(
+                rejected.exceptionOrNull()?.message.orEmpty()
+                    .contains("expert_answer projection requires expert evidence"),
+            )
         } finally {
             reopened.close()
         }
@@ -79,10 +112,10 @@ class SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest {
         projectionGeneration = 1,
         runtimeGeneration = 1,
         turnId = "turn:expert-trust:1",
-        outcome = "pending",
+        outcome = "success",
         projectId = "project:zara",
         projectGeneration = 1,
-        dialogueAct = "expert.answer",
+        dialogueAct = "expert_answer",
         dialogueStateJson = "{\"active_project\":\"project:zara\"}",
         expertEvidenceJson = expertEvidenceJson,
         rendererProvenance = "symbolic-dcg/v1",
