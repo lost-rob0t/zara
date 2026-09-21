@@ -17,7 +17,7 @@ class SymbolicVerifiedOutcomeAbaReplayTest {
             generation = 2,
             runtimeGeneration = 2,
             turnId = "turn-2",
-            receipts = listOf(R2),
+            receipts = listOf(R1, R2),
         )
         val third = projection(
             generation = 3,
@@ -26,25 +26,15 @@ class SymbolicVerifiedOutcomeAbaReplayTest {
             receipts = listOf(R1),
         )
 
-        var rejected = false
+        SymbolicProjectionContract.validateWrite(first, second, expectedGeneration = 1)
         try {
-            SymbolicProjectionContract.validateWrite(first, second, expectedGeneration = 1)
-        } catch (_: RuntimeException) {
-            rejected = true
+            SymbolicProjectionContract.validateWrite(second, third, expectedGeneration = 2)
+            fail("later verified turn dropped durable receipts and replayed old R1 as fresh evidence")
+        } catch (error: RuntimeException) {
+            assertTrue(
+                error.message.orEmpty().contains("verified outcome evidence rewind rejected")
+            )
         }
-
-        if (!rejected) {
-            try {
-                SymbolicProjectionContract.validateWrite(second, third, expectedGeneration = 2)
-            } catch (_: RuntimeException) {
-                rejected = true
-            }
-        }
-
-        assertTrue(
-            "R1 -> R2 -> R1 ABA replay was accepted as fresh postcondition evidence",
-            rejected,
-        )
     }
 
     @Test
