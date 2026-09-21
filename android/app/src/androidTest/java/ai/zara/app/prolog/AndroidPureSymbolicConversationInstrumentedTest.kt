@@ -4,6 +4,7 @@ import ai.zara.app.AndroidAppSession
 import ai.zara.app.conversations.CanonicalConversationStore
 import ai.zara.app.history.ConversationHistoryContract
 import ai.zara.app.history.HistoryMessageRole
+import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.runtime.LocalServerPhase
@@ -106,6 +107,62 @@ class AndroidPureSymbolicConversationInstrumentedTest {
         assertEquals(0L, finalProjection.providerCalls)
         assertEquals(0L, finalProjection.modelCalls)
         assertFalse(finalProjection.providersEnabled)
+    }
+
+    @Test
+    fun controllerCompletionCannotLeaveSuccessProjectionBesideRunningHistory() {
+        var history = reopenHistory(createConversation = true)
+        history.beginTurn(CONVERSATION_ID, "timer")
+        val controller = AndroidPureSymbolicConversationFactory.create(
+            session = session,
+            projectionStore = checkNotNull(store),
+        )
+
+        val result = controller.submit("timer", CONVERSATION_ID)
+            .get(TURN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        assertEquals("How long should I set the timer for?", result.turn.text)
+        assertZeroModel(result)
+
+        // Deliberately do not call CanonicalConversationStore.completeTurn(). This models process
+        // death after the deterministic runtime has completed but before the UI callback gets a
+        // chance to write history. The runtime/store boundary must already have committed the
+        // assistant message and Context1 together; otherwise restart can split visible history
+        // from the symbolic brain state.
+        val beforeRestartMessages = checkNotNull(store).loadMessages(CONVERSATION_ID)
+        val assistantBeforeRestart = beforeRestartMessages.last {
+            it.role == HistoryMessageRole.Assistant
+        }
+        assertEquals(result.turn.text, assistantBeforeRestart.content)
+        assertEquals(HistoryMessageStatus.Complete, assistantBeforeRestart.status)
+
+        val beforeRestartProjection = checkNotNull(
+            checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID),
+        )
+        beforeRestartProjection.assertPureSymbolic()
+        assertEquals("success", beforeRestartProjection.outcome)
+        assertEquals(assistantBeforeRestart.turnId, beforeRestartProjection.turnId)
+        assertEquals(0L, beforeRestartProjection.maxModelCalls)
+        assertEquals(0L, beforeRestartProjection.providerCalls)
+        assertEquals(0L, beforeRestartProjection.modelCalls)
+        assertFalse(beforeRestartProjection.providersEnabled)
+
+        history = reopenHistory(createConversation = false)
+        val recovered = history.state().conversation(CONVERSATION_ID)!!
+        assertEquals(1, recovered.turns.size)
+        assertEquals(result.turn.text, recovered.turns.single().assistantText)
+        assertEquals(true, recovered.turns.single().success)
+
+        val afterRestartProjection = checkNotNull(
+            checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID),
+        )
+        afterRestartProjection.assertPureSymbolic()
+        assertEquals("success", afterRestartProjection.outcome)
+        assertEquals(beforeRestartProjection.projectionGeneration, afterRestartProjection.projectionGeneration)
+        assertEquals(beforeRestartProjection.dialogueStateJson, afterRestartProjection.dialogueStateJson)
+        assertEquals(0L, afterRestartProjection.maxModelCalls)
+        assertEquals(0L, afterRestartProjection.providerCalls)
+        assertEquals(0L, afterRestartProjection.modelCalls)
+        assertFalse(afterRestartProjection.providersEnabled)
     }
 
     private fun reopenHistory(createConversation: Boolean): CanonicalConversationStore {
