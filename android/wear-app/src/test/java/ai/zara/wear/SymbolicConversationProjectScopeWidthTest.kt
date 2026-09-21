@@ -28,6 +28,8 @@ class SymbolicConversationProjectScopeWidthTest {
         val accepted = SymbolicConversationContinuityGate.decodeAccepted(
             expectedPrincipalId = PRINCIPAL_ID,
             expectedConversationId = CONVERSATION_ID,
+            expectedProjectId = projectId,
+            expectedProjectGeneration = 1,
             current = null,
             encoded = SymbolicConversationEdgeCodec.encode(incoming),
         )
