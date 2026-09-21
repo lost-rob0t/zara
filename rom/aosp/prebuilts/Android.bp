@@ -1,0 +1,36 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+android_app_import {
+    name: "Zara",
+    apk: "Zara.apk",
+    presigned: true,
+    privileged: true,
+    system_ext_specific: true,
+    dex_preopt: {
+        enabled: true,
+    },
+}
+
+android_app_import {
+    name: "StarIntelCompanion",
+    apk: "StarIntelCompanion.apk",
+    presigned: true,
+    privileged: true,
+    system_ext_specific: true,
+    dex_preopt: {
+        enabled: true,
+    },
+}
+
+android_app_import {
+    name: "StarIntelQuasar",
+    apk: "StarIntelQuasar.apk",
+    presigned: true,
+    privileged: true,
+    system_ext_specific: true,
+    dex_preopt: {
+        enabled: true,
+    },
+}
