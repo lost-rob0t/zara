@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -45,6 +46,27 @@ class AndroidSymbolicPersistenceCompositionContractTest {
         assertFalse(
             "natural turns must not discard the returned dialogue context",
             factory.contains("_Context"),
+        )
+    }
+
+    @Test
+    fun `one natural turn executes canonical dialogue exactly once`() {
+        val factory = File(
+            "src/main/java/ai/zara/app/prolog/AndroidPureSymbolicConversationFactory.kt"
+        ).readText()
+        val persistedTurn = factory
+            .substringAfter("private fun resolvePersistedTurn(")
+            .substringBefore("private fun splitDialogueEnvelope(")
+
+        assertTrue(persistedTurn.contains("dialogueTurnEnvelopeQuery(utterance, context0)"))
+        assertEquals(
+            "response rendering and Context1 capture must share one local Prolog evaluation",
+            1,
+            Regex("queryLocalProlog\\(").findAll(persistedTurn).count(),
+        )
+        assertFalse(
+            "Context1 must not be recovered by replaying the dialogue turn",
+            persistedTurn.contains("dialogueContextQuery("),
         )
     }
 
