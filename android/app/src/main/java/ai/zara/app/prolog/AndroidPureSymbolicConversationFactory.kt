@@ -58,7 +58,7 @@ internal object AndroidPureSymbolicConversationFactory {
 
     private fun controller(
         session: AndroidAppSession,
-        resolve: (String, String) -> CompletableFuture<LocalQueryResult>,
+        resolve: (String, String) -> PureSymbolicResolution,
     ): PureSymbolicConversationController =
         PureSymbolicConversationController(
             catalog = { PrologWorkspaceCatalog.from(session.prologSources()) },
@@ -72,7 +72,7 @@ internal object AndroidPureSymbolicConversationFactory {
         utterance: String,
         conversationId: String,
         requestedProjectId: String?,
-    ): CompletableFuture<LocalQueryResult> {
+    ): PureSymbolicResolution {
         val current = projectionStore.loadSymbolicProjection(conversationId)
         current?.assertPureSymbolic()
         val projectScope = SymbolicProjectScopeContract.next(current, requestedProjectId)
@@ -97,12 +97,15 @@ internal object AndroidPureSymbolicConversationFactory {
         val turnFuture = try {
             session.queryLocalProlog(dialogueTurnEnvelopeQuery(utterance, context0))
         } catch (error: Throwable) {
-            return failBeforeAsyncEvaluation(
-                projectionStore = projectionStore,
-                pendingProjection = pendingProjection,
-                pendingGeneration = pendingGeneration,
-                context0 = context0,
-                error = error,
+            return PureSymbolicResolution(
+                turnId = turnId,
+                future = failBeforeAsyncEvaluation(
+                    projectionStore = projectionStore,
+                    pendingProjection = pendingProjection,
+                    pendingGeneration = pendingGeneration,
+                    context0 = context0,
+                    error = error,
+                ),
             )
         }
         val output = PersistenceFencedFuture(turnFuture) {
@@ -174,7 +177,7 @@ internal object AndroidPureSymbolicConversationFactory {
                 )
             }
         }
-        return output
+        return PureSymbolicResolution(turnId = turnId, future = output)
     }
 
     private fun requireRunningTurnId(
