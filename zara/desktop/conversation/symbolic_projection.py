@@ -418,6 +418,20 @@ class SymbolicProjectionMixin:
                     raise RuntimeError(
                         "stale symbolic projection write: projection does not exist"
                     )
+                if projection.dialogue_act == "verified":
+                    v2_generations = {
+                        generation
+                        for reference in projection.verified_outcome_refs
+                        if (generation := _verified_outcome_runtime_generation(reference))
+                        is not None
+                    }
+                    if (
+                        v2_generations
+                        and projection.runtime_generation not in v2_generations
+                    ):
+                        raise RuntimeError(
+                            "verified projection requires fresh outcome evidence"
+                        )
             else:
                 current_generation = _decode_sqlite_integer(
                     "projection_generation", current["projection_generation"], minimum=1

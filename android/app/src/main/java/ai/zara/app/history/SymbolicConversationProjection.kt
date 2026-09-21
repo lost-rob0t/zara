@@ -416,6 +416,14 @@ internal object SymbolicProjectionContract {
             check(expectedGeneration == 0L) {
                 "stale symbolic projection write: projection does not exist"
             }
+            if (proposed.dialogueAct == "verified") {
+                val v2Generations = proposed.verifiedOutcomeRefs
+                    .mapNotNull(::verifiedOutcomeRuntimeGeneration)
+                    .toSet()
+                check(v2Generations.isEmpty() || proposed.runtimeGeneration in v2Generations) {
+                    "verified projection requires fresh outcome evidence"
+                }
+            }
             return
         }
         check(current.projectionGeneration == expectedGeneration) {
