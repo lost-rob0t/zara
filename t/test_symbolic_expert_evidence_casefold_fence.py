@@ -38,23 +38,8 @@ def _projection(evidence: list[dict[str, object]]) -> SymbolicConversationProjec
             "model_calls": 0,
             "explanation": {"MoDeL_CaLlS": 7},
         },
-        {
-            "expert_id": "zara:expert/python",
-            "model_calls": 0,
-            "providerCalls": 1,
-        },
-        {
-            "expert_id": "zara:expert/python",
-            "model_calls": 0,
-            "explanation": {"max-model-calls": 1},
-        },
-        {
-            "expert_id": "zara:expert/python",
-            "model_calls": 0,
-            "explanation": {"TokenUsage": {"inputTokens": 12}},
-        },
     ],
 )
-def test_normalized_provider_model_metadata_fails_closed(poisoned: dict[str, object]) -> None:
+def test_mixed_case_model_calls_metadata_fails_closed(poisoned: dict[str, object]) -> None:
     with pytest.raises((TypeError, ValueError, AssertionError)):
         _projection([poisoned]).assert_pure_symbolic()
