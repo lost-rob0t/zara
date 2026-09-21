@@ -72,3 +72,48 @@ def test_release_notes_survive_pixel_launcher_anr_overlay(
         ("shell", "input", "tap", "50", "50"),
         ("shell", "input", "tap", "600", "1550"),
     ]
+
+
+def test_await_label_dismisses_pixel_launcher_anr_before_accepting_background_label(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    chat = module.ET.fromstring('<node text="Chat" bounds="[10,10][100,80]" />')
+    launcher_anr = module.ET.fromstring(
+        '<node text="Pixel Launcher isn\'t responding" bounds="[10,10][90,90]" />'
+    )
+    wait = module.ET.fromstring('<node text="Wait" bounds="[20,30][80,70]" />')
+    state = {"launcher_anr": True}
+    adb_calls: list[tuple[str, ...]] = []
+
+    def find_contains(fragment: str):
+        if fragment == "Pixel Launcher isn't responding" and state["launcher_anr"]:
+            return launcher_anr
+        return None
+
+    def find(label: str):
+        if label == "Wait" and state["launcher_anr"]:
+            return wait
+        if label == "Chat":
+            return chat
+        return None
+
+    def adb(*arguments: str, **_kwargs):
+        adb_calls.append(arguments)
+        if arguments == ("shell", "input", "tap", "50", "50"):
+            state["launcher_anr"] = False
+        return ""
+
+    monkeypatch.setattr(device, "find_contains", find_contains)
+    monkeypatch.setattr(device, "find", find)
+    monkeypatch.setattr(device, "adb", adb)
+    monkeypatch.setattr(device, "dismiss_release_notes", lambda: False)
+    monkeypatch.setattr(module.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    device.await_label("Chat", timeout=1.0)
+
+    assert state["launcher_anr"] is False
+    assert adb_calls == [("shell", "input", "tap", "50", "50")]

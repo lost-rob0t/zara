@@ -4,10 +4,16 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+- Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
+
 ### Added
 
 - The repository now ships direnv integration: entering the root loads the pinned Python dev shell and entering `android/` loads the pinned Android toolchain shell automatically, with no secrets in any tracked env file (#1267).
+- Native Emacs chat can now keep a stable canonical Zara conversation identity, consume strict `turn.accepted`/`assistant.complete` events, inspect/switch conversation state while idle, and cancel the runtime-minted turn through canonical `CancelTurn`; late or malformed events fail closed without provider/model fallback or an Emacs-owned transcript store.
+- Desktop can now select the provider-free `pure_symbolic` conversation execution policy before any daemon/model runtime is constructed; symbolic replies use Zara's canonical Prolog dialogue renderer, report exact zero provider/model usage, and fail closed on unsupported context instead of falling back to a model.
+- ZARA-SYNC/1 now defines bounded version vectors, stale-delta fencing, content-addressed block manifests, tombstones, and opaque encrypted revisions, with tiny intermediate blocks rejected while allowing a short final tail block.
 - Authenticated ZARA/1 peers can now attach a bounded `ZaraNode` descriptor to the secure hello handshake; Zara binds that metadata to the existing CURVE/ZAP enrollment and exact principal/session, rejects identity/generation mismatches, and never treats advertised device features as authorization grants.
+- A running local Zara server now exposes owner-only live control that can lazily create its durable CURVE identity and idempotently activate an authenticated remote ZARA/1 listener without a daemon restart; pairing clients can consume the returned endpoint and public-key metadata.
 - The daemon now logs a warning for every denied CURVE/ZAP client authentication, including the presented public key, so unenrolled or mistyped client keys are diagnosable server-side instead of failing silently.
 - Added an authenticated browser bridge and packaged Chromium/Firefox extension for reading pages and performing approval-gated browser actions from Zara.
 - Portable Zara package profiles can now enable and pin packages independently per app while reusing the same package ABI and each app's existing symbol registry.
@@ -25,6 +31,11 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android Auto chat now prefers an authenticated desktop/server session when one is connected instead of silently answering locally first.
+- Android emulator CI now proves the installed APK can complete both a real embedded Local Prolog turn and an authenticated CURVE/ZARA/1 text turn against the stock Zara server.
+- Android remote connections now retain the client CURVE secret for the lifetime of the authenticated socket and deliver the first ZARA/1 hello after the asynchronous CURVE handshake completes, so an enrolled device connects to a secure Zara server over real networks instead of silently failing.
+- Native Emacs `zara-chat` now enables the canonical conversation-control minor mode by default once `zara-conversation` is loaded, so ordinary send keys use stable conversation identity, strict native events, and canonical cancellation instead of the legacy one-shot request path.
+- Explicit secure-TCP Zara servers keep their owner-only live security admin socket under the configured security directory, so existing live enroll/revoke commands continue mutating the running registry while the new local-first bootstrap control socket remains runtime-scoped.
 - Zara Code APKs now pass cryptographic/package validation, CI installs and launches the editor on an Android emulator, and rolling `android-latest` publication rechecks the stable signing certificate before publishing.
 - Python runtime descriptors now reject schema-invalid boolean and enum-shaped scalar values at construction, keeping `ZARA-RUNTIME/1` host state aligned with the shared wire contract before discovery or selection.
 - Runtime descriptor protocol text is now bounded consistently by the shared schema and host validators, preventing incompatible overlong protocol identifiers from passing wire validation.
