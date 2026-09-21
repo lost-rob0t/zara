@@ -1012,6 +1012,20 @@ private fun TurnFailureCard(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
             )
+            val retryStatus = retryStatusLabel(failure)
+            Text(
+                retryStatus,
+                modifier = Modifier.semantics {
+                    contentDescription = if (failure.autoRetrying) {
+                        "Retrying automatically — ${failure.attempt} of ${failure.maxAttempts}"
+                    } else {
+                        retryStatus
+                    }
+                },
+                color = if (failure.autoRetrying) tokens.accentCyan else tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (failure.retryPossible) {
                     AssistChip(onClick = { onRetry(userText) }, label = { Text("Retry") })
