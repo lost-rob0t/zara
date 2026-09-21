@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.conversations.ConversationStore
+import ai.zara.app.donations.DonationStore
 import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.ConversationExecutionPolicy
@@ -74,6 +75,8 @@ class MainActivity : ComponentActivity() {
         var projectState by mutableStateOf(projectStore.state())
         val conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
         var conversationState by mutableStateOf(conversationStore.state())
+        val donationStore = DonationStore(File(filesDir, "donations.json"))
+        var donationState by mutableStateOf(donationStore.state())
         val executionPolicyController = ConversationExecutionPolicyController(
             store = ConversationExecutionPolicyStore(
                 File(filesDir, "conversation-execution-policy.bin"),
@@ -104,6 +107,22 @@ class MainActivity : ComponentActivity() {
                 appSession.completeAssistantRoleRequest()
             } catch (error: Exception) {
                 operationError = UiOperationFailure.summarize(error)
+            }
+        }
+        val donationDocumentRequest = registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            if (uri != null) {
+                operationError = null
+                try {
+                    val payload = contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)
+                        ?.use { it.readText() }
+                        ?: error("Unable to read donation document")
+                    donationState = donationStore.importDocument(payload)
+                } catch (error: Exception) {
+                    operationError = UiOperationFailure.summarize(error)
+                }
             }
         }
 
@@ -162,6 +181,7 @@ class MainActivity : ComponentActivity() {
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
+                donationState = donationState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -174,6 +194,10 @@ class MainActivity : ComponentActivity() {
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
                     embeddingPreferenceStore.save(localEmbedding)
+                },
+                onImportDonations = {
+                    operationError = null
+                    donationDocumentRequest.launch(arrayOf("application/json", "text/plain"))
                 },
                 onCreateIdentity = {
                     operationError = null
