@@ -27,10 +27,11 @@ adb -s "$serial" install -r "$phone_apk"
 if adb -s "$serial" shell pm path com.google.android.apps.nexuslauncher >/dev/null 2>&1; then
   adb -s "$serial" shell am force-stop com.google.android.apps.nexuslauncher
 fi
-python android/integration/device_acceptance.py \
+nix develop "$repo_root/android" -c \
+  python3 "$repo_root/android/integration/device_acceptance.py" \
   --serial "$serial" \
   --source-sha "$source_sha" \
-  --output android/app/build/reports/device
+  --output "$repo_root/android/app/build/reports/device"
 
 # The visual acceptance above is intentionally broad. This second gate proves
 # the installed APK's real Android Keystore -> CURVE -> JeroMQ -> ZARA/1 path
