@@ -181,6 +181,39 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
         }
     }
 
+    @Test
+    fun fullWidthProjectIdRoundTripsAcrossConversationStoreRecreation() {
+        val fullWidthProjectId = "p".repeat(512)
+        val firstHistory = PortableConversationStore(context)
+        val first = CanonicalConversationStore(
+            history = firstHistory,
+            metadataFile = metadataFile,
+            legacyFile = null,
+            idFactory = { CONVERSATION_ID },
+        )
+        assertEquals(
+            fullWidthProjectId,
+            first.create(projectId = fullWidthProjectId).projectId,
+        )
+        firstHistory.close()
+
+        val reopenedHistory = PortableConversationStore(context)
+        try {
+            val reopened = CanonicalConversationStore(
+                history = reopenedHistory,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            assertEquals(
+                fullWidthProjectId,
+                checkNotNull(reopened.state().conversation(CONVERSATION_ID)).projectId,
+            )
+        } finally {
+            reopenedHistory.close()
+        }
+    }
+
     private companion object {
         const val CONVERSATION_ID = "android-stale-ui-completion-fence"
         const val FAILURE_TEXT = "symbolic turn failed durably"
