@@ -87,7 +87,7 @@ class SymbolicConversationEdgeSnapshotTest {
 
     @Test
     fun pureSymbolicSuccessActsRequireEvidenceReferences() {
-        assertFails("verified outcome evidence") {
+        assertFails("fresh current-generation v2 outcome evidence") {
             fixture().copy(dialogueAct = "verified", verifiedOutcomeRefs = emptyList()).assertPureSymbolic()
         }
         assertFails("expert evidence") {
@@ -116,6 +116,37 @@ class SymbolicConversationEdgeSnapshotTest {
                 ),
             ).assertPureSymbolic()
         }
+    }
+
+    @Test
+    fun verifiedActRequiresFreshCurrentGenerationV2Evidence() {
+        assertFails("fresh current-generation v2 outcome evidence") {
+            fixture().copy(
+                runtimeGeneration = 9,
+                dialogueAct = "verified",
+                verifiedOutcomeRefs = listOf(
+                    "zara.verified-outcome/v1:outcome:postcondition:legacy",
+                ),
+            ).assertPureSymbolic()
+        }
+        assertFails("fresh current-generation v2 outcome evidence") {
+            fixture().copy(
+                runtimeGeneration = 9,
+                dialogueAct = "verified",
+                verifiedOutcomeRefs = listOf(
+                    "zara.verified-outcome/v2:8:outcome:postcondition:stale",
+                ),
+            ).assertPureSymbolic()
+        }
+
+        fixture().copy(
+            runtimeGeneration = 9,
+            dialogueAct = "verified",
+            verifiedOutcomeRefs = listOf(
+                "zara.verified-outcome/v1:outcome:postcondition:legacy",
+                "zara.verified-outcome/v2:9:outcome:postcondition:fresh",
+            ),
+        ).assertPureSymbolic()
     }
 
     @Test
