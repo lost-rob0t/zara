@@ -129,6 +129,11 @@ def _conversation_replay_payload(store, conversation_id: str) -> dict:
     if conversation is None:
         raise ValueError(f"unknown conversation {normalized!r}")
     messages = store.load_messages(normalized)
+    from .desktop.conversation.replay_status import symbolic_projection_payload
+
+    symbolic_projection = symbolic_projection_payload(
+        store.load_symbolic_projection(normalized)
+    )
     return {
         "version": CLI_REPLAY_VERSION,
         "conversation": {
@@ -149,6 +154,7 @@ def _conversation_replay_payload(store, conversation_id: str) -> dict:
             }
             for message in messages
         ],
+        "symbolic_projection": symbolic_projection,
     }
 
 
