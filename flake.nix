@@ -261,6 +261,8 @@
             # Testing
             p.pytest
             p.pytest-asyncio
+            # Python packaging companion for scripts/zara-ytdlp.
+            p.yt-dlp
             # Packaging metadata sanity checks
             p.setuptools
             p.wheel
