@@ -248,6 +248,16 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             },
         )
 
+        val preProjectionFence = checkNotNull(firstStore.loadSymbolicProjection(CONVERSATION_ID))
+        preProjectionFence.assertPureSymbolic()
+        assertEquals("cancelled", preProjectionFence.outcome)
+        assertEquals(turnId, preProjectionFence.turnId)
+        assertEquals(PROJECT_B, preProjectionFence.projectId)
+        assertEquals(1L, preProjectionFence.projectGeneration)
+        assertEquals(1L, preProjectionFence.projectionGeneration)
+        assertEquals(1L, preProjectionFence.runtimeGeneration)
+        assertZeroModel(preProjectionFence)
+
         val lateProjectionInstall = runCatching {
             firstStore.saveSymbolicProjection(
                 projection = pendingProjection(turnId),
@@ -258,10 +268,11 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
             "a late project-A pending projection must not resurrect a turn cancelled by project switch",
             lateProjectionInstall.isFailure,
         )
-        assertNull(
-            "failed stale projection install must leave the canonical projection absent",
-            firstStore.loadSymbolicProjection(CONVERSATION_ID),
-        )
+        val afterLateInstall = checkNotNull(firstStore.loadSymbolicProjection(CONVERSATION_ID))
+        assertEquals("cancelled", afterLateInstall.outcome)
+        assertEquals(PROJECT_B, afterLateInstall.projectId)
+        assertEquals(1L, afterLateInstall.projectionGeneration)
+        assertZeroModel(afterLateInstall)
         firstStore.close()
 
         val reopenedStore = PortableConversationStore(context)
@@ -280,7 +291,11 @@ class CanonicalConversationProjectSwitchFenceInstrumentedTest {
                 message.role == HistoryMessageRole.Assistant && message.turnId == turnId
             }
             assertEquals(HistoryMessageStatus.Cancelled, reopenedAssistant.status)
-            assertNull(reopenedStore.loadSymbolicProjection(CONVERSATION_ID))
+            val reopenedProjection = checkNotNull(reopenedStore.loadSymbolicProjection(CONVERSATION_ID))
+            assertEquals("cancelled", reopenedProjection.outcome)
+            assertEquals(PROJECT_B, reopenedProjection.projectId)
+            assertEquals(1L, reopenedProjection.projectionGeneration)
+            assertZeroModel(reopenedProjection)
         } finally {
             reopenedStore.close()
         }
