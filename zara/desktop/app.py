@@ -147,12 +147,15 @@ def create_application(
         else:
             service = _default_desktop_client(active_config)
     bridge = QtRuntimeBridge(service, parent=app)
-    controller = DesktopController(
-        app,
-        service,
-        bridge,
-        conversation_service=conversation_service,
-    )
+    if conversation_service is None:
+        controller = DesktopController(app, service, bridge)
+    else:
+        controller = DesktopController(
+            app,
+            service,
+            bridge,
+            conversation_service=conversation_service,
+        )
     setattr(app, _CONTROLLER_ATTR, controller)
     return app, controller
 
