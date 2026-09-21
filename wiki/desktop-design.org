@@ -1,0 +1,93 @@
+#+title: Desktop UI parity
+#+subtitle: Android semantic design projected into native PySide6
+
+* Authority
+
+Desktop Zara is a native Qt projection of the same product design used by
+Android.  Android remains the visual authority:
+
+- =android/DESIGN.md= defines hierarchy and interaction language.
+- =android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt= defines the
+  canonical semantic token values.
+
+Desktop does not maintain a second product palette.  =zara/desktop/theme.py=
+contains a checked projection of those token values and
+=t/test_desktop_mobile_parity.py= parses the Kotlin source to fail CI if they
+drift.
+
+The Android-parity desktop themes are =outrun=, =starintel=, =midnight=,
+=terminal= and =light=.  =outrun= is the desktop default.  Legacy themes such
+as =signal-cabin= remain selectable for existing configurations.
+
+* Symbolic design expert
+
+The deterministic design mapping is split using the normal Zara Prolog
+boundary:
+
+- =kb/desktop_design.pl= owns facts and derivation rules.
+- =modules/desktop_design_expert.pl= exposes bounded queries.
+- expert identity: =zara:expert/desktop-design=
+- provider policy: disabled; max model calls: zero.
+
+The 15 desktop roles derive from Android tokens as follows:
+
+| Desktop role | Derivation |
+|--------------+------------|
+| ground | background |
+| panel_deep | surfaceInput |
+| panel | surface |
+| panel_lift | surfaceElevated |
+| line | border |
+| line_strong | borderActive |
+| text | text |
+| text_muted | textMuted |
+| primary | primary |
+| primary_hover | focus |
+| primary_deep | ambientGlow |
+| on_primary | WCAG contrast text against primary |
+| active | warning |
+| danger | error |
+| danger_deep | 18% error mixed into surfaceInput |
+
+=theme_provenance/2= points each parity theme back to =ZaraTheme.kt=.
+=desktop_role_derivation/3= exposes the exact direct/contrast/mix rule.
+
+The Python projection is checked for raw WCAG contrast before palette repair.
+=repair_palette= remains a defensive host-palette mechanism; it is not accepted
+as evidence that a generated parity theme is conformant.
+
+* Desktop shell
+
+The adaptive Copilot keeps one conversation renderer.  Compact mode is the
+chat surface; =History= opens the expanded history rail and =Chat= returns to
+the compact hierarchy.  The permanent desktop wordmark is removed, runtime
+state is a small semantic pill, messages remain the dominant viewport, and the
+composer uses the same input-well/elevated-surface hierarchy as Android.
+
+Appearance previews are a horizontal scroll strip so the parity themes and
+legacy themes do not force the Settings page wider.
+
+* Tool use and approvals
+
+Desktop tool use is not a Qt executor.  Tools are registered and executed by
+the canonical Zara runtime/LangChain path.  Qt receives typed tool lifecycle
+events through =QtRuntimeBridge= and =ConversationService=.
+
+When =ToolWaitingForUser= arrives, Desktop preserves the bounded approval
+prompt and renders one activity card with =Approve= and =Reject=.  A card emits
+only its opaque =tool_run_id= and decision.  The window converts that UI intent
+to the existing =ApproveTool= or =RejectTool= command and submits it through
+the same runtime bridge used by chat.
+
+The card disables both decisions after one click.  Stale, duplicate, replayed,
+unknown, cancelled and unauthorized decisions remain runtime-owned and fail
+closed.  No Qt widget receives a LangChain tool callable, tool arguments,
+credentials, or a second execution path.
+
+See also =wiki/tool-approvals.org=.
+
+* Verification
+
+Focused parity coverage lives in =t/test_desktop_mobile_parity.py= and the
+existing desktop theme/settings/Copilot suites.  Deterministic screenshots are
+rendered by =zara/desktop/ui_fixtures.py= using Outrun and uploaded by CI.
