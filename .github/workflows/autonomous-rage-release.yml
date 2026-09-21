@@ -1,0 +1,136 @@
+name: Autonomous RAGE release
+
+on:
+  workflow_run:
+    workflows:
+      - Autonomous Zara fork
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    name: Prolog-authorized deterministic promotion
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Reject stale master evidence
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin master
+          current_master="$(git rev-parse origin/master)"
+          if [[ "$current_master" != "$CANDIDATE_SHA" ]]; then
+            echo "Candidate is stale: candidate=$CANDIDATE_SHA master=$current_master"
+            exit 0
+          fi
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Download exact-run release evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh run download "$RUN_ID" \
+            --name "autonomous-release-evidence-$CANDIDATE_SHA" \
+            --dir artifacts
+
+      - name: Generate exact candidate Prolog facts
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          nix develop -c python scripts/generate-autonomous-release-facts.py \
+            --plan release/autonomous-plan.json \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --evidence artifacts/autonomous-release-evidence.json \
+            --output artifacts/autonomous-release-facts.pl
+
+      - name: Prove release readiness
+        id: proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          if nix develop -c swipl -q \
+            -s verification/autonomous_release_verify.pl \
+            -- release artifacts/autonomous-release-facts.pl
+          then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "Candidate is not release-ready; no promotion action will run."
+          fi
+
+      - name: Freeze deterministic release branch
+        if: steps.proof.outputs.ready == 'true'
+        id: freeze
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          target_version="$(python - <<'PY'
+          import json
+          print(json.load(open("release/autonomous-plan.json"))["target_version"])
+          PY
+          )"
+          branch="release/autonomous-v${target_version}-${CANDIDATE_SHA:0:12}"
+
+          nix develop -c python scripts/promote-autonomous-release.py \
+            --plan release/autonomous-plan.json \
+            --version-file version.properties \
+            --changelog CHANGELOG.md
+
+          git config user.name "zara-release-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add version.properties CHANGELOG.md
+          git commit -m "chore(release): promote Zara ${target_version}"
+          git push origin "$branch"
+
+          pr_url="$(gh pr list --head "$branch" --base master --state open --json url --jq '.[0].url')"
+          if [[ -z "$pr_url" ]]; then
+            pr_url="$(gh pr create \
+              --base master \
+              --head "$branch" \
+              --title "chore(release): autonomous Zara ${target_version} promotion" \
+              --body "Deterministic promotion authorized by exact-SHA Prolog release proof for \`$CANDIDATE_SHA\`. No LLM participated in version, tag, merge, or release authorization.")"
+          fi
+
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
+
+      - name: Enable protected auto-merge
+        if: steps.proof.outputs.ready == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.freeze.outputs.pr_url }}
+        run: |
+          set -euo pipefail
+          gh pr merge --auto --squash "$PR_URL"
