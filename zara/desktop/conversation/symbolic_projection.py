@@ -150,6 +150,18 @@ def _validate_verified_outcome_transition(
         for reference in current_refs
     )
 
+    if current_has_v2:
+        for reference in added:
+            if _verified_outcome_runtime_generation(reference) is None:
+                raise RuntimeError("retired verified outcome replay rejected")
+
+    for reference in added:
+        evidence_generation = _verified_outcome_runtime_generation(reference)
+        if evidence_generation is not None and evidence_generation != runtime_generation:
+            if removed:
+                raise RuntimeError("retired verified outcome replay rejected")
+            raise RuntimeError("verified outcome generation mismatch rejected")
+
     if not is_new_turn:
         if removed:
             raise RuntimeError("verified outcome evidence rewind rejected")
@@ -171,29 +183,14 @@ def _validate_verified_outcome_transition(
         if set(appended_refs) != added:
             raise RuntimeError("verified outcome evidence rewind rejected")
         for reference in appended_refs:
-            evidence_generation = _verified_outcome_runtime_generation(reference)
-            if evidence_generation is None:
+            if _verified_outcome_runtime_generation(reference) is None:
                 if current_has_v2:
                     raise RuntimeError("retired verified outcome replay rejected")
                 raise RuntimeError(
                     "verified outcome compaction requires generation-bound evidence"
                 )
-            if evidence_generation != runtime_generation:
-                raise RuntimeError("retired verified outcome replay rejected")
         return added
 
-    if current_has_v2:
-        for reference in added:
-            if _verified_outcome_runtime_generation(reference) is None:
-                raise RuntimeError("retired verified outcome replay rejected")
-
-    for reference in added:
-        evidence_generation = _verified_outcome_runtime_generation(reference)
-        if (
-            evidence_generation is not None
-            and evidence_generation != runtime_generation
-        ):
-            raise RuntimeError("verified outcome generation mismatch rejected")
     return added
 
 
