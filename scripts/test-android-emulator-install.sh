@@ -102,6 +102,16 @@ python android/integration/device_acceptance.py \
   --source-sha "$source_sha" \
   --output android/app/build/reports/device
 
+# Run the same installed candidate through the natural pure-symbolic UI path from
+# cleared app state. This proves no provider credentials are required, the hard-zero
+# policy stays selected across process recreation, canonical dialogue Context0/1 is
+# durable, effect-shaped output does not claim unverified success, and the persisted
+# projection ledger remains providers_enabled=false with model/provider calls at 0.
+python android/integration/device_pure_symbolic_acceptance.py \
+  --serial "$serial" \
+  --source-sha "$source_sha" \
+  --output android/app/build/reports/device
+
 # The visual acceptance above is intentionally broad. This second gate proves
 # the installed APK's real Android Keystore -> CURVE -> JeroMQ -> ZARA/1 path
 # against the stock Python Zara server and completes an actual remote text turn.
