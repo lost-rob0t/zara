@@ -1,12 +1,14 @@
 package ai.zara.app.history
 
 /**
- * Advance a pending symbolic projection onto the requested project scope before a project switch
- * becomes visible to Android chat.
+ * Atomically cancel a pending symbolic turn onto the requested project scope before that project
+ * switch becomes visible to Android chat.
  *
- * This reuses the canonical [PortableConversationStore] projection row and its generation CAS. It
- * does not own project metadata or create another conversation/project store. A late completion
- * from the previous project therefore loses the existing projection-generation fence.
+ * This reuses the canonical [PortableConversationStore] history/projection transaction and its
+ * generation CAS. It does not own project metadata or create another conversation/project store.
+ * A late completion from the previous project therefore loses the existing projection-generation
+ * fence, while the canonical assistant row is terminal immediately instead of remaining wedged in
+ * Running state until process recreation.
  */
 fun PortableConversationStore.fencePendingSymbolicProject(
     conversationId: String,
@@ -26,12 +28,19 @@ fun PortableConversationStore.fencePendingSymbolicProject(
         return@synchronized current
     }
 
-    saveSymbolicProjection(
+    val turnId = requireNotNull(current.turnId) {
+        "pending symbolic project switch requires canonical turn identity"
+    }
+    completeSymbolicTurnAtomically(
         projection = current.copy(
             projectionGeneration = Math.addExact(current.projectionGeneration, 1L),
+            outcome = "cancelled",
             projectId = scope.projectId,
             projectGeneration = scope.projectGeneration,
         ),
         expectedGeneration = current.projectionGeneration,
+        turnId = turnId,
+        assistantContent = "",
+        assistantStatus = HistoryMessageStatus.Cancelled,
     )
 }
