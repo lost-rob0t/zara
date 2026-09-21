@@ -29,8 +29,8 @@ else:
 DEFAULT_CONFIG_TOML = """# Zarathushtra Configuration
 
 [desktop]
-# Native desktop appearance. Unknown values fall back to Signal Cabin.
-theme = "signal-cabin"
+# Native desktop appearance. Unknown values fall back to canonical Outrun.
+theme = "outrun"
 
 [daemon]
 # ZARA/1 daemon service. Clients (wake listener, CLI, desktop) connect here.
@@ -339,7 +339,7 @@ class ZaraConfig:
         desktop_config = config.get("desktop", {})
         if not isinstance(desktop_config, dict):
             raise ConfigError("Invalid [desktop] configuration: expected a TOML table")
-        desktop_theme = desktop_config.get("theme", "signal-cabin")
+        desktop_theme = desktop_config.get("theme", "outrun")
         if not isinstance(desktop_theme, str):
             raise ConfigError("desktop.theme must be a string")
 
