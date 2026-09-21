@@ -37,8 +37,9 @@ internal object AndroidPureSymbolicConversationFactory {
      *
      * The supplied [projectionStore] remains the sole persistence authority. This overload adds
      * no Android-local context cache: every natural turn loads Context0 from the existing
-     * SymbolicConversationProjection, asks the already-running local Prolog runtime for both the
-     * rendered response and Context1, and persists Context1 with the projection generation CAS.
+     * SymbolicConversationProjection, executes the canonical dialogue turn exactly once, receives
+     * both the rendered response and Context1 through the existing Trealla Result-binding ABI,
+     * and persists Context1 with the projection generation CAS.
      *
      * Cancellation is fenced with the persistence commit. If cancellation wins the fence, no
      * Context1 write occurs. If persistence wins, the resolver completes successfully before a
@@ -80,62 +81,60 @@ internal object AndroidPureSymbolicConversationFactory {
         current?.assertPureSymbolic()
         val expectedGeneration = current?.projectionGeneration ?: 0L
         val context0 = SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
-        val responseFuture = session.queryLocalProlog(dialogueTurnQuery(utterance, context0))
-        val output = PersistenceFencedFuture(responseFuture)
+        val turnFuture = session.queryLocalProlog(dialogueTurnEnvelopeQuery(utterance, context0))
+        val output = PersistenceFencedFuture(turnFuture)
 
-        responseFuture.whenComplete { response, responseError ->
+        turnFuture.whenComplete { result, resultError ->
             if (output.isDone) return@whenComplete
-            if (responseError != null || response == null) {
+            if (resultError != null || result == null) {
                 output.completeExceptionally(
-                    responseError ?: IllegalStateException("Symbolic dialogue response is missing"),
+                    resultError ?: IllegalStateException("Symbolic dialogue result is missing"),
                 )
                 return@whenComplete
             }
-            if (response.terms.isEmpty()) {
-                output.complete(response)
+            if (result.terms.isEmpty()) {
+                output.complete(result)
                 return@whenComplete
             }
 
-            val contextFuture = session.queryLocalProlog(dialogueContextQuery(utterance, context0))
-            output.link(contextFuture)
-            contextFuture.whenComplete { contextResult, contextError ->
-                if (output.isDone) return@whenComplete
-                if (contextError != null || contextResult == null) {
-                    output.completeExceptionally(
-                        contextError ?: IllegalStateException("Symbolic dialogue context is missing"),
-                    )
-                    return@whenComplete
-                }
-                try {
-                    check(response.generation == contextResult.generation) {
-                        "Symbolic runtime generation changed while resolving one dialogue turn"
-                    }
-                    check(contextResult.terms.size == 1) {
-                        "Symbolic dialogue must return exactly one canonical Context1 term"
-                    }
-                    val context1 = SymbolicDialogueContextCodec.requireContextTerm(
-                        contextResult.terms.single(),
-                    )
-                    val next = nextProjection(
-                        current = current,
-                        conversationId = conversationId,
+            try {
+                val (renderedResponse, context1) = splitDialogueEnvelope(result)
+                val next = nextProjection(
+                    current = current,
+                    conversationId = conversationId,
+                    expectedGeneration = expectedGeneration,
+                    runtimeGeneration = result.generation,
+                    context1 = context1,
+                )
+                output.commitOrCancel {
+                    projectionStore.saveSymbolicProjection(
+                        projection = next,
                         expectedGeneration = expectedGeneration,
-                        runtimeGeneration = response.generation,
-                        context1 = context1,
                     )
-                    output.commitOrCancel {
-                        projectionStore.saveSymbolicProjection(
-                            projection = next,
-                            expectedGeneration = expectedGeneration,
-                        )
-                        output.complete(response)
-                    }
-                } catch (error: Throwable) {
-                    output.completeExceptionally(error)
+                    output.complete(result.copy(terms = listOf(renderedResponse)))
                 }
+            } catch (error: Throwable) {
+                output.completeExceptionally(error)
             }
         }
         return output
+    }
+
+    private fun splitDialogueEnvelope(result: LocalQueryResult): Pair<String, String> {
+        check(result.terms.size == 2) {
+            "Symbolic dialogue must return one rendered response and one canonical Context1 term"
+        }
+        val renderedResponse = result.terms[0]
+        val wrappedContext = result.terms[1].trim()
+        check(
+            wrappedContext.startsWith(DIALOGUE_CONTEXT_PREFIX) && wrappedContext.endsWith(')')
+        ) {
+            "Symbolic dialogue Context1 result has an invalid envelope"
+        }
+        val contextTerm = wrappedContext
+            .removePrefix(DIALOGUE_CONTEXT_PREFIX)
+            .dropLast(1)
+        return renderedResponse to SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
     }
 
     private fun nextProjection(
@@ -181,18 +180,9 @@ internal object AndroidPureSymbolicConversationFactory {
      * exclusive without introducing another scheduler or persistence owner.
      */
     private class PersistenceFencedFuture(
-        firstUpstream: CompletableFuture<*>,
+        private val upstream: CompletableFuture<*>,
     ) : CompletableFuture<LocalQueryResult>() {
         private val fence = Any()
-        private val upstreams = mutableListOf(firstUpstream)
-
-        fun link(upstream: CompletableFuture<*>) = synchronized(fence) {
-            if (isDone) {
-                upstream.cancel(false)
-            } else {
-                upstreams += upstream
-            }
-        }
 
         fun commitOrCancel(commit: () -> Unit) = synchronized(fence) {
             if (!isDone) commit()
@@ -201,7 +191,7 @@ internal object AndroidPureSymbolicConversationFactory {
         override fun cancel(mayInterruptIfRunning: Boolean): Boolean = synchronized(fence) {
             val cancelled = super.cancel(mayInterruptIfRunning)
             if (cancelled) {
-                upstreams.forEach { it.cancel(mayInterruptIfRunning) }
+                upstream.cancel(mayInterruptIfRunning)
             }
             cancelled
         }
@@ -220,11 +210,20 @@ internal object AndroidPureSymbolicConversationFactory {
     ): String = dialogueTurnPrelude(utterance, contextTerm) +
         ", symbolic_dialogue:render_response(Act, Result)"
 
-    /** Return the canonical Context1 term through Android's existing Result binding ABI. */
-    internal fun dialogueContextQuery(
+    /**
+     * Execute one canonical dialogue turn and return both outputs as ordered Result solutions.
+     *
+     * The first solution is exactly the renderer result used by the existing UI contract. The
+     * second wraps Context1 so Kotlin can distinguish continuation state without replaying the
+     * dialogue turn. This is critical once experts/effects participate in a turn: one user turn
+     * must never be evaluated twice merely to recover durable continuation state.
+     */
+    internal fun dialogueTurnEnvelopeQuery(
         utterance: String,
         contextTerm: String,
-    ): String = dialogueTurnPrelude(utterance, contextTerm) + ", Result = Context1"
+    ): String = dialogueTurnPrelude(utterance, contextTerm) +
+        ", symbolic_dialogue:render_response(Act, Response), " +
+        "(Result = Response ; Result = dialogue_context(Context1))"
 
     private fun dialogueTurnPrelude(utterance: String, contextTerm: String): String {
         val text = utterance.trim()
@@ -253,5 +252,6 @@ internal object AndroidPureSymbolicConversationFactory {
         }
     }
 
+    private const val DIALOGUE_CONTEXT_PREFIX = "dialogue_context("
     private const val MAX_UTTERANCE_CHARS = 8_192
 }
