@@ -1,0 +1,161 @@
+#+title: Autonomous Zara Fork Program
+#+startup: overview
+
+* Identity
+- Parent issue :: #1357
+- Branch :: =fork/autonomous-zara-20260920=
+- Fork base :: =dc74a41b216388662e55412e1e09a1c8c2fad5a7=
+- Release authority :: Prolog + exact-head CI only
+- LLM release authority :: none
+
+This branch is an isolated integration/program surface. It does not bypass protected
+=master= and does not mint releases by itself.
+
+* Priority queue
+1. #1358 :: normie pairing E2E
+2. #1359 :: Prolog-RLM coder + language/refactor/failure experts
+3. #1360 :: Mara Mother whole-life Org/routine manager
+4. #1364 :: pure symbolic + on-device Jev + on-device LLM
+5. #1362 :: CI fact/KB factory + Brave evidence
+6. #1363 :: language/refactor/provider-failure expert family
+7. #1361 :: deterministic autonomous release train
+
+Cross-cutting:
+- #1365 :: Desktop/Android/Wear/Org first-missing-feature conveyor
+- #911 :: Zara Book
+- #1164 :: formal Prolog CI
+- #1165 :: live app E2E
+- #1167 :: agentic scorecard
+- #1327 :: Android provider/local-model/visual release convergence
+
+* AGENTIC-15 coding assignments
+All fifteen durable identities are code workers. Specialties constrain review and
+ownership; they do not excuse status-only work when executable code is available.
+
+** 1 #623 runtime
+- reconcile one shared local/remote/symbolic runtime path;
+- wire Jev as bounded decision backend below Prolog authority;
+- provide coder/Mara runtime seams without a second registry.
+
+** 2 #888 desktop
+- implement first Android feature missing on Desktop each parity slice;
+- make Pair device and runtime/provider state ordinary-user friendly;
+- consume Mara Today/Agenda/Routines projections.
+
+** 3 #889 Android UI
+- implement first Desktop/Org feature missing on Android;
+- own installed-APK acceptance UX;
+- keep symbolic/Jev/local-model state truthful.
+
+** 4 #909 Android systems
+- on-device Jev/local model lifecycle;
+- bounded activity/device-presence facts for Mara;
+- cancellation/process-death/stale-generation repair.
+
+** 5 #921 Wear/edge
+- project canonical today/routine state;
+- critical routine acknowledgement surface;
+- reuse phone authority and never fork scheduling state.
+
+** 6 #646 review/repair
+- adversarial exact-head review;
+- land safe repairs, not only review prose;
+- target stale evidence, duplicate authority and hidden fallback.
+
+** 7 #922 CI/verify/release
+- generated facts;
+- Prolog proof gates;
+- exact-SHA APK/release evidence and deterministic promotion.
+
+** 8 #917 Book/acceptance
+- keep =docs/book.org= executable/current;
+- add tested examples for pairing, coder, Mara and local modes;
+- repair code/docs drift when discovered.
+
+** 9 #919 integration
+- reconcile stale pairing/runtime/provider branches onto current master;
+- resolve cross-surface collisions;
+- preserve one canonical contract per subsystem.
+
+** 10 #920 build
+- reproducible Desktop/APK artifacts;
+- provenance/checksum/source-SHA manifests;
+- package/install smoke and release-branch freeze.
+
+** 11 zara-plugins#505 provider
+- OpenRouter/StarIntel/OpenAI-compatible/Ollama/llama.cpp routing;
+- free-call failure fixtures;
+- strict no-fallback policy verification.
+
+** 12 zara-plugins#506 voice/multimodal
+- on-device model compatibility;
+- voice path through symbolic/Mara modes;
+- resource/cancel/thermal evidence.
+
+** 13 zara-plugins#507 symbolics
+- Prolog-RLM coder contract;
+- Mara long-term symbolic memory;
+- long-lived KB/expert promotion pipeline.
+
+** 14 zara-plugins#508 tools/registry
+- language/refactor expert packages;
+- MCP/A2A/tool capability descriptors;
+- expert discovery/activation conformance.
+
+** 15 #645 research-to-code
+- Brave/evidence fact ingestion;
+- failure taxonomy fixtures;
+- bounded research artifacts consumed by implementation workers.
+
+* Mara Mother invariant
+Org is canonical human todo/agenda state.
+
+Mara may derive bounded observations such as:
+#+begin_src prolog
+activity(phone_active).
+activity(desktop_active).
+activity(wear_active).
+activity(commuting).
+activity(sleep_window).
+#+end_src
+
+Routine schedules are user-owned facts. Medication names, doses, or timing changes
+are never invented by a model. The scheduler may remind, snooze inside declared
+policy, escalate, acknowledge and record missed/completed state.
+
+* Release invariant
+#+begin_example
+release/autonomous-plan.json
+  -> generated Prolog facts
+  -> every planned RAGE slice exact-head PASS
+  -> every required E2E/security gate exact-head PASS
+  -> model_calls(0)
+  -> unresolved_review_threads(0)
+  -> candidate APK source SHA matches
+  -> Prolog release verification
+  -> deterministic version branch
+  -> protected PR / branch protection
+  -> immutable GitHub tag + release
+#+end_example
+
+Missing, stale, skipped, cancelled, pending or old-SHA evidence is RED.
+
+* Knowledge invariant
+Remote/search/model material first becomes untrusted evidence facts with provenance.
+Promotion to trusted executable KB/rules requires contradiction checks, tests and
+Prolog verification. Search snippets never become executable source merely because
+they parse as text.
+
+* Current implementation on this branch
+- =modules/mara_mother.pl= :: pure symbolic routine/device/slot reasoning
+- =scripts/generate-autonomous-release-facts.py= :: candidate-bound release facts
+- =verification/autonomous_release_verify.pl= :: structural/release proof
+- =scripts/brave-results-to-prolog.py= :: bounded Brave evidence compiler
+- =.github/workflows/autonomous-zara-fork.yml= :: core + Prolog + Android APK gate
+- =.github/workflows/brave-kb-facts.yml= :: explicit Brave-to-evidence job
+
+* First merge target
+#1358 pairing is the first product blocker. Reconcile the useful production
+coordinator from #863 onto current master rather than force-merging the stale PR.
+Acceptance is fresh packaged Desktop/server -> fresh APK -> QR or human code ->
+authenticated ZARA/1 turn -> restart -> reconnect -> revoke.
