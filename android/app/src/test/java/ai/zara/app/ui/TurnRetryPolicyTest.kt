@@ -1,9 +1,5 @@
 package ai.zara.app.ui
 
-import ai.zara.app.telemetry.ZaraFailure
-import ai.zara.app.telemetry.ZaraOperation
-import ai.zara.app.telemetry.ZaraRecovery
-import ai.zara.app.telemetry.ZaraSubsystem
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -26,6 +22,13 @@ class TurnRetryPolicyTest {
         assertTrue(TurnRetryPolicy.decorate(failure, attempt = 1).retryPossible)
     }
 
+    @Test fun `cancel and stale generation never auto retry`() {
+        val cancelled = retryableFailure(connected = true).copy(code = "protocol.turn_cancelled")
+        val stale = retryableFailure(connected = true).copy(code = "protocol.stale_generation")
+        assertFalse(TurnRetryPolicy.shouldAutoRetry(cancelled, attempt = 1))
+        assertFalse(TurnRetryPolicy.shouldAutoRetry(stale, attempt = 1))
+    }
+
     @Test fun `final attempt hides retry and reports exhausted budget`() {
         val failure = TurnRetryPolicy.decorate(retryableFailure(connected = true), attempt = 2)
         assertEquals(2, failure.attempt)
@@ -45,16 +48,16 @@ class TurnRetryPolicyTest {
         assertEquals("Retrying automatically — attempt 2/2", retryStatusLabel(retrying))
     }
 
-    private fun retryableFailure(connected: Boolean): TurnFailure = TurnFailures.from(
-        failure = ZaraFailure(
-            code = "transport.timeout",
-            subsystem = ZaraSubsystem.TRANSPORT,
-            operation = ZaraOperation.SUBMIT,
-            recovery = ZaraRecovery.RETRYABLE,
-            message = "retry",
-            cause = null,
-        ),
-        transportConnected = connected,
+    private fun retryableFailure(connected: Boolean): TurnFailure = TurnFailure(
+        title = "Retryable",
+        explanation = "Retryable failure",
+        subsystem = "transport",
+        operation = "submit",
+        code = "transport.timeout",
+        connectionState = if (connected) "connected" else "disconnected",
+        recovery = "retryable",
         incidentId = null,
+        retryPossible = true,
+        reconnectPossible = !connected,
     )
 }
