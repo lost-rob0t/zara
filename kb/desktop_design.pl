@@ -1,6 +1,6 @@
 :- module(kb_desktop_design,
     [ supported_theme/1,
-      desktop_role_binding/2,
+      desktop_role_rule/2,
       design_theme_provenance/2
     ]).
 
@@ -16,18 +16,18 @@ design_theme_provenance(
 ) :-
     supported_theme(Theme).
 
-desktop_role_binding(ground, background).
-desktop_role_binding(panel_deep, surfaceInput).
-desktop_role_binding(panel, surface).
-desktop_role_binding(panel_lift, surfaceElevated).
-desktop_role_binding(line, border).
-desktop_role_binding(line_strong, borderActive).
-desktop_role_binding(text, text).
-desktop_role_binding(text_muted, textMuted).
-desktop_role_binding(primary, primary).
-desktop_role_binding(primary_hover, focus).
-desktop_role_binding(primary_deep, ambientGlow).
-desktop_role_binding(on_primary, primary).
-desktop_role_binding(active, warning).
-desktop_role_binding(danger, error).
-desktop_role_binding(danger_deep, surfaceInput).
+desktop_role_rule(ground, direct(background)).
+desktop_role_rule(panel_deep, direct(surfaceInput)).
+desktop_role_rule(panel, direct(surface)).
+desktop_role_rule(panel_lift, direct(surfaceElevated)).
+desktop_role_rule(line, direct(border)).
+desktop_role_rule(line_strong, direct(borderActive)).
+desktop_role_rule(text, direct(text)).
+desktop_role_rule(text_muted, direct(textMuted)).
+desktop_role_rule(primary, direct(primary)).
+desktop_role_rule(primary_hover, direct(focus)).
+desktop_role_rule(primary_deep, direct(ambientGlow)).
+desktop_role_rule(on_primary, contrast_text(primary)).
+desktop_role_rule(active, direct(warning)).
+desktop_role_rule(danger, direct(error)).
+desktop_role_rule(danger_deep, mix(surfaceInput, error, 18)).
