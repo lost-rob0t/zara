@@ -48,3 +48,87 @@ def test_default_desktop_client_selects_in_process_pure_symbolic_backend(monkeyp
     assert isinstance(backend._projection_adapter, PureSymbolicProjectionAdapter)
     assert backend._projection_adapter.store is expected_store
     assert config.get("agent", "backend", "missing") == "langgraph"
+
+
+def test_create_application_shares_one_canonical_store_with_symbolic_runtime_and_ui(monkeypatch):
+    """Pure-symbolic runtime and UI must use the exact same history/projection owner."""
+
+    class FakeApplication:
+        _instance = None
+
+        @classmethod
+        def instance(cls):
+            return cls._instance
+
+        def __init__(self, _argv):
+            type(self)._instance = self
+
+        def setApplicationName(self, _name):
+            pass
+
+        def setOrganizationName(self, _name):
+            pass
+
+        def setQuitOnLastWindowClosed(self, _enabled):
+            pass
+
+    class FakeConversationService:
+        def __init__(self, store):
+            self.store = store
+
+    expected_store = object()
+    expected_client = object()
+    seen = {"store_factory_calls": 0}
+
+    def store_factory():
+        seen["store_factory_calls"] += 1
+        return expected_store
+
+    def fake_default_client(config=None, *, conversation_store=None):
+        seen["client_config"] = config
+        seen["client_store"] = conversation_store
+        return expected_client
+
+    def fake_bridge(service, parent=None):
+        seen["bridge_service"] = service
+        seen["bridge_parent"] = parent
+        return object()
+
+    class FakeController:
+        def __init__(
+            self,
+            app,
+            service,
+            bridge,
+            *,
+            conversation_service=None,
+            **_kwargs,
+        ):
+            seen["controller_app"] = app
+            seen["controller_service"] = service
+            seen["controller_bridge"] = bridge
+            seen["conversation_service"] = conversation_service
+
+    monkeypatch.setattr(desktop_app, "QApplication", FakeApplication)
+    monkeypatch.setattr(desktop_app, "ConversationStore", store_factory)
+    monkeypatch.setattr(
+        desktop_app,
+        "ConversationService",
+        FakeConversationService,
+        raising=False,
+    )
+    monkeypatch.setattr(desktop_app, "_default_desktop_client", fake_default_client)
+    monkeypatch.setattr(desktop_app, "QtRuntimeBridge", fake_bridge)
+    monkeypatch.setattr(desktop_app, "DesktopController", FakeController)
+    monkeypatch.setattr(desktop_app, "apply_desktop_theme", lambda *_args, **_kwargs: None)
+
+    app, _controller = desktop_app.create_application(
+        ["zara-desktop"],
+        config=PureSymbolicConfig(),
+    )
+
+    assert seen["store_factory_calls"] == 1
+    assert seen["client_store"] is expected_store
+    assert seen["conversation_service"].store is expected_store
+    assert seen["bridge_service"] is expected_client
+    assert seen["bridge_parent"] is app
