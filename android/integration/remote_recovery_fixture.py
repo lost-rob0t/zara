@@ -301,7 +301,17 @@ class RecoveryFixture:
         turn_id = f"recovery-turn-{state.turn_count}"
         conversation = message.conversation_id
         if mode == "CLOSE":
-            _trace("inject", "close_before_reply")
+            _trace("inject", "close_mid_stream")
+            self._send(
+                identity,
+                self._message(
+                    "turn.accepted",
+                    session=state.session_id,
+                    reply_to=message.id,
+                    conversation=conversation,
+                    turn=turn_id,
+                ),
+            )
             self.abrupt_close()
             return
         if mode == "OUT_OF_ORDER":
