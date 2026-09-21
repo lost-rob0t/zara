@@ -37,3 +37,25 @@
 - Remaining exact-head authority: PR CI lanes (test, android+wear,
   deep regression, dual-surface, agentic live app) — merge on green
   via auto-merge.
+
+** Outcome (merged)
+
+- Exact-head CI green across lanes; auto-merge completed.
+- Merge SHA :: =3cc472ca342868a0a3a3797e4e88371a6bbc390b=
+- PR :: =https://github.com/lost-rob0t/zara/pull/863= (issue #863 state: MERGED/closed)
+
+Landed on master with this reconciliation:
+
+- QR pairing broker + =zara pair= / =zara pair-client URI= server CLIs;
+- 16-letter single-use human fallback code (bounded lifetime, one
+  winner under concurrent claims);
+- Android first-run **Scan pairing QR** setup action (Google Code
+  Scanner, no CAMERA permission) + generation-fenced pairing
+  coordinator + auto ZARA/1 connect after approval;
+- Desktop **Pair this desktop** flow with owner-private
+  =client-curve.json=;
+- Repair included: =WearFoundationContractTest= raw-string regex
+  (master regression from #1391).
+
+Next eligible in the queue: #1358 installed-product E2E acceptance
+matrix (consumes this), then #667 enrollment-ready truth fix.
