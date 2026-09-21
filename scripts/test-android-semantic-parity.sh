@@ -72,8 +72,8 @@ parity_main :-
 % This keeps the parity gate honest: semantic_core.pl imports the canonical
 % dialogue modules, Context0 is bridged from persisted string data to the atom
 % input required by pinned Trealla read_term_from_atom/3, the router/renderer
-% is committed once, and response + Context1 are then exposed as the two
-% Result solutions consumed by the bounded native adapter.
+% is committed once, and canonical Context1 is tagged and converted back to a
+% real Prolog string exactly as the Android native Result ABI expects.
 parity_dialogue_envelope :-
     string_codes("[]", Context0Codes),
     atom_codes(Context0Atom, Context0Codes),
@@ -87,16 +87,26 @@ parity_dialogue_envelope :-
                   turn(_Frames, Act, Context1)
               ),
               symbolic_dialogue_turn:valid_dialogue_context(Context1),
-              symbolic_dialogue:render_response(Act, Response)
+              symbolic_dialogue:render_response(Act, Response),
+              term_to_atom(Context1, ContextAtom),
+              atom_concat('__zara_context__:', ContextAtom, ContextTagged),
+              atom_codes(ContextTagged, ContextWireCodes),
+              string_codes(ContextWire, ContextWireCodes)
             ) -> true ; fail
           ),
-          ( Result = Response ; Result = dialogue_context(Context1) )
+          ( Result = Response ; Result = ContextWire )
         ),
         Results),
-    Results = [Rendered, dialogue_context(Context)],
+    Results = [Rendered, ContextWire],
     string_codes(Rendered, RenderedCodes),
     string_codes("How long should I set the timer for?", ExpectedCodes),
     RenderedCodes == ExpectedCodes,
+    string_codes(ContextWire, ContextWireCodes),
+    string_codes("__zara_context__:", PrefixCodes),
+    append(PrefixCodes, ContextAtomCodes, ContextWireCodes),
+    atom_codes(ContextAtom, ContextAtomCodes),
+    read_term_from_atom(ContextAtom, Context, []),
+    symbolic_dialogue_turn:valid_dialogue_context(Context),
     Context = partial_frame(
         frame(intent(ns(device), name('timer.set')), [], missing([duration])),
         [duration]
