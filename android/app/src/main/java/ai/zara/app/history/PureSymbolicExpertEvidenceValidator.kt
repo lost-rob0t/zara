@@ -13,6 +13,7 @@ internal object PureSymbolicExpertEvidenceValidator {
         "provider_id",
         "provider_name",
         "max_model_calls",
+        "model_calls",
         "model",
         "model_id",
         "model_name",

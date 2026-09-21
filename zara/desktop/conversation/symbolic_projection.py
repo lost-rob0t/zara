@@ -36,6 +36,7 @@ _EXPERT_FORBIDDEN_METADATA_KEYS = frozenset(
         "provider_id",
         "provider_name",
         "max_model_calls",
+        "model_calls",
         "model",
         "model_id",
         "model_name",
