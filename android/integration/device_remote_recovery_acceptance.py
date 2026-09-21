@@ -70,7 +70,29 @@ def send_chat_turn(device: Device, text: str, expect: str, timeout: float = 25.0
     type_printable_ascii(device, text)
     device.press_back()
     device.tap("↑")
+    device.await_contains(text, timeout=10.0)
     device.await_contains(expect, timeout=timeout)
+
+
+def diagnostics_preview_text(device: Device) -> str:
+    try:
+        open_menu(device, "Settings")
+        device.tap_tab("Diagnostics")
+        lines: list[str] = []
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            lines = [
+                value
+                for node in device.nodes()
+                for value in ((node.get("text") or "").strip(),)
+                if value
+            ]
+            if any("primary_failure" in line for line in lines):
+                break
+            time.sleep(0.5)
+        return "\n".join(lines)
+    except Exception as error:
+        return f"diagnostics preview unavailable: {error}"
 
 
 def connect_recovery_fixture(device: Device, fixture: dict[str, str]) -> dict[str, object]:
@@ -225,6 +247,7 @@ def main() -> None:
             result["visible_device_text"] = visible_device_text(device)
         except Exception as text_error:
             result["visible_device_text_failure"] = str(text_error)
+        result["diagnostics_v2_on_failure"] = diagnostics_preview_text(device)
         try:
             device.capture("recovery-failure")
         except Exception as capture_error:
