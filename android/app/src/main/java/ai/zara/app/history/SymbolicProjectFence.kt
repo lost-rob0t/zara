@@ -10,10 +10,10 @@ package ai.zara.app.history
  * fence, while the canonical assistant row is terminal immediately instead of remaining wedged in
  * Running state until process recreation.
  *
- * If the project switch wins during the narrow pre-projection window, the same canonical database
- * atomically writes a cancelled generation-1 tombstone for the running turn. That tombstone makes a
- * later generation-0 pending insert stale, closing the prepare -> pending-install race without a
- * second generation counter or Android-local context owner.
+ * A project switch can win in two pre-projection windows: before the first symbolic projection
+ * exists, or on a later turn while the prior turn's terminal projection still exists and the next
+ * pending projection has not been installed yet. Both paths advance the same canonical projection
+ * generation so a losing preflight cannot resurrect project-A state after project B is visible.
  *
  * Project-scoped dialogue knowledge is cleared on an actual scope change. Verified outcome receipt
  * history is deliberately retained because it is the canonical bounded anti-replay ledger, not
@@ -29,7 +29,14 @@ fun PortableConversationStore.fencePendingSymbolicProject(
             conversationId = conversationId,
             requestedProjectId = requestedProjectId,
         )
-    if (current.outcome != "pending") return@synchronized current
+
+    if (current.outcome != "pending") {
+        return@synchronized fenceRunningTurnBeforeSymbolicProjection(
+            conversationId = conversationId,
+            requestedProjectId = requestedProjectId,
+            currentProjection = current,
+        )
+    }
 
     val scope = SymbolicProjectScopeContract.next(
         current = current,
