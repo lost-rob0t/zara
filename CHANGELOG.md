@@ -8,6 +8,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Zara now ships a Prolog-authoritative Voice Expert with Qwen3-TTS voice inventory/registration, default single-voice speaking, conditional multi-speaker narration, bounded yt-dlp YouTube search, and approval-gated authorized YouTube reference cloning; Python executes the selected voice plan but never invents a voice when Prolog cannot resolve one.
 - Native Emacs chat can now keep a stable canonical Zara conversation identity, consume strict `turn.accepted`/`assistant.complete` events, inspect/switch conversation state while idle, and cancel the runtime-minted turn through canonical `CancelTurn`; late or malformed events fail closed without provider/model fallback or an Emacs-owned transcript store.
 - Desktop can now select the provider-free `pure_symbolic` conversation execution policy before any daemon/model runtime is constructed; symbolic replies use Zara's canonical Prolog dialogue renderer, report exact zero provider/model usage, and fail closed on unsupported context instead of falling back to a model.
 - ZARA-SYNC/1 now defines bounded version vectors, stale-delta fencing, content-addressed block manifests, tombstones, and opaque encrypted revisions, with tiny intermediate blocks rejected while allowing a short final tail block.
