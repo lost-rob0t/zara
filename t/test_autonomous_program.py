@@ -189,3 +189,20 @@ def test_release_promotion_rejects_android_code_regression():
 
     with pytest.raises(ValueError, match="regresses"):
         promote_release.promoted_text(plan, current)
+
+
+def test_release_promotion_cuts_unreleased_changelog():
+    source = (
+        "# Zara Changelog\n\n"
+        "## Unreleased\n\n"
+        "### Added\n\n"
+        "- New thing.\n\n"
+        "## 0.2.2-alpha\n\n"
+        "- Old thing.\n"
+    )
+
+    output = promote_release.promote_changelog(source, "0.3.0")
+
+    assert "## Unreleased\n\n## 0.3.0" in output
+    assert "### Added\n\n- New thing." in output
+    assert output.index("## 0.3.0") < output.index("## 0.2.2-alpha")
