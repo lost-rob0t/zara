@@ -34,6 +34,29 @@ class NativeTreallaSourceContractTest {
     }
 
     @Test
+    fun nativeAdapterReturnsTreallaStringBindingsAsUtf8Text() {
+        val source = projectFile("app/src/main/cpp/zara_trealla_jni.c")
+        val text = source.readText()
+
+        assertTrue(
+            "Trealla strings must use the typed embedding API instead of canonical chars-list text",
+            text.contains("pl_term_type(term) == PL_TYPE_STRING") &&
+                text.contains("pl_atom_text(term)") &&
+                text.contains("pl_atom_len(term)")
+        )
+        assertTrue(
+            "captured Result text must be copied before pl_redo invalidates the binding view",
+            text.contains("copy_result_text(text, pl_atom_len(term))") &&
+                text.contains("char *copy = malloc(length + 1)")
+        )
+        assertTrue(
+            "non-string structured terms must keep canonical Prolog text for Context1 envelopes",
+            text.contains("char *canonical = pl_term_text(term)") &&
+                text.contains("pl_free(canonical)")
+        )
+    }
+
+    @Test
     fun plQueryFalseReturnIsTreatedAsApiError() {
         val source = projectFile("app/src/main/cpp/zara_trealla_jni.c")
         val text = source.readText()
