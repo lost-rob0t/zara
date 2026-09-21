@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_ACCEPTANCE = ROOT / "android" / "integration" / "device_pure_symbolic_acceptance.py"
 EMULATOR_GATE = ROOT / "scripts" / "test-android-emulator-install.sh"
+SEMANTIC_PARITY_GATE = ROOT / "scripts" / "test-android-semantic-parity.sh"
 
 
 def test_installed_pure_symbolic_transcript_is_forced_offline_and_restored() -> None:
@@ -38,3 +39,11 @@ def test_emulator_gate_executes_zero_model_and_verified_receipt_fences() -> None
             f"Android pure-symbolic emulator acceptance must execute {class_name}; "
             "compiling androidTest without selecting the class is a false green"
         )
+
+
+def test_semantic_parity_gate_uses_pinned_trealla_atom_input_contract() -> None:
+    source = SEMANTIC_PARITY_GATE.read_text(encoding="utf-8")
+
+    assert 'atom_string(Context0Atom, "[]")' in source
+    assert "read_term_from_atom(Context0Atom, Context0, [])" in source
+    assert 'read_term_from_atom("[]", Context0, [])' not in source
