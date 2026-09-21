@@ -17,10 +17,12 @@ def test_acceptance_uses_three_primary_menus_not_legacy_drawer_routes():
     assert 'for route in ("Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled"' not in text
 
 
-def test_acceptance_captures_each_settings_tab_and_two_theme_states():
+def test_acceptance_captures_settings_overview_children_and_two_theme_states():
     text = source()
-    for tab in (
-        "Runtime",
+    assert '"settings-overview"' in text
+    assert '"Private, explicit, device-first controls"' in text
+    for route in (
+        "Runtime & local AI",
         "Connection",
         "Permissions",
         "Appearance",
@@ -29,8 +31,9 @@ def test_acceptance_captures_each_settings_tab_and_two_theme_states():
         "Diagnostics",
         "About",
     ):
-        assert f'"{tab}"' in text
-    assert 'device.capture(f"settings-{tab.lower()}")' in text
+        assert f'"{route}"' in text
+    assert 'device.capture(f"settings-{capture_name}")' in text
+    assert 'device.tap_tab("Connection")' not in text
     assert '"theme-outrun"' in text
     assert '"theme-light"' in text
 
