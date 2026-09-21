@@ -218,12 +218,11 @@ test(unsafe_commerce_confirmation_mode_is_rejected,
     config_loader:reload_user_config.
 
 test(invalid_preference_thresholds_are_rejected,
-     [ forall(Bad = [
+     [ forall(member(Config, [
            'preference_min_observations(0).\n',
            'preference_max_patterns(101).\n',
            'preference_min_confidence(1.5).\n'
-       ]),
-       member(Config, Bad),
+       ])),
        throws(error(domain_error(zarathushtra_user_config_fact, _), _))
      ]) :-
     config_loader:user_config_path(Path),
