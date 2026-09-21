@@ -364,8 +364,9 @@ internal object AndroidPureSymbolicConversationFactory {
      * Render one canonical dialogue turn from an explicitly supplied continuation term.
      *
      * The term is data, not executable query text: it is quoted as a Prolog string, decoded by
-     * portable term_string/2, and must pass the shared valid_dialogue_context/1 shape fence before
-     * the canonical router sees it. Context1 is also validated before a response can escape.
+     * read_term_from_atom/3 (supported by both pinned Trealla and SWI), and must pass the shared
+     * valid_dialogue_context/1 shape fence before the canonical router sees it. Context1 is also
+     * validated before a response can escape.
      */
     internal fun dialogueTurnQuery(
         utterance: String,
@@ -396,7 +397,7 @@ internal object AndroidPureSymbolicConversationFactory {
         val escapedText = prologString(text)
         val canonicalContext = SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
         val escapedContext = SymbolicDialogueContextCodec.prologString(canonicalContext)
-        return "term_string(Context0, \"$escapedContext\"), " +
+        return "read_term_from_atom(\"$escapedContext\", Context0, []), " +
             "symbolic_dialogue_turn:valid_dialogue_context(Context0), " +
             "symbolic_dialogue_turn:dialogue_turn(\"$escapedText\", conversation, Context0, " +
             "turn(_Frames, Act, Context1)), " +
