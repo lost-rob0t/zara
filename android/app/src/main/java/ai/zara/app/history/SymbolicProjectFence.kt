@@ -12,7 +12,8 @@ package ai.zara.app.history
  *
  * Project-scoped dialogue knowledge is cleared on an actual scope change. Verified outcome receipt
  * history is deliberately retained because it is the canonical bounded anti-replay ledger, not
- * conversational project context.
+ * conversational project context. The terminal dialogue act is the canonical `cancelled` act so
+ * the same persisted truth remains consumable by the shared phone/Wear edge projection contract.
  */
 fun PortableConversationStore.fencePendingSymbolicProject(
     conversationId: String,
@@ -41,7 +42,7 @@ fun PortableConversationStore.fencePendingSymbolicProject(
             outcome = "cancelled",
             projectId = scope.projectId,
             projectGeneration = scope.projectGeneration,
-            dialogueAct = "conversation",
+            dialogueAct = "cancelled",
             dialogueStateJson = "{}",
             discourseEntitiesJson = "[]",
             unresolvedQuestionsJson = "[]",
