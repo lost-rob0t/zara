@@ -9,6 +9,10 @@ package ai.zara.app.history
  * A late completion from the previous project therefore loses the existing projection-generation
  * fence, while the canonical assistant row is terminal immediately instead of remaining wedged in
  * Running state until process recreation.
+ *
+ * Project-scoped dialogue knowledge is cleared on an actual scope change. Verified outcome receipt
+ * history is deliberately retained because it is the canonical bounded anti-replay ledger, not
+ * conversational project context.
  */
 fun PortableConversationStore.fencePendingSymbolicProject(
     conversationId: String,
@@ -37,6 +41,12 @@ fun PortableConversationStore.fencePendingSymbolicProject(
             outcome = "cancelled",
             projectId = scope.projectId,
             projectGeneration = scope.projectGeneration,
+            dialogueAct = "conversation",
+            dialogueStateJson = "{}",
+            discourseEntitiesJson = "[]",
+            unresolvedQuestionsJson = "[]",
+            expertEvidenceJson = "[]",
+            verifiedFactsJson = "[]",
         ),
         expectedGeneration = current.projectionGeneration,
         turnId = turnId,
