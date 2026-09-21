@@ -22,7 +22,7 @@ class FakeConfig:
 class FakeProlog:
     def __init__(self, voices=None):
         self.goals = []
-        self.voices = list(voices or ["zara"])
+        self.voices = list(["zara"] if voices is None else voices)
 
     def query_once(self, goal):
         self.goals.append(goal)
@@ -192,7 +192,10 @@ def test_packaged_prolog_voice_policy_defaults_and_distinct_dialogue():
         'V2="alice",'
         'asserta(kb_voice_expert:voice_speaker("speaker_00","alice"),Ref),'
         'kb_voice_expert:resolve_voice("speaker_00","narrator","",["zara","alice"],[],V3),'
-        'V3="alice",erase(Ref)'
+        'V3="alice",erase(Ref),'
+        'kb_voice_expert:replace_speaker_segments("source",[segment(0,"speaker_00",100,900)]),'
+        'kb_voice_expert:speaker_segments("source",Segments),'
+        'Segments=[segment(0,"speaker_00",100,900)]'
     )
     result = subprocess.run(
         ["swipl", "-q", "-s", "main.pl", "-g", goal, "-t", "halt"],
