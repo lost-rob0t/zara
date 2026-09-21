@@ -48,9 +48,18 @@ class AndroidPureSymbolicConversationFactoryTest {
             context,
         )
 
+        assertFalse(
+            "internal natural-turn query must not use once/1 because the canonical bounded mobile query policy forbids it",
+            query.contains("once("),
+        )
         assertTrue(
-            "persisted dialogue must commit one router/renderer solution before Result enumeration",
-            query.startsWith("once(("),
+            "ISO if-then-else must commit the router/renderer condition before Result enumeration",
+            query.startsWith("((") && query.contains(") -> true ; fail), "),
+        )
+        assertEquals(
+            "generated natural-turn query must cross the same bounded mobile query policy as the real Android runtime",
+            query,
+            PrologQueryPolicy.requireSafe(query),
         )
         assertEquals(
             "one user turn must execute canonical dialogue_turn exactly once",
