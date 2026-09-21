@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.ZaraApplication
 import ai.zara.app.conversations.CanonicalConversationStore
 import ai.zara.app.history.ConversationHistoryContract
 import ai.zara.app.history.PortableConversationStore
@@ -21,11 +22,11 @@ import org.junit.Test
 /**
  * Diagnostic acceptance around the remaining Android process-recreation boundary.
  *
- * This deliberately uses the same canonical zara.db owner and the same native Trealla query path
- * as production. The direct query proves whether the persisted Context1 survives a real SQLite
- * close/reopen before the factory stages the next pending generation. If the factory result still
- * fails after that direct query succeeds, the emitted evidence pins the bug to the pending/terminal
- * persistence boundary instead of the dialogue semantics or provider fallback.
+ * This deliberately uses the same canonical zara.db owner and the same application-owned native
+ * Trealla query path as production. The direct query proves whether the persisted Context1 survives
+ * a real SQLite close/reopen before the factory stages the next pending generation. If the factory
+ * result still fails after that direct query succeeds, the emitted evidence pins the bug to the
+ * pending/terminal persistence boundary instead of the dialogue semantics or provider fallback.
  */
 class AndroidPureSymbolicPersistenceBoundaryInstrumentedTest {
     private lateinit var context: Context
@@ -39,14 +40,15 @@ class AndroidPureSymbolicPersistenceBoundaryInstrumentedTest {
         context.deleteDatabase(ConversationHistoryContract.databaseName)
         metadataFile = File(context.cacheDir, "pure-symbolic-persistence-boundary-ui.bin")
         metadataFile.delete()
-        session = AndroidAppSession(context)
+        session = (context.applicationContext as ZaraApplication).appSession
         awaitLocalServerReady()
     }
 
     @After
     fun tearDown() {
         store?.close()
-        session.close()
+        // ZaraApplication owns the process-wide native Trealla runtime. Keep that singleton alive
+        // across selected instrumentation methods and only tear down this test's SQLite state.
         context.deleteDatabase(ConversationHistoryContract.databaseName)
         metadataFile.delete()
     }
