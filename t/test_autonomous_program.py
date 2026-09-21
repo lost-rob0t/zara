@@ -28,6 +28,10 @@ promote_release = _load_script(
     "promote_autonomous_release",
     "scripts/promote-autonomous-release.py",
 )
+build_evidence = _load_script(
+    "build_autonomous_release_evidence",
+    "scripts/build-autonomous-release-evidence.py",
+)
 
 
 def test_release_plan_generates_candidate_bound_prolog_facts():
@@ -206,3 +210,30 @@ def test_release_promotion_cuts_unreleased_changelog():
     assert "## Unreleased\n\n## 0.3.0" in output
     assert "### Added\n\n- New thing." in output
     assert output.index("## 0.3.0") < output.index("## 0.2.2-alpha")
+
+
+def test_release_evidence_marks_absent_receipts_missing(tmp_path):
+    plan = {
+        "schema": 1,
+        "slices": [{"id": "pairing-e2e", "issue": 1358, "required": True}],
+        "required_gates": ["core_tests", "pairing_e2e"],
+    }
+
+    evidence = build_evidence.build(
+        tmp_path,
+        plan,
+        "a" * 40,
+        {"core_tests": "passed"},
+        None,
+        0,
+    )
+
+    assert evidence["slices"]["pairing-e2e"] == "missing"
+    assert evidence["gates"]["core_tests"] == "passed"
+    assert evidence["gates"]["pairing_e2e"] == "missing"
+    assert evidence["model_calls"] == 0
+
+
+def test_release_evidence_rejects_invalid_gate_override():
+    with pytest.raises(ValueError, match="gate-status"):
+        build_evidence.parse_gate_status(["core_tests=green"])
