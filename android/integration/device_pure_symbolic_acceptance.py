@@ -18,6 +18,16 @@ from device_acceptance import Device, verified_source_sha
 APP_PACKAGE = "ai.zara.app"
 DATABASE_PATH = "databases/zara.db"
 CONTEXT_VERSION = "ZARA-SYMBOLIC-DIALOGUE-CONTEXT/1"
+ACCEPTANCE_EXPERT_PATH = "files/prolog-workspace/p0_acceptance_expert.pl"
+ACCEPTANCE_EXPERT_SOURCE = """\
+expert_activation(diagnosis, inspect).
+symptom(alex, fever).
+symptom(alex, cough).
+diagnosis_explain(Person, Result) :-
+    symptom(Person, fever),
+    symptom(Person, cough),
+    Result = diagnosis(Person, flu).
+"""
 
 
 def type_printable_ascii(device: Device, value: str) -> None:
@@ -56,6 +66,16 @@ def set_airplane_mode(device: Device, enabled: bool) -> None:
     raise AssertionError(f"Emulator airplane mode did not become {verb}d")
 
 
+def install_acceptance_expert(device: Device) -> None:
+    """Install a private-workspace expert fixture without seeding projection/evidence state."""
+    encoded = base64.b64encode(ACCEPTANCE_EXPERT_SOURCE.encode("utf-8")).decode("ascii")
+    command = (
+        "mkdir -p files/prolog-workspace && "
+        f"printf %s '{encoded}' | base64 -d > {ACCEPTANCE_EXPERT_PATH}"
+    )
+    device.adb("shell", "run-as", APP_PACKAGE, "sh", "-c", command)
+
+
 def pull_app_file(device: Device, relative_path: str, destination: Path, *, required: bool) -> bool:
     try:
         data = device.adb(
@@ -74,7 +94,13 @@ def pull_app_file(device: Device, relative_path: str, destination: Path, *, requ
     return True
 
 
-def inspect_hard_zero_accounting(device: Device, *, stage: str) -> dict[str, object]:
+def inspect_hard_zero_accounting(
+    device: Device,
+    *,
+    stage: str,
+    expected_dialogue_act: str | None = None,
+    require_expert_evidence: bool = False,
+) -> dict[str, object]:
     """Snapshot the durable per-turn counters before a later turn can reset them."""
     device.adb("shell", "am", "force-stop", APP_PACKAGE)
     time.sleep(0.3)
@@ -91,8 +117,8 @@ def inspect_hard_zero_accounting(device: Device, *, stage: str) -> dict[str, obj
         try:
             projections = connection.execute(
                 """
-                SELECT conversation_id, turn_id, outcome, providers_enabled,
-                       max_model_calls, provider_calls, model_calls
+                SELECT conversation_id, turn_id, outcome, dialogue_act, expert_evidence_json,
+                       providers_enabled, max_model_calls, provider_calls, model_calls
                 FROM desktop_symbolic_projections
                 WHERE principal_id = 'local:owner'
                 ORDER BY updated_at DESC
@@ -116,6 +142,23 @@ def inspect_hard_zero_accounting(device: Device, *, stage: str) -> dict[str, obj
                 raise AssertionError(f"{stage}: provider_calls is nonzero")
             if projection["model_calls"] != 0:
                 raise AssertionError(f"{stage}: model_calls is nonzero")
+            if expected_dialogue_act is not None and projection["dialogue_act"] != expected_dialogue_act:
+                raise AssertionError(
+                    f"{stage}: expected dialogue act {expected_dialogue_act!r}; "
+                    f"observed {projection['dialogue_act']!r}"
+                )
+
+            expert_evidence = json.loads(projection["expert_evidence_json"])
+            if not isinstance(expert_evidence, list):
+                raise AssertionError(f"{stage}: expert evidence must decode to a list")
+            if require_expert_evidence:
+                if len(expert_evidence) != 1 or not isinstance(expert_evidence[0], dict):
+                    raise AssertionError(f"{stage}: expected exactly one durable expert evidence record")
+                evidence_ref = expert_evidence[0].get("ref")
+                if not isinstance(evidence_ref, str) or not evidence_ref.startswith("expert:"):
+                    raise AssertionError(
+                        f"{stage}: canonical expert evidence ref is missing or malformed: {expert_evidence!r}"
+                    )
 
             conversations = connection.execute(
                 """
@@ -142,6 +185,8 @@ def inspect_hard_zero_accounting(device: Device, *, stage: str) -> dict[str, obj
         "conversation_id": projection["conversation_id"],
         "turn_id": projection["turn_id"],
         "outcome": projection["outcome"],
+        "dialogue_act": projection["dialogue_act"],
+        "expert_evidence": expert_evidence,
         "providers_enabled": False,
         "max_model_calls": 0,
         "provider_calls": 0,
@@ -169,8 +214,8 @@ def inspect_pure_symbolic_database(device: Device, output: Path) -> dict[str, ob
                 """
                 SELECT conversation_id, principal_id, turn_id, outcome,
                        projection_generation, runtime_generation, dialogue_act,
-                       dialogue_state_json, renderer_provenance, providers_enabled,
-                       max_model_calls, provider_calls, model_calls
+                       dialogue_state_json, expert_evidence_json, renderer_provenance,
+                       providers_enabled, max_model_calls, provider_calls, model_calls
                 FROM desktop_symbolic_projections
                 WHERE principal_id = 'local:owner'
                 ORDER BY updated_at DESC
@@ -194,6 +239,15 @@ def inspect_pure_symbolic_database(device: Device, output: Path) -> dict[str, ob
                 raise AssertionError("Pure-symbolic projection recorded model calls")
             if projection["renderer_provenance"] != "symbolic-dcg/v1":
                 raise AssertionError("Pure-symbolic projection lost deterministic renderer provenance")
+            if projection["dialogue_act"] != "expert_answer":
+                raise AssertionError("Final pure-symbolic projection is not the expert why-follow-up")
+
+            expert_evidence = json.loads(projection["expert_evidence_json"])
+            if len(expert_evidence) != 1 or not isinstance(expert_evidence[0], dict):
+                raise AssertionError("Final expert answer lost durable evidence")
+            evidence_ref = expert_evidence[0].get("ref")
+            if not isinstance(evidence_ref, str) or not evidence_ref.startswith("expert:"):
+                raise AssertionError("Final expert answer has malformed evidence")
 
             dialogue_state = json.loads(projection["dialogue_state_json"])
             if dialogue_state.get("version") != CONTEXT_VERSION:
@@ -238,6 +292,8 @@ def inspect_pure_symbolic_database(device: Device, output: Path) -> dict[str, ob
                 "capability-checked execution",
                 "welcome",
                 "handle that symbolically yet",
+                "diagnosis(alex,flu)",
+                "I answered from evidence expert:",
             )
             for fragment in required_fragments:
                 if not any(fragment.lower() in content.lower() for content in contents):
@@ -262,6 +318,7 @@ def inspect_pure_symbolic_database(device: Device, output: Path) -> dict[str, ob
             "dialogue_act": projection["dialogue_act"],
             "dialogue_context_version": dialogue_state["version"],
             "dialogue_context_term": dialogue_state["term"],
+            "expert_evidence": expert_evidence,
             "renderer_provenance": projection["renderer_provenance"],
             "providers_enabled": False,
             "max_model_calls": 0,
@@ -288,7 +345,16 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
         if not airplane_mode_enabled(device):
             raise AssertionError("Pure-symbolic acceptance requires verified offline execution")
 
+        # Boot once to create the private workspace, install only an ordinary registered
+        # expert source, then restart so the production LocalZaraServer loads it normally.
+        # The fixture does not write conversation projections or expert evidence.
         device.start()
+        device.await_label("Ask anything…", timeout=30.0)
+        install_acceptance_expert(device)
+        device.adb("shell", "am", "force-stop", APP_PACKAGE)
+        time.sleep(0.3)
+        device.start()
+
         send_chat(device, "/symbolic on", "Pure symbolic mode enabled")
         device.capture("pure-symbolic-enabled")
 
@@ -328,6 +394,32 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
 
         device.recreate()
         device.await_contains("handle that symbolically yet", timeout=30.0)
+        send_chat(device, "inspect alex", "diagnosis(alex,flu)")
+        device.capture("pure-symbolic-expert-answer")
+        accounting_checkpoints.append(
+            inspect_hard_zero_accounting(
+                device,
+                stage="expert-answer",
+                expected_dialogue_act="expert_answer",
+                require_expert_evidence=True,
+            )
+        )
+
+        device.recreate()
+        device.await_contains("diagnosis(alex,flu)", timeout=30.0)
+        send_chat(device, "why?", "I answered from evidence expert:")
+        device.capture("pure-symbolic-expert-follow-up-after-restart")
+        accounting_checkpoints.append(
+            inspect_hard_zero_accounting(
+                device,
+                stage="expert-follow-up-after-restart",
+                expected_dialogue_act="expert_answer",
+                require_expert_evidence=True,
+            )
+        )
+
+        device.recreate()
+        device.await_contains("I answered from evidence expert:", timeout=30.0)
         device.capture("pure-symbolic-final-recreated")
 
         projection = inspect_pure_symbolic_database(device, output)
