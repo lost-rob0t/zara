@@ -71,18 +71,11 @@ class PureSymbolicExpertInvocationAdapter(
         }
 
         try {
-            val currentRegistryGeneration = port.currentRegistryGeneration()
-            val currentRuntimeGeneration = port.currentRuntimeGeneration()
-            require(currentRegistryGeneration >= 0L) {
-                "current registry generation must be non-negative"
-            }
-            require(currentRuntimeGeneration >= 0L) {
-                "current runtime generation must be non-negative"
-            }
-            require(activation.registryGeneration == currentRegistryGeneration) {
+            val live = stableLiveGenerations("before invocation")
+            require(activation.registryGeneration == live.registryGeneration) {
                 "activation registry generation is stale before invocation"
             }
-            require(activation.runtimeGeneration == currentRuntimeGeneration) {
+            require(activation.runtimeGeneration == live.runtimeGeneration) {
                 "activation runtime generation is stale before invocation"
             }
         } catch (error: Throwable) {
@@ -105,12 +98,13 @@ class PureSymbolicExpertInvocationAdapter(
         return try {
             val ownerFuture = port.invoke(request)
             val admittedFuture = ownerFuture.thenApply { result ->
+                val live = stableLiveGenerations("after invocation")
                 PureSymbolicExpertAdmission.validateResult(
                     activation = activation,
                     request = request,
                     result = result,
-                    currentRegistryGeneration = port.currentRegistryGeneration(),
-                    currentRuntimeGeneration = port.currentRuntimeGeneration(),
+                    currentRegistryGeneration = live.registryGeneration,
+                    currentRuntimeGeneration = live.runtimeGeneration,
                 )
             }
             admittedFuture.whenComplete { _, _ ->
@@ -123,4 +117,39 @@ class PureSymbolicExpertInvocationAdapter(
             CompletableFuture.failedFuture(error)
         }
     }
+
+    /**
+     * The canonical owner currently exposes registry/runtime generations as separate reads. Sample
+     * the pair twice and require stability so a generation change between those reads cannot make a
+     * stale activation look current. This is only a consumer-side fence; authority remains with the
+     * canonical owner and its expected-generation checks.
+     */
+    private fun stableLiveGenerations(phase: String): LiveGenerations {
+        val first = readLiveGenerations()
+        val second = readLiveGenerations()
+        require(first == second) {
+            "Canonical expert generations changed during $phase"
+        }
+        return second
+    }
+
+    private fun readLiveGenerations(): LiveGenerations {
+        val registryGeneration = port.currentRegistryGeneration()
+        val runtimeGeneration = port.currentRuntimeGeneration()
+        require(registryGeneration >= 0L) {
+            "current registry generation must be non-negative"
+        }
+        require(runtimeGeneration >= 0L) {
+            "current runtime generation must be non-negative"
+        }
+        return LiveGenerations(
+            registryGeneration = registryGeneration,
+            runtimeGeneration = runtimeGeneration,
+        )
+    }
+
+    private data class LiveGenerations(
+        val registryGeneration: Long,
+        val runtimeGeneration: Long,
+    )
 }
