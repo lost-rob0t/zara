@@ -24,7 +24,12 @@ class LocalNaturalLanguageExpertRouterLocaleTest {
             assertNotNull(selected)
             val selection = requireNotNull(selected)
             assertEquals("triage", selection.expertId)
-            assertEquals("triage_explain(alice, Result)", selection.query)
+            assertEquals("explain", selection.expertOperation)
+            assertEquals(mapOf("entity" to "alice"), selection.input)
+            assertEquals(
+                "triage_explain(alice, Result)",
+                LocalNaturalLanguageExpertRouter.query("INSPECT ALICE", catalog),
+            )
         } finally {
             Locale.setDefault(previousLocale)
         }
