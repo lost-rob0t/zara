@@ -100,6 +100,33 @@ class PureSymbolicExpertInvocationAdapterTest {
         assertEquals(1, port.invokeCount)
     }
 
+    @Test
+    fun cancellingConsumerFutureCancelsCanonicalOwnerInvocation() {
+        val activation = activation()
+        val ownerFuture = CompletableFuture<ExpertResult>()
+        val port = FakeCanonicalPort(activation)
+        port.invokeFuture = ownerFuture
+
+        val future = adapter(port).invoke(
+            principal = activation.principal,
+            workspace = activation.workspace,
+            expertId = activation.expertId,
+            requestId = "turn:cancelled",
+            expertOperation = "diagnose",
+            input = emptyMap(),
+            limits = zeroModelLimits(),
+            idempotencyKey = "turn:cancelled:diagnose",
+        )
+
+        assertEquals(1, port.invokeCount)
+        assertTrue(future.cancel(true))
+        assertTrue(future.isCancelled)
+        assertTrue(
+            "Cancelling the conversation-facing expert future must cancel the canonical owner future",
+            ownerFuture.isCancelled,
+        )
+    }
+
     private fun adapter(port: CanonicalExpertInvocationPort) =
         PureSymbolicExpertInvocationAdapter(port)
 
@@ -150,6 +177,7 @@ class PureSymbolicExpertInvocationAdapterTest {
         var invokeCount: Int = 0
         var lastRequest: ExpertRequest? = null
         var resultFactory: ((ExpertRequest) -> ExpertResult)? = null
+        var invokeFuture: CompletableFuture<ExpertResult>? = null
         var liveRegistryGeneration: Long = activation?.registryGeneration ?: 0L
         var liveRuntimeGeneration: Long = activation?.runtimeGeneration ?: 0L
 
@@ -162,6 +190,7 @@ class PureSymbolicExpertInvocationAdapterTest {
         override fun invoke(request: ExpertRequest): CompletableFuture<ExpertResult> {
             invokeCount += 1
             lastRequest = request
+            invokeFuture?.let { return it }
             val factory = requireNotNull(resultFactory) { "test result factory is missing" }
             return CompletableFuture.completedFuture(factory(request))
         }
