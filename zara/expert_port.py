@@ -85,6 +85,11 @@ class CanonicalExpertInvocationPort:
         encoder otherwise permits NaN and infinities by default while Android's
         canonical envelope rejects them.  Fence those values both before dispatch
         and before projecting a result so platform behavior cannot diverge.
+
+        A request admitted with ``max_model_calls=0`` is also not accepted as a
+        pure-symbolic success unless the canonical result explicitly proves both
+        provider and model usage counters are built-in integer zero.  The port
+        never invents a missing provider counter on behalf of the owner.
         """
 
         self._require_finite_numbers(request.input, "request.input")
@@ -92,6 +97,9 @@ class CanonicalExpertInvocationPort:
         self._require_finite_numbers(result.data, "result.data")
         self._require_finite_numbers(result.usage, "result.usage")
         self._require_finite_numbers(result.effect_receipts, "result.effect_receipts")
+        if request.limits is not None and request.limits.max_model_calls == 0:
+            self._require_exact_zero_usage(result.usage, "provider_calls")
+            self._require_exact_zero_usage(result.usage, "model_calls")
         return result
 
     def current_registry_generation(self) -> int:
@@ -112,6 +120,15 @@ class CanonicalExpertInvocationPort:
             pattern=_impl._PORTABLE,
             limit=128,
         )
+
+    @staticmethod
+    def _require_exact_zero_usage(usage: Mapping[str, Any], field_name: str) -> None:
+        value = usage.get(field_name)
+        if type(value) is not int or value != 0:
+            raise ExpertInvalidInputError(
+                f"zero-model canonical result must prove usage.{field_name} == 0 "
+                "as a built-in integer counter"
+            )
 
     @classmethod
     def _require_finite_numbers(cls, value: Any, field_name: str) -> None:
