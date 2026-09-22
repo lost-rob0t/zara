@@ -61,6 +61,36 @@ class PureSymbolicExpertAdmissionTest {
     }
 
     @Test
+    fun resultRejectsMissingProviderUsageProof() {
+        val activation = activation()
+        val request = request(activation)
+        val result = result(
+            activation = activation,
+            request = request,
+            usage = mapOf("model_calls" to 0),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            PureSymbolicExpertAdmission.validateResult(activation, request, result)
+        }
+    }
+
+    @Test
+    fun resultRejectsMissingModelUsageProof() {
+        val activation = activation()
+        val request = request(activation)
+        val result = result(
+            activation = activation,
+            request = request,
+            usage = mapOf("provider_calls" to 0),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            PureSymbolicExpertAdmission.validateResult(activation, request, result)
+        }
+    }
+
+    @Test
     fun resultRejectsStaleRuntimeGeneration() {
         val activation = activation()
         val request = request(activation)
