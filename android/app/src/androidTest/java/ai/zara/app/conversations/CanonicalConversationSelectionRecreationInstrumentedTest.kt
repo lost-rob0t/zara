@@ -124,6 +124,79 @@ class CanonicalConversationSelectionRecreationInstrumentedTest {
         }
     }
 
+    @Test
+    fun selectionChangedAfterRecreationSurvivesAnotherRecreationWithoutLosingHistory() {
+        var nextId = 0
+        val ids = listOf(FIRST_CONVERSATION_ID, SECOND_CONVERSATION_ID)
+
+        PortableConversationStore(context).use { history ->
+            val ui = CanonicalConversationStore(
+                history = history,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { ids[nextId++] },
+            )
+            ui.create()
+            ui.beginTurn(FIRST_CONVERSATION_ID, "timer")
+            val firstTurnId = checkNotNull(ui.runningTurnId(FIRST_CONVERSATION_ID))
+            ui.completeTurn(
+                conversationId = FIRST_CONVERSATION_ID,
+                assistantText = "How long should I set the timer for?",
+                success = true,
+                expectedTurnId = firstTurnId,
+            )
+
+            ui.create()
+            ui.beginTurn(SECOND_CONVERSATION_ID, "thanks")
+            val secondTurnId = checkNotNull(ui.runningTurnId(SECOND_CONVERSATION_ID))
+            ui.completeTurn(
+                conversationId = SECOND_CONVERSATION_ID,
+                assistantText = "You're welcome.",
+                success = true,
+                expectedTurnId = secondTurnId,
+            )
+            assertEquals(FIRST_CONVERSATION_ID, ui.select(FIRST_CONVERSATION_ID).selectedConversationId)
+        }
+
+        PortableConversationStore(context).use { history ->
+            val ui = CanonicalConversationStore(
+                history = history,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            assertEquals(FIRST_CONVERSATION_ID, ui.state().selectedConversationId)
+            assertEquals(SECOND_CONVERSATION_ID, ui.select(SECOND_CONVERSATION_ID).selectedConversationId)
+        }
+
+        PortableConversationStore(context).use { history ->
+            val ui = CanonicalConversationStore(
+                history = history,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            val reopened = ui.state()
+
+            assertNull(reopened.loadFailure)
+            assertEquals(SECOND_CONVERSATION_ID, reopened.selectedConversationId)
+            assertEquals(2, reopened.conversations.size)
+            assertEquals(
+                "How long should I set the timer for?",
+                checkNotNull(reopened.conversation(FIRST_CONVERSATION_ID))
+                    .turns.single()
+                    .assistantText,
+            )
+            assertEquals(
+                "You're welcome.",
+                checkNotNull(reopened.conversation(SECOND_CONVERSATION_ID))
+                    .turns.single()
+                    .assistantText,
+            )
+            assertEquals(2, history.listConversations(limit = 10).size)
+        }
+    }
+
     private companion object {
         const val FIRST_CONVERSATION_ID = "selection-recreation-a"
         const val SECOND_CONVERSATION_ID = "selection-recreation-b"
