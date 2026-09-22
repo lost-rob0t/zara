@@ -38,7 +38,33 @@ object PureSymbolicExpertAdmission {
         activation: ActivationHandle,
         request: ExpertRequest,
         result: ExpertResult,
+    ): ExpertResult = validateResult(
+        activation = activation,
+        request = request,
+        result = result,
+        currentRegistryGeneration = activation.registryGeneration,
+        currentRuntimeGeneration = activation.runtimeGeneration,
+    )
+
+    fun validateResult(
+        activation: ActivationHandle,
+        request: ExpertRequest,
+        result: ExpertResult,
+        currentRegistryGeneration: Long,
+        currentRuntimeGeneration: Long,
     ): ExpertResult {
+        require(currentRegistryGeneration >= 0L) {
+            "current registry generation must be non-negative"
+        }
+        require(currentRuntimeGeneration >= 0L) {
+            "current runtime generation must be non-negative"
+        }
+        require(activation.registryGeneration == currentRegistryGeneration) {
+            "activation registry generation is stale"
+        }
+        require(activation.runtimeGeneration == currentRuntimeGeneration) {
+            "activation runtime generation is stale"
+        }
         require(request.operation == "expert.invoke") {
             "Pure-symbolic expert result requires canonical expert.invoke admission"
         }
