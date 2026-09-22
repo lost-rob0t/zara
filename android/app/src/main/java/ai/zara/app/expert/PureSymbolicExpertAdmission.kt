@@ -82,28 +82,39 @@ object PureSymbolicExpertAdmission {
             "Pure-symbolic expert result must prove usage.model_calls == 0"
         }
 
-        if (result.verdict == ExpertVerdict.SUCCEEDED) {
-            require(result.errorCode == null && result.errorMessage.isEmpty()) {
-                "Successful expert result cannot carry an error"
+        require(result.verdict == ExpertVerdict.SUCCEEDED) {
+            "Only a succeeded canonical expert result may be projected as conversation success"
+        }
+        require(result.errorCode == null && result.errorMessage.isEmpty()) {
+            "Successful expert result cannot carry an error"
+        }
+        require(result.evidenceRefs.isNotEmpty()) {
+            "Successful pure-symbolic expert result requires canonical evidence"
+        }
+        if (result.effectReceipts.isNotEmpty()) {
+            require(result.data["verified"] == true) {
+                "Effect-dependent success requires fresh verified postcondition evidence"
             }
-            require(result.evidenceRefs.isNotEmpty()) {
-                "Successful pure-symbolic expert result requires canonical evidence"
+            val verifiedOutcomeRef = result.data["verified_outcome_ref"]
+            require(verifiedOutcomeRef is String && verifiedOutcomeRef.isNotBlank()) {
+                "Effect-dependent success requires a verified outcome reference"
             }
-            if (result.effectReceipts.isNotEmpty()) {
-                require(result.data["verified"] == true) {
-                    "Effect-dependent success requires fresh verified postcondition evidence"
-                }
-                val verifiedOutcomeRef = result.data["verified_outcome_ref"]
-                require(verifiedOutcomeRef is String && verifiedOutcomeRef.isNotBlank()) {
-                    "Effect-dependent success requires a verified outcome reference"
-                }
-                val postconditionEvidence = result.data["postcondition_evidence"]
-                require(postconditionEvidence is Map<*, *> && postconditionEvidence.isNotEmpty()) {
-                    "Effect-dependent success requires postcondition evidence"
-                }
-                require(result.evidenceRefs.contains(verifiedOutcomeRef)) {
-                    "Verified outcome reference must be present in canonical evidenceRefs"
-                }
+            val postconditionEvidence = result.data["postcondition_evidence"]
+            require(postconditionEvidence is Map<*, *> && postconditionEvidence.isNotEmpty()) {
+                "Effect-dependent success requires postcondition evidence"
+            }
+            require(result.evidenceRefs.contains(verifiedOutcomeRef)) {
+                "Verified outcome reference must be present in canonical evidenceRefs"
+            }
+            require(postconditionEvidence["receipt_ref"] == verifiedOutcomeRef) {
+                "Postcondition evidence must be bound to the verified outcome reference"
+            }
+            val sourceGeneration = postconditionEvidence["source_generation"]
+            require(
+                sourceGeneration is Number &&
+                    sourceGeneration.toLong() == activation.runtimeGeneration
+            ) {
+                "Postcondition evidence is stale for the admitted runtime generation"
             }
         }
         return result
