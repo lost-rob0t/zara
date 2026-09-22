@@ -140,6 +140,11 @@ def _close_surface(
     bridge.close()
     surface.prepare_for_quit()
     surface.close()
+    # Drain zero-delay layout callbacks while their Qt wrappers are still valid.
+    # Reusing the same QApplication to emulate a restarted process otherwise lets
+    # the old surface's queued _MessageBody resize callback fire after deletion.
+    app.processEvents()
+    app.processEvents()
     surface.deleteLater()
     controller.setParent(None)
     controller.deleteLater()
