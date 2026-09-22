@@ -32,6 +32,10 @@ def test_fact_store_round_trips_every_loader_supported_fact_and_preserves_manual
         store.add("llm_endpoint", {"value": "http://127.0.0.1:11434/api/chat"}),
         store.add("todo_destination", {"value": "~/notes/todo.org"}),
         store.add("todo_context_mode", {"value": "infer_with_llm"}),
+        store.add("voice_default", {"value": "zara"}),
+        store.add("voice_role", {"role": "narrator", "voice": "zara"}),
+        store.add("voice_speaker", {"speaker": "Alice", "voice": "zara"}),
+        store.add("voice_policy", {"role": "interviewer", "policy": "distinct_if_available"}),
         store.add("verb_intent", {"phrase": "summon studio", "intent": "open", "arity": 1}),
     ]
 
@@ -43,6 +47,10 @@ def test_fact_store_round_trips_every_loader_supported_fact_and_preserves_manual
     text = path.read_text(encoding="utf-8")
     assert text.startswith(manual)
     assert 'app_mapping(studio, ["code", "--new-window"]).' in text
+    assert 'voice_default("zara").' in text
+    assert 'voice_role(narrator, "zara").' in text
+    assert 'voice_speaker("Alice", "zara").' in text
+    assert "voice_policy(interviewer, distinct_if_available)." in text
     assert "verb_intent(summon_studio, open, 1)." in text
     assert text.count("% BEGIN ZARA MANAGED FACTS") == 1
 

@@ -219,7 +219,7 @@ def test_default_prompt_routes_agent_mode_tools_before_prolog():
 
     prompt = manager._build_system_prompt()
 
-    assert "Agent-mode service actions" in prompt
+    assert "Agent mode:" in prompt
     assert "schedule_recurring_task" in prompt
     assert "before considering the legacy command router" in prompt
     assert "`speak`" in prompt
