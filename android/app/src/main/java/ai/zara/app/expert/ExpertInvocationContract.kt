@@ -134,6 +134,7 @@ private fun requireBoundedPortableText(
     require(allowEmpty || value.isNotEmpty()) { "$field must not be empty" }
     require(value == value.trim()) { "$field must not contain surrounding whitespace" }
     require(value.none { it.code < 0x20 || it.code == 0x7f }) { "$field contains control characters" }
+    requireWellFormedUtf16(value, field)
 }
 
 private fun requireBoundedPayload(value: Any?, field: String, depth: Int = 0) {
@@ -142,7 +143,10 @@ private fun requireBoundedPayload(value: Any?, field: String, depth: Int = 0) {
         null, is Boolean, is Int, is Long -> Unit
         is Float -> require(value.isFinite()) { "$field contains non-finite number" }
         is Double -> require(value.isFinite()) { "$field contains non-finite number" }
-        is String -> require(value.length <= MAX_PAYLOAD_STRING) { "$field contains oversized string" }
+        is String -> {
+            require(value.length <= MAX_PAYLOAD_STRING) { "$field contains oversized string" }
+            requireWellFormedUtf16(value, field)
+        }
         is List<*> -> {
             require(value.size <= MAX_PAYLOAD_LIST) { "$field contains oversized list" }
             value.forEachIndexed { index, item -> requireBoundedPayload(item, "$field[$index]", depth + 1) }
@@ -151,10 +155,32 @@ private fun requireBoundedPayload(value: Any?, field: String, depth: Int = 0) {
             require(value.size <= MAX_PAYLOAD_KEYS) { "$field contains oversized object" }
             value.forEach { (key, item) ->
                 require(key is String && key.length <= 64) { "$field contains invalid object key" }
+                requireWellFormedUtf16(key, "$field object key")
                 requireBoundedPayload(item, "$field.$key", depth + 1)
             }
         }
         else -> throw IllegalArgumentException("$field contains unsupported value type")
+    }
+}
+
+private fun requireWellFormedUtf16(value: String, field: String) {
+    var index = 0
+    while (index < value.length) {
+        val character = value[index]
+        when {
+            Character.isHighSurrogate(character) -> {
+                require(
+                    index + 1 < value.length && Character.isLowSurrogate(value[index + 1]),
+                ) {
+                    "$field contains an unpaired UTF-16 surrogate"
+                }
+                index += 2
+            }
+            Character.isLowSurrogate(character) -> {
+                throw IllegalArgumentException("$field contains an unpaired UTF-16 surrogate")
+            }
+            else -> index += 1
+        }
     }
 }
 
