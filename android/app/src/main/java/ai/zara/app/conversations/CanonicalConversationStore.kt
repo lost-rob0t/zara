@@ -10,6 +10,8 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -526,7 +528,12 @@ class CanonicalConversationStore(
         require(size in 0..maxChars * 4)
         val bytes = ByteArray(size)
         readFully(bytes)
-        val value = String(bytes, StandardCharsets.UTF_8)
+        val value = StandardCharsets.UTF_8
+            .newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+            .toString()
         require(value.length <= maxChars)
         return value
     }
