@@ -1,0 +1,55 @@
+package ai.zara.wear
+
+import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
+
+/**
+ * Read-only Wear consumer for canonical phone conversation projections.
+ *
+ * This owns no durable conversation state and grants no runtime/tool authority.
+ * Callers must supply the currently selected scope; encoded projections are
+ * accepted only through [SymbolicConversationContinuityGate].
+ */
+class WearSymbolicConversationConsumer(
+    initialScope: Scope,
+) {
+    data class Scope(
+        val principalId: String,
+        val conversationId: String,
+        val projectId: String?,
+        val projectGeneration: Long,
+    ) {
+        init {
+            require(principalId.isNotBlank()) { "principalId must not be blank" }
+            require(conversationId.isNotBlank()) { "conversationId must not be blank" }
+            require(projectId?.isNotBlank() != false) { "projectId must be null or non-blank" }
+            require(projectGeneration >= 0L) { "projectGeneration must be >= 0" }
+        }
+    }
+
+    private var scope: Scope = initialScope
+    private var current: SymbolicConversationEdgeSnapshot? = null
+
+    @Synchronized
+    fun currentSnapshot(): SymbolicConversationEdgeSnapshot? = current
+
+    @Synchronized
+    fun accept(encoded: ByteArray): SymbolicConversationEdgeSnapshot? {
+        val accepted = SymbolicConversationContinuityGate.decodeAccepted(
+            expectedPrincipalId = scope.principalId,
+            expectedConversationId = scope.conversationId,
+            expectedProjectId = scope.projectId,
+            expectedProjectGeneration = scope.projectGeneration,
+            current = current,
+            encoded = encoded,
+        ) ?: return null
+        current = accepted
+        return accepted
+    }
+
+    @Synchronized
+    fun selectScope(next: Scope) {
+        if (next == scope) return
+        scope = next
+        current = null
+    }
+}
