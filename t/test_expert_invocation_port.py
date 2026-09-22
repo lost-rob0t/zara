@@ -201,8 +201,15 @@ def test_port_invokes_only_through_canonical_request_path_with_zero_model_budget
 
 
 @pytest.mark.parametrize("bad_number", [float("nan"), float("inf"), float("-inf")])
-def test_port_rejects_non_finite_numeric_input(bad_number: float) -> None:
-    registry = _registry()
+def test_port_rejects_non_finite_numeric_input_without_dispatch(bad_number: float) -> None:
+    dispatches = 0
+
+    def counting_handler(**_kwargs: Any) -> dict[str, object]:
+        nonlocal dispatches
+        dispatches += 1
+        return _handler(**_kwargs)
+
+    registry = _registry(counting_handler)
     handle, _ = registry.activate(
         "user:alice",
         "ws:main",
@@ -212,6 +219,8 @@ def test_port_rejects_non_finite_numeric_input(bad_number: float) -> None:
 
     with pytest.raises(ExpertInvalidInputError):
         port.invoke(_request(handle, input={"score": bad_number}))
+
+    assert dispatches == 0
 
 
 @pytest.mark.parametrize("surface", ["data", "usage", "effect_receipts"])
