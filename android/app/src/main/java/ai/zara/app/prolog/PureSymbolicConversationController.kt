@@ -161,13 +161,23 @@ class PureSymbolicConversationController(
             RoutedQuery(PureSymbolicRoute.EXPLICIT_COMMAND, query(command.query))
         }
         PureSymbolicRoute.FRAME_RESOLVER -> {
-            val resolution = resolve(input, conversationId)
+            val resolution = resolve(normalizeNaturalInput(input), conversationId)
             RoutedQuery(
                 route = PureSymbolicRoute.FRAME_RESOLVER,
                 future = resolution.future,
                 turnId = resolution.turnId,
             )
         }
+    }
+
+    private fun normalizeNaturalInput(input: String): String {
+        val punctuationCount = input.takeLastWhile { character ->
+            character == '.' || character == '!' || character == '?'
+        }.length
+        if (punctuationCount !in 1..MAX_TERMINAL_PUNCTUATION) return input
+
+        val normalized = input.dropLast(punctuationCount).trimEnd()
+        return normalized.ifEmpty { input }
     }
 
     private fun routeKind(input: String): PureSymbolicRoute = when {
@@ -233,5 +243,6 @@ class PureSymbolicConversationController(
     companion object {
         private const val MAX_INPUT_CHARS = 32 * 1024
         private const val MAX_CONVERSATION_ID_CHARS = 256
+        private const val MAX_TERMINAL_PUNCTUATION = 3
     }
 }
