@@ -70,7 +70,7 @@ class PureSymbolicExpertPostconditionGenerationTest {
         request: ExpertRequest,
         sourceGeneration: Number,
     ): ExpertResult {
-        val evidenceRef = "zara.verified-outcome/v1:effect:diagnosis-42"
+        val evidenceRef = "zara.verified-outcome/v2:${activation.runtimeGeneration}:effect:diagnosis-42"
         return ExpertResult(
             protocol = ZARA_EXPERT_PROTOCOL,
             requestId = requireNotNull(request.requestId),
