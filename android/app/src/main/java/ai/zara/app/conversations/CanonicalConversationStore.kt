@@ -194,6 +194,7 @@ class CanonicalConversationStore(
         val id = requireConversation(conversationId)
         val response = normalizeText(assistantText, "Assistant text", allowBlank = true)
         val expectedTurn = expectedTurnId?.let(::normalizeId)
+        val cleanRemoteId = normalizeOptionalId(remoteConversationId, MAX_ID_CHARS, "Remote conversation id")
         val messages = history.loadMessages(id)
         val pending = if (expectedTurn == null) {
             messages.lastOrNull {
@@ -202,7 +203,7 @@ class CanonicalConversationStore(
         } else {
             messages.lastOrNull {
                 it.role == HistoryMessageRole.Assistant &&
-                    it.turnId == expectedTurnId &&
+                    it.turnId == expectedTurn &&
                     it.status.isRunning()
             }
         }
@@ -219,7 +220,7 @@ class CanonicalConversationStore(
                 messages.lastOrNull { it.role == HistoryMessageRole.Assistant }
             } else {
                 messages.lastOrNull {
-                    it.role == HistoryMessageRole.Assistant && it.turnId == expectedTurnId
+                    it.role == HistoryMessageRole.Assistant && it.turnId == expectedTurn
                 }
             } ?: error("Conversation has no assistant turn matching the expected turn id")
             val expectedStatus = if (success) {
@@ -230,8 +231,13 @@ class CanonicalConversationStore(
             check(terminal.status == expectedStatus && terminal.content == response) {
                 "Conversation has no matching running or terminal turn"
             }
+            if (cleanRemoteId != null) {
+                val durableRemoteId = metadata.conversations[id]?.remoteConversationId
+                check(durableRemoteId == null || durableRemoteId == cleanRemoteId) {
+                    "Terminal turn replay cannot replace remote conversation id"
+                }
+            }
         }
-        val cleanRemoteId = normalizeOptionalId(remoteConversationId, MAX_ID_CHARS, "Remote conversation id")
         if (cleanRemoteId != null) {
             updateMetadata(id) { it.copy(remoteConversationId = cleanRemoteId) }
         }
