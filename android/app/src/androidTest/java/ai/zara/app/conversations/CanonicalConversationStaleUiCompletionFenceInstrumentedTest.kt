@@ -190,7 +190,7 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
             legacyFile = null,
             idFactory = { CONVERSATION_ID },
         )
-        first.create(projectId = "project-a")
+        first.create(projectId = VALID_PROJECT_ID)
         first.beginTurn(CONVERSATION_ID, "timer")
         val pendingTurnId = checkNotNull(first.runningTurnId(CONVERSATION_ID))
         firstHistory.close()
@@ -220,6 +220,56 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
             )
             assertEquals("", pendingAfterCorruptReopen.content)
             assertEquals("", pendingAfterCorruptReopen.error)
+        } finally {
+            reopenedHistory.close()
+        }
+    }
+
+    @Test
+    fun wellFormedUtf8ControlCharacterProjectIdFailsClosedBeforeRecovery() {
+        val firstHistory = PortableConversationStore(context)
+        val first = CanonicalConversationStore(
+            history = firstHistory,
+            metadataFile = metadataFile,
+            legacyFile = null,
+            idFactory = { CONVERSATION_ID },
+        )
+        first.create(projectId = VALID_PROJECT_ID)
+        first.beginTurn(CONVERSATION_ID, "timer")
+        val pendingTurnId = checkNotNull(first.runningTurnId(CONVERSATION_ID))
+        firstHistory.close()
+
+        val metadataBytes = metadataFile.readBytes()
+        val projectBytes = VALID_PROJECT_ID.toByteArray(Charsets.UTF_8)
+        val projectOffset = metadataBytes.indexOfSubsequence(projectBytes)
+        assertTrue("persisted project id must be present in metadata sidecar", projectOffset >= 0)
+        metadataBytes[projectOffset + "project".length] = 0
+        metadataFile.writeBytes(metadataBytes)
+
+        val reopenedHistory = PortableConversationStore(context)
+        try {
+            val reopened = CanonicalConversationStore(
+                history = reopenedHistory,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            assertEquals(
+                "well-formed UTF-8 with an invalid project identifier must fail closed",
+                "Conversation UI metadata is corrupt or unsupported",
+                reopened.state().loadFailure,
+            )
+
+            val pendingAfterInvalidProjectReopen = reopenedHistory.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == pendingTurnId
+            }
+            assertEquals(
+                "semantic metadata corruption must be rejected before interrupted-turn recovery",
+                HistoryMessageStatus.Pending,
+                pendingAfterInvalidProjectReopen.status,
+            )
+            assertEquals("", pendingAfterInvalidProjectReopen.content)
+            assertEquals("", pendingAfterInvalidProjectReopen.error)
         } finally {
             reopenedHistory.close()
         }
@@ -258,8 +308,24 @@ class CanonicalConversationStaleUiCompletionFenceInstrumentedTest {
         }
     }
 
+    private fun ByteArray.indexOfSubsequence(needle: ByteArray): Int {
+        if (needle.isEmpty() || needle.size > size) return -1
+        for (start in 0..size - needle.size) {
+            var matches = true
+            for (offset in needle.indices) {
+                if (this[start + offset] != needle[offset]) {
+                    matches = false
+                    break
+                }
+            }
+            if (matches) return start
+        }
+        return -1
+    }
+
     private companion object {
         const val CONVERSATION_ID = "android-stale-ui-completion-fence"
         const val FAILURE_TEXT = "symbolic turn failed durably"
+        const val VALID_PROJECT_ID = "project-a"
     }
 }
