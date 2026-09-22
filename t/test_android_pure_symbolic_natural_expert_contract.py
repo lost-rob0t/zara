@@ -54,6 +54,32 @@ EXPERT_INVOCATION_CONTRACT = (
     / "expert"
     / "ExpertInvocationContract.kt"
 )
+EXPERT_ADAPTER = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "expert"
+    / "CanonicalExpertInvocationPort.kt"
+)
+EXPERT_ADMISSION = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "expert"
+    / "PureSymbolicExpertAdmission.kt"
+)
 SYMBOLIC_DIALOGUE = ROOT / "modules" / "symbolic_dialogue.pl"
 INSTALLED_ACCEPTANCE = ROOT / "android" / "integration" / "device_pure_symbolic_acceptance.py"
 
@@ -83,6 +109,8 @@ def test_natural_pure_symbolic_turn_reuses_existing_expert_router_and_response_c
 def test_natural_expert_invocation_must_cross_zara_expert_v1_admission_before_body_execution() -> None:
     factory = FACTORY.read_text(encoding="utf-8")
     contract = EXPERT_CONTRACT.read_text(encoding="utf-8") + EXPERT_INVOCATION_CONTRACT.read_text(encoding="utf-8")
+    adapter = EXPERT_ADAPTER.read_text(encoding="utf-8")
+    admission = EXPERT_ADMISSION.read_text(encoding="utf-8")
 
     # Mirror the canonical #1233 request/result envelope on Android instead of inventing a
     # natural-language-only raw Prolog execution lane. These names intentionally match the
@@ -101,16 +129,22 @@ def test_natural_expert_invocation_must_cross_zara_expert_v1_admission_before_bo
     ):
         assert required in contract, f"Android ZARA-EXPERT/1 mirror is missing {required}"
 
-    assert 'operation = "expert.invoke"' in factory, (
-        "Natural expert turns must be admitted as canonical expert.invoke requests"
+    assert "PureSymbolicExpertInvocationAdapter" in factory, (
+        "Natural expert turns must cross the existing canonical expert invocation adapter, "
+        "not duplicate admission logic in the conversation factory."
     )
-    assert "expectedRegistryGeneration" in factory
-    assert "expectedRuntimeGeneration" in factory
-    assert "maxModelCalls = 0" in factory, (
+    assert "PureSymbolicExpertAdmission.request(" in adapter
+    assert "PureSymbolicExpertAdmission.validateResult(" in adapter
+    assert 'operation = "expert.invoke"' in admission, (
+        "Pure-symbolic expert admission must produce canonical expert.invoke requests"
+    )
+    assert "expectedRegistryGeneration = activation.registryGeneration" in admission
+    assert "expectedRuntimeGeneration = activation.runtimeGeneration" in admission
+    assert "limits.maxModelCalls == 0" in admission, (
         "Pure-symbolic expert admission must carry the shared zero-model budget"
     )
-    assert "effectReceipts" in factory, (
-        "Successful expert effects must be projected from canonical receipts, never inferred from prose"
+    assert "result.effectReceipts" in admission, (
+        "Successful expert effects must be admitted only from canonical receipts and verified evidence"
     )
     assert "expertTurnEnvelopeQuery(" not in factory, (
         "Natural expert turns must not execute a selected raw Prolog goal before canonical admission"
