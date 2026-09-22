@@ -161,7 +161,7 @@
       (should
        (equal captured
               '("zara" "--replay-conversation" "emacs-main"))))
-    (should (string-match-p "This project uses flakes\\." (buffer-string)))
+    (should (string-match-p "This project uses flakes\." (buffer-string)))
     (should-not zara-conversation-context-ids)
     (should (equal (gethash "project_id" zara-conversation-symbolic-projection)
                    "dotfiles"))
@@ -248,7 +248,7 @@
                   (should (= (gethash "max_model_calls" projection) 0))
                   (should (= (gethash "provider_calls" projection) 0))
                   (should (= (gethash "model_calls" projection) 0)))))
-            (should (string-match-p "This project uses flakes\\." (buffer-string)))
+            (should (string-match-p "This project uses flakes\." (buffer-string)))
             (should-not zara-conversation-context-ids)
             (setq-local zara-conversation-context-ids
                         '("evidence:42" "file:flake.nix"))
