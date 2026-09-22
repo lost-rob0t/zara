@@ -33,5 +33,23 @@ class CanonicalExpertOwnerSourceContractTest {
             "UI composition must not construct activation handles locally",
             activitySource.contains("ActivationHandle("),
         )
+
+        val ownerMethod = sessionSource.substringAfter(
+            "fun canonicalExpertInvocationPort(): CanonicalExpertInvocationPort",
+            missingDelimiterValue = "",
+        ).substringBefore("\n    fun ")
+        assertFalse(
+            "Canonical expert owner transport must not execute experts through raw Android Prolog queries",
+            ownerMethod.contains("queryLocalProlog(") || ownerMethod.contains("localServer.query("),
+        )
+        assertFalse(
+            "Canonical expert owner transport must not mint activation authority in AndroidAppSession",
+            ownerMethod.contains("ActivationHandle("),
+        )
+        assertFalse(
+            "Canonical expert owner transport must not construct a replacement port implementation",
+            ownerMethod.contains("CanonicalExpertInvocationPort {") ||
+                ownerMethod.contains("CanonicalExpertInvocationPort{"),
+        )
     }
 }
