@@ -169,6 +169,53 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
+    fun canonicalRenderedExpertEnvelopePreservesRenderedTextEvidenceAndRendererGeneration() {
+        val context = "completed_frame(frame(intent(ns(device),name('timer.set')),[],complete))"
+        val result = AndroidPureSymbolicConversationFactory.canonicalRenderedExpertEnvelopeResult(
+            rendered = CanonicalRenderedExpertAnswer(
+                text = "Triage says Alex is stable.",
+                evidenceRef = "evidence:triage:42",
+                runtimeGeneration = 17L,
+            ),
+            contextTerm = context,
+        )
+
+        assertEquals("expert.invoke", result.query)
+        assertEquals(17L, result.generation)
+        assertEquals(
+            listOf(
+                "Triage says Alex is stable.",
+                "__zara_context__:$context",
+                "__zara_act__:expert_answer",
+                "__zara_expert_evidence__:evidence:triage:42",
+            ),
+            result.terms,
+        )
+    }
+
+    @Test
+    fun canonicalRenderedExpertEnvelopeRejectsNonCanonicalContextOrInvalidRendererGeneration() {
+        val rendered = CanonicalRenderedExpertAnswer(
+            text = "Triage says Alex is stable.",
+            evidenceRef = "evidence:triage:42",
+            runtimeGeneration = 17L,
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidPureSymbolicConversationFactory.canonicalRenderedExpertEnvelopeResult(
+                rendered = rendered,
+                contextTerm = "future_context(foo)",
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidPureSymbolicConversationFactory.canonicalRenderedExpertEnvelopeResult(
+                rendered = rendered.copy(runtimeGeneration = -1L),
+                contextTerm = "[]",
+            )
+        }
+    }
+
+    @Test
     fun dialogueTurnQueryRejectsBlankInput() {
         assertThrows(IllegalArgumentException::class.java) {
             AndroidPureSymbolicConversationFactory.dialogueTurnQuery("   ")
