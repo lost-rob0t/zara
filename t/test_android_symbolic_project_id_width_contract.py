@@ -32,4 +32,11 @@ def test_canonical_ui_metadata_does_not_narrow_symbolic_project_identity() -> No
     )
     assert "normalizeOptionalId(projectId, MAX_PROJECT_ID_CHARS, \"Project id\")" in canonical
     assert "writeBoundedString(row.projectId.orEmpty(), MAX_PROJECT_ID_CHARS)" in canonical
-    assert "readBoundedString(MAX_PROJECT_ID_CHARS).ifEmpty { null }" in canonical
+    assert re.search(
+        r"val projectId = normalizeOptionalId\(\s*"
+        r"input\.readBoundedString\(MAX_PROJECT_ID_CHARS\),\s*"
+        r"MAX_PROJECT_ID_CHARS,\s*"
+        r'"Project id",\s*'
+        r"\)",
+        canonical,
+    ), "project metadata reload must preserve the canonical 512-char bound"
