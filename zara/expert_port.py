@@ -42,10 +42,12 @@ class CanonicalExpertInvocationPort:
         workspace: str,
         expert_id: str,
     ) -> Optional[ActivationHandle]:
-        """Return the sole already-active handle for an exact identity.
+        """Return the sole current already-active handle for an exact identity.
 
         Zero matches is an ordinary fail-closed miss.  Multiple matches are an
         authority ambiguity and are rejected rather than choosing one by order.
+        Handles minted under superseded registry/runtime generations are not
+        projected as active consumer authority.
         """
 
         self._require_scope(principal, "principal")
@@ -54,6 +56,8 @@ class CanonicalExpertInvocationPort:
 
         registry = self._registry
         with registry._lock:
+            current_registry_generation = registry._registry_generation
+            current_runtime_generation = registry._runtime_generation
             matches = [
                 record.handle
                 for record in registry._activations.values()
@@ -61,6 +65,8 @@ class CanonicalExpertInvocationPort:
                 and record.handle.principal == principal
                 and record.handle.workspace == workspace
                 and record.handle.expert_id == expert_id
+                and record.handle.registry_generation == current_registry_generation
+                and record.handle.runtime_generation == current_runtime_generation
             ]
 
         if len(matches) > 1:
