@@ -195,6 +195,12 @@ class CanonicalConversationStore(
         val response = normalizeText(assistantText, "Assistant text", allowBlank = true)
         val expectedTurn = expectedTurnId?.let(::normalizeId)
         val cleanRemoteId = normalizeOptionalId(remoteConversationId, MAX_ID_CHARS, "Remote conversation id")
+        val durableRemoteId = metadata.conversations[id]?.remoteConversationId
+        if (cleanRemoteId != null) {
+            check(durableRemoteId == null || durableRemoteId == cleanRemoteId) {
+                "Turn completion cannot replace remote conversation id"
+            }
+        }
         val messages = history.loadMessages(id)
         val pending = if (expectedTurn == null) {
             messages.lastOrNull {
@@ -231,14 +237,8 @@ class CanonicalConversationStore(
             check(terminal.status == expectedStatus && terminal.content == response) {
                 "Conversation has no matching running or terminal turn"
             }
-            if (cleanRemoteId != null) {
-                val durableRemoteId = metadata.conversations[id]?.remoteConversationId
-                check(durableRemoteId == null || durableRemoteId == cleanRemoteId) {
-                    "Terminal turn replay cannot replace remote conversation id"
-                }
-            }
         }
-        if (cleanRemoteId != null) {
+        if (cleanRemoteId != null && durableRemoteId == null) {
             updateMetadata(id) { it.copy(remoteConversationId = cleanRemoteId) }
         }
         return snapshot()
