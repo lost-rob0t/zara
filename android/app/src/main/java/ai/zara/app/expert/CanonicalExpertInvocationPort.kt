@@ -62,6 +62,25 @@ class PureSymbolicExpertInvocationAdapter(
             )
         }
 
+        try {
+            val currentRegistryGeneration = port.currentRegistryGeneration()
+            val currentRuntimeGeneration = port.currentRuntimeGeneration()
+            require(currentRegistryGeneration >= 0L) {
+                "current registry generation must be non-negative"
+            }
+            require(currentRuntimeGeneration >= 0L) {
+                "current runtime generation must be non-negative"
+            }
+            require(activation.registryGeneration == currentRegistryGeneration) {
+                "activation registry generation is stale before invocation"
+            }
+            require(activation.runtimeGeneration == currentRuntimeGeneration) {
+                "activation runtime generation is stale before invocation"
+            }
+        } catch (error: Throwable) {
+            return CompletableFuture.failedFuture(error)
+        }
+
         val request = try {
             PureSymbolicExpertAdmission.request(
                 activation = activation,
