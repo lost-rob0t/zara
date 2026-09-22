@@ -111,6 +111,7 @@ class CanonicalConversationStore(
         val title = rawTitle.trim()
         require(title.isNotEmpty()) { "Conversation title is required" }
         require(title.length <= 120) { "Conversation title is too long" }
+        requireWellFormedUtf16(title, "Conversation title")
         history.renameConversation(id, title)
         return snapshot()
     }
@@ -536,6 +537,7 @@ class CanonicalConversationStore(
 
     private fun DataOutputStream.writeBoundedString(value: String, maxChars: Int) {
         require(value.length <= maxChars)
+        requireWellFormedUtf16(value, "Conversation UI metadata value")
         val bytes = value.toByteArray(StandardCharsets.UTF_8)
         require(bytes.size <= maxChars * 4)
         writeInt(bytes.size)
@@ -561,6 +563,7 @@ class CanonicalConversationStore(
         val value = raw.trim()
         require(value.isNotEmpty()) { "Conversation id is required" }
         require(value.length <= MAX_ID_CHARS) { "Conversation id is too long" }
+        requireWellFormedUtf16(value, "Conversation id")
         require(value.none(Char::isISOControl)) { "Conversation id contains control characters" }
         return value
     }
@@ -570,6 +573,7 @@ class CanonicalConversationStore(
         val value = raw.trim()
         if (value.isEmpty()) return null
         require(value.length <= maxChars) { "$name is too long" }
+        requireWellFormedUtf16(value, name)
         require(value.none(Char::isISOControl)) { "$name contains control characters" }
         return value
     }
@@ -578,7 +582,27 @@ class CanonicalConversationStore(
         val value = raw.trim()
         if (!allowBlank) require(value.isNotEmpty()) { "$name is required" }
         require(value.length <= 64 * 1024) { "$name is too long" }
+        requireWellFormedUtf16(value, name)
         return value
+    }
+
+    private fun requireWellFormedUtf16(value: String, name: String) {
+        var index = 0
+        while (index < value.length) {
+            val current = value[index]
+            when {
+                Character.isHighSurrogate(current) -> {
+                    require(index + 1 < value.length && Character.isLowSurrogate(value[index + 1])) {
+                        "$name contains malformed UTF-16"
+                    }
+                    index += 2
+                }
+                Character.isLowSurrogate(current) -> {
+                    throw IllegalArgumentException("$name contains malformed UTF-16")
+                }
+                else -> index += 1
+            }
+        }
     }
 
     private fun deriveTitle(text: String): String {
