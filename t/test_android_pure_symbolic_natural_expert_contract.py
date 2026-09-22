@@ -95,10 +95,13 @@ def test_natural_pure_symbolic_turn_reuses_existing_expert_router_and_response_c
         "and preserve the selected expert identity for canonical admission; do not add a second "
         "expert registry or parser"
     )
-    assert "symbolic_dialogue:response_act(expert_result(" in factory, (
-        "A matched natural expert invocation must be projected through the canonical "
-        "symbolic expert_result -> answer(expert, ..., evidence(...)) response contract"
+    assert "canonicalExpertEnvelopeResult(" in factory, (
+        "A matched natural expert invocation must project the admitted canonical expert result "
+        "into the ordinary symbolic dialogue envelope rather than re-executing a raw Prolog goal"
     )
+    assert "projected.summary" in factory
+    assert "projected.evidenceRef" in factory
+    assert '"${DIALOGUE_ACT_WIRE_PREFIX}expert_answer"' in factory
     assert "response_act(expert_result(summary(Summary), evidence(EvidenceRef))" in symbolic_dialogue
     assert "DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX" in factory
 
