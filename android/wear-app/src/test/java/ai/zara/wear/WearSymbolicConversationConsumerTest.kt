@@ -36,6 +36,37 @@ class WearSymbolicConversationConsumerTest {
     }
 
     @Test
+    fun recreatedConsumerRehydratesSameScopedCanonicalTruth() {
+        val snapshot = fixture(
+            projectionGeneration = 12,
+            runtimeGeneration = 18,
+            dialogueAct = "clarify",
+            discourseEntityRefs = listOf("entity:repo:zara", "entity:project:mega-brain"),
+            unresolvedQuestionRefs = listOf("question:which-project"),
+            expertEvidenceRefs = listOf("expert:dotfiles:18", "expert:history:18"),
+            verifiedOutcomeRefs = listOf(
+                "zara.verified-outcome/v2:18:outcome:postcondition:project-selected",
+            ),
+        )
+        val encoded = SymbolicConversationEdgeCodec.encode(snapshot)
+
+        val beforeRecreation = consumer()
+        assertEquals(snapshot, beforeRecreation.accept(encoded))
+
+        val afterRecreation = consumer()
+        assertNull(afterRecreation.currentSnapshot())
+        assertEquals(snapshot, afterRecreation.accept(encoded))
+        assertEquals("clarify", afterRecreation.currentSnapshot()?.dialogueAct)
+        assertEquals(snapshot.discourseEntityRefs, afterRecreation.currentSnapshot()?.discourseEntityRefs)
+        assertEquals(snapshot.unresolvedQuestionRefs, afterRecreation.currentSnapshot()?.unresolvedQuestionRefs)
+        assertEquals(snapshot.expertEvidenceRefs, afterRecreation.currentSnapshot()?.expertEvidenceRefs)
+        assertEquals(snapshot.verifiedOutcomeRefs, afterRecreation.currentSnapshot()?.verifiedOutcomeRefs)
+        assertEquals(0L, afterRecreation.currentSnapshot()?.maxModelCalls)
+        assertEquals(0L, afterRecreation.currentSnapshot()?.modelCalls)
+        assertEquals(0L, afterRecreation.currentSnapshot()?.providerCalls)
+    }
+
+    @Test
     fun rejectsWrongScopeStaleGenerationAndProviderAuthority() {
         val consumer = consumer()
         val accepted = fixture(projectionGeneration = 5, runtimeGeneration = 8)
