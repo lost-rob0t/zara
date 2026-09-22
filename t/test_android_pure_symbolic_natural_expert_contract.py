@@ -90,9 +90,10 @@ def test_natural_pure_symbolic_turn_reuses_existing_expert_router_and_response_c
     symbolic_dialogue = SYMBOLIC_DIALOGUE.read_text(encoding="utf-8")
 
     assert "object LocalNaturalLanguageExpertRouter" in logic_language
-    assert "LocalNaturalLanguageExpertRouter.query" in factory, (
-        "Android pure-symbolic natural turns must reuse the existing expert activation router; "
-        "do not add a second expert registry or parser"
+    assert "LocalNaturalLanguageExpertRouter.select" in factory, (
+        "Android pure-symbolic natural turns must reuse the existing expert activation router "
+        "and preserve the selected expert identity for canonical admission; do not add a second "
+        "expert registry or parser"
     )
     assert "symbolic_dialogue:response_act(expert_result(" in factory, (
         "A matched natural expert invocation must be projected through the canonical "
@@ -104,6 +105,26 @@ def test_natural_pure_symbolic_turn_reuses_existing_expert_router_and_response_c
     # The pure-symbolic path must stay isolated from the legacy local-model fallback path.
     assert "generateLocalModelTurn" not in factory
     assert "submitLocalText(" not in factory
+
+
+def test_natural_expert_router_preserves_identity_for_canonical_expert_admission() -> None:
+    logic_language = LOGIC_LANGUAGE.read_text(encoding="utf-8")
+    router = logic_language.split("object LocalNaturalLanguageExpertRouter", 1)[1].split(
+        "data class LocalPrologCommand",
+        1,
+    )[0]
+
+    assert "data class NaturalLanguageExpertSelection" in logic_language, (
+        "The deterministic router must return a typed selection instead of dropping expert "
+        "identity and returning only a raw Prolog query string"
+    )
+    assert "fun select(" in router
+    assert "expertId" in router
+    assert "query" in router
+    assert "fun query(" in router, (
+        "Keep the existing query compatibility surface while canonical conversation routing "
+        "moves to the typed selection contract"
+    )
 
 
 def test_natural_expert_invocation_must_cross_zara_expert_v1_admission_before_body_execution() -> None:
