@@ -73,6 +73,10 @@ object PureSymbolicExpertAdmission {
             "expert result runtime generation is stale"
         }
 
+        val providerCalls = result.usage["provider_calls"]
+        require(providerCalls is Number && providerCalls.toLong() == 0L) {
+            "Pure-symbolic expert result must prove usage.provider_calls == 0"
+        }
         val modelCalls = result.usage["model_calls"]
         require(modelCalls is Number && modelCalls.toLong() == 0L) {
             "Pure-symbolic expert result must prove usage.model_calls == 0"
