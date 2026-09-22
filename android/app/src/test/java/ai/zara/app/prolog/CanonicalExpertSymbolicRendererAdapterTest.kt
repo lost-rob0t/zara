@@ -36,6 +36,7 @@ class CanonicalExpertSymbolicRendererAdapterTest {
         assertTrue(query.contains("symbolic_dialogue:render_response(Act, Result)"))
         assertFalse(query.contains("expert.invoke"))
         assertEquals("triage says alex is stable", rendered.text)
+        assertEquals("evidence:triage:42", rendered.evidenceRef)
         assertEquals(17L, rendered.runtimeGeneration)
     }
 
@@ -88,11 +89,12 @@ class CanonicalExpertSymbolicRendererAdapterTest {
             evidenceRef = "evidence:triage/quoted",
         )
 
-        adapter.render(projected).get()
+        val rendered = adapter.render(projected).get()
         val query = requireNotNull(capturedQuery)
 
         assertTrue(query.contains("quoted \\\"value\\\" at C:\\\\tmp\\nnext"))
         assertTrue(query.contains("evidence:triage/quoted"))
+        assertEquals("evidence:triage/quoted", rendered.evidenceRef)
     }
 
     private fun projected(): PureSymbolicExpertConversationResult =
