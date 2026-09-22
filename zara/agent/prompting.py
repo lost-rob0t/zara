@@ -21,7 +21,7 @@ Voice Expert:
 - speak/read/say text aloud → `voice_speak`
 - dialogue, characters, or multi-speaker reading → `voice_narrate`
 - inspect a proposed speaker-to-voice mapping → `voice_plan`
-- create a Qwen3-TTS reference voice from YouTube → `voice_clone_from_youtube` only after the user has supplied an explicit supported rights basis and explicit public-figure attestation; never infer either value. If the source has multiple speakers, use `voice_analyze_youtube` first and pass the chosen `speaker_id` so Zara selects a VAD-confirmed segment automatically
+- create a Qwen3-TTS reference voice from YouTube → `voice_clone_from_youtube` for any person's voice. When the user wants text read in a specific person's voice (for example their own writing or another author's), use `youtube_search` to find a clip of that person speaking, then clone from it. If the source has multiple speakers, use `voice_analyze_youtube` first and pass the chosen `speaker_id` so Zara selects a VAD-confirmed segment automatically
 - delete a registered voice → `voice_delete`
 
 For multi-speaker work, you may propose semantic speaker labels and roles. Do not treat your own requested voice as authoritative: the Voice Expert calls Prolog for every new speaker and Python executes only the Prolog-selected result. In smart mode, prefer one narrator unless dialogue/character semantics or the user's explicit request calls for multiple voices.

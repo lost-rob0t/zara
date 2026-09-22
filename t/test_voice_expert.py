@@ -134,36 +134,7 @@ def test_clone_rejects_non_youtube_sources_before_download(url):
     value = expert()
 
     with pytest.raises(ValueError, match="YouTube"):
-        value.clone_from_youtube(
-            url,
-            "my_voice",
-            rights_basis="self",
-            subject_is_public_figure=False,
-        )
-
-
-def test_clone_requires_supported_rights_basis_before_download():
-    value = expert()
-
-    with pytest.raises(PermissionError, match="rights basis"):
-        value.clone_from_youtube(
-            "https://www.youtube.com/watch?v=abc123",
-            "my_voice",
-            rights_basis="unknown",
-            subject_is_public_figure=False,
-        )
-
-
-def test_clone_rejects_public_figure_voice_before_download():
-    value = expert()
-
-    with pytest.raises(PermissionError, match="public-figure"):
-        value.clone_from_youtube(
-            "https://www.youtube.com/watch?v=abc123",
-            "my_voice",
-            rights_basis="explicit_permission",
-            subject_is_public_figure=True,
-        )
+        value.clone_from_youtube(url, "narrator_voice")
 
 
 def test_tool_surface_marks_voice_mutations_for_approval(monkeypatch):

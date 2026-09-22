@@ -78,17 +78,6 @@ class VoiceCloneYouTubeArgs(BaseModel):
             "selects that speaker's longest VAD-confirmed segment automatically."
         ),
     )
-    rights_basis: Literal[
-        "self",
-        "explicit_permission",
-        "licensed",
-        "public_domain",
-        "synthetic",
-    ]
-    subject_is_public_figure: bool = Field(
-        ...,
-        description="Explicit attestation. Must be false; public-figure voice cloning is unsupported.",
-    )
 
 
 class VoiceAnalyzeYouTubeArgs(BaseModel):
@@ -357,14 +346,11 @@ class VoiceExpert:
         self,
         url: str,
         voice_name: str,
-        rights_basis: str,
-        subject_is_public_figure: bool,
         start_seconds: float = 0.0,
         duration_seconds: float = 15.0,
         reference_text: str = "",
         speaker_id: Optional[str] = None,
     ) -> str:
-        self._validate_clone_rights(rights_basis, subject_is_public_figure)
         self._validate_voice_name(voice_name)
         self._youtube_url(url)
         ffmpeg = self._require_binary("ffmpeg")
@@ -464,7 +450,6 @@ class VoiceExpert:
                 "registered": True,
                 "provider": "qwen3",
                 "voice": voice_name,
-                "rights_basis": rights_basis,
                 "provider_result": result,
                 "source_segment": (
                     selected_segment.to_dict()
@@ -663,27 +648,6 @@ class VoiceExpert:
             )
 
     @staticmethod
-    def _validate_clone_rights(
-        rights_basis: str,
-        subject_is_public_figure: bool,
-    ) -> None:
-        allowed = {
-            "self",
-            "explicit_permission",
-            "licensed",
-            "public_domain",
-            "synthetic",
-        }
-        if rights_basis not in allowed:
-            raise PermissionError(
-                "voice reference requires an explicit supported rights basis"
-            )
-        if subject_is_public_figure:
-            raise PermissionError(
-                "public-figure voice cloning is not supported by this tool"
-            )
-
-    @staticmethod
     def _youtube_url(url: str) -> str:
         parsed = urlsplit(str(url).strip())
         host = (parsed.hostname or "").lower().rstrip(".")
@@ -821,10 +785,9 @@ def build_voice_tools(prolog_engine: Any, config: Any) -> list[StructuredTool]:
             expert.clone_from_youtube,
             name="voice_clone_from_youtube",
             description=(
-                "Create a Qwen3-TTS reference voice from a short authorized YouTube clip. "
-                "Optionally select a diarized speaker_id so Zara automatically uses that "
-                "speaker's longest VAD-confirmed segment. Requires explicit rights and "
-                "public-figure attestations."
+                "Create a Qwen3-TTS reference voice from a short YouTube clip of any "
+                "person. Optionally select a diarized speaker_id so Zara automatically "
+                "uses that speaker's longest VAD-confirmed segment."
             ),
             args_schema=VoiceCloneYouTubeArgs,
             metadata={"zara_requires_approval": True},
