@@ -8,12 +8,15 @@ four operations needed by portable/native conversation consumers.
 
 from __future__ import annotations
 
-from typing import Optional
+import math
+from collections.abc import Mapping
+from typing import Any, Optional
 
 from . import _experts_v1 as _impl
 from .experts import (
     ActivationHandle,
     ExpertDeniedError,
+    ExpertInvalidInputError,
     ExpertRegistry,
     ExpertRequest,
     ExpertResult,
@@ -76,9 +79,20 @@ class CanonicalExpertInvocationPort:
         return matches[0] if matches else None
 
     def invoke(self, request: ExpertRequest) -> ExpertResult:
-        """Invoke only through the existing canonical request path."""
+        """Invoke only through the existing canonical request path.
 
-        return self._registry.invoke_request(request)
+        Portable/native consumers share one JSON-shaped contract.  Python's JSON
+        encoder otherwise permits NaN and infinities by default while Android's
+        canonical envelope rejects them.  Fence those values both before dispatch
+        and before projecting a result so platform behavior cannot diverge.
+        """
+
+        self._require_finite_numbers(request.input, "request.input")
+        result = self._registry.invoke_request(request)
+        self._require_finite_numbers(result.data, "result.data")
+        self._require_finite_numbers(result.usage, "result.usage")
+        self._require_finite_numbers(result.effect_receipts, "result.effect_receipts")
+        return result
 
     def current_registry_generation(self) -> int:
         """Return the canonical registry's live generation."""
@@ -98,3 +112,21 @@ class CanonicalExpertInvocationPort:
             pattern=_impl._PORTABLE,
             limit=128,
         )
+
+    @classmethod
+    def _require_finite_numbers(cls, value: Any, field_name: str) -> None:
+        if isinstance(value, bool) or value is None or isinstance(value, (int, str)):
+            return
+        if isinstance(value, float):
+            if not math.isfinite(value):
+                raise ExpertInvalidInputError(
+                    f"{field_name} contains a non-finite number"
+                )
+            return
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                cls._require_finite_numbers(item, f"{field_name}.{key}")
+            return
+        if isinstance(value, (list, tuple)):
+            for index, item in enumerate(value):
+                cls._require_finite_numbers(item, f"{field_name}[{index}]")
