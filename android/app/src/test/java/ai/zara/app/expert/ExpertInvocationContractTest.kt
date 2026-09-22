@@ -135,6 +135,48 @@ class ExpertInvocationContractTest {
         }
     }
 
+    @Test
+    fun invocationPayloadsRejectUnpairedUtf16Surrogates() {
+        val request = ExpertRequest(
+            requestId = "req:utf16",
+            operation = "expert.invoke",
+            activationId = "act:0123456789abcdef0123456789abcdef",
+            expertId = "zara:expert/diagnosis",
+            expertOperation = "diagnosis_explain",
+        )
+        val result = ExpertResult(
+            protocol = ZARA_EXPERT_PROTOCOL,
+            requestId = "req:utf16",
+            invocationId = "inv:utf16",
+            activationId = "act:0123456789abcdef0123456789abcdef",
+            expertId = "zara:expert/diagnosis",
+            expertVersion = "1.0.0",
+            manifestDigest = "sha256:diagnosis",
+            expertOperation = "diagnosis_explain",
+            resolvedRegistryGeneration = 7L,
+            resolvedRuntimeGeneration = 11L,
+            verdict = ExpertVerdict.SUCCEEDED,
+        )
+
+        listOf("\uD800", "\uDC00").forEach { malformed ->
+            expectFailure<IllegalArgumentException> {
+                request.copy(input = mapOf("value" to malformed))
+            }
+            expectFailure<IllegalArgumentException> {
+                request.copy(input = mapOf(malformed to "value"))
+            }
+            expectFailure<IllegalArgumentException> {
+                result.copy(data = mapOf("value" to malformed))
+            }
+            expectFailure<IllegalArgumentException> {
+                result.copy(usage = mapOf(malformed to 0L))
+            }
+            expectFailure<IllegalArgumentException> {
+                result.copy(errorMessage = malformed)
+            }
+        }
+    }
+
     private inline fun <reified T : Throwable> expectFailure(block: () -> Unit): T {
         try {
             block()
