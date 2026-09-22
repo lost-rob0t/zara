@@ -88,6 +88,53 @@ class ExpertInvocationContractTest {
         }
     }
 
+    @Test
+    fun invocationPayloadsRejectNonFiniteNumbers() {
+        val request = ExpertRequest(
+            requestId = "req:finite",
+            operation = "expert.invoke",
+            activationId = "act:0123456789abcdef0123456789abcdef",
+            expertId = "zara:expert/diagnosis",
+            expertOperation = "diagnosis_explain",
+        )
+        val result = ExpertResult(
+            protocol = ZARA_EXPERT_PROTOCOL,
+            requestId = "req:finite",
+            invocationId = "inv:finite",
+            activationId = "act:0123456789abcdef0123456789abcdef",
+            expertId = "zara:expert/diagnosis",
+            expertVersion = "1.0.0",
+            manifestDigest = "sha256:diagnosis",
+            expertOperation = "diagnosis_explain",
+            resolvedRegistryGeneration = 7L,
+            resolvedRuntimeGeneration = 11L,
+            verdict = ExpertVerdict.SUCCEEDED,
+        )
+
+        val nonFinite = listOf<Any>(
+            Double.NaN,
+            Double.POSITIVE_INFINITY,
+            Double.NEGATIVE_INFINITY,
+            Float.NaN,
+            Float.POSITIVE_INFINITY,
+            Float.NEGATIVE_INFINITY,
+        )
+        nonFinite.forEach { value ->
+            expectFailure<IllegalArgumentException> {
+                request.copy(input = mapOf("score" to value))
+            }
+            expectFailure<IllegalArgumentException> {
+                result.copy(data = mapOf("score" to value))
+            }
+            expectFailure<IllegalArgumentException> {
+                result.copy(usage = mapOf("provider_calls" to value))
+            }
+            expectFailure<IllegalArgumentException> {
+                result.copy(effectReceipts = listOf(mapOf("latency" to value)))
+            }
+        }
+    }
+
     private inline fun <reified T : Throwable> expectFailure(block: () -> Unit): T {
         try {
             block()
