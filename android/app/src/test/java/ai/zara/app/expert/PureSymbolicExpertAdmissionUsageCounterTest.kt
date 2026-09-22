@@ -30,12 +30,22 @@ class PureSymbolicExpertAdmissionUsageCounterTest {
     }
 
     @Test
-    fun exactNumericZeroRemainsAccepted() {
+    fun floatingPointZeroUsageIsRejected() {
+        listOf(
+            mapOf<String, Any?>("provider_calls" to 0.0, "model_calls" to 0),
+            mapOf<String, Any?>("provider_calls" to 0.0f, "model_calls" to 0L),
+            mapOf<String, Any?>("provider_calls" to 0, "model_calls" to 0.0),
+            mapOf<String, Any?>("provider_calls" to 0L, "model_calls" to 0.0f),
+        ).forEach(::assertRejectsUsage)
+    }
+
+    @Test
+    fun exactIntegralZeroRemainsAccepted() {
         val activation = activation()
         val request = request(activation)
         listOf(
             mapOf<String, Any?>("provider_calls" to 0, "model_calls" to 0L),
-            mapOf<String, Any?>("provider_calls" to 0.0, "model_calls" to 0.0f),
+            mapOf<String, Any?>("provider_calls" to 0L, "model_calls" to 0),
         ).forEach { usage ->
             val result = result(activation, request, usage)
             assertEquals(
