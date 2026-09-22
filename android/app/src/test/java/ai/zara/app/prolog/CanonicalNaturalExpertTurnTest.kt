@@ -69,6 +69,33 @@ class CanonicalNaturalExpertTurnTest {
         assertTrue(ownerFuture.isCancelled)
     }
 
+    @Test
+    fun cancellingMappedConversationEnvelopeStillCancelsCanonicalOwnerInvocation() {
+        val activation = activation()
+        val ownerFuture = CompletableFuture<ExpertResult>()
+        val port = FakeCanonicalPort(activation).also { it.invokeFuture = ownerFuture }
+        val turn = CanonicalNaturalExpertTurn(PureSymbolicExpertInvocationAdapter(port))
+
+        val projected = turn.invoke(
+            selection = NaturalLanguageExpertSelection(
+                expertId = activation.expertId,
+                expertOperation = "explain",
+                input = mapOf("entity" to "alex"),
+            ),
+            principal = activation.principal,
+            workspace = activation.workspace,
+            requestId = "turn:mapped-cancel:42",
+            limits = zeroModelLimits(),
+            idempotencyKey = "turn:mapped-cancel:42:explain",
+        )
+        val envelope = projected.thenApply { result -> result.summary }
+
+        assertTrue(envelope.cancel(true))
+        assertTrue(envelope.isCancelled)
+        assertTrue(projected.isCancelled)
+        assertTrue(ownerFuture.isCancelled)
+    }
+
     private fun activation(): ActivationHandle = ActivationHandle(
         activationId = "act:0123456789abcdef0123456789abcdef",
         principal = "local:owner",
