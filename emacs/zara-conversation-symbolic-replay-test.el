@@ -198,5 +198,74 @@
      (equal zara-conversation-context-ids
             '("evidence:current" "file:current")))))
 
+(ert-deftest zara-conversation-symbolic-restart-replay-restores-current-evidence-only ()
+  "A recreated Emacs surface reloads durable evidence without reviving stale refs."
+  (let ((first (generate-new-buffer " *zara-symbolic-before-restart*"))
+        second)
+    (unwind-protect
+        (progn
+          (with-current-buffer first
+            (zara-chat-mode)
+            (setq-local zara-conversation-id "emacs-main")
+            (setq-local zara-conversation-context-ids
+                        '("evidence:stale" "file:old"))
+            (setq-local
+             zara-conversation-symbolic-projection
+             (zara-conversation-symbolic--parse
+              zara-conversation-symbolic-replay-test--payload
+              "emacs-main")))
+          ;; Buffer-local selectors and cached projection are presentation state.
+          ;; Killing the surface models Emacs/process recreation; durable truth
+          ;; must come back only through canonical replay.
+          (kill-buffer first)
+          (setq first nil)
+          (setq second (generate-new-buffer " *zara-symbolic-after-restart*"))
+          (with-current-buffer second
+            (zara-chat-mode)
+            (setq-local zara-conversation-id "emacs-main")
+            (should-not zara-conversation-context-ids)
+            (should-not zara-conversation-symbolic-projection)
+            (let ((calls 0)
+                  captured)
+              (cl-letf (((symbol-function 'zara--program)
+                         (lambda () "zara"))
+                        ((symbol-function 'process-file)
+                         (lambda (program _infile _destination _display &rest args)
+                           (cl-incf calls)
+                           (setq captured (cons program args))
+                           (insert zara-conversation-symbolic-replay-test--canonical-payload)
+                           0)))
+                (let ((projection (zara-conversation-symbolic-replay)))
+                  (should (= calls 1))
+                  (should
+                   (equal captured
+                          '("zara" "--replay-conversation" "emacs-main")))
+                  (should (eq projection zara-conversation-symbolic-projection))
+                  (should (equal (gethash "project_id" projection) "dotfiles"))
+                  (should (= (gethash "project_generation" projection) 3))
+                  (should (= (length (gethash "expert_evidence" projection)) 1))
+                  (should (eq (gethash "providers_enabled" projection) :false))
+                  (should (= (gethash "max_model_calls" projection) 0))
+                  (should (= (gethash "provider_calls" projection) 0))
+                  (should (= (gethash "model_calls" projection) 0)))))
+            (should (string-match-p "This project uses flakes\." (buffer-string)))
+            (should-not zara-conversation-context-ids)
+            (setq-local zara-conversation-context-ids
+                        '("evidence:42" "file:flake.nix"))
+            (let ((zara-connect-endpoint nil))
+              (should
+               (equal
+                (zara-conversation--turn-arguments
+                 zara-conversation-id
+                 "why does that apply here?")
+                '("--conversation-id" "emacs-main"
+                  "--context-id" "evidence:42"
+                  "--context-id" "file:flake.nix"
+                  "--json-events" "why does that apply here?"))))))
+      (when (buffer-live-p first)
+        (kill-buffer first))
+      (when (buffer-live-p second)
+        (kill-buffer second)))))
+
 (provide 'zara-conversation-symbolic-replay-test)
 ;;; zara-conversation-symbolic-replay-test.el ends here
