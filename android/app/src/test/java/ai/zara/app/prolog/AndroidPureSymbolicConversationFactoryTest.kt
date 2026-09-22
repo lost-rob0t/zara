@@ -119,6 +119,51 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
+    fun naturalExpertEnvelopeProjectsOneRegisteredResultThroughCanonicalExpertContract() {
+        val context = "completed_frame(frame(intent(ns(device),name('timer.set')),[],complete))"
+        val query = AndroidPureSymbolicConversationFactory.expertTurnEnvelopeQuery(
+            expertQuery = "triage_explain(alex, Result)",
+            contextTerm = context,
+            evidenceRef = "expert:triage_explain/turn-1",
+        )
+
+        assertTrue(query.contains("triage_explain(alex, ExpertResult)"))
+        assertFalse(query.contains("triage_explain(alex, Result)"))
+        assertTrue(query.contains("Context1 = Context0"))
+        assertTrue(
+            query.contains(
+                "symbolic_dialogue:response_act(expert_result(summary(Summary), evidence(EvidenceRef)), Act)",
+            ),
+        )
+        assertTrue(query.contains("with_output_to(atom(SummaryAtom), write_term(ExpertResult, [quoted(true)]))"))
+        assertTrue(query.contains("ActName = expert_answer"))
+        assertTrue(query.contains("expert:triage_explain/turn-1"))
+        assertTrue(query.contains("__zara_expert_evidence__:"))
+        assertTrue(query.endsWith("(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)"))
+        assertEquals(query, PrologQueryPolicy.requireSafe(query))
+        assertFalse(query.contains("once("))
+        assertFalse(query.contains("call("))
+    }
+
+    @Test
+    fun naturalExpertEnvelopeRejectsUnsafeOrAmbiguousExpertGoals() {
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidPureSymbolicConversationFactory.expertTurnEnvelopeQuery(
+                expertQuery = "call(triage_explain(alex, Result))",
+                contextTerm = "[]",
+                evidenceRef = "expert:triage_explain/turn-1",
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AndroidPureSymbolicConversationFactory.expertTurnEnvelopeQuery(
+                expertQuery = "triage_explain(Result, Result)",
+                contextTerm = "[]",
+                evidenceRef = "expert:triage_explain/turn-1",
+            )
+        }
+    }
+
+    @Test
     fun dialogueTurnQueryRejectsBlankInput() {
         assertThrows(IllegalArgumentException::class.java) {
             AndroidPureSymbolicConversationFactory.dialogueTurnQuery("   ")
