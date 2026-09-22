@@ -479,6 +479,7 @@ class CanonicalConversationStore(
                             MAX_ID_CHARS,
                             "Remote conversation id",
                         )
+                        require(!containsKey(id)) { "Duplicate conversation id in UI metadata" }
                         put(id, ConversationUiMetadata(pinned, projectId, remoteId))
                     }
                 }
