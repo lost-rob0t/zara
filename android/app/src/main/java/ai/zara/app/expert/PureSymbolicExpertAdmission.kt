@@ -171,14 +171,10 @@ object PureSymbolicExpertAdmission {
         reference: String,
         expectedRuntimeGeneration: Long,
     ): Boolean {
-        if (verifiedOutcomeV1RefPattern.matches(reference)) return true
         val match = verifiedOutcomeV2RefPattern.matchEntire(reference) ?: return false
         return match.groupValues[1].toLongOrNull() == expectedRuntimeGeneration
     }
 
-    private val verifiedOutcomeV1RefPattern = Regex(
-        "^zara\\.verified-outcome/v1:(effect|outcome):[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$",
-    )
     private val verifiedOutcomeV2RefPattern = Regex(
         "^zara\\.verified-outcome/v2:([1-9][0-9]*):(effect|outcome):" +
             "[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$",
