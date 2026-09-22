@@ -78,7 +78,7 @@ class PureSymbolicExpertInvocationAdapterTest {
     }
 
     @Test
-    fun liveGenerationAdvanceRejectsLateCanonicalResult() {
+    fun staleLiveGenerationFailsClosedBeforeCanonicalInvocation() {
         val activation = activation()
         val port = FakeCanonicalPort(activation)
         port.resultFactory = { request -> successResult(activation, request) }
@@ -88,11 +88,40 @@ class PureSymbolicExpertInvocationAdapterTest {
             principal = activation.principal,
             workspace = activation.workspace,
             expertId = activation.expertId,
-            requestId = "turn:42",
+            requestId = "turn:stale-preflight",
             expertOperation = "diagnose",
             input = emptyMap(),
             limits = zeroModelLimits(),
-            idempotencyKey = "turn:42:diagnose",
+            idempotencyKey = "turn:stale-preflight:diagnose",
+        )
+
+        val error = assertThrows(ExecutionException::class.java) { future.get() }
+        assertTrue(error.cause is IllegalArgumentException)
+        assertEquals(
+            "A stale activation must be rejected before the canonical owner can run a body/effect",
+            0,
+            port.invokeCount,
+        )
+    }
+
+    @Test
+    fun liveGenerationAdvanceRejectsLateCanonicalResultAfterInvocation() {
+        val activation = activation()
+        val port = FakeCanonicalPort(activation)
+        port.resultFactory = { request ->
+            port.liveRuntimeGeneration = activation.runtimeGeneration + 1L
+            successResult(activation, request)
+        }
+
+        val future = adapter(port).invoke(
+            principal = activation.principal,
+            workspace = activation.workspace,
+            expertId = activation.expertId,
+            requestId = "turn:stale-late",
+            expertOperation = "diagnose",
+            input = emptyMap(),
+            limits = zeroModelLimits(),
+            idempotencyKey = "turn:stale-late:diagnose",
         )
 
         val error = assertThrows(ExecutionException::class.java) { future.get() }
