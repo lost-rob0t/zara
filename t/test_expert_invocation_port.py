@@ -6,6 +6,7 @@ issue activations, register experts, own budgets, or create another dispatcher.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from zara.experts import (
     ZARA_EXPERT_PROTOCOL,
     ExpertDeniedError,
     ExpertDescriptor,
+    ExpertInvalidInputError,
     ExpertLimits,
     ExpertRegistry,
     ExpertRequest,
@@ -37,7 +39,15 @@ def _descriptor() -> ExpertDescriptor:
             "operations": [
                 {
                     "operation_id": "route.explain",
-                    "input_schema": {"fields": []},
+                    "input_schema": {
+                        "fields": [
+                            {
+                                "name": "score",
+                                "type": "number",
+                                "required": False,
+                            }
+                        ]
+                    },
                     "output_schema": {"fields": []},
                 }
             ],
@@ -69,10 +79,32 @@ def _handler(**_kwargs: Any) -> dict[str, object]:
     }
 
 
-def _registry() -> ExpertRegistry:
+def _registry(
+    handler: Callable[..., dict[str, object]] = _handler,
+) -> ExpertRegistry:
     registry = ExpertRegistry()
-    registry.reload([(_descriptor(), _handler)])
+    registry.reload([(_descriptor(), handler)])
     return registry
+
+
+def _request(handle: Any, *, input: dict[str, Any] | None = None) -> ExpertRequest:
+    return ExpertRequest(
+        request_id="req:canonical-port-1",
+        operation="expert.invoke",
+        activation_id=handle.activation_id,
+        expert_id=handle.expert_id,
+        expert_operation="route.explain",
+        expected_registry_generation=handle.registry_generation,
+        expected_runtime_generation=handle.runtime_generation,
+        input=input or {},
+        limits=ExpertLimits(
+            timeout_ms=1000,
+            max_results=4,
+            max_output_bytes=4096,
+            max_model_calls=0,
+        ),
+        idempotency_key="idem:canonical-port-1",
+    )
 
 
 def test_port_returns_exact_existing_activation_without_issuing_one() -> None:
@@ -157,25 +189,8 @@ def test_port_invokes_only_through_canonical_request_path_with_zero_model_budget
         "zara:expert/port-fixture",
     )
     port = CanonicalExpertInvocationPort(registry)
-    request = ExpertRequest(
-        request_id="req:canonical-port-1",
-        operation="expert.invoke",
-        activation_id=handle.activation_id,
-        expert_id=handle.expert_id,
-        expert_operation="route.explain",
-        expected_registry_generation=handle.registry_generation,
-        expected_runtime_generation=handle.runtime_generation,
-        input={},
-        limits=ExpertLimits(
-            timeout_ms=1000,
-            max_results=4,
-            max_output_bytes=4096,
-            max_model_calls=0,
-        ),
-        idempotency_key="idem:canonical-port-1",
-    )
 
-    result = port.invoke(request)
+    result = port.invoke(_request(handle))
 
     assert result.verdict is ExpertVerdict.SUCCEEDED
     assert result.activation_id == handle.activation_id
@@ -183,3 +198,49 @@ def test_port_invokes_only_through_canonical_request_path_with_zero_model_budget
     assert result.resolved_runtime_generation == registry.runtime_generation
     assert result.usage == {"model_calls": 0}
     assert result.evidence_refs == ("ev:canonical-port-fixture",)
+
+
+@pytest.mark.parametrize("bad_number", [float("nan"), float("inf"), float("-inf")])
+def test_port_rejects_non_finite_numeric_input(bad_number: float) -> None:
+    registry = _registry()
+    handle, _ = registry.activate(
+        "user:alice",
+        "ws:main",
+        "zara:expert/port-fixture",
+    )
+    port = CanonicalExpertInvocationPort(registry)
+
+    with pytest.raises(ExpertInvalidInputError):
+        port.invoke(_request(handle, input={"score": bad_number}))
+
+
+@pytest.mark.parametrize("surface", ["data", "usage", "effect_receipts"])
+def test_port_rejects_non_finite_numeric_result_payloads(surface: str) -> None:
+    def non_finite_handler(**_kwargs: Any) -> dict[str, object]:
+        outcome: dict[str, object] = {
+            "verdict": "succeeded",
+            "data": {},
+            "evidence_refs": ["ev:canonical-port-fixture"],
+            "usage": {"model_calls": 0},
+            "effect_receipts": [],
+        }
+        if surface == "data":
+            outcome["data"] = {"score": float("nan")}
+        elif surface == "usage":
+            outcome["usage"] = {"model_calls": 0, "latency_ms": float("inf")}
+        else:
+            outcome["effect_receipts"] = [
+                {"effect": "filesystem_read", "duration_ms": float("-inf")}
+            ]
+        return outcome
+
+    registry = _registry(non_finite_handler)
+    handle, _ = registry.activate(
+        "user:alice",
+        "ws:main",
+        "zara:expert/port-fixture",
+    )
+    port = CanonicalExpertInvocationPort(registry)
+
+    with pytest.raises(ExpertInvalidInputError):
+        port.invoke(_request(handle))
