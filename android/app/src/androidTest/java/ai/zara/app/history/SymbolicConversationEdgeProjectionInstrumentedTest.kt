@@ -1,5 +1,6 @@
 package ai.zara.app.history
 
+import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
 import android.content.Context
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
