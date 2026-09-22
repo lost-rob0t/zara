@@ -170,8 +170,8 @@ def assert_project_a_partial(store):
     projection.assert_pure_symbolic()
     assert projection.projection_generation == 2
     assert projection.runtime_generation == 2
-    assert projection.dialogue_act == "unsupported"
-    assert projection.dialogue_state["response_act_term"] == "unsupported"
+    assert projection.dialogue_act == "clarify"
+    assert projection.dialogue_state["response_act_term"].startswith("clarify(")
     assert "partial_frame(" in projection.dialogue_state["prolog_context_term"]
     assert projection.providers_enabled is False
     assert projection.max_model_calls == 0
@@ -191,23 +191,9 @@ async def phase_project_a_parse_miss():
     )
     await backend.start()
     try:
-        clarification = await backend.submit_turn(
-            "timer",
-            turn_id="project-a-turn-1",
-            conversation_id=conversation.id,
-        )
-        assert clarification.response == "How long should I set the timer for?"
-        assert clarification.metadata["response_act"].startswith("clarify(")
-        assert_zero(clarification.metadata)
-        backend.commit_turn_result(
-            clarification,
-            turn_id="project-a-turn-1",
-            conversation_id=conversation.id,
-        )
-
         miss = await backend.submit_turn(
             "frobnicate quantum socks",
-            turn_id="project-a-turn-2",
+            turn_id="project-a-turn-1",
             conversation_id=conversation.id,
         )
         assert miss.response == "I don’t know how to handle that symbolically yet."
@@ -215,6 +201,29 @@ async def phase_project_a_parse_miss():
         assert_zero(miss.metadata)
         backend.commit_turn_result(
             miss,
+            turn_id="project-a-turn-1",
+            conversation_id=conversation.id,
+        )
+
+        unsupported = store.load_symbolic_projection(PROJECT_A)
+        assert unsupported is not None
+        unsupported.assert_pure_symbolic()
+        assert unsupported.projection_generation == 1
+        assert unsupported.runtime_generation == 1
+        assert unsupported.dialogue_act == "unsupported"
+        assert unsupported.dialogue_state["response_act_term"] == "unsupported"
+        assert unsupported.dialogue_state["prolog_context_term"] == "[]"
+
+        clarification = await backend.submit_turn(
+            "timer",
+            turn_id="project-a-turn-2",
+            conversation_id=conversation.id,
+        )
+        assert clarification.response == "How long should I set the timer for?"
+        assert clarification.metadata["response_act"].startswith("clarify(")
+        assert_zero(clarification.metadata)
+        backend.commit_turn_result(
+            clarification,
             turn_id="project-a-turn-2",
             conversation_id=conversation.id,
         )
