@@ -118,6 +118,11 @@ class PureSymbolicProjectionAdapter:
             if not isinstance(prior_context, str):
                 raise TypeError("persisted symbolic dialogue context must be text")
             context_term = prior_context
+            prior_response_act = current.dialogue_state.get("response_act_term")
+            if prior_response_act is not None:
+                if not isinstance(prior_response_act, str):
+                    raise TypeError("persisted symbolic response act must be text")
+                response_act_term = prior_response_act
 
         if dialogue_act == "expert_answer":
             expert_evidence = [
