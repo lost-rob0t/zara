@@ -111,7 +111,20 @@ internal object AndroidPureSymbolicConversationFactory {
         val pendingGeneration = pendingProjection.projectionGeneration
 
         val turnFuture = try {
-            session.queryLocalProlog(dialogueTurnEnvelopeQuery(utterance, prepared.context0))
+            val expertQuery = LocalNaturalLanguageExpertRouter.query(
+                utterance,
+                PrologWorkspaceCatalog.from(session.prologSources()),
+            )
+            val query = if (expertQuery == null) {
+                dialogueTurnEnvelopeQuery(utterance, prepared.context0)
+            } else {
+                expertTurnEnvelopeQuery(
+                    expertQuery = expertQuery,
+                    contextTerm = prepared.context0,
+                    evidenceRef = naturalExpertEvidenceRef(expertQuery, turnId),
+                )
+            }
+            session.queryLocalProlog(query)
         } catch (error: Throwable) {
             return PureSymbolicResolution(
                 turnId = turnId,
@@ -549,6 +562,60 @@ internal object AndroidPureSymbolicConversationFactory {
         "append(EvidencePrefixCodes, EvidenceCodes, EvidenceWireCodes), " +
         "string_codes(EvidenceWire, EvidenceWireCodes)) -> true ; fail), " +
         "(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)"
+
+    internal fun expertTurnEnvelopeQuery(
+        expertQuery: String,
+        contextTerm: String,
+        evidenceRef: String,
+    ): String {
+        val goal = expertGoal(expertQuery)
+        val canonicalContext = SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
+        val escapedContext = SymbolicDialogueContextCodec.prologString(canonicalContext)
+        val escapedEvidence = prologString(requireExpertEvidenceRef(evidenceRef))
+        return "((string_codes(\"$escapedContext\", Context0Codes), " +
+            "atom_codes(Context0Atom, Context0Codes), " +
+            "read_term_from_atom(Context0Atom, Context0, []), " +
+            "symbolic_dialogue_turn:valid_dialogue_context(Context0), " +
+            "Context1 = Context0, " +
+            "$goal, " +
+            "with_output_to(atom(SummaryAtom), write_term(ExpertResult, [quoted(true)])), " +
+            "atom_codes(SummaryAtom, SummaryCodes), " +
+            "string_codes(Summary, SummaryCodes), " +
+            "string_codes(\"$escapedEvidence\", EvidenceCodes), " +
+            "string_codes(EvidenceRef, EvidenceCodes), " +
+            "symbolic_dialogue:response_act(expert_result(summary(Summary), evidence(EvidenceRef)), Act), " +
+            "symbolic_dialogue:render_response(Act, Response), " +
+            "with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)])), " +
+            "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
+            "atom_codes(ContextTagged, ContextWireCodes), " +
+            "string_codes(ContextWire, ContextWireCodes), " +
+            "ActName = expert_answer, " +
+            "atom_concat('$DIALOGUE_ACT_WIRE_PREFIX', ActName, ActTagged), " +
+            "atom_codes(ActTagged, ActWireCodes), " +
+            "string_codes(ActWire, ActWireCodes), " +
+            "string_codes(\"$DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX\", EvidencePrefixCodes), " +
+            "append(EvidencePrefixCodes, EvidenceCodes, EvidenceWireCodes), " +
+            "string_codes(EvidenceWire, EvidenceWireCodes)) -> true ; fail), " +
+            "(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)"
+    }
+
+    private fun expertGoal(expertQuery: String): String {
+        val safe = PrologQueryPolicy.requireSafe(expertQuery)
+        val resultVariable = Regex("\\bResult\\b")
+        require(resultVariable.findAll(safe).count() == 1) {
+            "Natural expert query must bind exactly one Result variable"
+        }
+        return resultVariable.replace(safe, "ExpertResult")
+    }
+
+    private fun naturalExpertEvidenceRef(expertQuery: String, turnId: String): String {
+        val safe = PrologQueryPolicy.requireSafe(expertQuery)
+        val predicate = safe.substringBefore('(')
+        require(predicate.matches(Regex("[a-z][A-Za-z0-9_]{0,63}"))) {
+            "Natural expert query has an invalid predicate"
+        }
+        return requireExpertEvidenceRef("expert:$predicate/$turnId")
+    }
 
     private fun dialogueTurnPrelude(utterance: String, contextTerm: String): String {
         val text = utterance.trim()
