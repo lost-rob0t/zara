@@ -25,6 +25,26 @@
     (should (equal zara-conversation-id "project-next"))
     (should-not zara-conversation-context-ids)))
 
+(ert-deftest zara-conversation-switch-follow-up-uses-only-new-project-context ()
+  "A follow-up after switching projects can only forward freshly selected refs."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-context-ids '("project:old" "doc:stale"))
+    (should (equal (zara-conversation-switch "project-next") "project-next"))
+    (should-not zara-conversation-context-ids)
+    (setq-local zara-conversation-context-ids '("project:next" "doc:fresh"))
+    (let ((zara-connect-endpoint nil))
+      (should
+       (equal
+        (zara-conversation--turn-arguments
+         zara-conversation-id
+         "why does that apply here?")
+        '("--conversation-id" "project-next"
+          "--context-id" "project:next"
+          "--context-id" "doc:fresh"
+          "--json-events" "why does that apply here?"))))))
+
 (ert-deftest zara-conversation-switch-fences-visible-transcript ()
   "Switching conversations must not leave the previous transcript on screen."
   (with-temp-buffer
