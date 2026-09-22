@@ -609,9 +609,17 @@ internal object AndroidPureSymbolicConversationFactory {
 
         override fun cancel(mayInterruptIfRunning: Boolean): Boolean = synchronized(fence) {
             if (isDone) return@synchronized false
-            onCancel()
+            var persistenceFailure: Throwable? = null
+            try {
+                onCancel()
+            } catch (error: Throwable) {
+                persistenceFailure = error
+            }
             val cancelled = super.cancel(mayInterruptIfRunning)
-            if (cancelled) upstream.cancel(mayInterruptIfRunning)
+            if (cancelled && !upstream.isDone) {
+                upstream.cancel(mayInterruptIfRunning)
+            }
+            persistenceFailure?.let { throw it }
             cancelled
         }
     }
