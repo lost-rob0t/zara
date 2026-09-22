@@ -35,24 +35,24 @@ internal class CanonicalRenderedNaturalExpertTurn(
             return CompletableFuture.failedFuture(error)
         }
         val output = ActiveStageCancellationFuture<CanonicalRenderedExpertAnswer>(projected)
-        projected.whenComplete { admitted, admissionError ->
-            if (output.isDone) return@whenComplete
+        projected.whenComplete admissionComplete@{ admitted, admissionError ->
+            if (output.isDone) return@admissionComplete
             if (admissionError != null || admitted == null) {
                 output.completeExceptionally(
                     admissionError ?: IllegalStateException("Canonical expert projection is missing"),
                 )
-                return@whenComplete
+                return@admissionComplete
             }
 
             val rendering = try {
                 renderer.render(admitted)
             } catch (renderError: Throwable) {
                 output.completeExceptionally(renderError)
-                return@whenComplete
+                return@admissionComplete
             }
-            if (!output.advanceTo(rendering)) return@whenComplete
-            rendering.whenComplete { rendered, renderError ->
-                if (output.isDone) return@whenComplete
+            if (!output.advanceTo(rendering)) return@admissionComplete
+            rendering.whenComplete renderComplete@{ rendered, renderError ->
+                if (output.isDone) return@renderComplete
                 if (renderError != null || rendered == null) {
                     output.completeExceptionally(
                         renderError ?: IllegalStateException("Canonical symbolic expert rendering is missing"),
