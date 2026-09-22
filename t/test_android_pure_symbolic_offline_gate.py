@@ -1,3 +1,4 @@
+import ast
 from pathlib import Path
 
 
@@ -44,9 +45,20 @@ def test_installed_pure_symbolic_transcript_checks_hard_zero_after_each_turn() -
         "expert-answer",
         "expert-follow-up-after-restart",
     )
+    tree = ast.parse(source, filename=str(INSTALLED_ACCEPTANCE))
+    observed_stages = {
+        keyword.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "inspect_hard_zero_accounting"
+        for keyword in node.keywords
+        if keyword.arg == "stage"
+        and isinstance(keyword.value, ast.Constant)
+        and isinstance(keyword.value.value, str)
+    }
     for stage in required_stages:
-        marker = f'inspect_hard_zero_accounting(device, stage="{stage}")'
-        assert marker in source, (
+        assert stage in observed_stages, (
             f"Installed pure-symbolic acceptance must snapshot hard-zero accounting at {stage}; "
             "checking only the final projection can hide a transient provider/model call because "
             "the next symbolic turn resets per-turn counters to zero"
