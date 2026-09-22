@@ -182,5 +182,21 @@
           "--context-id" "file:flake.nix"
           "--json-events" "why does that apply here?"))))))
 
+(ert-deftest zara-conversation-symbolic-replay-failure-preserves-current-context ()
+  "A failed replay must not erase refs from the still-visible presentation snapshot."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-context-ids '("evidence:current" "file:current"))
+    (cl-letf (((symbol-function 'zara--program)
+               (lambda () "zara"))
+              ((symbol-function 'process-file)
+               (lambda (_program _infile _destination _display &rest _args)
+                 9)))
+      (should-error (zara-conversation-replay) :type 'user-error))
+    (should
+     (equal zara-conversation-context-ids
+            '("evidence:current" "file:current")))))
+
 (provide 'zara-conversation-symbolic-replay-test)
 ;;; zara-conversation-symbolic-replay-test.el ends here
