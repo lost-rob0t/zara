@@ -74,7 +74,7 @@ def _handler(**_kwargs: Any) -> dict[str, object]:
         "verdict": "succeeded",
         "data": {},
         "evidence_refs": ["ev:canonical-port-fixture"],
-        "usage": {"provider_calls": 0, "model_calls": 0},
+        "usage": {"model_calls": 0},
         "effect_receipts": [],
     }
 
@@ -196,21 +196,12 @@ def test_port_invokes_only_through_canonical_request_path_with_zero_model_budget
     assert result.activation_id == handle.activation_id
     assert result.resolved_registry_generation == registry.generation
     assert result.resolved_runtime_generation == registry.runtime_generation
-    assert result.usage == {"provider_calls": 0, "model_calls": 0}
+    assert result.usage == {"model_calls": 0}
     assert result.evidence_refs == ("ev:canonical-port-fixture",)
 
 
-def test_zero_model_port_rejects_missing_provider_usage_proof() -> None:
-    def missing_provider_usage(**_kwargs: Any) -> dict[str, object]:
-        return {
-            "verdict": "succeeded",
-            "data": {},
-            "evidence_refs": ["ev:canonical-port-fixture"],
-            "usage": {"model_calls": 0},
-            "effect_receipts": [],
-        }
-
-    registry = _registry(missing_provider_usage)
+def test_zero_model_port_accepts_canonical_model_only_usage_proof() -> None:
+    registry = _registry()
     handle, _ = registry.activate(
         "user:alice",
         "ws:main",
@@ -218,12 +209,13 @@ def test_zero_model_port_rejects_missing_provider_usage_proof() -> None:
     )
     port = CanonicalExpertInvocationPort(registry)
 
-    with pytest.raises(ExpertInvalidInputError, match="provider_calls"):
-        port.invoke(_request(handle))
+    result = port.invoke(_request(handle))
+
+    assert result.usage == {"model_calls": 0}
 
 
 @pytest.mark.parametrize("bad_provider_calls", [1, 0.0, False, "0"])
-def test_zero_model_port_rejects_false_zero_provider_usage_proof(
+def test_zero_model_port_rejects_false_zero_provider_usage_extension(
     bad_provider_calls: object,
 ) -> None:
     def false_zero_provider_usage(**_kwargs: Any) -> dict[str, object]:
@@ -280,14 +272,13 @@ def test_port_rejects_non_finite_numeric_result_payloads(surface: str) -> None:
             "verdict": "succeeded",
             "data": {},
             "evidence_refs": ["ev:canonical-port-fixture"],
-            "usage": {"provider_calls": 0, "model_calls": 0},
+            "usage": {"model_calls": 0},
             "effect_receipts": [],
         }
         if surface == "data":
             outcome["data"] = {"score": float("nan")}
         elif surface == "usage":
             outcome["usage"] = {
-                "provider_calls": 0,
                 "model_calls": 0,
                 "latency_ms": float("inf"),
             }
