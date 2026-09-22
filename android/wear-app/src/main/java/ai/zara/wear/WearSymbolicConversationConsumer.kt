@@ -30,7 +30,7 @@ class WearSymbolicConversationConsumer(
     private var current: SymbolicConversationEdgeSnapshot? = null
 
     @Synchronized
-    fun currentSnapshot(): SymbolicConversationEdgeSnapshot? = current
+    fun currentSnapshot(): SymbolicConversationEdgeSnapshot? = current?.detachedCopy()
 
     @Synchronized
     fun accept(encoded: ByteArray): SymbolicConversationEdgeSnapshot? {
@@ -42,8 +42,8 @@ class WearSymbolicConversationConsumer(
             current = current,
             encoded = encoded,
         ) ?: return null
-        current = accepted
-        return accepted
+        current = accepted.detachedCopy()
+        return current?.detachedCopy()
     }
 
     @Synchronized
@@ -60,4 +60,12 @@ class WearSymbolicConversationConsumer(
         scope = next
         current = null
     }
+
+    private fun SymbolicConversationEdgeSnapshot.detachedCopy(): SymbolicConversationEdgeSnapshot =
+        copy(
+            discourseEntityRefs = discourseEntityRefs.toList(),
+            unresolvedQuestionRefs = unresolvedQuestionRefs.toList(),
+            expertEvidenceRefs = expertEvidenceRefs.toList(),
+            verifiedOutcomeRefs = verifiedOutcomeRefs.toList(),
+        )
 }
