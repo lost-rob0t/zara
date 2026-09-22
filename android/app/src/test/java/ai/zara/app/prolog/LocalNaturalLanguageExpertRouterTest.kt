@@ -1,9 +1,8 @@
 package ai.zara.app.prolog
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class LocalNaturalLanguageExpertRouterTest {
@@ -17,9 +16,9 @@ class LocalNaturalLanguageExpertRouterTest {
             activations = mapOf("inspect" to "triage"),
         )
 
-        val selection = assertNotNull(
-            LocalNaturalLanguageExpertRouter.select("  INSPECT Alice  ", catalog),
-        ) as NaturalLanguageExpertSelection
+        val selected = LocalNaturalLanguageExpertRouter.select("  INSPECT Alice  ", catalog)
+        assertNotNull(selected)
+        val selection = requireNotNull(selected)
 
         assertEquals("triage", selection.expertId)
         assertEquals("triage_explain(alice, Result)", selection.query)
