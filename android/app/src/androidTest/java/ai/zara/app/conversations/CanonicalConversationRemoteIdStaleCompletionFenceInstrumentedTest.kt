@@ -14,9 +14,11 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * A terminal-turn replay may repair missing UI metadata after a crash, but it must never overwrite
- * an already-durable remote conversation binding. Otherwise a late callback from stale transport
- * state can mutate the logical conversation identity after the canonical turn is already terminal.
+ * Remote transport identity is durable conversation metadata, not turn-local output.
+ *
+ * A terminal replay may repair missing UI metadata after a crash, but neither a terminal replay nor
+ * completion of a currently pending turn may replace an already-durable remote conversation binding.
+ * Otherwise a late callback from stale transport state can mutate logical conversation identity.
  */
 class CanonicalConversationRemoteIdStaleCompletionFenceInstrumentedTest {
     private lateinit var context: Context
@@ -106,10 +108,99 @@ class CanonicalConversationRemoteIdStaleCompletionFenceInstrumentedTest {
         }
     }
 
+    @Test
+    fun pendingCompletionCannotReplaceDurableRemoteConversationBindingBeforeTurnMutation() {
+        val history = PortableConversationStore(context)
+        var secondTurnId = ""
+        try {
+            val store = CanonicalConversationStore(
+                history = history,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { CONVERSATION_ID },
+            )
+            store.create()
+            store.beginTurn(CONVERSATION_ID, "inspect alex")
+            val firstTurnId = checkNotNull(store.runningTurnId(CONVERSATION_ID))
+            store.completeTurn(
+                conversationId = CONVERSATION_ID,
+                assistantText = TERMINAL_TEXT,
+                success = true,
+                expectedTurnId = firstTurnId,
+                remoteConversationId = CURRENT_REMOTE_ID,
+            )
+
+            store.beginTurn(CONVERSATION_ID, "why?")
+            secondTurnId = checkNotNull(store.runningTurnId(CONVERSATION_ID))
+            val staleCompletion = runCatching {
+                store.completeTurn(
+                    conversationId = CONVERSATION_ID,
+                    assistantText = STALE_PENDING_TEXT,
+                    success = true,
+                    expectedTurnId = secondTurnId,
+                    remoteConversationId = STALE_REMOTE_ID,
+                )
+            }
+            assertTrue(
+                "pending completion must fail closed before stale transport identity mutates the turn",
+                staleCompletion.isFailure,
+            )
+
+            val pendingAfterStale = history.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == secondTurnId
+            }
+            assertEquals(HistoryMessageStatus.Pending, pendingAfterStale.status)
+            assertEquals("", pendingAfterStale.content)
+            assertEquals("", pendingAfterStale.error)
+            assertEquals(
+                CURRENT_REMOTE_ID,
+                checkNotNull(store.state().conversation(CONVERSATION_ID)).remoteConversationId,
+            )
+
+            store.completeTurn(
+                conversationId = CONVERSATION_ID,
+                assistantText = VALID_PENDING_TEXT,
+                success = true,
+                expectedTurnId = secondTurnId,
+                remoteConversationId = CURRENT_REMOTE_ID,
+            )
+            val completed = history.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == secondTurnId
+            }
+            assertEquals(HistoryMessageStatus.Complete, completed.status)
+            assertEquals(VALID_PENDING_TEXT, completed.content)
+        } finally {
+            history.close()
+        }
+
+        val reopenedHistory = PortableConversationStore(context)
+        try {
+            val reopened = CanonicalConversationStore(
+                history = reopenedHistory,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { "unused" },
+            )
+            assertEquals(
+                CURRENT_REMOTE_ID,
+                checkNotNull(reopened.state().conversation(CONVERSATION_ID)).remoteConversationId,
+            )
+            val durable = reopenedHistory.loadMessages(CONVERSATION_ID).single { message ->
+                message.role == HistoryMessageRole.Assistant && message.turnId == secondTurnId
+            }
+            assertEquals(HistoryMessageStatus.Complete, durable.status)
+            assertEquals(VALID_PENDING_TEXT, durable.content)
+        } finally {
+            reopenedHistory.close()
+        }
+    }
+
     private companion object {
         const val CONVERSATION_ID = "android-remote-id-stale-completion-fence"
         const val CURRENT_REMOTE_ID = "remote-current"
         const val STALE_REMOTE_ID = "remote-stale"
         const val TERMINAL_TEXT = "Alex is already registered."
+        const val STALE_PENDING_TEXT = "stale transport output"
+        const val VALID_PENDING_TEXT = "The evidence still points to Alex."
     }
 }
