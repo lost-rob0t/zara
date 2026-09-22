@@ -77,6 +77,38 @@
      (zara-conversation-symbolic--parse payload "emacs-main")
      :type 'error)))
 
+(ert-deftest zara-conversation-symbolic-replay-keeps-one-canonical-snapshot ()
+  "Transcript replay and symbolic status must come from the same canonical snapshot."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (let ((replay-calls 0)
+          (refresh-calls 0))
+      (cl-letf (((symbol-function 'zara-conversation-replay)
+                 (lambda ()
+                   (cl-incf replay-calls)
+                   (setq-local
+                    zara-conversation-symbolic-projection
+                    (zara-conversation-symbolic--parse
+                     zara-conversation-symbolic-replay-test--payload
+                     "emacs-main"))
+                   :canonical-replay))
+                ((symbol-function 'zara-conversation-symbolic-refresh-status)
+                 (lambda ()
+                   (cl-incf refresh-calls)
+                   (error "symbolic replay must not issue a second canonical read"))))
+        (let ((projection (zara-conversation-symbolic-replay)))
+          (should (eq projection zara-conversation-symbolic-projection))
+          (should (= replay-calls 1))
+          (should (= refresh-calls 0))
+          (should (equal (gethash "project_id" projection) "dotfiles"))
+          (should (= (gethash "project_generation" projection) 3))
+          (should (= (length (gethash "expert_evidence" projection)) 1))
+          (should (eq (gethash "providers_enabled" projection) :false))
+          (should (= (gethash "max_model_calls" projection) 0))
+          (should (= (gethash "provider_calls" projection) 0))
+          (should (= (gethash "model_calls" projection) 0)))))))
+
 (ert-deftest zara-conversation-symbolic-switch-fences-stale-project-status ()
   (with-temp-buffer
     (zara-chat-mode)
