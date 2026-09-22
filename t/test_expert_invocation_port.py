@@ -74,7 +74,7 @@ def _handler(**_kwargs: Any) -> dict[str, object]:
         "verdict": "succeeded",
         "data": {},
         "evidence_refs": ["ev:canonical-port-fixture"],
-        "usage": {"model_calls": 0},
+        "usage": {"provider_calls": 0, "model_calls": 0},
         "effect_receipts": [],
     }
 
@@ -196,8 +196,30 @@ def test_port_invokes_only_through_canonical_request_path_with_zero_model_budget
     assert result.activation_id == handle.activation_id
     assert result.resolved_registry_generation == registry.generation
     assert result.resolved_runtime_generation == registry.runtime_generation
-    assert result.usage == {"model_calls": 0}
+    assert result.usage == {"provider_calls": 0, "model_calls": 0}
     assert result.evidence_refs == ("ev:canonical-port-fixture",)
+
+
+def test_zero_model_port_rejects_missing_provider_usage_proof() -> None:
+    def missing_provider_usage(**_kwargs: Any) -> dict[str, object]:
+        return {
+            "verdict": "succeeded",
+            "data": {},
+            "evidence_refs": ["ev:canonical-port-fixture"],
+            "usage": {"model_calls": 0},
+            "effect_receipts": [],
+        }
+
+    registry = _registry(missing_provider_usage)
+    handle, _ = registry.activate(
+        "user:alice",
+        "ws:main",
+        "zara:expert/port-fixture",
+    )
+    port = CanonicalExpertInvocationPort(registry)
+
+    with pytest.raises(ExpertInvalidInputError, match="provider_calls"):
+        port.invoke(_request(handle))
 
 
 @pytest.mark.parametrize("bad_number", [float("nan"), float("inf"), float("-inf")])
@@ -230,13 +252,17 @@ def test_port_rejects_non_finite_numeric_result_payloads(surface: str) -> None:
             "verdict": "succeeded",
             "data": {},
             "evidence_refs": ["ev:canonical-port-fixture"],
-            "usage": {"model_calls": 0},
+            "usage": {"provider_calls": 0, "model_calls": 0},
             "effect_receipts": [],
         }
         if surface == "data":
             outcome["data"] = {"score": float("nan")}
         elif surface == "usage":
-            outcome["usage"] = {"model_calls": 0, "latency_ms": float("inf")}
+            outcome["usage"] = {
+                "provider_calls": 0,
+                "model_calls": 0,
+                "latency_ms": float("inf"),
+            }
         else:
             outcome["effect_receipts"] = [
                 {"effect": "filesystem_read", "duration_ms": float("-inf")}
