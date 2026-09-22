@@ -107,6 +107,35 @@ class WearSymbolicConversationConsumerTest {
     }
 
     @Test
+    fun rejectsVerifiedSuccessWithStalePostconditionEvidenceAndPreservesCurrentTruth() {
+        val consumer = consumer()
+        val accepted = fixture(
+            projectionGeneration = 7,
+            runtimeGeneration = 11,
+            dialogueAct = "verified",
+            verifiedOutcomeRefs = listOf(
+                "zara.verified-outcome/v2:11:outcome:postcondition:timer-42",
+            ),
+        )
+        assertEquals(accepted, consumer.accept(SymbolicConversationEdgeCodec.encode(accepted)))
+
+        val staleEvidence = fixture(
+            projectionGeneration = 8,
+            runtimeGeneration = 12,
+            dialogueAct = "verified",
+            verifiedOutcomeRefs = listOf(
+                "zara.verified-outcome/v2:11:outcome:postcondition:timer-42",
+            ),
+        )
+
+        assertNull(consumer.accept(SymbolicConversationEdgeCodec.encode(staleEvidence)))
+        assertEquals(accepted, consumer.currentSnapshot())
+        assertEquals(0L, consumer.currentSnapshot()?.maxModelCalls)
+        assertEquals(0L, consumer.currentSnapshot()?.modelCalls)
+        assertEquals(0L, consumer.currentSnapshot()?.providerCalls)
+    }
+
+    @Test
     fun scopeSwitchDropsOldViewAndRequiresNewProjectFloor() {
         val consumer = consumer()
         assertEquals(
