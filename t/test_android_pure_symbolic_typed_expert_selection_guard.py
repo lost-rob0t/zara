@@ -29,6 +29,19 @@ FACTORY = (
     / "prolog"
     / "AndroidPureSymbolicConversationFactory.kt"
 )
+CANONICAL_TURN = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "prolog"
+    / "CanonicalNaturalExpertTurn.kt"
+)
 
 
 def _selection_fields(source: str) -> str:
@@ -57,13 +70,21 @@ def test_typed_expert_selection_carries_canonical_invocation_shape_not_a_raw_goa
     )
 
 
-def test_conversation_factory_consumes_only_typed_expert_invocation_fields() -> None:
-    """Factory composition must not recover a raw-goal shortcut from the typed router result."""
+def test_conversation_composition_consumes_only_typed_expert_invocation_fields() -> None:
+    """Factory -> canonical-turn composition must preserve typed fields without recovering a raw goal."""
     factory = FACTORY.read_text(encoding="utf-8")
+    canonical_turn = CANONICAL_TURN.read_text(encoding="utf-8")
 
     assert "LocalNaturalLanguageExpertRouter.select" in factory
-    assert "selection.expertId" in factory
-    assert "selection.expertOperation" in factory
-    assert "selection.input" in factory
+    assert "CanonicalNaturalExpertTurn(" in factory
+    assert "selection = selection" in factory, (
+        "The factory must hand the exact typed router result to the canonical expert turn boundary."
+    )
+    for field in ("expertId", "expertOperation", "input"):
+        assert f"selection.{field}" in canonical_turn, (
+            f"CanonicalNaturalExpertTurn must forward selection.{field} into canonical expert.invoke."
+        )
+    assert "adapter.invoke(" in canonical_turn
     assert "selection.query" not in factory
+    assert "selection.query" not in canonical_turn
     assert "LocalNaturalLanguageExpertRouter.query" not in factory
