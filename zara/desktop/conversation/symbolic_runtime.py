@@ -98,6 +98,13 @@ class PureSymbolicProjectionAdapter:
             expert_evidence = []
             verified_facts = []
 
+        is_error = dialogue_act == "error"
+        if is_error and current is not None and project_context_is_current:
+            prior_context = current.dialogue_state.get("prolog_context_term", "[]")
+            if not isinstance(prior_context, str):
+                raise TypeError("persisted symbolic dialogue context must be text")
+            context_term = prior_context
+
         if dialogue_act == "expert_answer":
             expert_evidence = [
                 {"ref": _bounded_expert_evidence_ref(expert_evidence_ref)}
@@ -112,11 +119,14 @@ class PureSymbolicProjectionAdapter:
             current.project_generation if current else 0
         )
 
-        unresolved_questions = [
-            item
-            for item in prior_questions
-            if item.get("source") != "symbolic_dialogue"
-        ]
+        if is_error:
+            unresolved_questions = prior_questions
+        else:
+            unresolved_questions = [
+                item
+                for item in prior_questions
+                if item.get("source") != "symbolic_dialogue"
+            ]
         if dialogue_act == "clarify":
             unresolved_questions.append(
                 {
@@ -131,7 +141,7 @@ class PureSymbolicProjectionAdapter:
             projection_generation=expected_generation + 1,
             runtime_generation=(current.runtime_generation if current else 0) + 1,
             turn_id=turn_id,
-            outcome="success",
+            outcome="error" if is_error else "success",
             project_id=current.project_id if current else None,
             project_generation=current.project_generation if current else 0,
             dialogue_act=dialogue_act,
