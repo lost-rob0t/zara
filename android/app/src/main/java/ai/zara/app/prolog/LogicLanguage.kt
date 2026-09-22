@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import java.net.URI
+import java.util.Locale
 import kotlin.math.sqrt
 
 enum class PrologTokenKind { COMMENT, DIRECTIVE, VARIABLE, ATOM, NUMBER, STRING, OPERATOR, PUNCTUATION }
@@ -156,7 +157,7 @@ object LocalNaturalLanguageExpertRouter {
     private val utterance = Regex("^([a-z][A-Za-z0-9_]*)\\s+([a-z][A-Za-z0-9_]*)$")
 
     fun select(text: String, catalog: PrologWorkspaceCatalog): NaturalLanguageExpertSelection? {
-        val match = utterance.matchEntire(text.trim().lowercase()) ?: return null
+        val match = utterance.matchEntire(text.trim().lowercase(Locale.ROOT)) ?: return null
         val expertId = catalog.activations[match.groupValues[1]] ?: return null
         val predicate = PredicateRef("${expertId}_explain", 2)
         if (predicate !in catalog.experts) return null
@@ -397,7 +398,7 @@ object LocalEmbeddingModel {
         require(configuration.modelVersion == "zara-token-hash-1") { "Unsupported local embedding model" }
         require(configuration.dimensions in 32..512) { "Invalid local embedding dimensions" }
         val vector = FloatArray(configuration.dimensions)
-        text.lowercase().split(Regex("[^a-z0-9_]+"))
+        text.lowercase(Locale.ROOT).split(Regex("[^a-z0-9_]+"))
             .filter(String::isNotBlank)
             .forEach { token ->
                 val hash = token.fold(0x811c9dc5.toInt()) { value, character ->
