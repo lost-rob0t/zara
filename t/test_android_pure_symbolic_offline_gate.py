@@ -41,6 +41,8 @@ def test_installed_pure_symbolic_transcript_checks_hard_zero_after_each_turn() -
         "follow-up-after-restart",
         "social-follow-up",
         "unsupported-no-fallback",
+        "expert-answer",
+        "expert-follow-up-after-restart",
     )
     for stage in required_stages:
         marker = f'inspect_hard_zero_accounting(device, stage="{stage}")'
@@ -59,6 +61,26 @@ def test_installed_pure_symbolic_transcript_checks_hard_zero_after_each_turn() -
     )
     timer_recreate = source.index("device.recreate()", timer_checkpoint)
     assert timer_send < timer_checkpoint < timer_recreate
+
+    # Expert success has stricter evidence semantics than social/clarification
+    # turns. Pin zero accounting before process recreation so a transient model or
+    # provider call cannot be hidden by the later `why?` projection resetting the
+    # durable per-turn counters back to zero.
+    expert_send = source.index('send_chat(device, "inspect alex"')
+    expert_checkpoint = source.index(
+        'stage="expert-answer"',
+        expert_send,
+    )
+    expert_recreate = source.index("device.recreate()", expert_checkpoint)
+    assert expert_send < expert_checkpoint < expert_recreate
+
+    why_send = source.index('send_chat(device, "why?"', expert_recreate)
+    why_checkpoint = source.index(
+        'stage="expert-follow-up-after-restart"',
+        why_send,
+    )
+    final_recreate = source.index("device.recreate()", why_checkpoint)
+    assert expert_recreate < why_send < why_checkpoint < final_recreate
 
 
 def test_emulator_gate_executes_zero_model_and_verified_receipt_fences() -> None:
