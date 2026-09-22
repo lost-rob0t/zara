@@ -1,9 +1,9 @@
 """Installed-wheel restart acceptance for Desktop pure-symbolic conversation.
 
-This exercises the shipped runtime and canonical ConversationStore in two fresh
-Python processes.  No provider credential or network access is available in
-either process.  A clarification written by process one must therefore be the
-only state process two can use to resolve the follow-up.
+These tests exercise the shipped runtime and canonical ConversationStore in fresh
+Python processes. No provider credential or network access is available in any
+process. Durable symbolic discourse and cancellation state must therefore be the
+only state later processes can use.
 """
 
 from __future__ import annotations
@@ -147,12 +147,20 @@ assert package_path.is_relative_to(wheel_root), (
 )
 
 from zara.database import DatabaseManager
-from zara.desktop.conversation import ConversationStore
+from zara.desktop.conversation import (
+    ConversationService,
+    ConversationStore,
+    MessageRole,
+    MessageStatus,
+)
 from zara.desktop.conversation.symbolic_runtime import PureSymbolicProjectionAdapter
+from zara.runtime import events
+from zara.runtime.commands import CommandReceipt
 from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
 
 DB_PATH = Path(os.environ["ZARA_TEST_CONVERSATION_DB"])
 CONVERSATION_ID = "installed-desktop-restart"
+CANCELLED_TURN_ID = "installed-cancelled-turn"
 
 
 def assert_zero(metadata):
@@ -239,11 +247,168 @@ async def phase_two():
         database.close()
 
 
+def phase_expert_seed_and_cancel():
+    database = DatabaseManager(DB_PATH)
+    store = ConversationStore(database)
+    conversation = store.create_conversation(
+        "Installed expert discourse",
+        conversation_id=CONVERSATION_ID,
+    )
+    adapter = PureSymbolicProjectionAdapter(store)
+    adapter.commit_turn(
+        conversation_id=conversation.id,
+        expected_generation=0,
+        turn_id="installed-expert-turn-1",
+        response="The flake input is stale.",
+        dialogue_act="expert_answer",
+        response_act_term=(
+            'answer(expert,"The flake input is stale.",'
+            'evidence("dotfiles:flake-lock"))'
+        ),
+        context_term="[]",
+        renderer_provenance="symbolic-dcg/v1",
+        expert_evidence_ref="dotfiles:flake-lock",
+    )
+
+    projection = store.load_symbolic_projection(conversation.id)
+    assert projection is not None
+    projection.assert_pure_symbolic()
+    assert projection.dialogue_state["response_act_term"].startswith("answer(expert,")
+    assert projection.expert_evidence == [{"ref": "dotfiles:flake-lock"}]
+    assert projection.providers_enabled is False
+    assert projection.max_model_calls == 0
+    assert projection.provider_calls == 0
+    assert projection.model_calls == 0
+
+    service = ConversationService(store)
+    user, _ = service.add_user_message(
+        conversation.id,
+        "cancel that follow-up",
+        request_id="installed-cancel-request",
+    )
+    service.bind_receipt(
+        CommandReceipt(
+            request_id="installed-cancel-request",
+            turn_id=CANCELLED_TURN_ID,
+        )
+    )
+    update = service.apply_event(
+        events.TurnCancelled(
+            conversation_id=conversation.id,
+            turn_id=CANCELLED_TURN_ID,
+            reason="user cancelled",
+        )
+    )
+    assert update is not None
+    assert user.status is MessageStatus.CANCELLED
+    assert user.error == "user cancelled"
+    database.close()
+
+
+async def phase_expert_why_after_cancel_restart():
+    database = DatabaseManager(DB_PATH)
+    store = ConversationStore(database)
+    service = ConversationService(store)
+    state = service.get_state(CONVERSATION_ID)
+    cancelled = state.latest_message(
+        role=MessageRole.USER,
+        turn_id=CANCELLED_TURN_ID,
+    )
+    assert cancelled is not None
+    assert cancelled.status is MessageStatus.CANCELLED
+    assert cancelled.error == "user cancelled"
+    message_count = len(state.messages)
+
+    late_events = (
+        events.AssistantStarted(
+            conversation_id=CONVERSATION_ID,
+            turn_id=CANCELLED_TURN_ID,
+        ),
+        events.AssistantDelta(
+            conversation_id=CONVERSATION_ID,
+            turn_id=CANCELLED_TURN_ID,
+            text="late assistant output",
+        ),
+        events.ResponseText(
+            conversation_id=CONVERSATION_ID,
+            turn_id=CANCELLED_TURN_ID,
+            text="late buffered output",
+        ),
+        events.ToolStarted(
+            conversation_id=CONVERSATION_ID,
+            turn_id=CANCELLED_TURN_ID,
+            tool_run_id="installed-late-tool",
+            tool_name="timer",
+        ),
+        events.ToolCompleted(
+            conversation_id=CONVERSATION_ID,
+            turn_id=CANCELLED_TURN_ID,
+            tool_run_id="installed-late-tool",
+            tool_name="timer",
+        ),
+        events.RuntimeError(
+            conversation_id=CONVERSATION_ID,
+            turn_id=CANCELLED_TURN_ID,
+            reason="late runtime error",
+        ),
+    )
+    for event in late_events:
+        assert service.apply_event(event) is None
+
+    fenced = store.load_state(CONVERSATION_ID)
+    assert len(fenced.messages) == message_count
+    assert fenced.latest_message(
+        role=MessageRole.ASSISTANT,
+        turn_id=CANCELLED_TURN_ID,
+    ) is None
+    assert not any(
+        message.tool_run_id == "installed-late-tool" for message in fenced.messages
+    )
+
+    backend = PureSymbolicRuntimeBackend(
+        projection_adapter=PureSymbolicProjectionAdapter(store),
+    )
+    await backend.start()
+    try:
+        follow_up = await backend.submit_turn(
+            "why?",
+            turn_id="installed-expert-why-2",
+            conversation_id=CONVERSATION_ID,
+        )
+        assert follow_up.response == "I answered from evidence dotfiles:flake-lock."
+        assert follow_up.metadata["response_act"].startswith("answer(expert,")
+        assert follow_up.metadata["expert_evidence_ref"] == "dotfiles:flake-lock"
+        assert_zero(follow_up.metadata)
+        backend.commit_turn_result(
+            follow_up,
+            turn_id="installed-expert-why-2",
+            conversation_id=CONVERSATION_ID,
+        )
+
+        projection = store.load_symbolic_projection(CONVERSATION_ID)
+        assert projection is not None
+        projection.assert_pure_symbolic()
+        assert projection.projection_generation == 2
+        assert projection.dialogue_act == "expert_answer"
+        assert projection.expert_evidence == [{"ref": "dotfiles:flake-lock"}]
+        assert projection.providers_enabled is False
+        assert projection.max_model_calls == 0
+        assert projection.provider_calls == 0
+        assert projection.model_calls == 0
+    finally:
+        await backend.stop()
+        database.close()
+
+
 phase = os.environ["ZARA_TEST_PHASE"]
 if phase == "one":
     asyncio.run(phase_one())
 elif phase == "two":
     asyncio.run(phase_two())
+elif phase == "expert-seed-cancel":
+    phase_expert_seed_and_cancel()
+elif phase == "expert-why-after-cancel":
+    asyncio.run(phase_expert_why_after_cancel_restart())
 else:
     raise AssertionError(f"unknown phase: {phase!r}")
 '''
@@ -272,6 +437,19 @@ def test_installed_desktop_clarification_survives_process_recreation_with_zero_c
 
     _run_installed_phase(env=env, cwd=tmp_path, phase="one")
     _run_installed_phase(env=env, cwd=tmp_path, phase="two")
+
+    assert (tmp_path / "conversation.db").is_file()
+    assert wheel_root.is_dir()
+
+
+def test_installed_desktop_cancelled_turn_stays_fenced_and_expert_why_survives_restart(
+    installed_symbolic_wheel: Path,
+    tmp_path: Path,
+) -> None:
+    env, wheel_root = _installed_env(installed_symbolic_wheel, tmp_path)
+
+    _run_installed_phase(env=env, cwd=tmp_path, phase="expert-seed-cancel")
+    _run_installed_phase(env=env, cwd=tmp_path, phase="expert-why-after-cancel")
 
     assert (tmp_path / "conversation.db").is_file()
     assert wheel_root.is_dir()
