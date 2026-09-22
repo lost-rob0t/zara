@@ -44,6 +44,14 @@ class PureSymbolicExpertInvocationAdapter(
         limits: ExpertLimits,
         idempotencyKey: String,
     ): CompletableFuture<ExpertResult> {
+        if (limits.maxModelCalls != 0) {
+            return CompletableFuture.failedFuture(
+                IllegalArgumentException(
+                    "Pure-symbolic expert invocation requires maxModelCalls=0",
+                ),
+            )
+        }
+
         val activation = port.activeActivation(
             principal = principal,
             workspace = workspace,
