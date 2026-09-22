@@ -42,6 +42,10 @@ class WearSymbolicConversationConsumer(
             current = current,
             encoded = encoded,
         ) ?: return null
+
+        if (accepted.projectGeneration > scope.projectGeneration) {
+            scope = scope.copy(projectGeneration = accepted.projectGeneration)
+        }
         current = accepted.detachedCopy()
         return current?.detachedCopy()
     }
