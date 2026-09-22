@@ -452,15 +452,27 @@ class CanonicalConversationStore(
         return try {
             DataInputStream(FileInputStream(metadataFile).buffered()).use { input ->
                 require(input.readUTF() == UI_METADATA_MAGIC)
-                val selected = input.readBoundedString(MAX_ID_CHARS).ifEmpty { null }
+                val selected = normalizeOptionalId(
+                    input.readBoundedString(MAX_ID_CHARS),
+                    MAX_ID_CHARS,
+                    "Selected conversation id",
+                )
                 val count = input.readInt()
                 require(count in 0..MAX_CONVERSATIONS)
                 val rows = buildMap {
                     repeat(count) {
                         val id = normalizeId(input.readBoundedString(MAX_ID_CHARS))
                         val pinned = input.readBoolean()
-                        val projectId = input.readBoundedString(MAX_PROJECT_ID_CHARS).ifEmpty { null }
-                        val remoteId = input.readBoundedString(MAX_ID_CHARS).ifEmpty { null }
+                        val projectId = normalizeOptionalId(
+                            input.readBoundedString(MAX_PROJECT_ID_CHARS),
+                            MAX_PROJECT_ID_CHARS,
+                            "Project id",
+                        )
+                        val remoteId = normalizeOptionalId(
+                            input.readBoundedString(MAX_ID_CHARS),
+                            MAX_ID_CHARS,
+                            "Remote conversation id",
+                        )
                         put(id, ConversationUiMetadata(pinned, projectId, remoteId))
                     }
                 }
