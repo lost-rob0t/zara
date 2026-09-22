@@ -222,6 +222,34 @@ def test_zero_model_port_rejects_missing_provider_usage_proof() -> None:
         port.invoke(_request(handle))
 
 
+@pytest.mark.parametrize("bad_provider_calls", [1, 0.0, False, "0"])
+def test_zero_model_port_rejects_false_zero_provider_usage_proof(
+    bad_provider_calls: object,
+) -> None:
+    def false_zero_provider_usage(**_kwargs: Any) -> dict[str, object]:
+        return {
+            "verdict": "succeeded",
+            "data": {},
+            "evidence_refs": ["ev:canonical-port-fixture"],
+            "usage": {
+                "provider_calls": bad_provider_calls,
+                "model_calls": 0,
+            },
+            "effect_receipts": [],
+        }
+
+    registry = _registry(false_zero_provider_usage)
+    handle, _ = registry.activate(
+        "user:alice",
+        "ws:main",
+        "zara:expert/port-fixture",
+    )
+    port = CanonicalExpertInvocationPort(registry)
+
+    with pytest.raises(ExpertInvalidInputError, match="provider_calls"):
+        port.invoke(_request(handle))
+
+
 @pytest.mark.parametrize("bad_number", [float("nan"), float("inf"), float("-inf")])
 def test_port_rejects_non_finite_numeric_input_without_dispatch(bad_number: float) -> None:
     dispatches = 0
