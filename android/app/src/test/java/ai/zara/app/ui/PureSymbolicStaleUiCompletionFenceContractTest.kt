@@ -36,8 +36,12 @@ class PureSymbolicStaleUiCompletionFenceContractTest {
             completeTurn.contains("expectedTurnId: String? = null"),
         )
         assertTrue(
-            "When an expected turn is supplied, terminal idempotence must resolve that exact historical assistant turn.",
-            completeTurn.contains("it.turnId == expectedTurnId"),
+            "Expected turn identity must be normalized through the canonical conversation-id validation path before comparison.",
+            completeTurn.contains("val expectedTurn = expectedTurnId?.let(::normalizeId)"),
+        )
+        assertTrue(
+            "When an expected turn is supplied, terminal idempotence must resolve that exact normalized historical assistant turn.",
+            completeTurn.contains("it.turnId == expectedTurn"),
         )
         assertTrue(
             "The UI facade must expose the running canonical turn id from the existing zara.db owner; do not mint a second identity.",
