@@ -41,6 +41,19 @@ EXPERT_CONTRACT = (
     / "expert"
     / "ExpertContract.kt"
 )
+EXPERT_INVOCATION_CONTRACT = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "expert"
+    / "ExpertInvocationContract.kt"
+)
 SYMBOLIC_DIALOGUE = ROOT / "modules" / "symbolic_dialogue.pl"
 INSTALLED_ACCEPTANCE = ROOT / "android" / "integration" / "device_pure_symbolic_acceptance.py"
 
@@ -69,7 +82,7 @@ def test_natural_pure_symbolic_turn_reuses_existing_expert_router_and_response_c
 
 def test_natural_expert_invocation_must_cross_zara_expert_v1_admission_before_body_execution() -> None:
     factory = FACTORY.read_text(encoding="utf-8")
-    contract = EXPERT_CONTRACT.read_text(encoding="utf-8")
+    contract = EXPERT_CONTRACT.read_text(encoding="utf-8") + EXPERT_INVOCATION_CONTRACT.read_text(encoding="utf-8")
 
     # Mirror the canonical #1233 request/result envelope on Android instead of inventing a
     # natural-language-only raw Prolog execution lane. These names intentionally match the
