@@ -174,7 +174,7 @@ object PureSymbolicExpertAdmission {
     }
 
     private val verifiedOutcomeV2RefPattern = Regex(
-        "^zara\\.verified-outcome/v2:([1-9][0-9]*):(effect|outcome):" +
+        "^zara\\.verified-outcome/v2:(0|[1-9][0-9]*):(effect|outcome):" +
             "[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$",
     )
 }
