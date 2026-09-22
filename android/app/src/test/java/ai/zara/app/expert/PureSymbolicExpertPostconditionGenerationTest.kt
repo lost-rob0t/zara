@@ -39,7 +39,23 @@ class PureSymbolicExpertPostconditionGenerationTest {
         )
     }
 
-    private fun activation(): ActivationHandle = ActivationHandle(
+    @Test
+    fun zeroRuntimeGenerationEffectEvidenceRemainsAccepted() {
+        val activation = activation(runtimeGeneration = 0L)
+        val request = request(activation)
+        val result = effectResult(
+            activation = activation,
+            request = request,
+            sourceGeneration = 0L,
+        )
+
+        assertEquals(
+            result,
+            PureSymbolicExpertAdmission.validateResult(activation, request, result),
+        )
+    }
+
+    private fun activation(runtimeGeneration: Long = 11L): ActivationHandle = ActivationHandle(
         activationId = "act:0123456789abcdef0123456789abcdef",
         principal = "local:owner",
         workspace = "local-device",
@@ -47,7 +63,7 @@ class PureSymbolicExpertPostconditionGenerationTest {
         expertVersion = "1.0.0",
         manifestDigest = "sha256:diagnosis",
         registryGeneration = 7L,
-        runtimeGeneration = 11L,
+        runtimeGeneration = runtimeGeneration,
     )
 
     private fun request(activation: ActivationHandle): ExpertRequest =
