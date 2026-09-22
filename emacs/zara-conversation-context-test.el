@@ -25,6 +25,22 @@
     (should (equal zara-conversation-id "project-next"))
     (should-not zara-conversation-context-ids)))
 
+(ert-deftest zara-conversation-switch-fences-visible-transcript ()
+  "Switching conversations must not leave the previous transcript on screen."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-context-ids '("project:old"))
+    (let ((inhibit-read-only t))
+      (insert "You\nold-project-secret\n\nZara\nold-project-answer\n\n"))
+    (should (equal (zara-conversation-switch "project-next") "project-next"))
+    (should (equal zara-conversation-id "project-next"))
+    (should-not zara-conversation-context-ids)
+    (should-not (string-match-p "old-project-secret" (buffer-string)))
+    (should-not (string-match-p "old-project-answer" (buffer-string)))
+    (should (string-match-p "Canonical conversation project-next" (buffer-string)))
+    (should (string-match-p "replay" (downcase (buffer-string))))))
+
 (ert-deftest zara-conversation-context-ids-fail-closed-over-budget ()
   "Emacs refuses an unbounded context set before starting the native client."
   (let ((zara-conversation-context-ids
