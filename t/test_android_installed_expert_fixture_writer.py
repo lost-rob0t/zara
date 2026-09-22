@@ -12,23 +12,30 @@ def _install_acceptance_expert_source() -> str:
     return source[start:end]
 
 
-def test_installed_expert_fixture_streams_bytes_without_run_as_shell_redirection() -> None:
-    """The API-35 run-as shell must not parse a multiline Prolog fixture as argv text."""
+def test_installed_expert_fixture_stages_file_without_run_as_streaming_or_shell_parsing() -> None:
+    """API-35 acceptance must not rely on run-as stdin forwarding for fixture bytes."""
     install = _install_acceptance_expert_source()
 
     assert '"sh", "-c"' not in install, (
-        "Installed acceptance must not pass multiline expert source through run-as sh -c; "
-        "exact-head CI 35689330099 proved that path exits 1 before the expert transcript starts."
+        "Installed acceptance must not pass multiline expert source through run-as sh -c."
     )
-    assert "subprocess.run(" in install, (
-        "Write the fixture over adb stdin so Prolog source bytes are data, not shell syntax."
+    assert '"/system/bin/tee"' not in install, (
+        "Exact-head CI 35693436239 proved adb exec-out run-as /system/bin/tee can hang waiting "
+        "for EOF; stage a regular file outside the app sandbox instead."
+    )
+    assert "input=ACCEPTANCE_EXPERT_SOURCE" not in install, (
+        "Do not depend on adb stdin forwarding for the app-private fixture boundary."
+    )
+    assert '"push"' in install, (
+        "Stage the exact fixture bytes with adb push before entering the app sandbox."
     )
     assert '"run-as"' in install
-    assert '"/system/bin/tee"' in install, (
-        "Use the platform-owned app-private writer instead of depending on shell redirection."
+    assert '"cp"' in install, (
+        "Copy the staged regular file into the existing app-private Prolog workspace under run-as."
     )
-    assert "input=ACCEPTANCE_EXPERT_SOURCE" in install
-    assert "check=True" in install
+    assert "ACCEPTANCE_EXPERT_SOURCE.encode(" in install, (
+        "The host staging file must be populated from the exact UTF-8 fixture bytes."
+    )
 
 
 def test_installed_expert_fixture_verifies_fresh_private_workspace_postcondition() -> None:
@@ -40,5 +47,5 @@ def test_installed_expert_fixture_verifies_fresh_private_workspace_postcondition
     assert '"/system/bin/cat"' in install
     assert "observed" in install and "expected" in install
     assert "raise AssertionError" in install, (
-        "A successful writer exit is not enough; require exact read-back evidence from app-private storage."
+        "A successful copy is not enough; require exact read-back evidence from app-private storage."
     )
