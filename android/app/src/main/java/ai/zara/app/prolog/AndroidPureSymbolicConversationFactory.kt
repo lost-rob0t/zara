@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.history.ConversationHistoryContract
 import ai.zara.app.history.HistoryMessageRole
 import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
@@ -10,6 +11,7 @@ import ai.zara.app.history.completeSymbolicTurnAtomically
 import ai.zara.app.history.failSymbolicTurnBeforeProjection
 import ai.zara.app.history.loadSymbolicProjection
 import ai.zara.app.history.saveSymbolicProjection
+import ai.zara.app.history.toSymbolicEdgeSnapshot
 import ai.zara.app.runtime.LocalQueryResult
 import java.util.concurrent.CompletableFuture
 
@@ -61,6 +63,15 @@ internal object AndroidPureSymbolicConversationFactory {
             } else {
                 SymbolicDialogueContextCodec.decode(current?.dialogueStateJson ?: "{}")
             }
+            val previousExpertResponseAct = if (resetProjectKnowledge) {
+                null
+            } else {
+                previousExpertResponseAct(
+                    current = current,
+                    projectionStore = projectionStore,
+                    conversationId = conversationId,
+                )
+            }
             PreparedTurn(
                 current = current,
                 expectedGeneration = expectedGeneration,
@@ -68,6 +79,7 @@ internal object AndroidPureSymbolicConversationFactory {
                 projectId = projectScope.projectId,
                 projectGeneration = projectScope.projectGeneration,
                 resetProjectKnowledge = resetProjectKnowledge,
+                previousExpertResponseAct = previousExpertResponseAct,
             )
         } catch (error: Throwable) {
             return PureSymbolicResolution(
@@ -115,14 +127,19 @@ internal object AndroidPureSymbolicConversationFactory {
                 utterance,
                 PrologWorkspaceCatalog.from(session.prologSources()),
             )
-            val query = if (expertQuery == null) {
-                dialogueTurnEnvelopeQuery(utterance, prepared.context0)
-            } else {
-                expertTurnEnvelopeQuery(
+            val query = when {
+                expertQuery != null -> expertTurnEnvelopeQuery(
                     expertQuery = expertQuery,
                     contextTerm = prepared.context0,
                     evidenceRef = naturalExpertEvidenceRef(expertQuery, turnId),
                 )
+                prepared.previousExpertResponseAct != null -> discourseAwareDialogueTurnEnvelopeQuery(
+                    utterance = utterance,
+                    contextTerm = prepared.context0,
+                    previousSummary = prepared.previousExpertResponseAct.summary,
+                    previousEvidenceRef = prepared.previousExpertResponseAct.evidenceRef,
+                )
+                else -> dialogueTurnEnvelopeQuery(utterance, prepared.context0)
             }
             session.queryLocalProlog(query)
         } catch (error: Throwable) {
@@ -213,6 +230,12 @@ internal object AndroidPureSymbolicConversationFactory {
         val projectId: String?,
         val projectGeneration: Long,
         val resetProjectKnowledge: Boolean,
+        val previousExpertResponseAct: PreviousExpertResponseAct?,
+    )
+
+    private data class PreviousExpertResponseAct(
+        val summary: String,
+        val evidenceRef: String,
     )
 
     private data class DialogueEnvelope(
@@ -221,6 +244,42 @@ internal object AndroidPureSymbolicConversationFactory {
         val dialogueAct: String,
         val expertEvidenceRef: String?,
     )
+
+    private fun previousExpertResponseAct(
+        current: SymbolicConversationProjection?,
+        projectionStore: PortableConversationStore,
+        conversationId: String,
+    ): PreviousExpertResponseAct? {
+        if (current == null || current.outcome != "success" || current.dialogueAct != "expert_answer") {
+            return null
+        }
+        val evidenceRefs = current.toSymbolicEdgeSnapshot(
+            ConversationHistoryContract.localPrincipalId,
+        ).expertEvidenceRefs
+        require(evidenceRefs.size == 1) {
+            "Canonical expert answer must expose exactly one stable evidence reference"
+        }
+        val previousTurnId = requireNotNull(current.turnId) {
+            "Canonical expert answer is missing its turn identity"
+        }
+        val summary = projectionStore.loadMessages(conversationId).lastOrNull { message ->
+            message.role == HistoryMessageRole.Assistant &&
+                message.status == HistoryMessageStatus.Complete &&
+                message.turnId == previousTurnId
+        }?.content ?: error("Canonical expert answer is missing its durable assistant message")
+        require(summary.isNotBlank() && summary.length <= MAX_EXPERT_SUMMARY_CHARS) {
+            "Canonical expert summary is outside the symbolic discourse bound"
+        }
+        require(summary.none { character ->
+            character.isISOControl() && character !in charArrayOf('\n', '\r', '\t')
+        }) {
+            "Canonical expert summary contains unsupported control characters"
+        }
+        return PreviousExpertResponseAct(
+            summary = summary,
+            evidenceRef = requireExpertEvidenceRef(evidenceRefs.single()),
+        )
+    }
 
     private fun requireRunningTurnId(
         projectionStore: PortableConversationStore,
@@ -599,6 +658,57 @@ internal object AndroidPureSymbolicConversationFactory {
             "(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)"
     }
 
+    internal fun discourseAwareDialogueTurnEnvelopeQuery(
+        utterance: String,
+        contextTerm: String,
+        previousSummary: String,
+        previousEvidenceRef: String,
+    ): String {
+        val text = utterance.trim()
+        require(text.isNotEmpty()) { "Utterance is required" }
+        require(text.length <= MAX_UTTERANCE_CHARS) { "Utterance is too large" }
+        require(previousSummary.isNotBlank() && previousSummary.length <= MAX_EXPERT_SUMMARY_CHARS) {
+            "Canonical expert summary is outside the symbolic discourse bound"
+        }
+        val escapedText = prologString(text)
+        val escapedSummary = prologString(previousSummary)
+        val escapedEvidence = prologString(requireExpertEvidenceRef(previousEvidenceRef))
+        val canonicalContext = SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
+        val escapedContext = SymbolicDialogueContextCodec.prologString(canonicalContext)
+        return "((string_codes(\"$escapedContext\", Context0Codes), " +
+            "atom_codes(Context0Atom, Context0Codes), " +
+            "read_term_from_atom(Context0Atom, Context0, []), " +
+            "symbolic_dialogue_turn:valid_dialogue_context(Context0), " +
+            "string_codes(\"$escapedSummary\", PreviousSummaryCodes), " +
+            "string_codes(PreviousSummary, PreviousSummaryCodes), " +
+            "string_codes(\"$escapedEvidence\", PreviousEvidenceCodes), " +
+            "string_codes(PreviousEvidenceRef, PreviousEvidenceCodes), " +
+            "PreviousAct = answer(expert, PreviousSummary, evidence(PreviousEvidenceRef)), " +
+            "((symbolic_dialogue:resolve_discourse(\"$escapedText\", PreviousAct, DiscourseAct), " +
+            "DiscourseAct \\= unsupported) -> " +
+            "Act = DiscourseAct, Context1 = Context0 ; " +
+            "symbolic_dialogue_turn:dialogue_turn(\"$escapedText\", conversation, Context0, " +
+            "turn(_Frames, Act, Context1))), " +
+            "symbolic_dialogue_turn:valid_dialogue_context(Context1), " +
+            "symbolic_dialogue:render_response(Act, Response), " +
+            "write_term_to_atom(ContextAtom, Context1, [quoted(true)]), " +
+            "atom_concat('$DIALOGUE_CONTEXT_WIRE_PREFIX', ContextAtom, ContextTagged), " +
+            "atom_codes(ContextTagged, ContextWireCodes), " +
+            "string_codes(ContextWire, ContextWireCodes), " +
+            "(Act = answer(expert, _, evidence(EvidenceRef)) -> " +
+            "ActName = expert_answer, " +
+            "(atom(EvidenceRef) -> atom_codes(EvidenceRef, EvidenceCodes) ; " +
+            "string(EvidenceRef) -> string_codes(EvidenceRef, EvidenceCodes) ; fail) ; " +
+            "functor(Act, ActName, _), EvidenceCodes = []), " +
+            "atom_concat('$DIALOGUE_ACT_WIRE_PREFIX', ActName, ActTagged), " +
+            "atom_codes(ActTagged, ActWireCodes), " +
+            "string_codes(ActWire, ActWireCodes), " +
+            "string_codes(\"$DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX\", EvidencePrefixCodes), " +
+            "append(EvidencePrefixCodes, EvidenceCodes, EvidenceWireCodes), " +
+            "string_codes(EvidenceWire, EvidenceWireCodes)) -> true ; fail), " +
+            "(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)"
+    }
+
     private fun expertGoal(expertQuery: String): String {
         val safe = PrologQueryPolicy.requireSafe(expertQuery)
         val resultVariable = Regex("\\bResult\\b")
@@ -653,5 +763,6 @@ internal object AndroidPureSymbolicConversationFactory {
     private const val NO_MATCH_TEXT = "I don't have a deterministic symbolic answer for that yet."
     private const val MAX_DIALOGUE_ACT_CHARS = 64
     private const val MAX_EXPERT_EVIDENCE_CHARS = 128
+    private const val MAX_EXPERT_SUMMARY_CHARS = 1_024
     private const val MAX_UTTERANCE_CHARS = 8_192
 }
