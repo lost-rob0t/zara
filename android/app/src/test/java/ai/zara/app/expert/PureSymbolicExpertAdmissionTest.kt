@@ -31,7 +31,28 @@ class PureSymbolicExpertAdmissionTest {
         val result = result(
             activation = activation,
             request = request,
-            usage = mapOf("model_calls" to 1),
+            usage = mapOf(
+                "provider_calls" to 0,
+                "model_calls" to 1,
+            ),
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            PureSymbolicExpertAdmission.validateResult(activation, request, result)
+        }
+    }
+
+    @Test
+    fun resultRejectsAnyProviderUsageEvenWhenModelUsageIsZero() {
+        val activation = activation()
+        val request = request(activation)
+        val result = result(
+            activation = activation,
+            request = request,
+            usage = mapOf(
+                "provider_calls" to 1,
+                "model_calls" to 0,
+            ),
         )
 
         assertThrows(IllegalArgumentException::class.java) {
@@ -139,7 +160,10 @@ class PureSymbolicExpertAdmissionTest {
         activation: ActivationHandle,
         request: ExpertRequest,
         resolvedRuntimeGeneration: Long = activation.runtimeGeneration,
-        usage: Map<String, Any?> = mapOf("model_calls" to 0),
+        usage: Map<String, Any?> = mapOf(
+            "provider_calls" to 0,
+            "model_calls" to 0,
+        ),
         evidenceRefs: List<String> = listOf("expert:diagnosis/turn:42"),
         effectReceipts: List<Map<String, Any?>> = emptyList(),
         data: Map<String, Any?> = mapOf("summary" to "diagnosis(alex, flu)"),
