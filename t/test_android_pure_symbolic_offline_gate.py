@@ -102,6 +102,7 @@ def test_emulator_gate_executes_zero_model_and_verified_receipt_fences() -> None
         "ai.zara.app.conversations.CanonicalConversationStaleUiCompletionFenceInstrumentedTest",
         "ai.zara.app.prolog.AndroidPureSymbolicPreflightFailureInstrumentedTest",
         "ai.zara.app.conversations.CanonicalConversationProjectSwitchVerifiedReceiptEdgeInstrumentedTest",
+        "ai.zara.app.conversations.CanonicalConversationSelectionRecreationInstrumentedTest",
     )
     for class_name in required_classes:
         assert class_name in source, (
