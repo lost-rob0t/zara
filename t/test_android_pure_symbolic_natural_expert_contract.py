@@ -28,6 +28,19 @@ LOGIC_LANGUAGE = (
     / "prolog"
     / "LogicLanguage.kt"
 )
+EXPERT_CONTRACT = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "expert"
+    / "ExpertContract.kt"
+)
 SYMBOLIC_DIALOGUE = ROOT / "modules" / "symbolic_dialogue.pl"
 INSTALLED_ACCEPTANCE = ROOT / "android" / "integration" / "device_pure_symbolic_acceptance.py"
 
@@ -52,6 +65,46 @@ def test_natural_pure_symbolic_turn_reuses_existing_expert_router_and_response_c
     # The pure-symbolic path must stay isolated from the legacy local-model fallback path.
     assert "generateLocalModelTurn" not in factory
     assert "submitLocalText(" not in factory
+
+
+def test_natural_expert_invocation_must_cross_zara_expert_v1_admission_before_body_execution() -> None:
+    factory = FACTORY.read_text(encoding="utf-8")
+    contract = EXPERT_CONTRACT.read_text(encoding="utf-8")
+
+    # Mirror the canonical #1233 request/result envelope on Android instead of inventing a
+    # natural-language-only raw Prolog execution lane. These names intentionally match the
+    # Python authority so parity is reviewable across runtimes.
+    for required in (
+        "data class ActivationHandle",
+        "data class ExpertRequest",
+        "data class ExpertResult",
+        "activationId",
+        "expertOperation",
+        "expectedRegistryGeneration",
+        "expectedRuntimeGeneration",
+        "maxModelCalls",
+        "evidenceRefs",
+        "effectReceipts",
+    ):
+        assert required in contract, f"Android ZARA-EXPERT/1 mirror is missing {required}"
+
+    assert 'operation = "expert.invoke"' in factory, (
+        "Natural expert turns must be admitted as canonical expert.invoke requests"
+    )
+    assert "expectedRegistryGeneration" in factory
+    assert "expectedRuntimeGeneration" in factory
+    assert "maxModelCalls = 0" in factory, (
+        "Pure-symbolic expert admission must carry the shared zero-model budget"
+    )
+    assert "effectReceipts" in factory, (
+        "Successful expert effects must be projected from canonical receipts, never inferred from prose"
+    )
+    assert "expertTurnEnvelopeQuery(" not in factory, (
+        "Natural expert turns must not execute a selected raw Prolog goal before canonical admission"
+    )
+    assert "naturalExpertEvidenceRef(" not in factory, (
+        "Evidence must come from the canonical expert result/receipt, not a fabricated local turn reference"
+    )
 
 
 def test_installed_android_acceptance_proves_expert_evidence_survives_recreation_and_follow_up() -> None:
