@@ -150,7 +150,8 @@ data class PrologWorkspaceCatalog(
 
 data class NaturalLanguageExpertSelection(
     val expertId: String,
-    val query: String,
+    val expertOperation: String,
+    val input: Map<String, Any?>,
 )
 
 object LocalNaturalLanguageExpertRouter {
@@ -163,12 +164,16 @@ object LocalNaturalLanguageExpertRouter {
         if (predicate !in catalog.experts) return null
         return NaturalLanguageExpertSelection(
             expertId = expertId,
-            query = "${predicate.name}(${match.groupValues[2]}, Result)",
+            expertOperation = "explain",
+            input = mapOf("entity" to match.groupValues[2]),
         )
     }
 
-    fun query(text: String, catalog: PrologWorkspaceCatalog): String? =
-        select(text, catalog)?.query
+    fun query(text: String, catalog: PrologWorkspaceCatalog): String? {
+        val selection = select(text, catalog) ?: return null
+        val entity = selection.input["entity"] as? String ?: return null
+        return "${selection.expertId}_explain($entity, Result)"
+    }
 }
 
 data class LocalPrologCommand(val query: String) {
