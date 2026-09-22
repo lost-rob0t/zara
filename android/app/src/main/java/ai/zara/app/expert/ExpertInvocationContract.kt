@@ -139,7 +139,9 @@ private fun requireBoundedPortableText(
 private fun requireBoundedPayload(value: Any?, field: String, depth: Int = 0) {
     require(depth <= MAX_PAYLOAD_DEPTH) { "$field exceeds bounded depth" }
     when (value) {
-        null, is Boolean, is Int, is Long, is Float, is Double -> Unit
+        null, is Boolean, is Int, is Long -> Unit
+        is Float -> require(value.isFinite()) { "$field contains non-finite number" }
+        is Double -> require(value.isFinite()) { "$field contains non-finite number" }
         is String -> require(value.length <= MAX_PAYLOAD_STRING) { "$field contains oversized string" }
         is List<*> -> {
             require(value.size <= MAX_PAYLOAD_LIST) { "$field contains oversized list" }
