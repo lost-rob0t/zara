@@ -64,6 +64,7 @@ internal class CanonicalExpertSymbolicRendererAdapter(
                 output.complete(
                     CanonicalRenderedExpertAnswer(
                         text = text,
+                        evidenceRef = projected.evidenceRef,
                         runtimeGeneration = result.generation,
                     ),
                 )
@@ -173,5 +174,6 @@ internal class CanonicalExpertSymbolicRendererAdapter(
 
 internal data class CanonicalRenderedExpertAnswer(
     val text: String,
+    val evidenceRef: String,
     val runtimeGeneration: Long,
 )
