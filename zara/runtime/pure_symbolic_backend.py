@@ -153,7 +153,11 @@ def _resolve_turn(
     )
     row = engine.query_once(goal)
     if row is None:
-        raise RuntimeError("canonical symbolic dialogue result unavailable")
+        return PureSymbolicTurn(
+            response=PURE_SYMBOLIC_RENDER_ERROR,
+            act_term="error(renderer_unavailable)",
+            context_term="[]",
+        )
     raw_evidence = _as_text(row.get("EvidenceRef", ""))
     return PureSymbolicTurn(
         response=_as_text(row["Response"]),
