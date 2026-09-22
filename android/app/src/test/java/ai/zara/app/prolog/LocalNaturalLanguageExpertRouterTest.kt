@@ -7,7 +7,7 @@ import org.junit.Test
 
 class LocalNaturalLanguageExpertRouterTest {
     @Test
-    fun selectionPreservesCanonicalExpertIdentityAndCompatibilityQuery() {
+    fun selectionPreservesCanonicalExpertInvocationAndCompatibilityQuery() {
         val catalog = PrologWorkspaceCatalog(
             facts = emptyList(),
             rules = emptyList(),
@@ -21,9 +21,10 @@ class LocalNaturalLanguageExpertRouterTest {
         val selection = requireNotNull(selected)
 
         assertEquals("triage", selection.expertId)
-        assertEquals("triage_explain(alice, Result)", selection.query)
+        assertEquals("explain", selection.expertOperation)
+        assertEquals(mapOf("entity" to "alice"), selection.input)
         assertEquals(
-            selection.query,
+            "triage_explain(alice, Result)",
             LocalNaturalLanguageExpertRouter.query("inspect alice", catalog),
         )
     }
