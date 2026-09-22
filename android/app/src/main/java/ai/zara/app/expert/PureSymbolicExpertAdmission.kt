@@ -73,12 +73,10 @@ object PureSymbolicExpertAdmission {
             "expert result runtime generation is stale"
         }
 
-        val providerCalls = result.usage["provider_calls"]
-        require(providerCalls is Number && providerCalls.toLong() == 0L) {
+        require(isExactZeroUsageCounter(result.usage["provider_calls"])) {
             "Pure-symbolic expert result must prove usage.provider_calls == 0"
         }
-        val modelCalls = result.usage["model_calls"]
-        require(modelCalls is Number && modelCalls.toLong() == 0L) {
+        require(isExactZeroUsageCounter(result.usage["model_calls"])) {
             "Pure-symbolic expert result must prove usage.model_calls == 0"
         }
 
@@ -118,5 +116,13 @@ object PureSymbolicExpertAdmission {
             }
         }
         return result
+    }
+
+    private fun isExactZeroUsageCounter(value: Any?): Boolean = when (value) {
+        is Int -> value == 0
+        is Long -> value == 0L
+        is Float -> value.isFinite() && value == 0.0f
+        is Double -> value.isFinite() && value == 0.0
+        else -> false
     }
 }
