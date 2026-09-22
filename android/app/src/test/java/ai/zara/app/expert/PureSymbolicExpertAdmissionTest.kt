@@ -61,7 +61,7 @@ class PureSymbolicExpertAdmissionTest {
     }
 
     @Test
-    fun resultRejectsMissingProviderUsageProof() {
+    fun resultAcceptsCanonicalModelOnlyZeroUsageWithoutProviderExtension() {
         val activation = activation()
         val request = request(activation)
         val result = result(
@@ -70,9 +70,10 @@ class PureSymbolicExpertAdmissionTest {
             usage = mapOf("model_calls" to 0),
         )
 
-        assertThrows(IllegalArgumentException::class.java) {
-            PureSymbolicExpertAdmission.validateResult(activation, request, result)
-        }
+        assertEquals(
+            result,
+            PureSymbolicExpertAdmission.validateResult(activation, request, result),
+        )
     }
 
     @Test
