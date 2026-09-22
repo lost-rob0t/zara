@@ -47,31 +47,30 @@ class PureSymbolicProjectionAdapter:
     def __init__(self, store) -> None:
         self.store = store
 
-    def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]:
+    def load_dialogue_state(self, conversation_id: str) -> tuple[str, str | None, int]:
+        """Read context and prior act from one canonical projection generation."""
         projection = self.store.load_symbolic_projection(conversation_id)
         if projection is None:
-            return "[]", 0
+            return "[]", None, 0
         projection.assert_pure_symbolic()
         if not _dialogue_context_matches_project(projection):
-            return "[]", projection.projection_generation
+            return "[]", None, projection.projection_generation
+
         context = projection.dialogue_state.get("prolog_context_term", "[]")
         if not isinstance(context, str):
             raise TypeError("persisted symbolic dialogue context must be text")
-        return context, projection.projection_generation
+        response_act = projection.dialogue_state.get("response_act_term")
+        if response_act is not None and not isinstance(response_act, str):
+            raise TypeError("persisted symbolic response act must be text")
+        return context, response_act, projection.projection_generation
+
+    def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]:
+        context, _response_act, generation = self.load_dialogue_state(conversation_id)
+        return context, generation
 
     def load_previous_response_act(self, conversation_id: str) -> str | None:
         """Return the current-project prior act from the canonical projection owner."""
-        projection = self.store.load_symbolic_projection(conversation_id)
-        if projection is None:
-            return None
-        projection.assert_pure_symbolic()
-        if not _dialogue_context_matches_project(projection):
-            return None
-        response_act = projection.dialogue_state.get("response_act_term")
-        if response_act is None:
-            return None
-        if not isinstance(response_act, str):
-            raise TypeError("persisted symbolic response act must be text")
+        _context, response_act, _generation = self.load_dialogue_state(conversation_id)
         return response_act
 
     def commit_turn(
