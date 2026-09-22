@@ -135,8 +135,11 @@ internal object AndroidPureSymbolicConversationFactory {
             if (selection != null) {
                 val port = canonicalExpertInvocationPort
                     ?: throw IllegalStateException("Canonical expert owner is unavailable")
-                CanonicalNaturalExpertTurn(
-                    PureSymbolicExpertInvocationAdapter(port),
+                CanonicalRenderedNaturalExpertTurn(
+                    expertTurn = CanonicalNaturalExpertTurn(
+                        PureSymbolicExpertInvocationAdapter(port),
+                    ),
+                    renderer = CanonicalExpertSymbolicRendererAdapter(session::queryLocalProlog),
                 ).invoke(
                     selection = selection,
                     principal = ConversationHistoryContract.localPrincipalId,
@@ -144,11 +147,10 @@ internal object AndroidPureSymbolicConversationFactory {
                     requestId = turnId,
                     limits = PURE_SYMBOLIC_EXPERT_LIMITS,
                     idempotencyKey = "$turnId:${selection.expertOperation}",
-                ).thenApply { projected ->
-                    canonicalExpertEnvelopeResult(
-                        projected = projected,
+                ).thenApply { rendered ->
+                    canonicalRenderedExpertEnvelopeResult(
+                        rendered = rendered,
                         contextTerm = prepared.context0,
-                        generation = pendingProjection.runtimeGeneration,
                     )
                 }
             } else {
@@ -669,6 +671,27 @@ internal object AndroidPureSymbolicConversationFactory {
                 "$DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX$evidenceRef",
             ),
             generation = generation,
+        )
+    }
+
+    internal fun canonicalRenderedExpertEnvelopeResult(
+        rendered: CanonicalRenderedExpertAnswer,
+        contextTerm: String,
+    ): LocalQueryResult {
+        require(rendered.runtimeGeneration >= 0L) {
+            "Canonical rendered expert generation must be non-negative"
+        }
+        val canonicalContext = SymbolicDialogueContextCodec.requireContextTerm(contextTerm)
+        val evidenceRef = requireExpertEvidenceRef(rendered.evidenceRef)
+        return LocalQueryResult(
+            query = CANONICAL_EXPERT_QUERY_MARKER,
+            terms = listOf(
+                rendered.text,
+                "$DIALOGUE_CONTEXT_WIRE_PREFIX$canonicalContext",
+                "${DIALOGUE_ACT_WIRE_PREFIX}expert_answer",
+                "$DIALOGUE_EXPERT_EVIDENCE_WIRE_PREFIX$evidenceRef",
+            ),
+            generation = rendered.runtimeGeneration,
         )
     }
 
