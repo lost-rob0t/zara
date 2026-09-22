@@ -105,6 +105,33 @@ class PureSymbolicExpertInvocationAdapterTest {
     }
 
     @Test
+    fun registryAdvanceDuringPreflightSamplingFailsClosedBeforeCanonicalInvocation() {
+        val activation = activation()
+        val port = FakeCanonicalPort(activation)
+        port.resultFactory = { request -> successResult(activation, request) }
+        port.advanceRegistryAfterRead = 1
+
+        val future = adapter(port).invoke(
+            principal = activation.principal,
+            workspace = activation.workspace,
+            expertId = activation.expertId,
+            requestId = "turn:preflight-race",
+            expertOperation = "diagnose",
+            input = emptyMap(),
+            limits = zeroModelLimits(),
+            idempotencyKey = "turn:preflight-race:diagnose",
+        )
+
+        val error = assertThrows(ExecutionException::class.java) { future.get() }
+        assertTrue(error.cause is IllegalArgumentException)
+        assertEquals(
+            "A generation change during the pre-invocation fence must stop the owner before any body/effect runs",
+            0,
+            port.invokeCount,
+        )
+    }
+
+    @Test
     fun liveGenerationAdvanceRejectsLateCanonicalResultAfterInvocation() {
         val activation = activation()
         val port = FakeCanonicalPort(activation)
@@ -122,6 +149,31 @@ class PureSymbolicExpertInvocationAdapterTest {
             input = emptyMap(),
             limits = zeroModelLimits(),
             idempotencyKey = "turn:stale-late:diagnose",
+        )
+
+        val error = assertThrows(ExecutionException::class.java) { future.get() }
+        assertTrue(error.cause is IllegalArgumentException)
+        assertEquals(1, port.invokeCount)
+    }
+
+    @Test
+    fun registryAdvanceDuringLateSamplingRejectsResultBeforeConversationProjection() {
+        val activation = activation()
+        val port = FakeCanonicalPort(activation)
+        port.resultFactory = { request ->
+            port.advanceRegistryAfterRead = port.registryReadCount + 1
+            successResult(activation, request)
+        }
+
+        val future = adapter(port).invoke(
+            principal = activation.principal,
+            workspace = activation.workspace,
+            expertId = activation.expertId,
+            requestId = "turn:late-race",
+            expertOperation = "diagnose",
+            input = emptyMap(),
+            limits = zeroModelLimits(),
+            idempotencyKey = "turn:late-race:diagnose",
         )
 
         val error = assertThrows(ExecutionException::class.java) { future.get() }
@@ -209,6 +261,8 @@ class PureSymbolicExpertInvocationAdapterTest {
         var invokeFuture: CompletableFuture<ExpertResult>? = null
         var liveRegistryGeneration: Long = activation?.registryGeneration ?: 0L
         var liveRuntimeGeneration: Long = activation?.runtimeGeneration ?: 0L
+        var registryReadCount: Int = 0
+        var advanceRegistryAfterRead: Int? = null
 
         override fun activeActivation(
             principal: String,
@@ -224,7 +278,14 @@ class PureSymbolicExpertInvocationAdapterTest {
             return CompletableFuture.completedFuture(factory(request))
         }
 
-        override fun currentRegistryGeneration(): Long = liveRegistryGeneration
+        override fun currentRegistryGeneration(): Long {
+            val generation = liveRegistryGeneration
+            registryReadCount += 1
+            if (advanceRegistryAfterRead == registryReadCount) {
+                liveRegistryGeneration = Math.addExact(liveRegistryGeneration, 1L)
+            }
+            return generation
+        }
 
         override fun currentRuntimeGeneration(): Long = liveRuntimeGeneration
     }
