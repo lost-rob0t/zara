@@ -28,6 +28,18 @@ PORT = (
     / "expert"
     / "CanonicalExpertInvocationPort.kt"
 )
+APP_SESSION = (
+    ROOT
+    / "android"
+    / "app"
+    / "src"
+    / "main"
+    / "java"
+    / "ai"
+    / "zara"
+    / "app"
+    / "AndroidAppSession.kt"
+)
 
 
 def test_conversation_factory_consumes_existing_canonical_expert_owner() -> None:
@@ -70,3 +82,23 @@ def test_canonical_owner_adapter_remains_consumer_only() -> None:
         assert forbidden not in port, (
             f"CanonicalExpertInvocationPort consumer seam must not acquire owner behavior: {forbidden}"
         )
+
+
+def test_app_session_owner_transport_cannot_recreate_or_raw_query_authority() -> None:
+    """Future Android owner transport must remain a transport over the existing canonical owner."""
+    session = APP_SESSION.read_text(encoding="utf-8")
+
+    assert "object : CanonicalExpertInvocationPort" not in session, (
+        "AndroidAppSession must not fabricate a replacement canonical expert port."
+    )
+    assert "ActivationHandle(" not in session, (
+        "AndroidAppSession must not mint expert activation authority locally."
+    )
+
+    marker = "fun canonicalExpertInvocationPort(): CanonicalExpertInvocationPort"
+    if marker not in session:
+        return
+
+    owner_method = session.split(marker, 1)[1].split("\n    fun ", 1)[0]
+    assert "queryLocalProlog(" not in owner_method
+    assert "localServer.query(" not in owner_method
