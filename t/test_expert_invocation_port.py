@@ -99,6 +99,35 @@ def test_port_returns_exact_existing_activation_without_issuing_one() -> None:
     assert not hasattr(port, "deactivate")
 
 
+def test_port_does_not_project_stale_activation_after_generation_advance() -> None:
+    registry = _registry()
+    handle, _ = registry.activate(
+        "user:alice",
+        "ws:main",
+        "zara:expert/port-fixture",
+    )
+    port = CanonicalExpertInvocationPort(registry)
+
+    assert port.active_activation(
+        "user:alice",
+        "ws:main",
+        "zara:expert/port-fixture",
+    ) == handle
+
+    # Registry reload is the canonical authority cutover. The registry deliberately
+    # keeps old activation records for lifecycle/audit semantics, so the consumer
+    # projection must not surface a handle minted under the superseded generations.
+    registry.reload([])
+
+    assert registry.generation != handle.registry_generation
+    assert registry.runtime_generation != handle.runtime_generation
+    assert port.active_activation(
+        "user:alice",
+        "ws:main",
+        "zara:expert/port-fixture",
+    ) is None
+
+
 def test_port_missing_or_ambiguous_activation_fails_closed() -> None:
     registry = _registry()
     port = CanonicalExpertInvocationPort(registry)
