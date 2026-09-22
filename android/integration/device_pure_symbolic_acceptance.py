@@ -68,10 +68,10 @@ def set_airplane_mode(device: Device, enabled: bool) -> None:
 
 def install_acceptance_expert(device: Device) -> None:
     """Install a private-workspace expert fixture without seeding projection/evidence state."""
-    encoded = base64.b64encode(ACCEPTANCE_EXPERT_SOURCE.encode("utf-8")).decode("ascii")
+    shell_source = ACCEPTANCE_EXPERT_SOURCE.replace("'", "'\"'\"'")
     command = (
         "mkdir -p files/prolog-workspace && "
-        f"printf %s '{encoded}' | base64 -d > {ACCEPTANCE_EXPERT_PATH}"
+        f"printf '%s' '{shell_source}' > {ACCEPTANCE_EXPERT_PATH}"
     )
     device.adb("shell", "run-as", APP_PACKAGE, "sh", "-c", command)
 
