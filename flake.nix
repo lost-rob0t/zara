@@ -268,6 +268,23 @@
             p.wheel
           ]);
 
+          # Shared yt-dlp throttle wrapper, shipped once and placed on every
+          # Zara runtime PATH so buildEnv never sees duplicate bin entries.
+          zaraYtdlp = pkgs.stdenv.mkDerivation {
+            pname = "zara-ytdlp";
+            version = "1.0";
+            src = ./.;
+
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+
+            installPhase = ''
+              install -Dm755 $src/scripts/zara-ytdlp $out/bin/zara-ytdlp
+              patchShebangs $out/bin/zara-ytdlp
+              wrapProgram $out/bin/zara-ytdlp \
+                --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.yt-dlp ]}
+            '';
+          };
+
           # Shared derivation builder for the Zara runtime packages.
           mkZaraPackage = { pname, binaryName ? pname, addFlags, withProlog ? true, extraPath ? [ ], }:
             pkgs.stdenv.mkDerivation {
@@ -295,16 +312,10 @@
                   cp -r $src/browser-addon $out/share/zarathushtra/
                 '' else ""}
 
-                # Package the shared yt-dlp throttle wrapper for every Zara runtime.
-                install -m755 $src/scripts/zara-ytdlp $out/bin/zara-ytdlp
-                patchShebangs $out/bin/zara-ytdlp
-                wrapProgram $out/bin/zara-ytdlp \
-                  --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.yt-dlp ]}
-
                 # Create wrapper with correct Python interpreter and environment
                 makeWrapper ${pythonLibs}/bin/python3 $out/bin/${binaryName} \
                   --add-flags "${addFlags}" \
-                  --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv pkgs.yt-dlp ] ++ extraPath)} \
+                  --prefix PATH : ${pkgs.lib.makeBinPath ([ pkgs.swi-prolog pkgs.mpv pkgs.yt-dlp zaraYtdlp ] ++ extraPath)} \
                   --set PYTHONPATH $out/lib/python${if withProlog then ":$out/share/zarathushtra" else ""}:${pythonLibs}/${python.sitePackages} \
                   --set LD_LIBRARY_PATH ${pkgs.lib.makeLibraryPath [ pkgs.libsndfile pkgs.portaudio ]} \
                   ${if withProlog then "--set SWI_HOME_DIR ${pkgs.swi-prolog}/lib/swipl" else ""} \
@@ -380,7 +391,7 @@
 
           zarathushtra = pkgs.buildEnv {
             name = "zarathushtra-full";
-            paths = [ zara-cli zara-server zara-desktop zara-prolog zara-wake zara-dictate ];
+            paths = [ zara-cli zara-server zara-desktop zara-prolog zara-wake zara-dictate zaraYtdlp ];
           };
 
           # Development wrappers intentionally execute the working checkout,
