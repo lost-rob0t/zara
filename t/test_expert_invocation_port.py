@@ -1,10 +1,12 @@
 """Canonical consumer-only expert invocation port tests for #1238.
 
-The port is a narrow view over the existing ZARA-EXPERT/1 registry.  It must not
+The port is a narrow view over the existing ZARA-EXPERT/1 registry. It must not
 issue activations, register experts, own budgets, or create another dispatcher.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
@@ -57,7 +59,7 @@ def _descriptor() -> ExpertDescriptor:
     )
 
 
-def _handler() -> dict[str, object]:
+def _handler(**_kwargs: Any) -> dict[str, object]:
     return {
         "verdict": "succeeded",
         "data": {},
