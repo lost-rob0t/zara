@@ -147,16 +147,27 @@ data class PrologWorkspaceCatalog(
     }
 }
 
+data class NaturalLanguageExpertSelection(
+    val expertId: String,
+    val query: String,
+)
+
 object LocalNaturalLanguageExpertRouter {
     private val utterance = Regex("^([a-z][A-Za-z0-9_]*)\\s+([a-z][A-Za-z0-9_]*)$")
 
-    fun query(text: String, catalog: PrologWorkspaceCatalog): String? {
+    fun select(text: String, catalog: PrologWorkspaceCatalog): NaturalLanguageExpertSelection? {
         val match = utterance.matchEntire(text.trim().lowercase()) ?: return null
-        val expert = catalog.activations[match.groupValues[1]] ?: return null
-        val predicate = PredicateRef("${expert}_explain", 2)
+        val expertId = catalog.activations[match.groupValues[1]] ?: return null
+        val predicate = PredicateRef("${expertId}_explain", 2)
         if (predicate !in catalog.experts) return null
-        return "${predicate.name}(${match.groupValues[2]}, Result)"
+        return NaturalLanguageExpertSelection(
+            expertId = expertId,
+            query = "${predicate.name}(${match.groupValues[2]}, Result)",
+        )
     }
+
+    fun query(text: String, catalog: PrologWorkspaceCatalog): String? =
+        select(text, catalog)?.query
 }
 
 data class LocalPrologCommand(val query: String) {
