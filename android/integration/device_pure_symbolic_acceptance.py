@@ -227,6 +227,57 @@ def inspect_hard_zero_accounting(
     }
 
 
+def assert_checkpoint_continuity(
+    checkpoints: list[dict[str, object]],
+    projection: dict[str, object],
+) -> None:
+    """Reject recreation that swaps durable conversation identity or canonical expert evidence."""
+    if not checkpoints:
+        raise AssertionError("Pure-symbolic acceptance recorded no durable checkpoints")
+
+    expected_conversation_id = checkpoints[0].get("conversation_id")
+    if not isinstance(expected_conversation_id, str) or not expected_conversation_id:
+        raise AssertionError("First durable checkpoint has no canonical conversation_id")
+
+    by_stage: dict[str, dict[str, object]] = {}
+    for checkpoint in checkpoints:
+        stage = checkpoint.get("stage")
+        if not isinstance(stage, str) or not stage:
+            raise AssertionError(f"Durable checkpoint has no stage: {checkpoint!r}")
+        if stage in by_stage:
+            raise AssertionError(f"Duplicate durable checkpoint stage: {stage}")
+        by_stage[stage] = checkpoint
+        if checkpoint.get("conversation_id") != expected_conversation_id:
+            raise AssertionError(
+                f"{stage}: process recreation replaced canonical conversation identity"
+            )
+
+    if projection.get("conversation_id") != expected_conversation_id:
+        raise AssertionError("Final durable snapshot is not the original canonical conversation")
+
+    def evidence_ref(stage: str, value: dict[str, object]) -> str:
+        evidence = value.get("expert_evidence")
+        if not isinstance(evidence, list) or len(evidence) != 1 or not isinstance(evidence[0], dict):
+            raise AssertionError(f"{stage}: expected exactly one canonical expert evidence record")
+        ref = evidence[0].get("ref")
+        if not isinstance(ref, str) or not ref.startswith("expert:"):
+            raise AssertionError(f"{stage}: canonical expert evidence ref is missing or malformed")
+        return ref
+
+    expert_answer = by_stage.get("expert-answer")
+    expert_follow_up = by_stage.get("expert-follow-up-after-restart")
+    if expert_answer is None or expert_follow_up is None:
+        raise AssertionError("Installed acceptance is missing expert continuity checkpoints")
+
+    original_ref = evidence_ref("expert-answer", expert_answer)
+    follow_up_ref = evidence_ref("expert-follow-up-after-restart", expert_follow_up)
+    final_ref = evidence_ref("final", projection)
+    if follow_up_ref != original_ref or final_ref != original_ref:
+        raise AssertionError(
+            "Process recreation or follow-up replaced the admitted canonical expert evidence ref"
+        )
+
+
 def inspect_pure_symbolic_database(device: Device, output: Path) -> dict[str, object]:
     # Stop the process before copying SQLite files so the acceptance evidence is a
     # stable on-disk snapshot rather than a race against a live WAL writer.
@@ -456,6 +507,7 @@ def exercise_pure_symbolic_dialogue(device: Device, output: Path) -> dict[str, o
         device.capture("pure-symbolic-final-recreated")
 
         projection = inspect_pure_symbolic_database(device, output)
+        assert_checkpoint_continuity(accounting_checkpoints, projection)
         projection["offline_verified"] = True
         projection["accounting_checkpoints"] = accounting_checkpoints
         return projection
