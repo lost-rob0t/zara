@@ -25,6 +25,7 @@ PURE_SYMBOLIC_RENDER_ERROR = (
     "I couldn't render that symbolic response. No model or provider was used."
 )
 _MAX_CONTEXT_TERM_CHARS = 8192
+_MAX_RESPONSE_ACT_TERM_CHARS = 4096
 _MAX_EXPERT_EVIDENCE_CHARS = 128
 _DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\(|$)")
 _EXPERT_ANSWER_RE = re.compile(r"^answer\(expert,")
@@ -34,6 +35,8 @@ class SymbolicProjectionPort(Protocol):
     """Runtime-neutral persistence port supplied by a product composition root."""
 
     def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]: ...
+
+    def load_previous_response_act(self, conversation_id: str) -> Optional[str]: ...
 
     def commit_turn(
         self,
@@ -89,6 +92,19 @@ def _bounded_context_term(value: object) -> str:
     return value
 
 
+def _bounded_response_act_term(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("symbolic response act must be text")
+    if not value or len(value) > _MAX_RESPONSE_ACT_TERM_CHARS:
+        raise ValueError(
+            "symbolic response act must be "
+            f"1..{_MAX_RESPONSE_ACT_TERM_CHARS} characters"
+        )
+    if "\x00" in value:
+        raise ValueError("symbolic response act must not contain NUL")
+    return value
+
+
 def _dialogue_act_token(value: object) -> str:
     if not isinstance(value, str):
         raise TypeError("symbolic response act must be text")
@@ -127,12 +143,59 @@ def _dialogue_envelope(
     return dialogue_act, None
 
 
+def _resolve_discourse_turn(
+    engine: PrologEngine,
+    text: str,
+    context_term: str,
+    previous_act_term: str,
+) -> Optional[PureSymbolicTurn]:
+    """Resolve a terse follow-up against the canonical persisted prior response act."""
+    text_term = json.dumps(text, ensure_ascii=False)
+    previous_text = json.dumps(
+        _bounded_response_act_term(previous_act_term),
+        ensure_ascii=False,
+    )
+    goal = (
+        f"term_string(PreviousAct, {previous_text}, [syntax_errors(error)]), "
+        "ground(PreviousAct), "
+        f"symbolic_dialogue:resolve_discourse({text_term}, PreviousAct, Act), "
+        "Act \\= unsupported, "
+        "symbolic_dialogue:render_response(Act, Response), "
+        "term_string(Act, ActTerm, [quoted(true)]), "
+        "(Act = answer(expert, _, evidence(EvidenceValue)) -> "
+        " (string(EvidenceValue) -> EvidenceRef = EvidenceValue ; "
+        "  atom(EvidenceValue) -> atom_string(EvidenceValue, EvidenceRef) ; fail) ; "
+        " EvidenceRef = \"\")"
+    )
+    row = engine.query_once(goal)
+    if row is None:
+        return None
+    raw_evidence = _as_text(row.get("EvidenceRef", ""))
+    return PureSymbolicTurn(
+        response=_as_text(row["Response"]),
+        act_term=_as_text(row["ActTerm"]),
+        context_term=_bounded_context_term(context_term),
+        expert_evidence_ref=raw_evidence or None,
+    )
+
+
 def _resolve_turn(
     engine: PrologEngine,
     text: str,
     context_term: str = "[]",
+    previous_act_term: Optional[str] = None,
 ) -> PureSymbolicTurn:
     """Run one turn through the canonical Prolog dialogue adapter."""
+    if previous_act_term is not None:
+        discourse = _resolve_discourse_turn(
+            engine,
+            text,
+            context_term,
+            previous_act_term,
+        )
+        if discourse is not None:
+            return discourse
+
     text_term = json.dumps(text, ensure_ascii=False)
     context_text = json.dumps(_bounded_context_term(context_term), ensure_ascii=False)
     goal = (
@@ -209,6 +272,21 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             raise RuntimeError("symbolic projection returned an invalid generation")
         return _bounded_context_term(context), generation
 
+    def _load_previous_response_act(
+        self,
+        conversation_id: Optional[str],
+    ) -> Optional[str]:
+        adapter = self._projection_adapter
+        if adapter is None or conversation_id is None:
+            return None
+        loader = getattr(adapter, "load_previous_response_act", None)
+        if loader is None:
+            return None
+        response_act = loader(conversation_id)
+        if response_act is None:
+            return None
+        return _bounded_response_act_term(response_act)
+
     async def submit_turn(
         self,
         text: str,
@@ -233,12 +311,14 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
             )
 
         context_term, base_generation = self._load_dialogue_context(conversation_id)
+        previous_response_act = self._load_previous_response_act(conversation_id)
         if self._uses_default_turn_resolver:
             symbolic = await asyncio.to_thread(
                 self._turn_resolver,
                 self._engine,
                 text,
                 context_term,
+                previous_response_act,
             )
         else:
             symbolic = await asyncio.to_thread(self._turn_resolver, self._engine, text)
