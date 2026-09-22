@@ -100,10 +100,10 @@ object PureSymbolicExpertAdmission {
         }
 
         require(isExactZeroUsageCounter(result.usage["provider_calls"])) {
-            "Pure-symbolic expert result must prove usage.provider_calls == 0"
+            "Pure-symbolic expert result must prove usage.provider_calls == 0 as an integer counter"
         }
         require(isExactZeroUsageCounter(result.usage["model_calls"])) {
-            "Pure-symbolic expert result must prove usage.model_calls == 0"
+            "Pure-symbolic expert result must prove usage.model_calls == 0 as an integer counter"
         }
 
         require(result.verdict == ExpertVerdict.SUCCEEDED) {
@@ -156,8 +156,6 @@ object PureSymbolicExpertAdmission {
     private fun isExactZeroUsageCounter(value: Any?): Boolean = when (value) {
         is Int -> value == 0
         is Long -> value == 0L
-        is Float -> value.isFinite() && value == 0.0f
-        is Double -> value.isFinite() && value == 0.0
         else -> false
     }
 
