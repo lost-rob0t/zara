@@ -26,6 +26,29 @@
    "\"verified_outcome_refs\":[\"zara.verified-outcome/v1:outcome:turn-7\"]},"
    "\"version\":\"ZARA-SYMBOLIC-REPLAY/1\"}"))
 
+(defconst zara-conversation-symbolic-replay-test--canonical-payload
+  (concat
+   "{\"version\":\"ZARA-CONVERSATION-REPLAY/1\","
+   "\"conversation\":{\"id\":\"emacs-main\",\"title\":\"Emacs Main\","
+   "\"created_at\":\"2026-09-20T18:00:00\","
+   "\"updated_at\":\"2026-09-20T18:05:00\"},"
+   "\"messages\":[{\"sequence\":1,\"role\":\"assistant\","
+   "\"content\":\"This project uses flakes.\",\"status\":\"complete\","
+   "\"turn_id\":\"turn-7\",\"error\":\"\",\"tool_run_id\":null}],"
+   "\"symbolic_projection\":{"
+   "\"dialogue_act\":\"inform\","
+   "\"dialogue_state\":{\"topic\":\"nix-shell\"},"
+   "\"discourse_entities\":[{\"id\":\"file:flake.nix\",\"kind\":\"file\"}],"
+   "\"expert_evidence\":[{\"expert\":\"DotfilesExpert\",\"ref\":\"evidence:42\"}],"
+   "\"max_model_calls\":0,\"model_calls\":0,\"outcome\":\"success\","
+   "\"project_generation\":3,\"project_id\":\"dotfiles\","
+   "\"projection_generation\":9,\"provider_calls\":0,"
+   "\"providers_enabled\":false,\"renderer_provenance\":\"symbolic-dcg/v1\","
+   "\"runtime_generation\":7,\"turn_id\":\"turn-7\","
+   "\"unresolved_questions\":[],\"updated_at\":\"2026-09-20T18:05:00\","
+   "\"verified_facts\":[{\"fact\":\"project uses flakes\",\"ref\":\"fact:9\"}],"
+   "\"verified_outcome_refs\":[\"zara.verified-outcome/v1:outcome:turn-7\"]}}"))
+
 (ert-deftest zara-conversation-symbolic-replay-restores-status-view ()
   (with-temp-buffer
     (zara-chat-mode)
@@ -119,6 +142,61 @@
                  "emacs-main"))
     (zara-conversation-switch "other-project-chat")
     (should-not zara-conversation-symbolic-projection)))
+
+(ert-deftest zara-conversation-symbolic-replay-fences-stale-follow-up-context ()
+  "A successful replay invalidates ephemeral refs from the older presentation snapshot."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-context-ids '("evidence:stale" "file:old"))
+    (let (captured)
+      (cl-letf (((symbol-function 'zara--program)
+                 (lambda () "zara"))
+                ((symbol-function 'process-file)
+                 (lambda (program _infile _destination _display &rest args)
+                   (setq captured (cons program args))
+                   (insert zara-conversation-symbolic-replay-test--canonical-payload)
+                   0)))
+        (zara-conversation-replay))
+      (should
+       (equal captured
+              '("zara" "--replay-conversation" "emacs-main"))))
+    (should (string-match-p "This project uses flakes\." (buffer-string)))
+    (should-not zara-conversation-context-ids)
+    (should (equal (gethash "project_id" zara-conversation-symbolic-projection)
+                   "dotfiles"))
+    (should (eq (gethash "providers_enabled" zara-conversation-symbolic-projection)
+                :false))
+    (should (= (gethash "max_model_calls" zara-conversation-symbolic-projection) 0))
+    (should (= (gethash "provider_calls" zara-conversation-symbolic-projection) 0))
+    (should (= (gethash "model_calls" zara-conversation-symbolic-projection) 0))
+    (setq-local zara-conversation-context-ids '("evidence:42" "file:flake.nix"))
+    (let ((zara-connect-endpoint nil))
+      (should
+       (equal
+        (zara-conversation--turn-arguments
+         zara-conversation-id
+         "why does that apply here?")
+        '("--conversation-id" "emacs-main"
+          "--context-id" "evidence:42"
+          "--context-id" "file:flake.nix"
+          "--json-events" "why does that apply here?"))))))
+
+(ert-deftest zara-conversation-symbolic-replay-failure-preserves-current-context ()
+  "A failed replay must not erase refs from the still-visible presentation snapshot."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-context-ids '("evidence:current" "file:current"))
+    (cl-letf (((symbol-function 'zara--program)
+               (lambda () "zara"))
+              ((symbol-function 'process-file)
+               (lambda (_program _infile _destination _display &rest _args)
+                 9)))
+      (should-error (zara-conversation-replay) :type 'user-error))
+    (should
+     (equal zara-conversation-context-ids
+            '("evidence:current" "file:current")))))
 
 (provide 'zara-conversation-symbolic-replay-test)
 ;;; zara-conversation-symbolic-replay-test.el ends here

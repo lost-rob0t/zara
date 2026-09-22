@@ -346,10 +346,22 @@ or project generation and make transcript and symbolic status disagree."
   "Fence cached project/discourse status after a conversation switch."
   (setq-local zara-conversation-symbolic-projection nil))
 
+(defun zara-conversation-symbolic--clear-context-after-replay (&rest _ignored)
+  "Fence ephemeral context refs after a successful canonical replay.
+
+A replay may adopt a newer transcript/symbolic snapshot for the same canonical
+conversation.  Context refs are presentation-local selectors, so keeping refs
+from the prior snapshot could make the next follow-up target stale evidence.
+This :after advice runs only when replay returns successfully; failed replay
+leaves the current presentation refs untouched."
+  (setq-local zara-conversation-context-ids nil))
+
 (advice-add 'zara-conversation--render-replay :before
             #'zara-conversation-symbolic--validate-before-replay-render)
 (advice-add 'zara-conversation-switch :after
             #'zara-conversation-symbolic--clear-after-switch)
+(advice-add 'zara-conversation-replay :after
+            #'zara-conversation-symbolic--clear-context-after-replay)
 
 (provide 'zara-conversation-symbolic)
 ;;; zara-conversation-symbolic.el ends here
