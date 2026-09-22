@@ -44,6 +44,7 @@ class CanonicalRenderedNaturalExpertTurnTest {
         ).get()
 
         assertEquals("triage says alex is stable", rendered.text)
+        assertEquals("evidence:triage:42", rendered.evidenceRef)
         assertEquals(23L, rendered.runtimeGeneration)
         assertEquals(0, requireNotNull(port.lastRequest).limits!!.maxModelCalls)
         val renderQuery = requireNotNull(capturedRenderQuery)
