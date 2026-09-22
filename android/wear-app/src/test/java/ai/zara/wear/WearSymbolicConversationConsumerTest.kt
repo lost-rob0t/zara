@@ -211,6 +211,33 @@ class WearSymbolicConversationConsumerTest {
         assertEquals(accepted, consumer.currentSnapshot())
     }
 
+    @Test
+    fun returnedReadViewsCannotMutateAcceptedCanonicalProjection() {
+        val consumer = consumer()
+        val snapshot = fixture(
+            projectionGeneration = 13,
+            runtimeGeneration = 21,
+            discourseEntityRefs = listOf("entity:repo:zara", "entity:project:mega-brain"),
+            unresolvedQuestionRefs = listOf("question:first", "question:second"),
+            expertEvidenceRefs = listOf("expert:dotfiles:21", "expert:history:21"),
+        )
+
+        val accepted = consumer.accept(SymbolicConversationEdgeCodec.encode(snapshot))!!
+        (accepted.discourseEntityRefs as MutableList<String>).add("entity:forged")
+        (accepted.expertEvidenceRefs as MutableList<String>).clear()
+
+        assertEquals(snapshot.discourseEntityRefs, consumer.currentSnapshot()?.discourseEntityRefs)
+        assertEquals(snapshot.expertEvidenceRefs, consumer.currentSnapshot()?.expertEvidenceRefs)
+
+        val readView = consumer.currentSnapshot()!!
+        (readView.unresolvedQuestionRefs as MutableList<String>).clear()
+
+        assertEquals(snapshot.unresolvedQuestionRefs, consumer.currentSnapshot()?.unresolvedQuestionRefs)
+        assertEquals(0L, consumer.currentSnapshot()?.maxModelCalls)
+        assertEquals(0L, consumer.currentSnapshot()?.modelCalls)
+        assertEquals(0L, consumer.currentSnapshot()?.providerCalls)
+    }
+
     private fun consumer() = WearSymbolicConversationConsumer(
         WearSymbolicConversationConsumer.Scope(
             principalId = PRINCIPAL,
