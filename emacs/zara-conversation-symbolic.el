@@ -332,10 +332,15 @@ model, expert, effect executor, or alternate history/state owner."
 
 ;;;###autoload
 (defun zara-conversation-symbolic-replay ()
-  "Replay canonical transcript, then refresh persisted symbolic presentation state."
+  "Replay one canonical transcript/symbolic snapshot into the Emacs surface.
+
+`zara-conversation-replay' already validates and adopts the symbolic projection
+from the same canonical replay payload after rendering.  Reuse that adopted
+projection instead of issuing a second store read that could race a newer turn
+or project generation and make transcript and symbolic status disagree."
   (interactive)
   (zara-conversation-replay)
-  (zara-conversation-symbolic-refresh-status))
+  zara-conversation-symbolic-projection)
 
 (defun zara-conversation-symbolic--clear-after-switch (&rest _ignored)
   "Fence cached project/discourse status after a conversation switch."
