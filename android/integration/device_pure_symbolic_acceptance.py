@@ -67,33 +67,34 @@ def set_airplane_mode(device: Device, enabled: bool) -> None:
 
 
 def install_acceptance_expert(device: Device) -> None:
-    """Install and verify a private-workspace expert without shell-parsing its source."""
-    device.adb(
-        "shell",
-        "run-as",
-        APP_PACKAGE,
-        "mkdir",
-        "-p",
-        "files/prolog-workspace",
-    )
-    subprocess.run(
-        [
-            "adb",
-            "-s",
-            device.serial,
-            "exec-out",
-            "run-as",
-            APP_PACKAGE,
-            "/system/bin/tee",
-            ACCEPTANCE_EXPERT_PATH,
-        ],
-        input=ACCEPTANCE_EXPERT_SOURCE,
-        text=True,
-        capture_output=True,
-        check=True,
-        timeout=30,
-    )
+    """Install and verify a private-workspace expert without shell or stdin parsing."""
     expected = ACCEPTANCE_EXPERT_SOURCE.encode("utf-8")
+    staged_remote = f"/data/local/tmp/zara-p0-expert-{os.getpid()}.pl"
+    with tempfile.TemporaryDirectory(prefix="zara-p0-expert-") as temporary:
+        staged_host = Path(temporary) / "p0_acceptance_expert.pl"
+        staged_host.write_bytes(expected)
+        device.adb("push", str(staged_host), staged_remote)
+        try:
+            device.adb("shell", "chmod", "0644", staged_remote)
+            device.adb(
+                "shell",
+                "run-as",
+                APP_PACKAGE,
+                "mkdir",
+                "-p",
+                "files/prolog-workspace",
+            )
+            device.adb(
+                "shell",
+                "run-as",
+                APP_PACKAGE,
+                "cp",
+                staged_remote,
+                ACCEPTANCE_EXPERT_PATH,
+            )
+        finally:
+            device.adb("shell", "rm", "-f", staged_remote)
+
     observed = device.adb(
         "exec-out",
         "run-as",
