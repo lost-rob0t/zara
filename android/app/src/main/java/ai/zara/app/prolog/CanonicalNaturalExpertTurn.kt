@@ -44,10 +44,19 @@ internal class CanonicalNaturalExpertTurn(
             limits = limits,
             idempotencyKey = idempotencyKey,
         )
-        val projected = admitted.thenApply(PureSymbolicExpertConversationProjection::from)
-        projected.whenComplete { _, _ ->
-            if (projected.isCancelled && !admitted.isDone) {
-                admitted.cancel(true)
+        val projected = CancellationPropagatingFuture<PureSymbolicExpertConversationResult>(admitted)
+        admitted.whenComplete { result, error ->
+            if (projected.isDone) return@whenComplete
+            if (error != null || result == null) {
+                projected.completeExceptionally(
+                    error ?: IllegalStateException("Canonical expert result is missing"),
+                )
+                return@whenComplete
+            }
+            try {
+                projected.complete(PureSymbolicExpertConversationProjection.from(result))
+            } catch (projectionError: Throwable) {
+                projected.completeExceptionally(projectionError)
             }
         }
         return projected
@@ -68,6 +77,28 @@ internal class CanonicalNaturalExpertTurn(
         require(idempotencyKey == expectedIdempotencyKey) {
             "Canonical expert conversation idempotency identity is not bound to the durable turn"
         }
+    }
+
+    /**
+     * CompletableFuture does not normally propagate cancellation from a dependent stage to its
+     * source. Android wraps an admitted expert result into the ordinary conversation envelope, so
+     * that default would allow canonical expert work/effects to continue after the UI turn is
+     * durably cancelled. Every dependent stage created from this future therefore inherits the
+     * same backward cancellation chain until it reaches the canonical owner future.
+     */
+    private class CancellationPropagatingFuture<T>(
+        private val upstream: CompletableFuture<*>,
+    ) : CompletableFuture<T>() {
+        override fun cancel(mayInterruptIfRunning: Boolean): Boolean {
+            val cancelled = super.cancel(mayInterruptIfRunning)
+            if (cancelled && !upstream.isDone) {
+                upstream.cancel(mayInterruptIfRunning)
+            }
+            return cancelled
+        }
+
+        override fun <U> newIncompleteFuture(): CompletableFuture<U> =
+            CancellationPropagatingFuture(this)
     }
 
     private companion object {
