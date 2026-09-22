@@ -81,15 +81,15 @@ class CanonicalExpertInvocationPort:
     def invoke(self, request: ExpertRequest) -> ExpertResult:
         """Invoke only through the existing canonical request path.
 
-        Portable/native consumers share one JSON-shaped contract.  Python's JSON
+        Portable/native consumers share one JSON-shaped contract. Python's JSON
         encoder otherwise permits NaN and infinities by default while Android's
-        canonical envelope rejects them.  Fence those values both before dispatch
+        canonical envelope rejects them. Fence those values both before dispatch
         and before projecting a result so platform behavior cannot diverge.
 
-        A request admitted with ``max_model_calls=0`` is also not accepted as a
-        pure-symbolic success unless the canonical result explicitly proves both
-        provider and model usage counters are built-in integer zero.  The port
-        never invents a missing provider counter on behalf of the owner.
+        ``usage.model_calls`` is the ZARA-EXPERT/1 shared-budget proof. Provider
+        runtime accounting remains owned outside the expert envelope. If a host
+        supplies a ``provider_calls`` extension, it may only report exact integer
+        zero; the port never fabricates that optional field when it is absent.
         """
 
         self._require_finite_numbers(request.input, "request.input")
@@ -98,8 +98,9 @@ class CanonicalExpertInvocationPort:
         self._require_finite_numbers(result.usage, "result.usage")
         self._require_finite_numbers(result.effect_receipts, "result.effect_receipts")
         if request.limits is not None and request.limits.max_model_calls == 0:
-            self._require_exact_zero_usage(result.usage, "provider_calls")
             self._require_exact_zero_usage(result.usage, "model_calls")
+            if "provider_calls" in result.usage:
+                self._require_exact_zero_usage(result.usage, "provider_calls")
         return result
 
     def current_registry_generation(self) -> int:
