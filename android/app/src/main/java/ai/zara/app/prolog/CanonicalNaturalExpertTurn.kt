@@ -24,6 +24,16 @@ internal class CanonicalNaturalExpertTurn(
         limits: ExpertLimits,
         idempotencyKey: String,
     ): CompletableFuture<PureSymbolicExpertConversationResult> {
+        try {
+            requireCanonicalTurnIdentity(
+                requestId = requestId,
+                expertOperation = selection.expertOperation,
+                idempotencyKey = idempotencyKey,
+            )
+        } catch (error: Throwable) {
+            return CompletableFuture.failedFuture(error)
+        }
+
         val admitted = adapter.invoke(
             principal = principal,
             workspace = workspace,
@@ -41,5 +51,26 @@ internal class CanonicalNaturalExpertTurn(
             }
         }
         return projected
+    }
+
+    private fun requireCanonicalTurnIdentity(
+        requestId: String,
+        expertOperation: String,
+        idempotencyKey: String,
+    ) {
+        require(portableRequestIdentity.matches(requestId)) {
+            "Canonical expert conversation requestId must be the bounded durable turn identity"
+        }
+        val expectedIdempotencyKey = "$requestId:$expertOperation"
+        require(portableRequestIdentity.matches(expectedIdempotencyKey)) {
+            "Canonical expert conversation idempotency identity is outside the portable bound"
+        }
+        require(idempotencyKey == expectedIdempotencyKey) {
+            "Canonical expert conversation idempotency identity is not bound to the durable turn"
+        }
+    }
+
+    private companion object {
+        val portableRequestIdentity = Regex("^[!-~]{1,128}$")
     }
 }
