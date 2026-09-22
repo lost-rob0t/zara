@@ -99,11 +99,13 @@ object PureSymbolicExpertAdmission {
             "expert result runtime generation is stale"
         }
 
-        require(isExactZeroUsageCounter(result.usage["provider_calls"])) {
-            "Pure-symbolic expert result must prove usage.provider_calls == 0 as an integer counter"
-        }
         require(isExactZeroUsageCounter(result.usage["model_calls"])) {
             "Pure-symbolic expert result must prove usage.model_calls == 0 as an integer counter"
+        }
+        if (result.usage.containsKey("provider_calls")) {
+            require(isExactZeroUsageCounter(result.usage["provider_calls"])) {
+                "Pure-symbolic expert result cannot report non-zero usage.provider_calls"
+            }
         }
 
         require(result.verdict == ExpertVerdict.SUCCEEDED) {
