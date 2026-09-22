@@ -106,6 +106,32 @@ class PureSymbolicExpertAdmissionTest {
     }
 
     @Test
+    fun nonSuccessVerdictsCannotBeProjectedAsConversationSuccess() {
+        val activation = activation()
+        val request = request(activation)
+        val rejected = listOf(
+            ExpertVerdict.FAILED to ExpertErrorCode.DENIED,
+            ExpertVerdict.BLOCKED to ExpertErrorCode.APPROVAL_REQUIRED,
+            ExpertVerdict.CANCELLED to ExpertErrorCode.CANCELLED,
+            ExpertVerdict.ERROR to ExpertErrorCode.BUDGET_EXCEEDED,
+        )
+
+        rejected.forEach { (verdict, errorCode) ->
+            val result = result(
+                activation = activation,
+                request = request,
+                verdict = verdict,
+                errorCode = errorCode,
+                errorMessage = "canonical expert invocation did not succeed",
+            )
+
+            assertThrows(IllegalArgumentException::class.java) {
+                PureSymbolicExpertAdmission.validateResult(activation, request, result)
+            }
+        }
+    }
+
+    @Test
     fun successfulConversationProjectionRequiresCanonicalEvidence() {
         val activation = activation()
         val request = request(activation)
@@ -158,6 +184,50 @@ class PureSymbolicExpertAdmissionTest {
         )
     }
 
+    @Test
+    fun effectSuccessRejectsStaleOrUnboundPostconditionEvidence() {
+        val activation = activation()
+        val request = request(activation)
+        val evidenceRef = "zara.verified-outcome/v1:effect:diagnosis-42"
+        val effectReceipts = listOf(mapOf("receipt_ref" to "effect:diagnosis-42"))
+
+        val stale = result(
+            activation = activation,
+            request = request,
+            evidenceRefs = listOf(evidenceRef),
+            effectReceipts = effectReceipts,
+            data = mapOf(
+                "verified" to true,
+                "verified_outcome_ref" to evidenceRef,
+                "postcondition_evidence" to mapOf(
+                    "receipt_ref" to evidenceRef,
+                    "source_generation" to activation.runtimeGeneration - 1,
+                ),
+            ),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            PureSymbolicExpertAdmission.validateResult(activation, request, stale)
+        }
+
+        val unbound = result(
+            activation = activation,
+            request = request,
+            evidenceRefs = listOf(evidenceRef),
+            effectReceipts = effectReceipts,
+            data = mapOf(
+                "verified" to true,
+                "verified_outcome_ref" to evidenceRef,
+                "postcondition_evidence" to mapOf(
+                    "receipt_ref" to "zara.verified-outcome/v1:effect:other-turn",
+                    "source_generation" to activation.runtimeGeneration,
+                ),
+            ),
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            PureSymbolicExpertAdmission.validateResult(activation, request, unbound)
+        }
+    }
+
     private fun activation(): ActivationHandle = ActivationHandle(
         activationId = "act:0123456789abcdef0123456789abcdef",
         principal = "local:owner",
@@ -197,6 +267,9 @@ class PureSymbolicExpertAdmissionTest {
         evidenceRefs: List<String> = listOf("expert:diagnosis/turn:42"),
         effectReceipts: List<Map<String, Any?>> = emptyList(),
         data: Map<String, Any?> = mapOf("summary" to "diagnosis(alex, flu)"),
+        verdict: ExpertVerdict = ExpertVerdict.SUCCEEDED,
+        errorCode: ExpertErrorCode? = null,
+        errorMessage: String = "",
     ): ExpertResult = ExpertResult(
         protocol = ZARA_EXPERT_PROTOCOL,
         requestId = requireNotNull(request.requestId),
@@ -208,10 +281,12 @@ class PureSymbolicExpertAdmissionTest {
         expertOperation = request.expertOperation,
         resolvedRegistryGeneration = activation.registryGeneration,
         resolvedRuntimeGeneration = resolvedRuntimeGeneration,
-        verdict = ExpertVerdict.SUCCEEDED,
+        verdict = verdict,
         data = data,
         evidenceRefs = evidenceRefs,
         usage = usage,
         effectReceipts = effectReceipts,
+        errorCode = errorCode,
+        errorMessage = errorMessage,
     )
 }
