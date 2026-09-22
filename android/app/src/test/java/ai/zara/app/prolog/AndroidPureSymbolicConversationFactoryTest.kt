@@ -1,5 +1,6 @@
 package ai.zara.app.prolog
 
+import ai.zara.app.expert.PureSymbolicExpertConversationResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -119,46 +120,50 @@ class AndroidPureSymbolicConversationFactoryTest {
     }
 
     @Test
-    fun naturalExpertEnvelopeProjectsOneRegisteredResultThroughCanonicalExpertContract() {
+    fun canonicalExpertEnvelopeProjectsOnlyAdmittedSummaryEvidenceAndContext() {
         val context = "completed_frame(frame(intent(ns(device),name('timer.set')),[],complete))"
-        val query = AndroidPureSymbolicConversationFactory.expertTurnEnvelopeQuery(
-            expertQuery = "triage_explain(alex, Result)",
+        val result = AndroidPureSymbolicConversationFactory.canonicalExpertEnvelopeResult(
+            projected = PureSymbolicExpertConversationResult(
+                summary = "triage says alex is stable",
+                evidenceRef = "evidence:triage:42",
+            ),
             contextTerm = context,
-            evidenceRef = "expert:triage_explain/turn-1",
+            generation = 11L,
         )
 
-        assertTrue(query.contains("triage_explain(alex, ExpertResult)"))
-        assertFalse(query.contains("triage_explain(alex, Result)"))
-        assertTrue(query.contains("Context1 = Context0"))
-        assertTrue(
-            query.contains(
-                "symbolic_dialogue:response_act(expert_result(summary(Summary), evidence(EvidenceRef)), Act)",
+        assertEquals("expert.invoke", result.query)
+        assertEquals(11L, result.generation)
+        assertEquals(
+            listOf(
+                "triage says alex is stable",
+                "__zara_context__:$context",
+                "__zara_act__:expert_answer",
+                "__zara_expert_evidence__:evidence:triage:42",
             ),
+            result.terms,
         )
-        assertTrue(query.contains("with_output_to(atom(SummaryAtom), write_term(ExpertResult, [quoted(true)]))"))
-        assertTrue(query.contains("ActName = expert_answer"))
-        assertTrue(query.contains("expert:triage_explain/turn-1"))
-        assertTrue(query.contains("__zara_expert_evidence__:"))
-        assertTrue(query.endsWith("(Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire)"))
-        assertEquals(query, PrologQueryPolicy.requireSafe(query))
-        assertFalse(query.contains("once("))
-        assertFalse(query.contains("call("))
+        assertFalse(result.query.contains("triage_explain"))
     }
 
     @Test
-    fun naturalExpertEnvelopeRejectsUnsafeOrAmbiguousExpertGoals() {
+    fun canonicalExpertEnvelopeRejectsNonCanonicalContextOrInvalidGeneration() {
+        val projected = PureSymbolicExpertConversationResult(
+            summary = "triage says alex is stable",
+            evidenceRef = "evidence:triage:42",
+        )
+
         assertThrows(IllegalArgumentException::class.java) {
-            AndroidPureSymbolicConversationFactory.expertTurnEnvelopeQuery(
-                expertQuery = "call(triage_explain(alex, Result))",
-                contextTerm = "[]",
-                evidenceRef = "expert:triage_explain/turn-1",
+            AndroidPureSymbolicConversationFactory.canonicalExpertEnvelopeResult(
+                projected = projected,
+                contextTerm = "future_context(foo)",
+                generation = 11L,
             )
         }
         assertThrows(IllegalArgumentException::class.java) {
-            AndroidPureSymbolicConversationFactory.expertTurnEnvelopeQuery(
-                expertQuery = "triage_explain(Result, Result)",
+            AndroidPureSymbolicConversationFactory.canonicalExpertEnvelopeResult(
+                projected = projected,
                 contextTerm = "[]",
-                evidenceRef = "expert:triage_explain/turn-1",
+                generation = -1L,
             )
         }
     }
