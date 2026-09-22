@@ -52,6 +52,34 @@ class PureSymbolicConversationControllerTest {
     }
 
     @Test
+    fun `natural resolver strips only bounded terminal conversation punctuation`() {
+        val resolves = mutableListOf<String>()
+        val controller = PureSymbolicConversationController(
+            catalog = { emptyCatalog },
+            query = { error("query path must not run") },
+            resolve = { text, _ ->
+                resolves += text
+                resolution(
+                    turnId = "turn-punctuation-${resolves.size}",
+                    result = LocalQueryResult("symbolic_dialogue_turn", listOf("ok"), 1),
+                )
+            },
+            turnIds = listOf("synthetic-turn-must-not-be-used").iterator(),
+        )
+
+        val natural = controller.submit("Inspect Alice Smith?!", "chat-a").get()
+        val excessive = controller.submit("inspect alice!!!!", "chat-a").get()
+
+        assertEquals(listOf("Inspect Alice Smith", "inspect alice!!!!"), resolves)
+        assertEquals(PureSymbolicRoute.FRAME_RESOLVER, natural.route)
+        assertEquals(PureSymbolicRoute.FRAME_RESOLVER, excessive.route)
+        assertEquals(0, natural.modelCalls)
+        assertEquals(0, natural.providerCalls)
+        assertEquals(0, excessive.modelCalls)
+        assertEquals(0, excessive.providerCalls)
+    }
+
+    @Test
     fun `natural result preserves canonical durable turn identity without minting a second id`() {
         val syntheticIds = listOf("synthetic-turn-must-remain-unused").iterator()
         val controller = PureSymbolicConversationController(
