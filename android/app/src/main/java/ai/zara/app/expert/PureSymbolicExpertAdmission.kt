@@ -133,10 +133,11 @@ object PureSymbolicExpertAdmission {
             require(postconditionEvidence["receipt_ref"] == verifiedOutcomeRef) {
                 "Postcondition evidence must be bound to the verified outcome reference"
             }
-            val sourceGeneration = postconditionEvidence["source_generation"]
             require(
-                sourceGeneration is Number &&
-                    sourceGeneration.toLong() == activation.runtimeGeneration
+                isExactGeneration(
+                    postconditionEvidence["source_generation"],
+                    activation.runtimeGeneration,
+                )
             ) {
                 "Postcondition evidence is stale for the admitted runtime generation"
             }
@@ -149,6 +150,12 @@ object PureSymbolicExpertAdmission {
         is Long -> value == 0L
         is Float -> value.isFinite() && value == 0.0f
         is Double -> value.isFinite() && value == 0.0
+        else -> false
+    }
+
+    private fun isExactGeneration(value: Any?, expected: Long): Boolean = when (value) {
+        is Int -> value.toLong() == expected
+        is Long -> value == expected
         else -> false
     }
 }
