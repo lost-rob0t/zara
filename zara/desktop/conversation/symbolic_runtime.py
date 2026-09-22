@@ -59,6 +59,21 @@ class PureSymbolicProjectionAdapter:
             raise TypeError("persisted symbolic dialogue context must be text")
         return context, projection.projection_generation
 
+    def load_previous_response_act(self, conversation_id: str) -> str | None:
+        """Return the current-project prior act from the canonical projection owner."""
+        projection = self.store.load_symbolic_projection(conversation_id)
+        if projection is None:
+            return None
+        projection.assert_pure_symbolic()
+        if not _dialogue_context_matches_project(projection):
+            return None
+        response_act = projection.dialogue_state.get("response_act_term")
+        if response_act is None:
+            return None
+        if not isinstance(response_act, str):
+            raise TypeError("persisted symbolic response act must be text")
+        return response_act
+
     def commit_turn(
         self,
         *,
