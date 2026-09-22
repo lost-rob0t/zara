@@ -34,6 +34,11 @@ _EXPERT_ANSWER_RE = re.compile(r"^answer\(expert,")
 class SymbolicProjectionPort(Protocol):
     """Runtime-neutral persistence port supplied by a product composition root."""
 
+    def load_dialogue_state(
+        self,
+        conversation_id: str,
+    ) -> tuple[str, Optional[str], int]: ...
+
     def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]: ...
 
     def load_previous_response_act(self, conversation_id: str) -> Optional[str]: ...
@@ -260,32 +265,32 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
         await asyncio.to_thread(engine.consult, path)
         self._engine = engine
 
-    def _load_dialogue_context(
+    def _load_dialogue_state(
         self,
         conversation_id: Optional[str],
-    ) -> tuple[str, int]:
+    ) -> tuple[str, Optional[str], int]:
         adapter = self._projection_adapter
         if adapter is None or conversation_id is None:
-            return "[]", 0
-        context, generation = adapter.load_dialogue_context(conversation_id)
+            return "[]", None, 0
+
+        state_loader = getattr(adapter, "load_dialogue_state", None)
+        if state_loader is not None:
+            context, response_act, generation = state_loader(conversation_id)
+        else:
+            context, generation = adapter.load_dialogue_context(conversation_id)
+            response_loader = getattr(adapter, "load_previous_response_act", None)
+            response_act = (
+                response_loader(conversation_id) if response_loader is not None else None
+            )
+
         if type(generation) is not int or generation < 0:
             raise RuntimeError("symbolic projection returned an invalid generation")
-        return _bounded_context_term(context), generation
-
-    def _load_previous_response_act(
-        self,
-        conversation_id: Optional[str],
-    ) -> Optional[str]:
-        adapter = self._projection_adapter
-        if adapter is None or conversation_id is None:
-            return None
-        loader = getattr(adapter, "load_previous_response_act", None)
-        if loader is None:
-            return None
-        response_act = loader(conversation_id)
-        if response_act is None:
-            return None
-        return _bounded_response_act_term(response_act)
+        bounded_act = (
+            None
+            if response_act is None
+            else _bounded_response_act_term(response_act)
+        )
+        return _bounded_context_term(context), bounded_act, generation
 
     async def submit_turn(
         self,
@@ -310,8 +315,9 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
                 "task prompt context is not available in pure symbolic mode"
             )
 
-        context_term, base_generation = self._load_dialogue_context(conversation_id)
-        previous_response_act = self._load_previous_response_act(conversation_id)
+        context_term, previous_response_act, base_generation = self._load_dialogue_state(
+            conversation_id
+        )
         if self._uses_default_turn_resolver:
             symbolic = await asyncio.to_thread(
                 self._turn_resolver,
