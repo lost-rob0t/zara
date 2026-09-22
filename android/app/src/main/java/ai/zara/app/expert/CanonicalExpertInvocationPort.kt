@@ -76,7 +76,8 @@ class PureSymbolicExpertInvocationAdapter(
         }
 
         return try {
-            port.invoke(request).thenApply { result ->
+            val ownerFuture = port.invoke(request)
+            val admittedFuture = ownerFuture.thenApply { result ->
                 PureSymbolicExpertAdmission.validateResult(
                     activation = activation,
                     request = request,
@@ -85,6 +86,12 @@ class PureSymbolicExpertInvocationAdapter(
                     currentRuntimeGeneration = port.currentRuntimeGeneration(),
                 )
             }
+            admittedFuture.whenComplete { _, _ ->
+                if (admittedFuture.isCancelled && !ownerFuture.isDone) {
+                    ownerFuture.cancel(true)
+                }
+            }
+            admittedFuture
         } catch (error: Throwable) {
             CompletableFuture.failedFuture(error)
         }
