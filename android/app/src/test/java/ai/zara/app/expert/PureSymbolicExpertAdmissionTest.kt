@@ -150,10 +150,11 @@ class PureSymbolicExpertAdmissionTest {
     fun effectSuccessRequiresFreshVerifiedPostconditionEvidence() {
         val activation = activation()
         val request = request(activation)
+        val evidenceRef = verifiedOutcomeRef(activation)
         val unverified = result(
             activation = activation,
             request = request,
-            evidenceRefs = listOf("zara.verified-outcome/v1:effect:diagnosis-42"),
+            evidenceRefs = listOf(evidenceRef),
             effectReceipts = listOf(mapOf("receipt_ref" to "effect:diagnosis-42")),
             data = mapOf("verified" to false),
         )
@@ -162,7 +163,6 @@ class PureSymbolicExpertAdmissionTest {
             PureSymbolicExpertAdmission.validateResult(activation, request, unverified)
         }
 
-        val evidenceRef = "zara.verified-outcome/v1:effect:diagnosis-42"
         val verified = result(
             activation = activation,
             request = request,
@@ -188,7 +188,7 @@ class PureSymbolicExpertAdmissionTest {
     fun effectSuccessRejectsStaleOrUnboundPostconditionEvidence() {
         val activation = activation()
         val request = request(activation)
-        val evidenceRef = "zara.verified-outcome/v1:effect:diagnosis-42"
+        val evidenceRef = verifiedOutcomeRef(activation)
         val effectReceipts = listOf(mapOf("receipt_ref" to "effect:diagnosis-42"))
 
         val stale = result(
@@ -218,7 +218,7 @@ class PureSymbolicExpertAdmissionTest {
                 "verified" to true,
                 "verified_outcome_ref" to evidenceRef,
                 "postcondition_evidence" to mapOf(
-                    "receipt_ref" to "zara.verified-outcome/v1:effect:other-turn",
+                    "receipt_ref" to "zara.verified-outcome/v2:${activation.runtimeGeneration}:effect:other-turn",
                     "source_generation" to activation.runtimeGeneration,
                 ),
             ),
@@ -255,6 +255,9 @@ class PureSymbolicExpertAdmissionTest {
         maxOutputBytes = 64 * 1024,
         maxModelCalls = 0,
     )
+
+    private fun verifiedOutcomeRef(activation: ActivationHandle): String =
+        "zara.verified-outcome/v2:${activation.runtimeGeneration}:effect:diagnosis-42"
 
     private fun result(
         activation: ActivationHandle,
