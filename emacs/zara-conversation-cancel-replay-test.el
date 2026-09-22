@@ -134,7 +134,25 @@
               (should (eq (plist-get status :providers-enabled) :false))
               (should (= (plist-get status :max-model-calls) 0))
               (should (= (plist-get status :provider-calls) 0))
-              (should (= (plist-get status :model-calls) 0)))))
+              (should (= (plist-get status :model-calls) 0)))
+            (setq-local zara-conversation-context-ids
+                        '("evidence:replay-current" "file:timer-current"))
+            (let ((zara-connect-endpoint nil))
+              (should
+               (equal
+                (zara-conversation--turn-arguments
+                 zara-conversation-id
+                 "what should I do instead?")
+                '("--conversation-id" "emacs-main"
+                  "--context-id" "evidence:replay-current"
+                  "--context-id" "file:timer-current"
+                  "--json-events" "what should I do instead?"))))
+            (should-not
+             (member "evidence:stale"
+                     (zara-conversation--context-arguments)))
+            (should-not
+             (member "file:old"
+                     (zara-conversation--context-arguments)))))
       (when (and process (process-live-p process))
         (delete-process process))
       (when (buffer-live-p target)
