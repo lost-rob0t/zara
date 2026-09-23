@@ -181,7 +181,6 @@ class ExpertIdempotencyJournal:
                 if (
                     replay.verdict is ExpertVerdict.SUCCEEDED
                     and replay.effect_receipts
-                    and row["activation_id"] != handle.activation_id
                 ):
                     replay = replace(
                         replay,
@@ -189,7 +188,7 @@ class ExpertIdempotencyJournal:
                         error_code=ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME,
                         error_message=(
                             "durable effectful expert result requires fresh postcondition "
-                            "verification after process recreation"
+                            "verification before replay success"
                         ),
                     )
                 return ClaimDecision(
