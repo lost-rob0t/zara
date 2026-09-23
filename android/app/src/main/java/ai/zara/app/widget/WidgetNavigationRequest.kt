@@ -23,20 +23,13 @@ object WidgetNavigationRequest {
     }
 }
 
-private fun WidgetRoute.toAppRoute(): AppRoute = when (this) {
-    WidgetRoute.CHAT -> AppRoute.Chat
-    WidgetRoute.VOICE -> AppRoute.Voice
-    WidgetRoute.LOGIC -> AppRoute.Logic
-    WidgetRoute.REMOTE -> AppRoute.Runtime
-    WidgetRoute.DIAGNOSTICS -> AppRoute.Diagnostics
-    WidgetRoute.THEMES -> AppRoute.Appearance
-}
-
 class WidgetRouteReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val requested = intent.getStringExtra(EXTRA_ROUTE)?.trim()?.lowercase() ?: return
-        val route = WidgetRoute.entries.firstOrNull { it.atom == requested } ?: return
-        WidgetNavigationRequest.request(route.toAppRoute())
+        val route = WidgetRoute.entries.firstOrNull { it.atom == requested }
+            ?: WidgetRoute.fromAtom(requested)
+            ?: return
+        WidgetNavigationRequest.request(route.appRoute)
         context.startActivity(
             Intent(context, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
