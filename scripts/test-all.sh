@@ -20,6 +20,7 @@
 #
 # Output:
 #   - JUnit XML at $ARTIFACT_DIR/junit.xml (pytest)
+#   - Native Emacs ERT output at $ARTIFACT_DIR/emacs-ert.log
 #   - Per-phase pass/fail summary on stdout
 #   - Artifacts under $ARTIFACT_DIR
 #
@@ -183,7 +184,8 @@ phase_emacs_client() {
     emacs -Q --batch \
     -L "$repo_root/emacs" \
     -l "$repo_root/emacs/zara-test.el" \
-    -f ert-run-tests-batch-and-exit
+    -f ert-run-tests-batch-and-exit \
+    2>&1 | tee "$ARTIFACT_DIR/emacs-ert.log"
 }
 
 run_phase "Native Emacs client ERT" phase_emacs_client
