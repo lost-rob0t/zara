@@ -319,11 +319,14 @@ def test_verified_voice_mutations_report_postcondition_evidence(monkeypatch):
         "voice_present": True,
     }
 
+    delete_inventory = ["zara", "authorized_voice"]
+
     async def fake_delete(voice_name):
+        delete_inventory.remove(voice_name)
         return {"ok": True, "voice": voice_name}
 
     async def fake_list_after_delete():
-        return ["zara"]
+        return list(delete_inventory)
 
     monkeypatch.setattr(value, "_qwen_delete_voice", fake_delete)
     monkeypatch.setattr(value, "_qwen_list_voices", fake_list_after_delete)
