@@ -217,6 +217,40 @@ def test_clone_fails_when_fresh_inventory_does_not_confirm_registration(monkeypa
         )
 
 
+def test_clone_rejects_preexisting_target_before_registration(monkeypatch):
+    value = expert()
+    attempted_downloads = []
+    attempted_registrations = []
+
+    monkeypatch.setattr(value, "_require_binary", lambda name: "/bin/ffmpeg")
+    monkeypatch.setattr(
+        value,
+        "_download_youtube_audio",
+        lambda url, root: attempted_downloads.append(url),
+    )
+
+    async def fake_list():
+        return ["zara", "authorized_voice"]
+
+    async def fake_register(voice_name, wav_path, *, reference_text):
+        attempted_registrations.append(voice_name)
+        return {"ok": True, "voice": voice_name}
+
+    monkeypatch.setattr(value, "_qwen_list_voices", fake_list)
+    monkeypatch.setattr(value, "_qwen_register_voice", fake_register)
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        value.clone_from_youtube(
+            "https://youtu.be/abc123",
+            "authorized_voice",
+            rights_basis="consent",
+            attest_not_public_figure=True,
+        )
+
+    assert attempted_downloads == []
+    assert attempted_registrations == []
+
+
 def test_delete_fails_when_fresh_inventory_still_contains_voice(monkeypatch):
     value = expert()
 
