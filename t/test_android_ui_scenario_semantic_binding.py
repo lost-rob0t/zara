@@ -20,6 +20,10 @@ RUNTIME = {
     "quantization": None,
     "phase": None,
 }
+TRACE = (
+    "ACTION 1 capture:state\n"
+    "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n"
+)
 
 
 def _load_validator():
@@ -50,15 +54,12 @@ def _write_bundle(tmp_path: Path) -> Path:
     text = tmp_path / "state.ui.txt"
     text.write_text(
         'route="chat"\n'
-        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n",
+        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n"
+        + TRACE,
         encoding="utf-8",
     )
     assertions = tmp_path / "state.assertions.txt"
-    assertions.write_text(
-        "ACTION 1 capture:state\n"
-        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n",
-        encoding="utf-8",
-    )
+    assertions.write_text(TRACE, encoding="utf-8")
     scenario = {
         "scenario_id": "android.ui.state",
         "source_sha": SOURCE_SHA,
@@ -129,7 +130,8 @@ def test_validator_rejects_text_twin_route_drift(tmp_path: Path) -> None:
     text = tmp_path / "state.ui.txt"
     text.write_text(
         'route="settings"\n'
-        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n",
+        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n"
+        + TRACE,
         encoding="utf-8",
     )
     manifest["scenarios"][0]["text_evidence"]["sha256"] = hashlib.sha256(
@@ -157,4 +159,25 @@ def test_validator_rejects_assertion_trace_semantic_drift(tmp_path: Path) -> Non
     _persist_manifest_and_scenario(manifest_path, manifest)
 
     with pytest.raises(validator.EvidenceError, match="assertion.*trace"):
+        validator.validate_android(manifest_path, SOURCE_SHA)
+
+
+def test_validator_rejects_text_twin_missing_action_assertion_trace(
+    tmp_path: Path,
+) -> None:
+    validator = _load_validator()
+    manifest_path = _write_bundle(tmp_path)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    text = tmp_path / "state.ui.txt"
+    text.write_text(
+        'route="chat"\n'
+        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n",
+        encoding="utf-8",
+    )
+    manifest["scenarios"][0]["text_evidence"]["sha256"] = hashlib.sha256(
+        text.read_bytes()
+    ).hexdigest()
+    _persist_manifest_and_scenario(manifest_path, manifest)
+
+    with pytest.raises(validator.EvidenceError, match="text.*action/assertion trace"):
         validator.validate_android(manifest_path, SOURCE_SHA)
