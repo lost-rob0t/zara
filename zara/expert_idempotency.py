@@ -19,6 +19,9 @@ from ._experts_v1 import (
     ExpertInvalidInputError,
     ExpertResult,
     ExpertVerdict,
+    _bounded_mapping,
+    _bounded_receipts,
+    _bounded_refs,
 )
 from .database import DatabaseManager, get_database
 
@@ -423,19 +426,13 @@ class ExpertIdempotencyJournal:
         ):
             if wire[key] != row[column]:
                 raise ValueError(f"durable expert result {key} mismatch")
-        if not isinstance(wire["data"], dict) or not isinstance(wire["usage"], dict):
-            raise ValueError("durable expert result mappings are invalid")
-        model_calls = wire["usage"].get("model_calls")
+        data = _bounded_mapping(wire["data"], "data")
+        usage = _bounded_mapping(wire["usage"], "usage")
+        evidence_refs = _bounded_refs(wire["evidence_refs"])
+        effect_receipts = _bounded_receipts(wire["effect_receipts"])
+        model_calls = usage.get("model_calls")
         if type(model_calls) is not int or model_calls < 0:
             raise ValueError("durable expert result usage is invalid")
-        if not isinstance(wire["evidence_refs"], list) or not all(
-            isinstance(item, str) for item in wire["evidence_refs"]
-        ):
-            raise ValueError("durable expert result evidence is invalid")
-        if not isinstance(wire["effect_receipts"], list) or not all(
-            isinstance(item, dict) for item in wire["effect_receipts"]
-        ):
-            raise ValueError("durable expert result receipts are invalid")
         error_code = wire["error_code"]
         return ExpertResult(
             protocol=wire["protocol"],
@@ -449,10 +446,10 @@ class ExpertIdempotencyJournal:
             resolved_registry_generation=wire["resolved_registry_generation"],
             resolved_runtime_generation=wire["resolved_runtime_generation"],
             verdict=ExpertVerdict(wire["verdict"]),
-            data=dict(wire["data"]),
-            evidence_refs=tuple(wire["evidence_refs"]),
-            usage=dict(wire["usage"]),
-            effect_receipts=tuple(dict(item) for item in wire["effect_receipts"]),
+            data=data,
+            evidence_refs=evidence_refs,
+            usage=usage,
+            effect_receipts=effect_receipts,
             error_code=ExpertErrorCode(error_code) if error_code is not None else None,
             error_message=wire["error_message"],
             replayed=False,
