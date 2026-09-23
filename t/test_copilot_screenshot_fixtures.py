@@ -73,7 +73,7 @@ def test_fixture_manifest_binds_actual_theme_and_settings_semantic_twin(tmp_path
     assert settings["text_twin"] == {
         "window_title": "Zara Settings",
         "category": "Appearance",
-        "theme_label": "Outrun",
+        "theme_label": "Dotfiles Outrun",
     }
     assert settings["actions"] == [
         {"id": "save-settings", "text": "Save settings", "enabled": True},
