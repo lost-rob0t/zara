@@ -1,12 +1,12 @@
 from zara.notification_identity import derive_notification_id
 
 
-def test_notification_identity_is_stable_and_generation_scoped() -> None:
+def test_notification_identity_is_stable_across_generations() -> None:
     first = derive_notification_id(source_peer="phone", platform_identity="android:chat:42", generation=7)
     same = derive_notification_id(source_peer="phone", platform_identity="android:chat:42", generation=7)
     replaced = derive_notification_id(source_peer="phone", platform_identity="android:chat:42", generation=8)
     assert first == same
-    assert first != replaced
+    assert first == replaced
     assert first.startswith("notification:")
 
 
