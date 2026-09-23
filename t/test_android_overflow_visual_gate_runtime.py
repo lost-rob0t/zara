@@ -149,3 +149,26 @@ def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
     assert receipt["screenshot_sha256"] == hashlib.sha256(screenshot.read_bytes()).hexdigest()
     assert receipt["text_twin_file"] == twin.name
     assert receipt["text_twin_sha256"] == twin_sha
+
+
+def test_overflow_visual_receipt_reuses_capture_bound_text_evidence(
+    tmp_path: Path,
+) -> None:
+    """The visual receipt must not recapture UI semantics after the screenshot fence."""
+    device = synthetic_device(tmp_path, text_like_image())
+
+    def reject_late_recapture(_state: str) -> dict:
+        raise AssertionError("late UI hierarchy recapture escaped the screenshot fence")
+
+    device.capture_text_twin = reject_late_recapture
+    device.assert_transient_surface_visible(
+        trigger_fragment="Actions for ",
+        trigger_bounds=(100, 20, 140, 34),
+        action_labels=("Rename",),
+        screenshot_name="same-state-bound",
+    )
+
+    scenario = device.scenario_evidence[-1]
+    receipt = device.visual_checks[-1]
+    assert receipt["text_twin_file"] == scenario["text_evidence"]["file"]
+    assert receipt["text_twin_sha256"] == scenario["text_evidence"]["sha256"]
