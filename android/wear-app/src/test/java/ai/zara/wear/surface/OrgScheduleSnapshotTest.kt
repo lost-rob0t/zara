@@ -1,6 +1,7 @@
 package ai.zara.wear.surface
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -51,6 +52,22 @@ class OrgScheduleSnapshotTest {
         """.trimIndent()
 
         assertNull(OrgScheduleSnapshotCodec.decode(duplicate))
+    }
+
+    @Test
+    fun staleSnapshotCannotRollBackAcceptedCacheState() {
+        val current = OrgScheduleSnapshot(
+            generatedAtEpochMillis = 200L,
+            allocations = emptyList(),
+            currentOrNextTitle = null,
+        )
+        val newer = current.copy(generatedAtEpochMillis = 201L)
+        val sameGeneration = current.copy(currentOrNextTitle = "same generation refresh")
+        val stale = current.copy(generatedAtEpochMillis = 199L)
+
+        assertTrue(shouldAcceptOrgScheduleSnapshot(current, newer))
+        assertTrue(shouldAcceptOrgScheduleSnapshot(current, sameGeneration))
+        assertFalse(shouldAcceptOrgScheduleSnapshot(current, stale))
     }
 
     @Test
