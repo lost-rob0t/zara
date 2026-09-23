@@ -34,6 +34,19 @@ class DispatchCounter:
         }
 
 
+@dataclass
+class CancelledDispatchCounter(DispatchCounter):
+    def handler(self, **_payload: Any) -> dict[str, Any]:
+        self.calls += 1
+        return {
+            "verdict": "cancelled",
+            "data": {},
+            "evidence_refs": [],
+            "usage": {"model_calls": 0},
+            "effect_receipts": [],
+        }
+
+
 def _descriptor(expert_id: str, manifest_digest: str) -> ExpertDescriptor:
     return ExpertDescriptor.from_wire(
         {
@@ -97,6 +110,22 @@ def _request(registry: ExpertRegistry, activation_id: str, expert_id: str) -> Ex
     )
 
 
+def _bump_generation(registry: ExpertRegistry) -> None:
+    registry.register(
+        _descriptor(
+            "zara:expert/restart-generation-peer",
+            "sha256:restart-generation-peer-v1",
+        ),
+        lambda **_payload: {
+            "verdict": "succeeded",
+            "data": {"summary": "unused peer"},
+            "evidence_refs": ["evidence:restart-generation-peer:v1"],
+            "usage": {"model_calls": 0},
+            "effect_receipts": [],
+        },
+    )
+
+
 def test_terminal_restart_replay_with_changed_generation_is_explicit_unknown(
     tmp_path: Path,
 ) -> None:
@@ -124,19 +153,7 @@ def test_terminal_restart_replay_with_changed_generation_is_explicit_unknown(
     restarted_db = DatabaseManager(path)
     restarted_registry = ExpertRegistry(database=restarted_db)
     restarted_registry.reload([(target, counter.handler)])
-    restarted_registry.register(
-        _descriptor(
-            "zara:expert/restart-generation-peer",
-            "sha256:restart-generation-peer-v1",
-        ),
-        lambda **_payload: {
-            "verdict": "succeeded",
-            "data": {"summary": "unused peer"},
-            "evidence_refs": ["evidence:restart-generation-peer:v1"],
-            "usage": {"model_calls": 0},
-            "effect_receipts": [],
-        },
-    )
+    _bump_generation(restarted_registry)
     restarted_handle, _ = restarted_registry.activate(
         "user:restart-generation",
         "workspace:restart-generation",
@@ -159,3 +176,51 @@ def test_terminal_restart_replay_with_changed_generation_is_explicit_unknown(
     assert replay.usage == {"model_calls": 0}
     assert replay.evidence_refs == ()
     assert replay.effect_receipts == ()
+
+
+def test_cancelled_terminal_replay_stays_cancelled_across_generation_change(
+    tmp_path: Path,
+) -> None:
+    target_id = "zara:expert/restart-generation"
+    target = _descriptor(target_id, "sha256:restart-generation-v1")
+    counter = CancelledDispatchCounter()
+    path = tmp_path / "restart-generation-cancelled.db"
+
+    first_db = DatabaseManager(path)
+    first_registry = ExpertRegistry(database=first_db)
+    first_registry.reload([(target, counter.handler)])
+    first_handle, _ = first_registry.activate(
+        "user:restart-generation",
+        "workspace:restart-generation",
+        target_id,
+    )
+    first = CanonicalExpertInvocationPort(first_registry).invoke(
+        _request(first_registry, first_handle.activation_id, target_id)
+    )
+    assert first.verdict is ExpertVerdict.CANCELLED
+    assert first.usage == {"model_calls": 0}
+    assert counter.calls == 1
+    first_db.close()
+
+    restarted_db = DatabaseManager(path)
+    restarted_registry = ExpertRegistry(database=restarted_db)
+    restarted_registry.reload([(target, counter.handler)])
+    _bump_generation(restarted_registry)
+    restarted_handle, _ = restarted_registry.activate(
+        "user:restart-generation",
+        "workspace:restart-generation",
+        target_id,
+    )
+
+    replay = CanonicalExpertInvocationPort(restarted_registry).invoke(
+        _request(restarted_registry, restarted_handle.activation_id, target_id)
+    )
+
+    assert counter.calls == 1, "cancelled terminal retry must not redispatch"
+    assert replay.replayed is True
+    assert replay.verdict is ExpertVerdict.CANCELLED
+    assert replay.error_code is first.error_code
+    assert replay.activation_id == first.activation_id
+    assert replay.invocation_id == first.invocation_id
+    assert replay.request_id == first.request_id
+    assert replay.usage == first.usage == {"model_calls": 0}
