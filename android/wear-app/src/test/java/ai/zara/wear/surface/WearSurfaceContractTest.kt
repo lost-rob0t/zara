@@ -85,6 +85,8 @@ class WearSurfaceContractTest {
         assertTrue(store.contains("snapshot_v1"))
         assertTrue(provider.contains("NoDataComplicationData"))
         assertTrue(provider.contains("RangedValueComplicationData.Builder"))
+        assertTrue(provider.contains("snapshot.currentOrNextId"))
+        assertFalse(provider.contains("snapshot.allocations.firstOrNull()"))
     }
 
     @Test
