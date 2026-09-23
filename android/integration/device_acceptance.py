@@ -223,9 +223,6 @@ class Device:
         ) from last_error
 
     def nodes(self):
-        # Hosted API-35 emulators can occasionally report a successful dump before
-        # the hierarchy file becomes available. Retry only that exact missing-file
-        # condition; command failures and malformed XML still fail immediately.
         return ET.fromstring(self._hierarchy_text()).iter("node")
 
     def find(self, label: str):
@@ -379,11 +376,6 @@ class Device:
         time.sleep(0.4)
 
     def dismiss_pixel_launcher_anr(self) -> bool:
-        # The hosted Pixel emulator can surface a launcher ANR over an otherwise
-        # healthy Zara activity. Prefer closing only that OS-owned launcher process
-        # so the same hung launcher cannot immediately re-present the dialog. Keep
-        # Wait only as a compatibility fallback for platform variants that do not
-        # expose Close app. Never hide a Zara crash/ANR or weaken app assertions.
         if self.find_contains("Pixel Launcher isn't responding") is None:
             return False
         action = self.find("Close app")
@@ -404,11 +396,6 @@ class Device:
         return True
 
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
-        # A fresh install legitimately opens the versioned changelog before Chat.
-        # Prefer Zara's exact release-notes title. Hosted Compose can occasionally
-        # render that title visually while UIAutomator exposes only the action and
-        # changelog-section semantics. Accept that exact fallback pair; unrelated
-        # Continue buttons still do not satisfy the release-notes contract.
         release_notes = self.find_contains("What's new in Zara ")
         if release_notes is None:
             release_notes = self.find_contains("What's new in Zara")
@@ -445,9 +432,6 @@ class Device:
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            # UIAutomator includes nodes from the activity behind a system ANR
-            # dialog. Never accept those background labels as proof that Zara is
-            # interactive; clear only the known Pixel Launcher dialog first.
             if self.dismiss_pixel_launcher_anr():
                 continue
             if self.find(label) is not None:
@@ -706,7 +690,7 @@ class Device:
             f"runtime={json.dumps(runtime_snapshot, sort_keys=True, separators=(',', ':'))}\n"
         )
         trace = self._assertion_evidence_text(actions, assertions)
-        text_evidence = evidence_header + trace + normalized_after
+        text_evidence = evidence_header + normalized_after + trace
 
         path = self.output / f"{name}.png"
         text_path = self.output / f"{name}.ui.txt"
@@ -796,9 +780,6 @@ class Device:
         time.sleep(0.5)
 
     def recreate(self) -> None:
-        # HOME + am kill keeps the Android task/saved-state path while killing the app
-        # process. This is stronger than a same-process Compose recreation and remains
-        # distinct from a force-stop/new-task smoke.
         self.adb("shell", "input", "keyevent", "3")
         time.sleep(0.5)
         self.adb("shell", "am", "kill", "ai.zara.app")
@@ -900,10 +881,6 @@ def exercise_three_menu_ui(device: Device) -> None:
         device.await_label(menu)
     device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
 
-    # Exercise the real New chat UI twice so the overflow catcher cannot pass on
-    # a synthetic/single-row drawer. Each tap crosses MainActivity's canonical
-    # ConversationStore path, then we reopen the drawer and prove multiple action
-    # triggers exist before capturing any overflow evidence.
     device.tap_contains("New chat")
     device.await_label("Chat")
     device.tap("Open navigation menu")
@@ -988,8 +965,6 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.restore_profile()
     device.await_label("Chat")
 
-    # Keep a draft only; never submit it. The local chat path must become usable for
-    # this lifecycle acceptance or the screenshot gate fails honestly.
     device.await_label("Ask anything…", timeout=30.0)
     device.tap("Ask anything…")
     device.type_text("ui_draft_939")
@@ -1048,8 +1023,6 @@ def main() -> None:
         "accessibility_semantics": device.accessibility_semantics,
         "visual_checks": device.visual_checks,
         "scenarios": device.scenario_evidence,
-        # UIAutomator semantics are useful accessibility evidence, but they are not
-        # proof of real TalkBack spoken traversal. Keep that hardware/service claim false.
         "talkback_spoken_traversal": False,
     }
     try:
