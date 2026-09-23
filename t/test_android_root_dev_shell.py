@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import shutil
@@ -9,8 +10,39 @@ import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
+def _assert_projection_structure() -> None:
+    root_flake = (ROOT / "flake.nix").read_text()
+    lock = json.loads((ROOT / "flake.lock").read_text())
+    android_flake = (ROOT / "android" / "flake.nix").read_text()
+
+    assert 'android.url = "path:./android";' in root_flake
+    assert "outputs = { self, nixpkgs, android, ... }:" in root_flake
+    assert "devShells.android = android.devShells.${system}.default;" in root_flake
+    assert "androidPkgs = import nixpkgs" not in root_flake
+    assert "androidEnv = androidPkgs.androidenv.composeAndroidPackages" not in root_flake
+
+    android_lock = lock["nodes"]["android"]
+    assert android_lock["locked"] == {"path": "./android", "type": "path"}
+    assert android_lock["original"] == {"path": "./android", "type": "path"}
+
+    for export in (
+        "ANDROID_NDK_ROOT",
+        "ZARA_ANDROID_NDK_VERSION",
+        "ZARA_TREALLA_SOURCE_DIR",
+    ):
+        assert f"export {export}=" in android_flake
+
+
 def test_root_android_dev_shell_is_the_pinned_android_toolchain(tmp_path: pathlib.Path) -> None:
-    assert shutil.which("nix") is not None, "release toolchain regression requires nix"
+    _assert_projection_structure()
+
+    # `nix flake check` also runs pytest inside a pure derivation where the Nix
+    # client is intentionally absent. The repository's primary test-all and both
+    # adversarial CI jobs run outside that derivation with Nix installed, so they
+    # execute the real root shell below. Keep the pure derivation deterministic
+    # without skipping the test or trying to nest Nix inside a Nix sandbox.
+    if shutil.which("nix") is None:
+        return
 
     env = os.environ.copy()
     env["GRADLE_USER_HOME"] = str(tmp_path / "gradle-home")
