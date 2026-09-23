@@ -106,7 +106,13 @@ def _app() -> QApplication:
     return app
 
 
-def _wait_until(app: QApplication, predicate, timeout: float = 8.0) -> None:
+def _wait_until(
+    app: QApplication,
+    predicate,
+    timeout: float = 8.0,
+    *,
+    failure_detail=None,
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         app.processEvents()
@@ -114,19 +120,56 @@ def _wait_until(app: QApplication, predicate, timeout: float = 8.0) -> None:
             return
         time.sleep(0.01)
     app.processEvents()
-    assert predicate(), "timed out waiting for Desktop pure-symbolic restart state"
+    if predicate():
+        return
+    detail = ""
+    if failure_detail is not None:
+        detail = f": {failure_detail()}"
+    raise AssertionError(
+        f"timed out waiting for Desktop pure-symbolic restart state{detail}"
+    )
 
 
-def _assert_no_runtime_errors(diagnostics) -> None:
-    observed_errors = []
+def _runtime_failures(diagnostics) -> list[str]:
+    observed_failures: list[str] = []
     while True:
         try:
             envelope = diagnostics.get(timeout=0.01)
         except queue.Empty:
             break
-        if isinstance(envelope.event, events.RuntimeError):
-            observed_errors.append(envelope.event)
-    assert observed_errors == []
+        event = envelope.event
+        if isinstance(event, events.RuntimeError):
+            observed_failures.append(f"RuntimeError: {event.reason}")
+        elif isinstance(event, events.AgentFailed):
+            observed_failures.append(f"AgentFailed: {event.reason}")
+    return observed_failures
+
+
+def _assert_no_runtime_failures(diagnostics) -> None:
+    assert _runtime_failures(diagnostics) == []
+
+
+def _conversation_failure_detail(
+    service: ConversationService,
+    conversation_id: str,
+    diagnostics,
+) -> str:
+    state = service.get_state(conversation_id)
+    transcript = [
+        {
+            "role": message.role.value,
+            "status": message.status.value,
+            "content": message.content,
+            "error": message.error,
+            "turn_id": message.turn_id,
+        }
+        for message in state.messages
+    ]
+    failures = _runtime_failures(diagnostics)
+    return (
+        f"active_turn_id={state.active_turn_id!r}; "
+        f"transcript={transcript!r}; runtime_failures={failures!r}"
+    )
 
 
 def _close_surface(
@@ -231,7 +274,7 @@ def test_real_desktop_surface_reopens_durable_symbolic_clarification_without_mod
         assert before_restart.max_model_calls == 0
         assert before_restart.provider_calls == 0
         assert before_restart.model_calls == 0
-        _assert_no_runtime_errors(first_diagnostics)
+        _assert_no_runtime_failures(first_diagnostics)
 
         _close_surface(qt_app, first_client, first_bridge, first_controller)
         first_closed = True
@@ -283,6 +326,13 @@ def test_real_desktop_surface_reopens_durable_symbolic_clarification_without_mod
         second_surface.composer.setPlainText("5 minutes")
         second_surface.submit_current_text()
 
+        submitted = second_service.get_state(conversation_id)
+        assert [message.content for message in submitted.messages] == [
+            "timer",
+            "How long should I set the timer for?",
+            "5 minutes",
+        ]
+
         expected = (
             "That action needs capability-checked execution before I can report success."
         )
@@ -291,6 +341,11 @@ def test_real_desktop_surface_reopens_durable_symbolic_clarification_without_mod
             lambda: any(
                 message.role is MessageRole.ASSISTANT and message.content == expected
                 for message in second_service.get_state(conversation_id).messages
+            ),
+            failure_detail=lambda: _conversation_failure_detail(
+                second_service,
+                conversation_id,
+                second_diagnostics,
             ),
         )
 
@@ -314,7 +369,7 @@ def test_real_desktop_surface_reopens_durable_symbolic_clarification_without_mod
         assert after_restart.max_model_calls == 0
         assert after_restart.provider_calls == 0
         assert after_restart.model_calls == 0
-        _assert_no_runtime_errors(second_diagnostics)
+        _assert_no_runtime_failures(second_diagnostics)
     finally:
         if second_controller is not None and not second_closed:
             assert second_client is not None
