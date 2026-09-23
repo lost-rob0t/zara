@@ -35,8 +35,15 @@ PROVIDER_ENV = (
     "OPENAI_BASE_URL",
     "OPENROUTER_API_KEY",
     "TOGETHER_API_KEY",
+    "XAI_API_KEY",
     "ZAI_API_KEY",
+    "ZARA_PROLOG_RLM_ROOT",
 )
+
+POLICY_ENV = {
+    "ZARA_PROVIDERS_ENABLED": "0",
+    "ZARA_MAX_MODEL_CALLS": "0",
+}
 
 HELP_RESPONSE = (
     "I can help with conversation, device and media actions, search, navigation, "
@@ -173,6 +180,13 @@ def _runtime_failures(diagnostics) -> list[str]:
     return failures
 
 
+def _assert_provider_fallback_disabled() -> None:
+    for key in PROVIDER_ENV:
+        assert key not in os.environ
+    for key, expected in POLICY_ENV.items():
+        assert os.environ.get(key) == expected
+
+
 def _assert_zero_model_projection(projection) -> None:
     projection.assert_pure_symbolic()
     assert projection.providers_enabled is False
@@ -187,7 +201,9 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
 ):
     for key in PROVIDER_ENV:
         monkeypatch.delenv(key, raising=False)
-        assert key not in os.environ
+    for key, value in POLICY_ENV.items():
+        monkeypatch.setenv(key, value)
+    _assert_provider_fallback_disabled()
     _network_fence(monkeypatch)
 
     qt_app = _app()
@@ -238,6 +254,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
         before_restart = first_store.load_symbolic_projection(conversation_id)
         assert before_restart is not None
         _assert_zero_model_projection(before_restart)
+        _assert_provider_fallback_disabled()
         assert before_restart.dialogue_act == "help"
         assert before_restart.dialogue_state["prolog_context_term"] == "[]"
         assert _runtime_failures(first_diagnostics) == []
@@ -246,6 +263,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
         first_closed = True
         first_database.close()
 
+        _assert_provider_fallback_disabled()
         second_database = DatabaseManager(database_path)
         second_store = ConversationStore(second_database)
         second_service = ConversationService(second_store)
@@ -280,6 +298,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
         recovered = second_store.load_symbolic_projection(conversation_id)
         assert recovered is not None
         _assert_zero_model_projection(recovered)
+        _assert_provider_fallback_disabled()
         assert recovered == before_restart
 
         second_surface.composer.setPlainText("zzzxqvvv qqqzxvvv")
@@ -296,6 +315,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
         after_miss = second_store.load_symbolic_projection(conversation_id)
         assert after_miss is not None
         _assert_zero_model_projection(after_miss)
+        _assert_provider_fallback_disabled()
         assert after_miss.projection_generation == before_restart.projection_generation + 1
         assert after_miss.runtime_generation == before_restart.runtime_generation + 1
         assert after_miss.dialogue_act == "unsupported"
@@ -327,6 +347,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
         after_recovery = second_store.load_symbolic_projection(conversation_id)
         assert after_recovery is not None
         _assert_zero_model_projection(after_recovery)
+        _assert_provider_fallback_disabled()
         assert after_recovery.projection_generation == before_restart.projection_generation + 2
         assert after_recovery.runtime_generation == before_restart.runtime_generation + 2
         assert after_recovery.dialogue_act == "acknowledgement"
