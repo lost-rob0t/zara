@@ -325,38 +325,7 @@ private fun PluginInstallSettings() {
 
 @Composable
 private fun PluginPickerAction(enabled: Boolean, onActivate: () -> Unit) {
-    val tokens = LocalZaraTokens.current
-    Surface(
-        color = if (enabled) tokens.primary else tokens.surface,
-        contentColor = if (enabled) Color(0xFF160018) else tokens.textMuted,
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Row(
-            modifier = Modifier
-                .clickable(
-                    enabled = enabled,
-                    role = Role.Button,
-                    onClick = onActivate,
-                )
-                .semantics(mergeDescendants = true) {
-                    contentDescription = "Choose APK"
-                    role = Role.Button
-                    if (enabled) {
-                        onClick(label = "Choose APK") {
-                            onActivate()
-                            true
-                        }
-                    } else {
-                        disabled()
-                    }
-                }
-                .padding(horizontal = 24.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Choose APK")
-        }
-    }
+    PrimaryAction("Choose APK", enabled, onActivate)
 }
 
 @Composable
