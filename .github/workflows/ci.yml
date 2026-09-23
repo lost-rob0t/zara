@@ -41,6 +41,7 @@ jobs:
           }
 
       - name: Resolve trusted coverage base
+        id: coverage-base
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -78,7 +79,7 @@ jobs:
               exit 1
               ;;
           esac
-          echo "ZARA_COVERAGE_BASE_REF=$base_ref" >> "$GITHUB_ENV"
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
 
       - name: Check whitespace errors
         shell: bash
@@ -95,6 +96,8 @@ jobs:
         uses: cachix/install-nix-action@v31
 
       - name: Run all tests
+        env:
+          ZARA_COVERAGE_BASE_REF: ${{ steps.coverage-base.outputs.base_ref }}
         run: nix develop -c bash scripts/test-all.sh
 
       - name: Run formal AGENTIC-15 verification
