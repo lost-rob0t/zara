@@ -27,8 +27,9 @@ def test_android_local_symbolic_entry_points_use_the_loaded_portable_core_module
 
 def test_strict_local_natural_language_cannot_route_to_remote_transport():
     session = _text(SESSION)
-    submit = session.substring_after if False else None
-    submit_text = session.split("fun submitText(", 1)[1].split("private fun submitAutoRemoteFirst", 1)[0]
+    submit_text = session.split("fun submitText(", 1)[1].split(
+        "private fun submitAutoRemoteFirst", 1
+    )[0]
     local_turn = session.split("internal fun submitLocalText(", 1)[1].split(
         "private fun generateLocalModelTurn", 1
     )[0]
@@ -42,25 +43,27 @@ def test_strict_local_natural_language_cannot_route_to_remote_transport():
 
 def test_installed_local_gate_proves_readiness_then_canonical_natural_language_before_network():
     acceptance = _text(INSTALLED_ACCEPTANCE)
+    exercise = acceptance.split("def exercise_remote_connection", 1)[1]
 
-    readiness = acceptance.index('type_printable_ascii(device, "?- Result = zara_ready.")')
-    natural = acceptance.index('type_printable_ascii(device, "set a timer for 2 hours")')
-    symbolic_result = acceptance.index('device.await_contains("timer.set"')
-    diagnostics = acceptance.index("local_diagnostics = read_app_diagnostics(device)")
-    no_model = acceptance.index('if "local_model.generate.begin" in local_diagnostics:')
-    enrollment = acceptance.index("enroll_live_server(fixture, client_public)")
-    connect = acceptance.index('device.tap("Connect")')
+    readiness = exercise.index('type_printable_ascii(device, "?- Result = zara_ready.")')
+    natural = exercise.index('type_printable_ascii(device, "set a timer for 2 hours")')
+    symbolic_result = exercise.index('device.await_contains("timer.set"')
+    diagnostics = exercise.index("local_diagnostics = read_app_diagnostics(device)")
+    no_model = exercise.index('if "local_model.generate.begin" in local_diagnostics:')
+    enrollment = exercise.index("enroll_live_server(fixture, client_public)")
+    connect = exercise.index('device.tap("Connect")')
 
     assert readiness < natural < symbolic_result < diagnostics < no_model < enrollment < connect
-    assert 'device.tap("Local")' in acceptance[:natural]
-    assert 'device.await_contains("LOCAL", timeout=5.0)' in acceptance[:enrollment]
-    assert 'if "local_model.generate.complete" in local_diagnostics:' in acceptance
-    assert '"local_model_fallback_observed": False' in acceptance
+    assert 'device.tap("Local")' in exercise[:natural]
+    assert 'device.await_contains("LOCAL", timeout=5.0)' in exercise[:enrollment]
+    assert 'if "local_model.generate.complete" in local_diagnostics:' in exercise
+    assert '"local_model_fallback_observed": False' in exercise
 
 
 def test_installed_local_gate_cannot_be_satisfied_by_remote_or_provider_setup():
     acceptance = _text(INSTALLED_ACCEPTANCE)
-    local_gate = acceptance.split("# Then enroll the same installed app", 1)[0]
+    exercise = acceptance.split("def exercise_remote_connection", 1)[1]
+    local_gate = exercise.split("# Then enroll the same installed app", 1)[0]
 
     assert "enroll_live_server(" not in local_gate
     assert 'device.tap("Connect")' not in local_gate
