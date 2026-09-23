@@ -51,20 +51,21 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
     text_twin = tmp_path / "drawer-conversation-overflow.xml"
     text_twin.write_text(twin_xml, encoding="utf-8")
 
+    trace = (
+        "ACTION 1 capture:drawer-conversation-overflow\n"
+        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n"
+    )
     scenario_text = tmp_path / "drawer-conversation-overflow.ui.txt"
     scenario_text.write_text(
         'route="chat"\n'
         f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n"
         'class="android.widget.TextView" text="Rename" enabled=true clickable=false '
-        'bounds=[10,30][70,50]\n',
+        'bounds=[10,30][70,50]\n'
+        + trace,
         encoding="utf-8",
     )
     scenario_assertions = tmp_path / "drawer-conversation-overflow.assertions.txt"
-    scenario_assertions.write_text(
-        "ACTION 1 capture:drawer-conversation-overflow\n"
-        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n",
-        encoding="utf-8",
-    )
+    scenario_assertions.write_text(trace, encoding="utf-8")
 
     actions = [
         {
