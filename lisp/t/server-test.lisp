@@ -54,3 +54,34 @@
           (is (stringp conversation-id))
           (is (plusp
                (length conversation-id))))))))
+
+(test real-daemon-concurrent-ping-uses-one-client-owner
+  (when (uiop:getenv "ZARA_LISP_INTEGRATION")
+    (zara:with-server (server)
+      (zara:with-client
+          (client
+           :endpoint (zara:server-endpoint server))
+        (let* ((count 8)
+               (results (make-array count :initial-element nil))
+               (threads
+                 (loop for index below count
+                       collect
+                       (let ((slot index))
+                         (bt:make-thread
+                          (lambda ()
+                            (setf (aref results slot)
+                                  (handler-case
+                                      (let ((reply
+                                              (zara:ping
+                                               client
+                                               :timeout 5.0d0)))
+                                        (string=
+                                         "pong"
+                                         (zara:protocol-message-type reply)))
+                                    (error (condition)
+                                      condition))))
+                          :name (format nil "zara-test-ping-~d" slot))))))
+          (dolist (thread threads)
+            (bt:join-thread thread))
+          (loop for index below count
+                do (is (eq t (aref results index)))))))))
