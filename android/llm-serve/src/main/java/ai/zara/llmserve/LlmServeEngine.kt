@@ -1,63 +1,46 @@
 package ai.zara.llmserve
 
-import ai.zara.app.localai.LiteRtLocalLlmBackend
 import ai.zara.app.localai.LocalAiPhase
-import ai.zara.app.localai.LocalAiRuntime
+import ai.zara.app.localai.LocalAiRemoteClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
 import ai.zara.app.localai.LocalGenerationResult
 import ai.zara.app.localai.LocalModelFormat
 import ai.zara.app.localai.LocalModelMetadata
 import ai.zara.app.localai.LocalModelSpec
-import ai.zara.app.localai.LocalModelStore
 import android.content.Context
-import java.io.File
-import java.io.InputStream
+import android.net.Uri
 import java.util.concurrent.TimeUnit
 
 class LlmServeEngine(context: Context) : AutoCloseable {
-    private val modelStore = LocalModelStore(File(context.filesDir, "zara/models"))
-    private val runtime = LocalAiRuntime(LiteRtLocalLlmBackend(context))
+    private val remote = LocalAiRemoteClient(context)
 
     fun loadActiveModel(): LocalAiState {
-        val active = modelStore.activeModel() ?: return runtime.state()
-        return runtime.load(active).get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        val active = activeModel() ?: return state()
+        return remote.selectModel(active.id, active.version)
+            .get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     }
 
-    fun models(): List<LocalModelSpec> = modelStore.installedModels()
+    fun models(): List<LocalModelSpec> =
+        remote.models().get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 
-    fun activeModel(): LocalModelSpec? = modelStore.activeModel()
+    fun activeModel(): LocalModelSpec? =
+        remote.activeModel().get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 
-    fun state(): LocalAiState = runtime.state()
+    fun state(): LocalAiState =
+        remote.state().get(QUERY_TIMEOUT_SECONDS, TimeUnit.SECONDS)
 
-    fun install(source: InputStream, metadata: LocalModelMetadata): LocalModelSpec {
+    fun install(uri: Uri, metadata: LocalModelMetadata): LocalModelSpec {
         require(metadata.format == LocalModelFormat.LITERT_LM) {
             "LLM Serve currently accepts only litert-lm models"
         }
-        check(runtime.state().phase != LocalAiPhase.GENERATING) {
-            "Cannot replace the active model during generation"
-        }
-        val previous = modelStore.activeModel()
-        val spec = modelStore.install(source, metadata)
-        try {
-            runtime.load(spec).get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            return spec
-        } catch (error: Throwable) {
-            if (previous == null) {
-                modelStore.clear()
-            } else {
-                modelStore.activate(previous)
-                runCatching {
-                    runtime.load(previous).get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                }
-            }
-            throw error
-        }
+        return remote.installModel(uri, metadata)
+            .get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     }
 
     fun selectModel(name: String?): LocalModelSpec {
         val requested = name?.trim().orEmpty()
-        val active = modelStore.activeModel()
+        val active = activeModel()
         if (requested.isEmpty() && active != null) {
             ensureLoaded(active)
             return active
@@ -72,7 +55,6 @@ class LlmServeEngine(context: Context) : AutoCloseable {
         )
 
         ensureLoaded(candidate)
-        modelStore.activate(candidate)
         return candidate
     }
 
@@ -83,8 +65,11 @@ class LlmServeEngine(context: Context) : AutoCloseable {
         onChunk: (String) -> Unit = {},
     ): LocalGenerationResult {
         val spec = selectModel(model)
-        check(runtime.state().phase == LocalAiPhase.READY) { "Local model is not ready" }
-        val result = runtime.generate(
+        val current = state()
+        check(current.phase == LocalAiPhase.READY && current.model?.id == spec.id && current.model?.version == spec.version) {
+            "Local model is not ready"
+        }
+        val result = remote.generate(
             LocalGenerationRequest(prompt = prompt, maxOutputTokens = maxOutputTokens),
             onChunk,
         ).get(GENERATION_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -95,20 +80,35 @@ class LlmServeEngine(context: Context) : AutoCloseable {
     }
 
     fun cancel() {
-        runtime.cancel().get(CANCEL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        remote.cancelGeneration().get(CANCEL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     }
 
     private fun ensureLoaded(spec: LocalModelSpec) {
-        val current = runtime.state()
-        if (current.phase == LocalAiPhase.READY && current.model == spec) return
-        runtime.load(spec).get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        val current = state()
+        if (
+            current.phase == LocalAiPhase.READY &&
+            current.model?.id == spec.id &&
+            current.model?.version == spec.version
+        ) {
+            return
+        }
+        val selected = remote.selectModel(spec.id, spec.version)
+            .get(LOAD_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        check(
+            selected.phase == LocalAiPhase.READY &&
+                selected.model?.id == spec.id &&
+                selected.model?.version == spec.version
+        ) {
+            "Canonical local runtime did not activate the selected model"
+        }
     }
 
     override fun close() {
-        runtime.close()
+        remote.close()
     }
 
     companion object {
+        private const val QUERY_TIMEOUT_SECONDS = 10L
         private const val LOAD_TIMEOUT_SECONDS = 180L
         private const val GENERATION_TIMEOUT_SECONDS = 300L
         private const val CANCEL_TIMEOUT_SECONDS = 5L
