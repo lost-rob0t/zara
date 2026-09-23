@@ -69,6 +69,21 @@ def test_authority_metadata_is_rejected_even_inside_argument_object(field):
         )
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["predicate", "goal", "module", "namespace", "principal", "query", "token"],
+)
+def test_nested_authority_metadata_cannot_be_smuggled_through_inert_payload(field):
+    with pytest.raises(PredicateAuthorityError, match="reserved authority metadata"):
+        PredicateInvocationRequest(
+            request_id="req-nested",
+            operation="person.lookup",
+            expected_generation=1,
+            arguments={"filters": {"nested": {field: "shell"}}},
+            timeout_ms=500,
+        )
+
+
 def test_callable_or_object_argument_never_crosses_wire_contract():
     with pytest.raises(PredicateAuthorityError, match="not inert wire data"):
         PredicateInvocationRequest(
