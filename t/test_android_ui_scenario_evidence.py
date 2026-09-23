@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEVICE_ACCEPTANCE = ROOT / "android" / "integration" / "device_acceptance.py"
 PNG_FIXTURE = b"\x89PNG\r\n\x1a\n" + b"w10-rendered-state"
 SOURCE_SHA = "a" * 40
+APK_SHA256 = "b" * 64
 
 
 def _load_device_acceptance_module():
@@ -30,8 +31,17 @@ def _device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
     device.source_sha = SOURCE_SHA
+    device.apk_sha256 = APK_SHA256
     device.device_api = "35"
     device.current_profile = "default"
+    device.current_route = "chat"
+    device.runtime_evidence = {
+        "mode": None,
+        "runtime_id": None,
+        "model": None,
+        "quantization": None,
+        "phase": None,
+    }
     hierarchy = (
         '<hierarchy rotation="0">'
         '<node text="Chat" content-desc="" class="android.widget.TextView" '
@@ -69,8 +79,17 @@ def test_capture_emits_exact_source_scenario_bundle(
     record = device.scenario_evidence[0]
     assert record["scenario_id"] == "android.ui.contract-state"
     assert record["source_sha"] == SOURCE_SHA
+    assert record["apk_sha256"] == APK_SHA256
     assert record["device_api"] == "35"
     assert record["profile"] == "default"
+    assert record["route"] == "chat"
+    assert record["runtime"] == {
+        "mode": None,
+        "runtime_id": None,
+        "model": None,
+        "quantization": None,
+        "phase": None,
+    }
     assert record["actions"] == [
         "tap:Open navigation menu",
         "capture:contract-state",
@@ -92,9 +111,10 @@ def test_capture_emits_exact_source_scenario_bundle(
 
     persisted = json.loads((tmp_path / "contract-state.json").read_text(encoding="utf-8"))
     assert persisted == record
-    assert "Open navigation menu" in (tmp_path / "contract-state.ui.txt").read_text(
-        encoding="utf-8"
-    )
+    ui_text = (tmp_path / "contract-state.ui.txt").read_text(encoding="utf-8")
+    assert 'route="chat"' in ui_text
+    assert "runtime=" in ui_text
+    assert "Open navigation menu" in ui_text
     assertion_text = (tmp_path / "contract-state.assertions.txt").read_text(
         encoding="utf-8"
     )
