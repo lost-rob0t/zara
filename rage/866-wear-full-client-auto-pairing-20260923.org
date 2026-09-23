@@ -1,0 +1,81 @@
+#+TITLE: RAGE 2026-09-23 — #866 Wear full client UI + phone-assisted auto pairing
+#+AUTHOR: opencode (GLM)
+#+DATE: 2026-09-23
+
+* Iteration 1
+
+** Context
+- Consumed issue: #866 ([AUTO-RAGE SLOT 1/4] WearOS full Zara client + shared foundation) under worker lane #921.
+- Operator ask: implement the full watch UI + auto pairing using the paired Android phone; find existing issues/PRs first.
+- Exact immutable start commit: =f94da1289ede13ec4d58cefb73bc0b86648bb65e= (master).
+- Work branch: =rage/866-wear-auto-pairing=.
+
+** Research — issues/PRs
+- #866 reopened: full Wear client scope = round chat/conversation UI, connection/enrollment/status UI, settings entries, deep links to Voice, standalone-capable; shared foundation = phone-assisted provisioning, shared theme, no duplicate auth/session implementation.
+- In-flight Wear PRs (do not duplicate):
+  - #1429 =WearSymbolicConversationConsumer= over the shared snapshot (child of #1282).
+  - #872 Zara Voice shell (=ai.zara.wear.voice=, action =ai.zara.action.WEAR_VOICE=).
+  - #873 Tiles/complications.
+- #1358 pairing E2E owns Desktop↔Android↔Zara *server* pairing acceptance; watch auto-pair here must not build a second enrollment/security system.
+- #1258 requires Wear↔continuity relayed through Android.
+
+** Research — code
+- =wear-app= has: static placeholder =WearMainActivity= ("STANDALONE • NOT ENROLLED"), =SymbolicConversationContinuityGate= on master, capability =zara_watch= declared, =play.services.wearable= dependency, shared-ui theme tokens in use.
+- Phone side:
+  - =watch/WearNodeScanner= discovers watches via capability =zara_watch= (read-only discovery).
+  - =watch/WatchSetupController= installs the Wear APK over wireless ADB (debug path only).
+  - =auth/EnrollmentRepository= owns CURVE identity + server pin (never leaves Keystore-wrapped store; must NOT be copied to the watch or duplicated).
+  - =history/PortableConversationStore= owns canonical conversation truth; =loadSymbolicEdgeSnapshot(conversationId)= produces the bounded pure-symbolic snapshot (≤32KB wire) through =SymbolicConversationEdgeCodec=.
+- Recorded #866 Auto-ARADR decision D (issue #921 comments): =:wear-app= is the canonical watch client host; MessageClient for bounded control, DataClient for durable small state, ChannelClient for streams; no second auth/session authority; strict truthfulness about connection state.
+
+** Design (slice for this iteration)
+Auto pairing = the paired Android phone (the node already holding canonical truth) provisions the watch automatically over the Wear Data Layer. No server credentials ever leave the phone (fail-closed boundary from #866/#1358); the watch renders canonical truth pushed by the phone and states truthfully whether the phone link is live.
+
+- New shared contract in =shared-ui= =ai.zara.ui.continuity=:
+  - =WearCompanionContract=: capability name, message paths, request/response envelope codec (bounded, versioned) for /watch_hello request and /phone_provision response carrying phone name, principal/conversation/project scope, and the encoded =SymbolicConversationEdgeSnapshot=.
+- Phone =app/watch/WearCompanionLink.kt=:
+  - listens for =zara_watch= capability nodes, answers hello with the current scope + latest canonical snapshot from =PortableConversationStore=, republishes snapshot on conversation changes while a watch is reachable.
+- Wear =wear-app=:
+  - =WearCompanionClient.kt=: Data Layer client that auto-requests provisioning on connect (auto pairing; zero manual input), tracks link state machine =SEARCHING → REQUESTING → PAIRED / PHONE_UNREACHABLE / REJECTED=, accepts snapshots only through =SymbolicConversationContinuityGate=.
+  - =WearMainActivity= becomes a real round UI: sigil header + status (link state, phone name, scope), conversation screen (dialogue act, entities, unresolved questions, outcomes, generation), Voice deep-link button.
+- Invariants:
+  - watch never renders unprovisioned state as connected; snapshot truth only through the gate;
+  - secrets/credentials never enter Data Layer payloads (payload is pure-symbolic projection only);
+  - no second auth/session/transport authority on Wear in this slice (server enrollment stays phone-owned per #1358);
+  - payloads bounded by codec contract.
+
+** Acceptance mapped to tests (RED first)
+1. Contract codec round-trip + malformed/oversized/wrong-magic rejection (unit, shared-ui).
+2. Phone =WearCompanionLink= provision response builds valid payload from a fixture store; fails closed on missing conversation; never includes credential material (unit, app).
+3. Wear =WearCompanionClient= state machine: auto-request on connect, provision→PAIRED, unreachable→PHONE_UNREACHABLE, malformed payload→REJECTED w/o clearing accepted truth, stale generation rejected by gate (unit, wear-app).
+4. UI state projection: each link state renders its truthful label; conversation renders canonical fields; Voice deep link intent resolves (unit on wear UI state projection).
+5. Full gates: =scripts/test-all.sh=, =nix flake check=, =scripts/test-android.sh= through =prolog-verify observe=.
+
+* Evidence
+:PROPERTIES:
+:VISIBILITY: private
+:END:
+
+** RED → GREEN per behavior
+- Contract: =WearCompanionContractTest= RED (unresolved reference) → GREEN.
+- Phone: =WearCompanionProvisionSourceTest= RED → GREEN.
+- Wear machine: =WearCompanionClientTest= RED → GREEN (13 tests; one assertion-type repair Long/Int, implementation unchanged).
+- UI projection + wiring: =WearClientPresentationTest= / =WearCompanionWiringContractTest= RED → GREEN.
+
+** Exact-head gates (via prolog-verify observe, run-f94da1289ede13ec4d58cefb73bc0b86648bb65e)
+- =nix develop -c bash scripts/test-all.sh= → exit 0 (digest f4cdc273…).
+- =nix develop ./android -c bash scripts/test-android.sh= → exit 0 (digest e2ca31e3…; includes wear JVM tests, phone/Wear APK assembly, secret inspection).
+- =nix flake check= → all checks passed.
+- =prolog-verify check= → verification passed.
+
+** Files
+- shared-ui: =WearCompanionContract.kt= (+test).
+- app: =watch/WearCompanionProvisionSource.kt=, =watch/WearCompanionLinkService.kt=, =res/values/wear.xml= (=zara_phone=), manifest service, =latestSymbolicEdgeSnapshot()= (+test).
+- wear-app: =WearCompanionClient.kt=, =WearCompanionRuntime.kt=, =WearCompanionLinkService.kt=, =WearClientPresentation.kt=, full =WearMainActivity= UI, manifest service + voice queries (+3 test files).
+- CHANGELOG.md, wiki/android-watch-install.org.
+
+** Known limits / next slices
+- Null-snapshot provision after truth keeps last accepted truth (no deletion projection through the forward-only gate yet).
+- Watch scope/phone pinning is in-memory; process death re-pairs automatically (acceptable; persistent rehydration follows #1429's model).
+- Phone does not yet push on every conversation change; the watch re-requests on reachability changes. Wire an app-session publish hook next.
+- Real Galaxy Watch5 Pro hardware acceptance (Data Layer round trip with the phone) remains hardware-gated per repo policy.
