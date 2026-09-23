@@ -176,6 +176,17 @@ def test_full_repository_gate_reuses_canonical_coverage_authority():
     assert "coverage-baseline.json" in source
 
 
+def test_nix_pytest_check_declares_bash_prerequisite():
+    source = (ROOT / "flake.nix").read_text(encoding="utf-8")
+    pytest_check = source.split(
+        'pytest = pkgs.runCommand "zara-check-pytest"', 1
+    )[1].split(
+        'syntax = pkgs.runCommand "zara-check-syntax"', 1
+    )[0]
+
+    assert "pkgs.bash" in pytest_check
+
+
 def test_coverage_entrypoint_rejects_unknown_arguments_before_pytest(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
