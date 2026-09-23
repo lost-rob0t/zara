@@ -1374,7 +1374,7 @@ class ZaraZmqGateway:
                         )
                         continue
                     route = self._turn_routes.get((principal_id, event.turn_id))
-            if route is None and event.conversation_id:
+            if route is None and event.turn_id is None and event.conversation_id:
                 matches = [
                     candidate
                     for candidate, state in self._routes.items()
