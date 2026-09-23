@@ -131,6 +131,20 @@ def _wait_until(app: QApplication, predicate, timeout: float = 8.0) -> None:
     assert predicate()
 
 
+def _wait_until_idle(
+    app: QApplication,
+    service: ConversationService,
+    conversation_id: str,
+) -> None:
+    _wait_until(
+        app,
+        lambda: (
+            service.get_state(conversation_id).active_turn_id is None
+            and not service.has_pending_request(conversation_id)
+        ),
+    )
+
+
 def _close_surface(
     app: QApplication,
     client,
@@ -250,6 +264,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
                 for message in first_service.get_state(conversation_id).messages
             ),
         )
+        _wait_until_idle(qt_app, first_service, conversation_id)
 
         before_restart = first_store.load_symbolic_projection(conversation_id)
         assert before_restart is not None
@@ -311,6 +326,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
                 for message in second_service.get_state(conversation_id).messages
             ),
         )
+        _wait_until_idle(qt_app, second_service, conversation_id)
 
         after_miss = second_store.load_symbolic_projection(conversation_id)
         assert after_miss is not None
@@ -332,6 +348,7 @@ def test_real_desktop_restart_parse_miss_fails_closed_and_recovers_symbolically(
                 for message in second_service.get_state(conversation_id).messages
             ),
         )
+        _wait_until_idle(qt_app, second_service, conversation_id)
 
         state = second_service.get_state(conversation_id)
         assert [message.content for message in state.messages] == [
