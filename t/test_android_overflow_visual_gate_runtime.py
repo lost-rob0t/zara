@@ -30,18 +30,21 @@ def node(*, bounds: tuple[int, int, int, int], label: str) -> ET.Element:
 def synthetic_device(tmp_path: Path, image: Image.Image) -> Device:
     path = tmp_path / "surface.png"
     image.save(path, format="PNG")
-    twin = tmp_path / "surface.xml"
-    twin.write_text("<hierarchy><node text='Rename'/></hierarchy>", encoding="utf-8")
+    screenshot_bytes = path.read_bytes()
+    hierarchy = "<hierarchy><node text='Rename'/></hierarchy>"
     device = Device("synthetic", tmp_path)
     trigger = node(bounds=(100, 20, 140, 34), label="Actions for test")
     action = node(bounds=(40, 40, 120, 80), label="Rename")
     device.find_contains = lambda fragment: trigger if fragment == "Actions for " else None
     device.find = lambda label: action if label == "Rename" else None
-    device.capture = lambda screenshot_name: path
-    device.capture_text_twin = lambda state: {
-        "file": twin.name,
-        "sha256": hashlib.sha256(twin.read_bytes()).hexdigest(),
-    }
+    device._hierarchy_text = lambda: hierarchy
+
+    def synthetic_adb(*arguments: str, binary: bool = False):
+        if arguments == ("exec-out", "screencap", "-p") and binary:
+            return screenshot_bytes
+        raise AssertionError(f"Unexpected synthetic adb call: {arguments!r} binary={binary}")
+
+    device.adb = synthetic_adb
     return device
 
 
@@ -87,6 +90,7 @@ def test_overflow_visual_gate_accepts_interior_text_like_contrast(tmp_path: Path
     )
 
     assert device.visual_checks[-1]["state"] == "interior-glyphs"
+    assert device.scenario_evidence[-1]["scenario_id"] == "android.ui.interior-glyphs"
 
 
 def test_overflow_visual_gate_uses_preopen_trigger_bounds_after_trigger_disappears(
@@ -106,6 +110,7 @@ def test_overflow_visual_gate_uses_preopen_trigger_bounds_after_trigger_disappea
 
     receipt = device.visual_checks[-1]
     assert receipt["trigger_bounds"] == [100, 20, 140, 34]
+    assert device.scenario_evidence[-1]["scenario_id"] == "android.ui.trigger-hidden"
 
 
 def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
@@ -113,7 +118,7 @@ def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
 ) -> None:
     """Review evidence must bind pixels and UI semantics from the popup state."""
     device = synthetic_device(tmp_path, text_like_image())
-    screenshot = tmp_path / "surface.png"
+    screenshot = tmp_path / "bound-evidence.png"
     twin = tmp_path / "overflow.xml"
     twin.write_text("<hierarchy><node text='Rename'/></hierarchy>", encoding="utf-8")
     twin_sha = hashlib.sha256(twin.read_bytes()).hexdigest()
