@@ -362,7 +362,7 @@ def test_gateway_generation_restart_fences_late_old_completion_and_frames(
     endpoint = _endpoint("turn-session-generation")
     supervisor = InterleavingSupervisor(
         ["started", "started"],
-        turn_ids=["turn-old", "turn-new"],
+        turn_ids=["turn-reused", "turn-reused"],
     )
     gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
     probe = BufferProbe(gateway)
@@ -395,7 +395,7 @@ def test_gateway_generation_restart_fences_late_old_completion_and_frames(
             delivered = [_receive(second) for _ in range(2)]
             assert [message.type for message in delivered] == ["turn.accepted", "turn.started"]
             assert [message.session_id for message in delivered] == [second_session, second_session]
-            assert [message.turn_id for message in delivered] == ["turn-new", "turn-new"]
+            assert [message.turn_id for message in delivered] == ["turn-reused", "turn-reused"]
             _assert_quiet(second)
         finally:
             second.close(0)

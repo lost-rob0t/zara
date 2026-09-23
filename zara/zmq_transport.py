@@ -331,6 +331,8 @@ class ZaraZmqGateway:
             self._generation += 1
             self._routes.clear()
             self._turn_routes.clear()
+            self._early_turn_events.clear()
+            self._turns_awaiting_accept.clear()
             self._approval_owners.clear()
             self._replay.clear()
             self._inflight.clear()
@@ -1374,16 +1376,41 @@ class ZaraZmqGateway:
                         )
                         continue
                     route = self._turn_routes.get((principal_id, event.turn_id))
+                    if route is None:
+                        acceptance_pending = any(
+                            inflight_principal == principal_id
+                            and isinstance(inflight.command, SubmitTurn)
+                            and inflight.command.conversation_id == event.conversation_id
+                            for (inflight_principal, _request_id), inflight in self._inflight.items()
+                        )
+                        if acceptance_pending:
+                            self._buffer_early_turn_event(
+                                principal_id,
+                                event.turn_id,
+                                (message, ()),
+                            )
+                            continue
+                        if event.conversation_id:
+                            matches = [
+                                candidate
+                                for candidate, state in self._routes.items()
+                                if state.ready
+                                and state.principal_id == principal_id
+                                and state.conversation_id == event.conversation_id
+                            ]
+                            if len(matches) == 1:
+                                route = matches[0]
             if route is None and event.turn_id is None and event.conversation_id:
-                matches = [
-                    candidate
-                    for candidate, state in self._routes.items()
-                    if state.ready
-                    and state.principal_id == principal_id
-                    and state.conversation_id == event.conversation_id
-                ]
-                if len(matches) == 1:
-                    route = matches[0]
+                with self._lock:
+                    matches = [
+                        candidate
+                        for candidate, state in self._routes.items()
+                        if state.ready
+                        and state.principal_id == principal_id
+                        and state.conversation_id == event.conversation_id
+                    ]
+                    if len(matches) == 1:
+                        route = matches[0]
             if route is None:
                 if event.turn_id is None:
                     continue
