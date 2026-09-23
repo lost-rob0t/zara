@@ -9,6 +9,7 @@ import java.util.Locale
 internal object PluginApkSecurity {
     const val MAX_APK_BYTES = 256L * 1024 * 1024
     private val sha256Pattern = Regex("[0-9a-fA-F]{64}")
+    private val callbackNoncePattern = Regex("[A-Za-z0-9-]{1,80}")
 
     fun normalizeSha256(value: String): String {
         val normalized = value.trim()
@@ -49,6 +50,12 @@ internal object PluginApkSecurity {
         require(certificates.size in 1..8 && certificates.all(sha256Pattern::matches)) {
             "The APK has no readable signing certificate."
         }
+    }
+
+    fun callbackIdentity(sessionId: Int, nonce: String): String {
+        require(sessionId >= 0) { "Invalid plugin install session." }
+        require(callbackNoncePattern.matches(nonce)) { "Invalid plugin install callback nonce." }
+        return "zara-plugin-install://callback/$sessionId/$nonce"
     }
 
     fun matchesCallback(expectedSession: Int, expectedNonce: String, session: Int, nonce: String?): Boolean =
