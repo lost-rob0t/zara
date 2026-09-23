@@ -98,7 +98,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Changed
 
 - The active release line is `0.2.2-alpha`; immutable publication remains gated on exact-head CI, signing, provenance, and version promotion.
-- A validated `version.properties` promotion on `master` can publish the matching immutable alpha release, and an existing tag is accepted only when its source SHA and release manifest match the promoted build exactly.
+- Immutable publication requires an explicit matching `v0.2.2-alpha` tag at an exact approved `master` source SHA; ordinary `master` pushes cannot mint the immutable release, and an existing release fails closed instead of being rewritten.
 - Mutable `android-latest` remains a rolling test channel and is not treated as an immutable semantic release.
 
 ## 0.1.2-alpha

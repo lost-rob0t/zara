@@ -15,8 +15,10 @@ on:
       - android/code-editor/build.gradle.kts
       - android/wear-app/build.gradle.kts
       - .github/workflows/release.yml
+      - scripts/release-changelog.py
 
 permissions:
+  actions: read
   contents: write
 
 jobs:
@@ -28,7 +30,6 @@ jobs:
       version_code: ${{ steps.release.outputs.version_code }}
       tag: ${{ steps.release.outputs.tag }}
       release_ready: ${{ steps.release.outputs.release_ready }}
-      publish_needed: ${{ steps.release.outputs.publish_needed }}
 
     steps:
       - name: Check out repository
@@ -39,8 +40,6 @@ jobs:
       - name: Resolve canonical version context
         id: release
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -59,31 +58,119 @@ jobs:
             exit 1
           fi
 
-          publish_needed=false
-          if [[ "${GITHUB_REF}" == "refs/heads/master" && "$release_ready" == "true" ]]; then
-            if ! gh release view "$tag" >/dev/null 2>&1; then
-              publish_needed=true
-            fi
-          fi
-          echo "publish_needed=$publish_needed" >> "$GITHUB_OUTPUT"
+      - name: Validate canonical release notes
+        if: steps.release.outputs.release_ready == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          NOTES: ${{ runner.temp }}/canonical-release-notes.md
+        run: |
+          set -euo pipefail
+          python scripts/release-changelog.py --version "$VERSION" --output "$NOTES"
 
-  android-alpha-release:
-    name: build and publish Android alpha
-    if: >-
-      github.ref_type == 'tag' ||
-      (github.ref == 'refs/heads/master' &&
-       needs.validate-version-context.outputs.release_ready == 'true' &&
-       needs.validate-version-context.outputs.publish_needed == 'true')
+  android-versioned-release:
+    name: build and publish versioned Android release
+    if: github.ref_type == 'tag'
     needs:
       - validate-version-context
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 120
+    concurrency:
+      group: versioned-release-${{ needs.validate-version-context.outputs.tag }}
+      cancel-in-progress: false
 
     steps:
-      - name: Check out repository
+      - name: Check out exact tagged source
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           fetch-depth: 0
+
+      - name: Verify exact tag checkout
+        shell: bash
+        env:
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
+
+      - name: Wait for exact approved source CI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_file="$RUNNER_TEMP/exact-source-ci.txt"
+          runs_file="$RUNNER_TEMP/exact-source-ci.json"
+
+          for attempt in $(seq 1 60); do
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&event=push&per_page=100" \
+              > "$runs_file"
+
+            set +e
+            SOURCE_SHA="$GITHUB_SHA" python - "$runs_file" "$evidence_file" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          source_sha = os.environ["SOURCE_SHA"]
+          runs = json.loads(pathlib.Path(sys.argv[1]).read_text())["workflow_runs"]
+          matches = [
+              run
+              for run in runs
+              if run.get("event") == "push"
+              and run.get("head_branch") == "master"
+              and run.get("head_sha") == source_sha
+          ]
+          success = next(
+              (
+                  run
+                  for run in matches
+                  if run.get("status") == "completed"
+                  and run.get("conclusion") == "success"
+              ),
+              None,
+          )
+          if success is not None:
+              pathlib.Path(sys.argv[2]).write_text(success.get("html_url", "") + "\n")
+              raise SystemExit(0)
+          failed = next(
+              (
+                  run
+                  for run in matches
+                  if run.get("status") == "completed"
+                  and run.get("conclusion") not in (None, "success")
+              ),
+              None,
+          )
+          if failed is not None:
+              print(
+                  "Exact approved master CI failed: "
+                  f"conclusion={failed.get('conclusion')} url={failed.get('html_url')}",
+                  file=sys.stderr,
+              )
+              raise SystemExit(2)
+          raise SystemExit(1)
+          PY
+            status=$?
+            set -e
+
+            if [[ "$status" == "0" ]]; then
+              echo "Exact approved source CI passed: $(cat "$evidence_file")"
+              break
+            fi
+            if [[ "$status" == "2" ]]; then
+              exit 1
+            fi
+            if [[ "$attempt" == "60" ]]; then
+              echo "Timed out waiting for successful master CI at exact source $GITHUB_SHA" >&2
+              exit 1
+            fi
+            sleep 10
+          done
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -106,7 +193,19 @@ jobs:
       - name: Run Android release gate
         run: nix develop ./android -c bash scripts/test-android-release.sh
 
-      - name: Prepare APK and checksum
+      - name: Materialize canonical release notes
+        id: notes
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          notes="dist/zara-${VERSION}-release-notes.md"
+          python scripts/release-changelog.py --version "$VERSION" --output "$notes"
+          echo "notes=$notes" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare APKs, checksums, and provenance manifests
         id: artifact
         shell: bash
         env:
@@ -150,91 +249,201 @@ jobs:
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
 
-      - name: Publish GitHub prerelease
+      - name: Enable KVM access for released-APK acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install Android emulator host runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libpulse0
+
+      - name: Prime Android emulator SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"
+          emulator_bin="$sdk_root/emulator/emulator"
+          android_cache="${HOME:?HOME is unavailable}/.android/cache"
+          android_cli_tools_build="15859902"
+          android_cli_tools_sha256="4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583"
+          android_cli_tools_archive="commandlinetools-linux-${android_cli_tools_build}_latest.zip"
+          android_cli_tools_url="https://dl.google.com/android/repository/${android_cli_tools_archive}"
+          android_cli_tools_tmp="$(mktemp -d)"
+          trap 'rm -rf "$android_cli_tools_tmp"' EXIT
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$android_cli_tools_url" \
+            --output "$android_cli_tools_tmp/$android_cli_tools_archive"
+          printf '%s  %s\n' \
+            "$android_cli_tools_sha256" \
+            "$android_cli_tools_tmp/$android_cli_tools_archive" \
+            | sha256sum --check
+          unzip -q \
+            "$android_cli_tools_tmp/$android_cli_tools_archive" \
+            -d "$android_cli_tools_tmp/unpacked"
+
+          rm -rf "$sdk_root/cmdline-tools/latest"
+          mkdir -p "$sdk_root/cmdline-tools/latest"
+          cp -R \
+            "$android_cli_tools_tmp/unpacked/cmdline-tools/." \
+            "$sdk_root/cmdline-tools/latest/"
+
+          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager_bin"
+
+          if test -x "$emulator_bin" && "$emulator_bin" -version; then
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$sdk_root/.downloadIntermediates" "$android_cache"
+            if "$sdkmanager_bin" --sdk_root="$sdk_root" --install platform-tools --channel=0 \
+              && "$sdkmanager_bin" --sdk_root="$sdk_root" --install emulator --channel=0 \
+              && test -x "$emulator_bin" \
+              && "$emulator_bin" -version; then
+              exit 0
+            fi
+            sleep "$((attempt * 2))"
+          done
+          exit 1
+
+      - name: Exercise exact release APK before publication
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          APK: ${{ steps.artifact.outputs.apk }}
+          SOURCE_SHA: ${{ github.sha }}
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash -euo pipefail -c 'serial="emulator-5554"; adb -s "$serial" wait-for-device; test "$(adb -s "$serial" get-state)" = "device"; adb -s "$serial" install -r "$APK"; nix develop ./android -c python3 android/integration/device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output artifacts/versioned-release-device'
+
+      - name: Upload exact release APK acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: versioned-release-device-${{ github.sha }}
+          path: artifacts/versioned-release-device/
+          if-no-files-found: error
+
+      - name: Recover stale owned draft from prior interrupted run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+          OWNED_TITLE_PREFIX: "Zara ${{ needs.validate-version-context.outputs.tag }} [zara-staging:${{ github.repository }}:${{ github.sha }}:run="
+          STAGED_SOURCE: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_source_sha="$(git rev-list -n 1 "$TAG")"
+          if [[ "$tag_source_sha" != "$STAGED_SOURCE" ]]; then
+            echo "Tag $TAG resolves to $tag_source_sha; expected exact release source $STAGED_SOURCE." >&2
+            exit 1
+          fi
+          draft_pages="$RUNNER_TEMP/releases-recovery-${TAG}.json"
+          stale_id_file="$RUNNER_TEMP/releases-recovery-${TAG}.id"
+          : > "$stale_id_file"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "$draft_pages"
+          RELEASE_TAG="$TAG" OWNED_TITLE_PREFIX="$OWNED_TITLE_PREFIX" \
+            python - "$draft_pages" "$stale_id_file" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          releases = [release for page in pages for release in page]
+          stale = [
+              release
+              for release in releases
+              if release.get("draft") is True and release.get("tag_name") == os.environ["RELEASE_TAG"]
+          ]
+          if not stale:
+              raise SystemExit(0)
+          if len(stale) != 1:
+              raise SystemExit(
+                  f"Found {len(stale)} drafts for {os.environ['RELEASE_TAG']}; refusing ambiguous recovery"
+              )
+          release = stale[0]
+          name = release.get("name") or ""
+          if not name.startswith(os.environ["OWNED_TITLE_PREFIX"]):
+              raise SystemExit("Existing draft lacks Zara workflow ownership marker; refusing foreign recovery")
+          pathlib.Path(sys.argv[2]).write_text(str(release["id"]) + "\n")
+          PY
+          stale_release_id="$(cat "$stale_id_file")"
+          if [[ -n "$stale_release_id" ]]; then
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/releases/${stale_release_id}"
+          fi
+
+      - name: Stage GitHub versioned release as draft
+        id: stage
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate-version-context.outputs.tag }}
           VERSION: ${{ needs.validate-version-context.outputs.version }}
-          VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
           APK: ${{ steps.artifact.outputs.apk }}
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
           CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
           CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+          STAGED_TITLE: "Zara ${{ needs.validate-version-context.outputs.tag }} [zara-staging:${{ github.repository }}:${{ github.sha }}:run=${{ github.run_id }}:attempt=${{ github.run_attempt }}]"
         shell: bash
         run: |
           set -euo pipefail
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
-              existing_sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq '.sha')"
-              if [[ "$existing_sha" != "$GITHUB_SHA" ]]; then
-                echo "Release $TAG already exists at $existing_sha; expected promoted source $GITHUB_SHA." >&2
-                exit 1
-              fi
-
-              assets="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
-              for required in \
-                "$(basename "$APK")" \
-                "$(basename "${APK}.sha256")" \
-                "$(basename "$MANIFEST")" \
-                "$(basename "$CODE_EDITOR_APK")" \
-                "$(basename "${CODE_EDITOR_APK}.sha256")" \
-                "$(basename "$CODE_EDITOR_MANIFEST")"
-              do
-                if ! grep -Fxq "$required" <<< "$assets"; then
-                  echo "Release $TAG is missing required asset $required." >&2
-                  exit 1
-                fi
-              done
-
-              existing_dir="$RUNNER_TEMP/existing-release-${TAG}"
-              mkdir -p "$existing_dir"
-              gh release download "$TAG" \
-                --dir "$existing_dir" \
-                --pattern "$(basename "$MANIFEST")"
-              gh release download "$TAG" \
-                --dir "$existing_dir" \
-                --pattern "$(basename "$CODE_EDITOR_MANIFEST")"
-              existing_manifest="$existing_dir/$(basename "$MANIFEST")"
-              existing_code_editor_manifest="$existing_dir/$(basename "$CODE_EDITOR_MANIFEST")"
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
-                echo "Release $TAG manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_manifest" || {
-                echo "Release $TAG manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_manifest" || {
-                echo "Release $TAG manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
-
-              echo "Release $TAG already exists and matches canonical promotion $GITHUB_SHA."
-              exit 0
-            fi
             echo "Release $TAG already exists; refusing to overwrite it." >&2
             exit 1
           fi
 
-          if git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/dev/null; then
-            existing_tag_sha="$(git rev-list -n 1 "$TAG")"
-            if [[ "$existing_tag_sha" != "$GITHUB_SHA" ]]; then
-              echo "Tag $TAG already exists at $existing_tag_sha; expected release source $GITHUB_SHA." >&2
-              exit 1
-            fi
+          if ! git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/dev/null; then
+            echo "Immutable release tag $TAG is missing from the checked-out repository." >&2
+            exit 1
+          fi
+          existing_tag_sha="$(git rev-list -n 1 "$TAG")"
+          if [[ "$existing_tag_sha" != "$GITHUB_SHA" ]]; then
+            echo "Tag $TAG exists at $existing_tag_sha; expected exact release source $GITHUB_SHA." >&2
+            exit 1
+          fi
+
+          draft_pages="$RUNNER_TEMP/releases-before-${TAG}.json"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "$draft_pages"
+          RELEASE_TAG="$TAG" python - "$draft_pages" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          releases = [release for page in pages for release in page]
+          stale = [
+              release
+              for release in releases
+              if release.get("draft") is True and release.get("tag_name") == os.environ["RELEASE_TAG"]
+          ]
+          if stale:
+              raise SystemExit(
+                  f"Draft release already exists for {os.environ['RELEASE_TAG']}; refusing ambiguous staging"
+              )
+          PY
+
+          release_flags=(--draft --verify-tag)
+          if [[ "$VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
           fi
 
           gh release create "$TAG" \
@@ -244,7 +453,301 @@ jobs:
             "$CODE_EDITOR_APK" \
             "${CODE_EDITOR_APK}.sha256" \
             "$CODE_EDITOR_MANIFEST" \
-            --target "$GITHUB_SHA" \
-            --title "Zara $TAG" \
-            --prerelease \
-            --notes "Android alpha preview of Zara and Zara Code Editor. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file. Source commit: $GITHUB_SHA"
+            "$NOTES" \
+            --title "$STAGED_TITLE" \
+            --notes-file "$NOTES" \
+            "${release_flags[@]}"
+
+          test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
+          staged_pages="$RUNNER_TEMP/releases-staged-${TAG}.json"
+          staged_id_file="$RUNNER_TEMP/releases-staged-${TAG}.id"
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > "$staged_pages"
+          RELEASE_TAG="$TAG" STAGED_TITLE="$STAGED_TITLE" \
+            python - "$staged_pages" "$staged_id_file" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          releases = [release for page in pages for release in page]
+          matches = [
+              release
+              for release in releases
+              if release.get("draft") is True
+              and release.get("tag_name") == os.environ["RELEASE_TAG"]
+              and release.get("name") == os.environ["STAGED_TITLE"]
+          ]
+          if len(matches) != 1:
+              raise SystemExit(
+                  f"Expected one owned staged draft for {os.environ['RELEASE_TAG']}, found {len(matches)}"
+              )
+          pathlib.Path(sys.argv[2]).write_text(str(matches[0]["id"]) + "\n")
+          PY
+          staged_release_id="$(cat "$staged_id_file")"
+          test -n "$staged_release_id"
+          echo "release_id=$staged_release_id" >> "$GITHUB_OUTPUT"
+
+      - name: Verify staged release bytes, metadata, signer, and notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+          VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
+          APK: ${{ steps.artifact.outputs.apk }}
+          MANIFEST: ${{ steps.artifact.outputs.manifest }}
+          CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
+          CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+          STAGED_RELEASE_ID: ${{ steps.stage.outputs.release_id }}
+          STAGED_TITLE: "Zara ${{ needs.validate-version-context.outputs.tag }} [zara-staging:${{ github.repository }}:${{ github.sha }}:run=${{ github.run_id }}:attempt=${{ github.run_attempt }}]"
+          STAGED_SOURCE: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_source_sha="$(git rev-list -n 1 "$TAG")"
+          if [[ "$tag_source_sha" != "$STAGED_SOURCE" ]]; then
+            echo "Tag $TAG resolves to $tag_source_sha; expected exact release source $STAGED_SOURCE." >&2
+            exit 1
+          fi
+
+          staged_release_json="$RUNNER_TEMP/staged-${TAG}.json"
+          asset_map="$RUNNER_TEMP/staged-${TAG}-assets.tsv"
+          verify_dir="$RUNNER_TEMP/staged-${TAG}"
+          rm -rf "$verify_dir"
+          mkdir -p "$verify_dir"
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}" \
+            > "$staged_release_json"
+          STAGED_TAG="$TAG" STAGED_TITLE="$STAGED_TITLE" python - \
+            "$staged_release_json" \
+            "$asset_map" \
+            "$APK" \
+            "${APK}.sha256" \
+            "$MANIFEST" \
+            "$CODE_EDITOR_APK" \
+            "${CODE_EDITOR_APK}.sha256" \
+            "$CODE_EDITOR_MANIFEST" \
+            "$NOTES" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if release.get("draft") is not True:
+              raise SystemExit("Staged release became public before verification")
+          if release.get("tag_name") != os.environ["STAGED_TAG"]:
+              raise SystemExit("Staged release tag drifted")
+          if release.get("name") != os.environ["STAGED_TITLE"]:
+              raise SystemExit("Staged release ownership marker drifted")
+          expected = [pathlib.Path(value).name for value in sys.argv[3:]]
+          assets = release.get("assets") or []
+          by_name = {asset.get("name"): asset for asset in assets}
+          if len(by_name) != len(assets):
+              raise SystemExit("Staged release contains duplicate asset names")
+          if set(by_name) != set(expected):
+              raise SystemExit(
+                  f"Staged release assets differ: expected={sorted(expected)!r} actual={sorted(by_name)!r}"
+              )
+          lines = [f"{by_name[name]['id']}\t{name}" for name in expected]
+          pathlib.Path(sys.argv[2]).write_text("\n".join(lines) + "\n")
+          PY
+
+          while IFS=$'\t' read -r asset_id asset_name; do
+            gh api --method GET \
+              --header "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "$verify_dir/$asset_name"
+          done < "$asset_map"
+
+          staged_apk="$verify_dir/$(basename "$APK")"
+          staged_checksum="$verify_dir/$(basename "${APK}.sha256")"
+          staged_manifest="$verify_dir/$(basename "$MANIFEST")"
+          staged_code_editor_apk="$verify_dir/$(basename "$CODE_EDITOR_APK")"
+          staged_code_editor_checksum="$verify_dir/$(basename "${CODE_EDITOR_APK}.sha256")"
+          staged_code_editor_manifest="$verify_dir/$(basename "$CODE_EDITOR_MANIFEST")"
+          staged_notes="$verify_dir/$(basename "$NOTES")"
+
+          cmp "$APK" "$staged_apk"
+          cmp "$MANIFEST" "$staged_manifest"
+          cmp "$CODE_EDITOR_APK" "$staged_code_editor_apk"
+          cmp "$CODE_EDITOR_MANIFEST" "$staged_code_editor_manifest"
+          cmp "$NOTES" "$staged_notes"
+
+          expected_sha="$(awk '{print $1}' "$staged_checksum")"
+          actual_sha="$(sha256sum "$staged_apk" | awk '{print $1}')"
+          test "$actual_sha" = "$expected_sha"
+          expected_code_editor_sha="$(awk '{print $1}' "$staged_code_editor_checksum")"
+          actual_code_editor_sha="$(sha256sum "$staged_code_editor_apk" | awk '{print $1}')"
+          test "$actual_code_editor_sha" = "$expected_code_editor_sha"
+
+          grep -Fxq "source_sha=${GITHUB_SHA}" "$staged_manifest"
+          grep -Fxq "version_name=${VERSION}" "$staged_manifest"
+          grep -Fxq "version_code=${VERSION_CODE}" "$staged_manifest"
+          grep -Fxq "apk=$(basename "$staged_apk")" "$staged_manifest"
+          grep -Fxq "apk_sha256=${actual_sha}" "$staged_manifest"
+          grep -Fxq "source_sha=${GITHUB_SHA}" "$staged_code_editor_manifest"
+          grep -Fxq "version_name=${VERSION}" "$staged_code_editor_manifest"
+          grep -Fxq "version_code=${VERSION_CODE}" "$staged_code_editor_manifest"
+          grep -Fxq "apk=$(basename "$staged_code_editor_apk")" "$staged_code_editor_manifest"
+          grep -Fxq "apk_sha256=${actual_code_editor_sha}" "$staged_code_editor_manifest"
+
+          STAGED_NOTES="$NOTES" python - "$staged_release_json" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          expected = pathlib.Path(os.environ["STAGED_NOTES"]).read_text().rstrip("\n")
+          actual = (release.get("body") or "").rstrip("\n")
+          if actual != expected:
+              raise SystemExit("Staged release notes differ from canonical changelog notes")
+          PY
+
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$staged_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$staged_code_editor_apk"
+
+      - name: Publish verified GitHub versioned release
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+          STAGED_RELEASE_ID: ${{ steps.stage.outputs.release_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
+          published_json="$RUNNER_TEMP/published-${TAG}.json"
+          gh api --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}" \
+            -f name="Zara $TAG" \
+            -F draft=false \
+            > "$published_json"
+          PUBLISHED_TAG="$TAG" python - "$published_json" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if release.get("draft") is not False:
+              raise SystemExit("Verified release did not publish")
+          if release.get("tag_name") != os.environ["PUBLISHED_TAG"]:
+              raise SystemExit("Published release tag drifted")
+          if not release.get("published_at"):
+              raise SystemExit("Published release has no publication timestamp")
+          PY
+
+      - name: Verify published release bytes, metadata, signer, and notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+          VERSION: ${{ needs.validate-version-context.outputs.version }}
+          VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
+          APK: ${{ steps.artifact.outputs.apk }}
+          MANIFEST: ${{ steps.artifact.outputs.manifest }}
+          CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
+          CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
+          verify_dir="$RUNNER_TEMP/published-${TAG}"
+          rm -rf "$verify_dir"
+          mkdir -p "$verify_dir"
+          gh release download "$TAG" \
+            --dir "$verify_dir" \
+            --pattern "$(basename "$APK")" \
+            --pattern "$(basename "${APK}.sha256")" \
+            --pattern "$(basename "$MANIFEST")" \
+            --pattern "$(basename "$CODE_EDITOR_APK")" \
+            --pattern "$(basename "${CODE_EDITOR_APK}.sha256")" \
+            --pattern "$(basename "$CODE_EDITOR_MANIFEST")" \
+            --pattern "$(basename "$NOTES")"
+
+          published_apk="$verify_dir/$(basename "$APK")"
+          published_checksum="$verify_dir/$(basename "${APK}.sha256")"
+          published_manifest="$verify_dir/$(basename "$MANIFEST")"
+          published_code_editor_apk="$verify_dir/$(basename "$CODE_EDITOR_APK")"
+          published_code_editor_checksum="$verify_dir/$(basename "${CODE_EDITOR_APK}.sha256")"
+          published_code_editor_manifest="$verify_dir/$(basename "$CODE_EDITOR_MANIFEST")"
+          published_notes="$verify_dir/$(basename "$NOTES")"
+
+          cmp "$APK" "$published_apk"
+          cmp "$MANIFEST" "$published_manifest"
+          cmp "$CODE_EDITOR_APK" "$published_code_editor_apk"
+          cmp "$CODE_EDITOR_MANIFEST" "$published_code_editor_manifest"
+          cmp "$NOTES" "$published_notes"
+
+          expected_sha="$(awk '{print $1}' "$published_checksum")"
+          actual_sha="$(sha256sum "$published_apk" | awk '{print $1}')"
+          test "$actual_sha" = "$expected_sha"
+          expected_code_editor_sha="$(awk '{print $1}' "$published_code_editor_checksum")"
+          actual_code_editor_sha="$(sha256sum "$published_code_editor_apk" | awk '{print $1}')"
+          test "$actual_code_editor_sha" = "$expected_code_editor_sha"
+
+          grep -Fxq "source_sha=${GITHUB_SHA}" "$published_manifest"
+          grep -Fxq "version_name=${VERSION}" "$published_manifest"
+          grep -Fxq "version_code=${VERSION_CODE}" "$published_manifest"
+          grep -Fxq "apk=$(basename "$published_apk")" "$published_manifest"
+          grep -Fxq "apk_sha256=${actual_sha}" "$published_manifest"
+          grep -Fxq "source_sha=${GITHUB_SHA}" "$published_code_editor_manifest"
+          grep -Fxq "version_name=${VERSION}" "$published_code_editor_manifest"
+          grep -Fxq "version_code=${VERSION_CODE}" "$published_code_editor_manifest"
+          grep -Fxq "apk=$(basename "$published_code_editor_apk")" "$published_code_editor_manifest"
+          grep -Fxq "apk_sha256=${actual_code_editor_sha}" "$published_code_editor_manifest"
+
+          release_body="$RUNNER_TEMP/published-release-body.md"
+          gh release view "$TAG" --json body --jq '.body' > "$release_body"
+          diff -u "$NOTES" "$release_body"
+
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$published_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$published_code_editor_apk"
+
+      - name: Cleanup unpublished owned staged release
+        if: always() && steps.stage.outputs.release_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate-version-context.outputs.tag }}
+          STAGED_RELEASE_ID: ${{ steps.stage.outputs.release_id }}
+          STAGED_TITLE: "Zara ${{ needs.validate-version-context.outputs.tag }} [zara-staging:${{ github.repository }}:${{ github.sha }}:run=${{ github.run_id }}:attempt=${{ github.run_attempt }}]"
+          STAGED_SOURCE: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_source_sha="$(git rev-list -n 1 "$TAG")"
+          if [[ "$tag_source_sha" != "$STAGED_SOURCE" ]]; then
+            echo "Owned draft cleanup refused tag source drift: $TAG resolves to $tag_source_sha." >&2
+            exit 1
+          fi
+          staged_release_json="$RUNNER_TEMP/cleanup-${TAG}.json"
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}" \
+            > "$staged_release_json"
+          decision="$(STAGED_TAG="$TAG" STAGED_TITLE="$STAGED_TITLE" \
+            python - "$staged_release_json" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if release.get("draft") is not True:
+              print("keep")
+              raise SystemExit(0)
+          if release.get("tag_name") != os.environ["STAGED_TAG"]:
+              raise SystemExit("Owned draft cleanup refused tag drift")
+          if release.get("name") != os.environ["STAGED_TITLE"]:
+              raise SystemExit("Owned draft cleanup refused ownership-marker drift")
+          print("delete")
+          PY
+          )"
+          if [[ "$decision" == "delete" ]]; then
+            gh api --method DELETE \
+              "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"
+          fi

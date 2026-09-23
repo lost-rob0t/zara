@@ -101,14 +101,17 @@ def test_versioned_release_publication_requires_an_explicit_tag():
     assert "Release tag refused: current source is not promoted to release.target" in workflow
 
 
-def test_promoted_master_publication_does_not_depend_on_push_changed_files():
+def test_immutable_versioned_release_is_tag_only_and_master_is_evidence_only():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
 
-    assert "publish_needed: ${{ steps.release.outputs.publish_needed }}" in workflow
-    assert 'gh release view "$tag"' in workflow
-    assert '"${GITHUB_REF}" == "refs/heads/master"' in workflow
-    assert '"$release_ready" == "true"' in workflow
-    assert "needs.validate-version-context.outputs.publish_needed == 'true'" in workflow
+    assert "if: github.ref_type == 'tag'" in workflow
+    assert 'run.get("head_branch") == "master"' in workflow
+    assert 'run.get("head_sha") == source_sha' in workflow
+    assert 'if gh release view "$TAG" >/dev/null 2>&1; then' in workflow
+    assert "gh release edit" not in workflow
+    assert "publish_needed" not in workflow
+    assert '"${GITHUB_REF}" == "refs/heads/master"' not in workflow
+    assert "needs.validate-version-context.outputs.publish_needed" not in workflow
     assert "contains(github.event.head_commit.modified, 'version.properties')" not in workflow
 
 
