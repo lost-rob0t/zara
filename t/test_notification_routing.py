@@ -77,6 +77,17 @@ class EffectPlane:
         return {"ok": True, "observed_owner_peer": owner_peer, "receipt_id": receipt["receipt_id"]}
 
 
+class StaleVerificationPlane(EffectPlane):
+    def verify(self, request: NotificationActionRequest, receipt: Mapping[str, Any], *, owner_peer: str) -> Mapping[str, Any]:
+        self.verified.append(request.request_id)
+        return {
+            "ok": True,
+            "observed_owner_peer": owner_peer,
+            "receipt_id": receipt["receipt_id"],
+            "generation": request.generation - 1,
+        }
+
+
 def _store(tmp_path: Path) -> tuple[DatabaseManager, NotificationRouterStore]:
     db = DatabaseManager(tmp_path / "zara.db")
     return db, NotificationRouterStore(db)
@@ -289,6 +300,30 @@ def test_action_from_remote_sink_routes_to_source_owner_and_stale_generation_is_
     )
     with pytest.raises(NotificationStale):
         router.perform_action(stale, plane, now_ms=NOW + 2)
+
+
+def test_stale_postcondition_generation_is_rejected_after_effect_execution(tmp_path: Path) -> None:
+    _, store = _store(tmp_path)
+    router = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store)
+    event = _event(notification_id="n:verify", generation=3)
+    router.route(event, _peers(), now_ms=NOW)
+    plane = StaleVerificationPlane()
+    request = NotificationActionRequest(
+        request_id="req:verify",
+        notification_id="n:verify",
+        generation=3,
+        principal_id="user:alice",
+        workspace_id="ws:main",
+        sink_peer="desktop",
+        action="dismiss",
+    )
+
+    with pytest.raises(NotificationDenied, match="fresh verified postcondition"):
+        router.perform_action(request, plane, now_ms=NOW + 1)
+
+    assert plane.executed == [("req:verify", "phone")]
+    assert plane.verified == ["req:verify"]
+    assert store.effect_done("user:alice", "ws:main", "action:req:verify") is False
 
 
 def test_denied_capability_never_executes_effect(tmp_path: Path) -> None:
