@@ -295,10 +295,14 @@ class Device:
             )
 
     def capture(self, name: str) -> None:
+        path = self.output / f"{name}.png"
+        if path.exists() or any(
+            screenshot.get("state") == name for screenshot in self.screenshots
+        ):
+            raise AssertionError(f"duplicate screenshot evidence state: {name}")
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
-        path = self.output / f"{name}.png"
         path.write_bytes(data)
         self.screenshots.append(
             {
