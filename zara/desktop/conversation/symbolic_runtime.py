@@ -12,6 +12,7 @@ from .symbolic_projection import SymbolicConversationProjection
 
 _CONTEXT_PROJECT_ID = "prolog_context_project_id"
 _CONTEXT_PROJECT_GENERATION = "prolog_context_project_generation"
+_MAX_RESPONSE_ACT_TERM_CHARS = 8192
 
 
 def _dialogue_context_has_project_provenance(
@@ -38,6 +39,19 @@ def _dialogue_context_matches_project(projection: SymbolicConversationProjection
     )
 
 
+def _bounded_response_act_term(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("persisted symbolic response act must be text")
+    if not value or len(value) > _MAX_RESPONSE_ACT_TERM_CHARS:
+        raise ValueError(
+            "persisted symbolic response act must be "
+            f"1..{_MAX_RESPONSE_ACT_TERM_CHARS} characters"
+        )
+    if "\x00" in value:
+        raise ValueError("persisted symbolic response act must not contain NUL")
+    return value
+
+
 class PureSymbolicProjectionAdapter:
     """Persist pure-symbolic dialogue context in the canonical conversation store."""
 
@@ -55,6 +69,22 @@ class PureSymbolicProjectionAdapter:
         if not isinstance(context, str):
             raise TypeError("persisted symbolic dialogue context must be text")
         return context, projection.projection_generation
+
+    def load_previous_response_act(self, conversation_id: str) -> str | None:
+        """Return the canonical prior typed act without creating another history owner."""
+        projection = self.store.load_symbolic_projection(conversation_id)
+        if projection is None:
+            return None
+        projection.assert_pure_symbolic()
+        if (
+            _dialogue_context_has_project_provenance(projection)
+            and not _dialogue_context_matches_project(projection)
+        ):
+            return None
+        value = projection.dialogue_state.get("response_act_term")
+        if value is None:
+            return None
+        return _bounded_response_act_term(value)
 
     def commit_turn(
         self,
