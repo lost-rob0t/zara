@@ -37,6 +37,32 @@ def expert(prolog=None):
     return value
 
 
+def prepare_clone_fixture(monkeypatch, value, *, inventory):
+    monkeypatch.setattr(value, "_require_binary", lambda name: "/bin/ffmpeg")
+
+    def fake_download(url, root):
+        path = root / "source.webm"
+        path.write_bytes(b"source" * 400)
+        return path
+
+    def fake_run(command, *, timeout):
+        output = Path(command[-1])
+        if output.name == "reference.wav":
+            output.write_bytes(b"wav" * 700)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    async def fake_register(voice_name, wav_path, *, reference_text):
+        return {"ok": True, "voice": voice_name}
+
+    async def fake_list():
+        return list(inventory)
+
+    monkeypatch.setattr(value, "_download_youtube_audio", fake_download)
+    monkeypatch.setattr(value, "_run", fake_run)
+    monkeypatch.setattr(value, "_qwen_register_voice", fake_register)
+    monkeypatch.setattr(value, "_qwen_list_voices", fake_list)
+
+
 def test_voice_plan_is_prolog_authoritative_per_new_speaker():
     prolog = FakeProlog(["zara", "alice"])
     value = expert(prolog)
@@ -134,7 +160,112 @@ def test_clone_rejects_non_youtube_sources_before_download(url):
     value = expert()
 
     with pytest.raises(ValueError, match="YouTube"):
-        value.clone_from_youtube(url, "narrator_voice")
+        value.clone_from_youtube(
+            url,
+            "narrator_voice",
+            rights_basis="consent",
+            attest_not_public_figure=True,
+        )
+
+
+def test_clone_requires_typed_rights_and_public_figure_attestation(monkeypatch):
+    value = expert()
+    attempted_downloads = []
+    monkeypatch.setattr(
+        value,
+        "_download_youtube_audio",
+        lambda url, root: attempted_downloads.append(url),
+    )
+
+    with pytest.raises(ValueError, match="rights_basis"):
+        value.clone_from_youtube(
+            "https://youtu.be/abc123",
+            "authorized_voice",
+            rights_basis="",
+            attest_not_public_figure=True,
+        )
+    with pytest.raises(ValueError, match="public figure"):
+        value.clone_from_youtube(
+            "https://youtu.be/abc123",
+            "authorized_voice",
+            rights_basis="consent",
+            attest_not_public_figure=False,
+        )
+
+    assert attempted_downloads == []
+
+
+def test_clone_tool_schema_requires_authority_fields():
+    tools = build_voice_tools(FakeProlog(), FakeConfig())
+    schema = {
+        tool.name: tool for tool in tools
+    }["voice_clone_from_youtube"].args_schema.model_json_schema()
+
+    assert {"rights_basis", "attest_not_public_figure"}.issubset(schema["required"])
+
+
+def test_clone_fails_when_fresh_inventory_does_not_confirm_registration(monkeypatch):
+    value = expert()
+    prepare_clone_fixture(monkeypatch, value, inventory=["zara"])
+
+    with pytest.raises(RuntimeError, match="fresh provider inventory"):
+        value.clone_from_youtube(
+            "https://youtu.be/abc123",
+            "authorized_voice",
+            rights_basis="consent",
+            attest_not_public_figure=True,
+        )
+
+
+def test_delete_fails_when_fresh_inventory_still_contains_voice(monkeypatch):
+    value = expert()
+
+    async def fake_delete(voice_name):
+        return {"ok": True, "voice": voice_name}
+
+    async def fake_list():
+        return ["zara", "authorized_voice"]
+
+    monkeypatch.setattr(value, "_qwen_delete_voice", fake_delete)
+    monkeypatch.setattr(value, "_qwen_list_voices", fake_list)
+
+    with pytest.raises(RuntimeError, match="fresh provider inventory"):
+        value.delete_voice("authorized_voice")
+
+
+def test_verified_voice_mutations_report_postcondition_evidence(monkeypatch):
+    value = expert()
+    prepare_clone_fixture(monkeypatch, value, inventory=["zara", "authorized_voice"])
+
+    registered = json.loads(
+        value.clone_from_youtube(
+            "https://youtu.be/abc123",
+            "authorized_voice",
+            rights_basis="licensed",
+            attest_not_public_figure=True,
+        )
+    )
+    assert registered["registered"] is True
+    assert registered["postcondition"] == {
+        "source": "fresh_provider_inventory",
+        "voice_present": True,
+    }
+
+    async def fake_delete(voice_name):
+        return {"ok": True, "voice": voice_name}
+
+    async def fake_list_after_delete():
+        return ["zara"]
+
+    monkeypatch.setattr(value, "_qwen_delete_voice", fake_delete)
+    monkeypatch.setattr(value, "_qwen_list_voices", fake_list_after_delete)
+
+    deleted = json.loads(value.delete_voice("authorized_voice"))
+    assert deleted["deleted"] is True
+    assert deleted["postcondition"] == {
+        "source": "fresh_provider_inventory",
+        "voice_present": False,
+    }
 
 
 def test_tool_surface_marks_voice_mutations_for_approval(monkeypatch):
