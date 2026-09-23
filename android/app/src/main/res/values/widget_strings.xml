@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_sigil_description">Zara</string>
+    <string name="widget_assistant_description">Zara symbolic assistant and bounded actions</string>
+    <string name="widget_runtime_description">Zara local and remote runtime state</string>
+    <string name="widget_actions_description">Zara quick workspace actions</string>
+</resources>
