@@ -8,7 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
+import android.os.HandlerThread
 import android.os.Message
 import android.os.Messenger
 import android.os.RemoteException
@@ -36,8 +36,9 @@ class LocalAiRemoteClient(
     private var pendingBind: CompletableFuture<Messenger>? = null
     private var bound = false
 
+    private val replyThread = HandlerThread("zara-local-ai-replies").apply { start() }
     private val replyMessenger = Messenger(
-        Handler(Looper.getMainLooper()) { message ->
+        Handler(replyThread.looper) { message ->
             handleReply(message)
             true
         }
@@ -193,11 +194,15 @@ class LocalAiRemoteClient(
                 val current = synchronized(lock) { pending[requestId] } ?: return
                 val chunk = payload.getString(LocalAiRemoteProtocol.KEY_CHUNK).orEmpty()
                 if (chunk.isEmpty()) return
-                val generation = current.generation
-                if (generation == null) {
-                    current.onChunk(chunk)
-                } else {
-                    generation.deliver { current.onChunk(chunk) }
+                try {
+                    val generation = current.generation
+                    if (generation == null) {
+                        current.onChunk(chunk)
+                    } else {
+                        generation.deliver { current.onChunk(chunk) }
+                    }
+                } catch (error: Throwable) {
+                    failChunkConsumer(requestId, current, error)
                 }
             }
 
@@ -225,6 +230,40 @@ class LocalAiRemoteClient(
                 )
             }
         }
+    }
+
+    private fun failChunkConsumer(
+        requestId: Long,
+        current: Pending,
+        error: Throwable,
+    ) {
+        val removed = synchronized(lock) {
+            if (pending[requestId] !== current) {
+                false
+            } else {
+                pending.remove(requestId)
+                true
+            }
+        }
+        if (!removed) return
+        current.generation?.terminate()
+        current.future.completeExceptionally(
+            LocalAiRemoteConsumerException("Local AI stream consumer failed", error)
+        )
+        sendBestEffortCancel()
+    }
+
+    private fun sendBestEffortCancel() {
+        val messenger = synchronized(lock) { remote } ?: return
+        val requestId = requestIds.getAndIncrement()
+        val payload = Bundle().apply {
+            putLong(LocalAiRemoteProtocol.KEY_REQUEST_ID, requestId)
+        }
+        val message = Message.obtain(null, LocalAiRemoteProtocol.MSG_CANCEL).apply {
+            data = payload
+            replyTo = replyMessenger
+        }
+        runCatching { messenger.send(message) }
     }
 
     private fun cancelPendingGenerations() {
@@ -317,6 +356,7 @@ class LocalAiRemoteClient(
             )
         }
         if (shouldUnbind) runCatching { appContext.unbindService(connection) }
+        replyThread.quitSafely()
     }
 
     private fun requireBundle(payload: Bundle, key: String): Bundle =
@@ -335,7 +375,12 @@ internal class LocalAiRemoteGenerationTicket {
     @Synchronized
     fun deliver(block: () -> Unit): Boolean {
         if (!active) return false
-        block()
+        try {
+            block()
+        } catch (error: Throwable) {
+            active = false
+            throw error
+        }
         return true
     }
 
@@ -346,6 +391,11 @@ internal class LocalAiRemoteGenerationTicket {
         return true
     }
 }
+
+class LocalAiRemoteConsumerException(
+    message: String,
+    cause: Throwable? = null,
+) : IllegalStateException(message, cause)
 
 class LocalAiRemoteUnavailableException(
     message: String,

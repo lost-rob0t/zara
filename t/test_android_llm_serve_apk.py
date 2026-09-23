@@ -94,3 +94,23 @@ def test_llm_serve_signature_boundary_has_installed_adversary_acceptance():
     assert '"$apksigner" verify --print-certs' in gate
     assert "device_local_ai_ipc_acceptance.py" in emulator_gate
     assert "llm-serve-adversary.apk" in emulator_gate
+
+
+def test_llm_serve_streaming_callbacks_leave_android_main_looper():
+    client = (
+        ROOT
+        / "android/app/src/main/java/ai/zara/app/localai/LocalAiRemoteClient.kt"
+    ).read_text()
+    server = (
+        ROOT
+        / "android/llm-serve/src/main/java/ai/zara/llmserve/OllamaLoopbackServer.kt"
+    ).read_text()
+
+    assert 'HandlerThread("zara-local-ai-replies")' in client
+    assert "Handler(Looper.getMainLooper())" not in client
+    assert "failChunkConsumer(requestId, current, error)" in client
+    assert "LocalAiRemoteConsumerException" in client
+    assert "sendBestEffortCancel()" in client
+    assert "runCatching { messenger.send(message) }" in client
+    assert "runCatching {" in server
+    assert 'JSONObject().put("error", boundedMessage(error))' in server

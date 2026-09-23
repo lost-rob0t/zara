@@ -70,11 +70,13 @@ class OllamaLoopbackServer(
         try {
             route(readRequest(input), output)
         } catch (error: Throwable) {
-            writeJson(
-                output,
-                400,
-                JSONObject().put("error", boundedMessage(error)),
-            )
+            runCatching {
+                writeJson(
+                    output,
+                    400,
+                    JSONObject().put("error", boundedMessage(error)),
+                )
+            }
         } finally {
             runCatching { output.flush() }
         }
