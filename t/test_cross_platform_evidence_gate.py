@@ -106,21 +106,22 @@ def _write_android_evidence(root: Path, source_sha: str, *, passed: bool = True)
         "quantization": None,
         "phase": None,
     }
+    trace = (
+        "ACTION 1 capture:empty-shell\n"
+        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n"
+    )
 
     text_evidence = evidence / "empty-shell.ui.txt"
     text_evidence.write_text(
         'route="chat"\n'
         f"runtime={json.dumps(runtime, sort_keys=True, separators=(',', ':'))}\n"
         'class="android.widget.TextView" text="Chat" content_desc="" '
-        'enabled=true clickable=false selected=true focused=false bounds=[20,40][180,96]\n',
+        'enabled=true clickable=false selected=true focused=false bounds=[20,40][180,96]\n'
+        + trace,
         encoding="utf-8",
     )
     assertion_evidence = evidence / "empty-shell.assertions.txt"
-    assertion_evidence.write_text(
-        "ACTION 1 capture:empty-shell\n"
-        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n",
-        encoding="utf-8",
-    )
+    assertion_evidence.write_text(trace, encoding="utf-8")
     scenario = {
         "scenario_id": "android.ui.empty-shell",
         "source_sha": source_sha,
@@ -283,6 +284,7 @@ def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
     assert 'bash scripts/test-android-emulator-install.sh "$serial" "$SOURCE_SHA"' in workflow
     assert "android/integration/device_acceptance.py" in emulator_smoke
     assert '--source-sha "$source_sha"' in emulator_smoke
+    assert '--apk-sha256 "$phone_apk_sha256"' in emulator_smoke
     assert "--output android/app/build/reports/device" in emulator_smoke
     assert "android-ui-evidence" in workflow
     assert "Validate dual-surface screenshot evidence" in workflow
