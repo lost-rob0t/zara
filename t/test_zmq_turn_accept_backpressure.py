@@ -164,7 +164,7 @@ def test_full_route_fifo_never_evicts_turn_accepted_for_a_later_turn_event():
         context.term()
 
 
-def test_early_turn_capacity_fences_route_before_accept_instead_of_orphaning_terminal_event():
+def test_early_turn_capacity_preserves_oldest_terminal_and_fails_new_turn_closed():
     context = zmq.Context()
     endpoint = _endpoint()
     config = TransportConfig(
@@ -225,34 +225,35 @@ def test_early_turn_capacity_fences_route_before_accept_instead_of_orphaning_ter
 
         _wait_until(lambda: len(supervisor.pending) == 65)
 
-        def overflow_processed() -> bool:
-            with gateway._lock:
-                return (
-                    not gateway._routes
-                    or ("local-owner", "turn-submit-64") in gateway._early_turn_events
-                )
+        def all_terminal_events_drained() -> bool:
+            subscription = gateway._event_subscription
+            return subscription is not None and subscription._queue.empty()
 
-        _wait_until(overflow_processed)
+        _wait_until(all_terminal_events_drained)
+
         supervisor.accept("submit-0")
+        accepted = _receive(dealer)
+        assert accepted.type == "turn.accepted"
+        assert accepted.turn_id == "turn-submit-0"
+        terminal = _receive(dealer)
+        assert terminal.type == "turn.completed", (
+            "cross-turn early-event capacity must not silently discard the "
+            f"oldest live turn terminal; got {terminal.type}"
+        )
+        assert terminal.turn_id == "turn-submit-0"
 
-        dealer.send_multipart(
-            encode_message(
-                ProtocolMessage(
-                    type="ping",
-                    id="ping-after-early-capacity",
-                    session_id=hello.session_id,
-                    timestamp_ns=1000,
-                    payload_count=0,
-                )
-            )
+        supervisor.accept("submit-64")
+        overflow = _receive(dealer)
+        assert overflow.type == "protocol.error", (
+            "the turn that cannot reserve bounded early-event capacity must fail "
+            f"closed before acceptance; got {overflow.type}"
         )
-        response = _receive(dealer)
-        assert response.type == "protocol.error", (
-            "early-turn capacity exhaustion must fence the affected route before "
-            f"any turn is accepted without its terminal event; got {response.type}"
-        )
-        assert response.reply_to == "ping-after-early-capacity"
-        assert response.body["code"] == "handshake_required"
+        assert overflow.reply_to == "submit-64"
+        assert overflow.body == {
+            "code": "server_backpressure",
+            "message": "too many turn events are awaiting acceptance",
+            "retryable": True,
+        }
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
