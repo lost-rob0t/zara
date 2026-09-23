@@ -133,6 +133,7 @@ internal class PluginApkInstaller(private val context: Context) {
                     sessionId,
                     Intent(context, PluginInstallReceiver::class.java)
                         .setAction(INSTALL_RESULT_ACTION)
+                        .setData(Uri.parse(PluginApkSecurity.callbackIdentity(sessionId, nonce)))
                         .putExtra(EXTRA_NONCE, nonce),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
                 )
