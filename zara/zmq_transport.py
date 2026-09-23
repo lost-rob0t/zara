@@ -441,9 +441,11 @@ class ZaraZmqGateway:
                 sorted(orphaned_turns)[:8],
             )
         self._route_outbound.pop(route, None)
-        for turn_id, candidate in tuple(self._turn_routes.items()):
+        for turn_key, candidate in tuple(self._turn_routes.items()):
             if candidate == route:
-                self._turn_routes.pop(turn_id, None)
+                self._turn_routes.pop(turn_key, None)
+                self._early_turn_events.pop(turn_key, None)
+                self._turns_awaiting_accept.discard(turn_key)
         for key, owner in tuple(self._approval_owners.items()):
             if owner.route == route:
                 self._approval_owners.pop(key, None)
@@ -470,6 +472,7 @@ class ZaraZmqGateway:
         payloads: Sequence[bytes] = (),
     ) -> bool:
         item = _GatewayOutbound(message=message, payloads=tuple(payloads))
+        overflow_state = None
         with self._lock:
             if route not in self._routes:
                 return False
@@ -478,16 +481,36 @@ class ZaraZmqGateway:
                 outbound = deque()
                 self._route_outbound[route] = outbound
             if len(outbound) >= self._config.event_queue_size:
-                # Lossy per-queue: drop the oldest queued event so the route and
-                # its active turns survive. Dropping the route here orphaned
-                # every later event of in-flight turns and hung clients (#669).
-                dropped = outbound.popleft()
-                logger.warning(
-                    "Outbound queue full; dropping oldest %s (event_queue_size=%d)",
-                    dropped.message.type,
-                    self._config.event_queue_size,
+                drop_index = next(
+                    (
+                        index
+                        for index, queued in enumerate(outbound)
+                        if queued.message.type != "turn.accepted"
+                    ),
+                    None,
                 )
-            outbound.append(item)
+                if drop_index is None:
+                    logger.warning(
+                        "Outbound queue saturated by turn.accepted barriers; "
+                        "dropping route (event_queue_size=%d)",
+                        self._config.event_queue_size,
+                    )
+                    overflow_state = self._drop_route_locked(route)
+                else:
+                    outbound.rotate(-drop_index)
+                    dropped = outbound.popleft()
+                    outbound.rotate(drop_index)
+                    logger.warning(
+                        "Outbound queue full; dropping oldest non-barrier %s "
+                        "(event_queue_size=%d)",
+                        dropped.message.type,
+                        self._config.event_queue_size,
+                    )
+            if overflow_state is None:
+                outbound.append(item)
+        if overflow_state is not None:
+            self._cancel_audio_inputs(overflow_state)
+            return False
         return True
 
     def _route_for_session_locked(self, principal_id: str, session_id: str) -> tuple[bytes, _RouteState] | None:
@@ -1304,7 +1327,8 @@ class ZaraZmqGateway:
                 if response.turn_id and live_routes:
                     latest = live_routes[-1]
                     self._turn_routes[(latest.principal_id, response.turn_id)] = latest.route
-                    self._turns_awaiting_accept.add((latest.principal_id, response.turn_id))
+                    if response.type == "turn.accepted":
+                        self._turns_awaiting_accept.add((latest.principal_id, response.turn_id))
                 self._remember_response(replay_key, command, response)
 
             for candidate in routes:
@@ -1314,21 +1338,6 @@ class ZaraZmqGateway:
                     candidate.route,
                     self._response_for_route(response, candidate.route),
                 )
-            if response.turn_id and live_routes:
-                latest = live_routes[-1]
-                key = (latest.principal_id, response.turn_id)
-                while True:
-                    with self._lock:
-                        held_batch = list(self._early_turn_events.pop(key, ()))
-                        if not held_batch:
-                            self._turns_awaiting_accept.discard(key)
-                            break
-                    for held_message, held_payloads in held_batch:
-                        self._enqueue_outbound(
-                            latest.route,
-                            self._response_for_route(held_message, latest.route),
-                            held_payloads,
-                        )
 
         future.add_done_callback(completed)
 
@@ -1363,11 +1372,10 @@ class ZaraZmqGateway:
                 except RuntimeCodecError:
                     continue
                 with self._lock:
-                    # The hold decision and the append must be one critical
-                    # section: completed()'s flush pops the early buffer and
-                    # discards the awaiting key under this same lock, so an
-                    # event observed after that point routes directly instead
-                    # of being stranded in the early buffer forever (#1396).
+                    # The hold decision and append are one critical section.
+                    # The awaiting key remains live until turn.accepted is
+                    # actually written to the socket, so runtime events cannot
+                    # evict or overtake the acceptance barrier (#1396).
                     if (principal_id, event.turn_id) in self._turns_awaiting_accept:
                         self._buffer_early_turn_event(
                             principal_id,
@@ -1484,6 +1492,27 @@ class ZaraZmqGateway:
             ) and tool_run_id:
                 self._approval_owners.pop((principal_id, tool_run_id), None)
 
+    def _release_turn_events_after_accept(self, route: bytes, turn_id: str) -> None:
+        while True:
+            with self._lock:
+                state = self._routes.get(route)
+                if state is None or not state.ready:
+                    return
+                key = (state.principal_id, turn_id)
+                if self._turn_routes.get(key) != route:
+                    return
+                held_batch = list(self._early_turn_events.pop(key, ()))
+                if not held_batch:
+                    self._turns_awaiting_accept.discard(key)
+                    return
+            for held_message, held_payloads in held_batch:
+                if not self._enqueue_outbound(
+                    route,
+                    self._response_for_route(held_message, route),
+                    held_payloads,
+                ):
+                    return
+
     def _drain_outbound(self, socket: zmq.Socket) -> None:
         sent = 0
         while sent < 32:
@@ -1505,13 +1534,18 @@ class ZaraZmqGateway:
                 queue_on_again=False,
             ):
                 return
+            release_turn_id = None
             with self._lock:
                 current = self._route_outbound.get(route)
                 if current is outbound and outbound and outbound[0] is item:
                     outbound.popleft()
                     if not outbound:
                         self._route_outbound.pop(route, None)
+                    if item.message.type == "turn.accepted" and item.message.turn_id:
+                        release_turn_id = item.message.turn_id
             sent += 1
+            if release_turn_id is not None:
+                self._release_turn_events_after_accept(route, release_turn_id)
 
     def _send(
         self,
