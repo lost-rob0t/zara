@@ -704,7 +704,16 @@ class NotificationRouter:
             raise NotificationDenied("notification effect already completed")
         receipt = dict(effect_plane.execute(request, owner_peer=event.owner_peer))
         verification = dict(effect_plane.verify(request, receipt, owner_peer=event.owner_peer))
-        if verification.get("ok") is not True:
+        receipt_id = receipt.get("receipt_id")
+        fresh_postcondition = (
+            verification.get("ok") is True
+            and verification.get("generation") == request.generation
+            and verification.get("observed_owner_peer") == event.owner_peer
+            and isinstance(receipt_id, str)
+            and bool(receipt_id)
+            and verification.get("receipt_id") == receipt_id
+        )
+        if not fresh_postcondition:
             raise NotificationDenied("notification effect did not produce fresh verified postcondition evidence")
         self.store.record_effect(
             principal_id=request.principal_id,
