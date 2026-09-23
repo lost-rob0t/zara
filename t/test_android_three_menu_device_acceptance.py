@@ -104,6 +104,17 @@ def test_drawer_conversation_overflow_has_pixel_and_geometry_catcher():
     assert 'pkgs.python3Packages.pillow' in android_flake
 
 
+def test_overflow_acceptance_creates_two_chats_before_visual_capture():
+    text = source()
+    new_chat = 'device.tap_contains("New chat")'
+    count = 'device.assert_contains_count("Actions for ", minimum=2)'
+    screenshot = 'screenshot_name="drawer-conversation-overflow"'
+
+    assert text.count(new_chat) >= 2
+    assert count in text
+    assert text.index(new_chat) < text.index(count) < text.index(screenshot)
+
+
 def test_visual_gate_binds_preopen_trigger_and_same_state_text_twin():
     text = source()
 
