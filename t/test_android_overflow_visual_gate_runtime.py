@@ -30,12 +30,18 @@ def node(*, bounds: tuple[int, int, int, int], label: str) -> ET.Element:
 def synthetic_device(tmp_path: Path, image: Image.Image) -> Device:
     path = tmp_path / "surface.png"
     image.save(path, format="PNG")
+    twin = tmp_path / "surface.xml"
+    twin.write_text("<hierarchy><node text='Rename'/></hierarchy>", encoding="utf-8")
     device = Device("synthetic", tmp_path)
     trigger = node(bounds=(100, 20, 140, 34), label="Actions for test")
     action = node(bounds=(40, 40, 120, 80), label="Rename")
     device.find_contains = lambda fragment: trigger if fragment == "Actions for " else None
     device.find = lambda label: action if label == "Rename" else None
     device.capture = lambda screenshot_name: path
+    device.capture_text_twin = lambda state: {
+        "file": twin.name,
+        "sha256": hashlib.sha256(twin.read_bytes()).hexdigest(),
+    }
     return device
 
 
@@ -90,12 +96,6 @@ def test_overflow_visual_gate_uses_preopen_trigger_bounds_after_trigger_disappea
     device = synthetic_device(tmp_path, text_like_image())
     trigger_bounds = (100, 20, 140, 34)
     device.find_contains = lambda fragment: None
-    twin = tmp_path / "overflow.xml"
-    twin.write_text("<hierarchy><node text='Rename'/></hierarchy>", encoding="utf-8")
-    device.capture_text_twin = lambda state: {
-        "file": twin.name,
-        "sha256": hashlib.sha256(twin.read_bytes()).hexdigest(),
-    }
 
     device.assert_transient_surface_visible(
         trigger_fragment="Actions for ",
