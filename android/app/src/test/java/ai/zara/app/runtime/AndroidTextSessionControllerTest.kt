@@ -71,6 +71,100 @@ class AndroidTextSessionControllerTest {
     }
 
     @Test
+    fun connection_loss_listener_receives_typed_codes_from_both_paths() {
+        val timeoutClient = FakeTextSessionClient()
+        val timeoutController = connectedController(timeoutClient)
+        val losses = mutableListOf<String>()
+        timeoutController.setConnectionLossListener { code, _ -> losses += code }
+
+        timeoutController.submitText("hello")
+        timeoutClient.turnFuture.completeExceptionally(TextRequestTimeoutException("timed out"))
+        assertEquals(listOf(ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_TIMEOUT), losses)
+
+        val failureClient = FakeTextSessionClient()
+        val failureController = connectedController(failureClient)
+        failureController.setConnectionLossListener { code, _ -> losses += code }
+        failureController.clientReportedFailure(protocolMalformed(generation = 1))
+        assertEquals(
+            listOf(
+                ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_TIMEOUT,
+                ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_MALFORMED,
+            ),
+            losses,
+        )
+    }
+
+    @Test
+    fun typed_client_failure_collapses_connection_and_schedules_bounded_reconnect() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = connectedController(client, scheduler)
+
+        controller.clientReportedFailure(protocolMalformed(generation = 1))
+
+        assertEquals(ServerConnection.Reconnecting(2, 1), controller.state().server)
+        assertEquals(2L, controller.state().generation)
+        assertEquals(null, controller.state().sessionId)
+        assertEquals(1, client.disconnectCalls)
+        assertEquals(listOf(250L), scheduler.delays)
+    }
+
+    @Test
+    fun typed_client_failure_is_ignored_when_not_connected() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = AndroidTextSessionController(
+            initialState = RuntimeState.initial().copy(enrollment = EnrollmentReadiness.Ready),
+            client = client,
+            reconnectScheduler = scheduler,
+        )
+
+        controller.clientReportedFailure(protocolMalformed(generation = 1))
+
+        assertEquals(ServerConnection.Disconnected, controller.state().server)
+        assertEquals(0, client.disconnectCalls)
+        assertEquals(emptyList<Long>(), scheduler.delays)
+    }
+
+    @Test
+    fun stale_generation_failure_cannot_collapse_new_connection() {
+        val client = FakeTextSessionClient()
+        val scheduler = FakeReconnectScheduler()
+        val controller = AndroidTextSessionController(
+            initialState = RuntimeState.initial().copy(enrollment = EnrollmentReadiness.Ready),
+            client = client,
+            reconnectScheduler = scheduler,
+        )
+        val profile = ServerProfile.create("tcp://127.0.0.1:5555")
+        val future = controller.connect(profile)
+        client.completeConnect(0, ConnectedTextSession(1, "session-1"))
+        future.get()
+
+        controller.clientReportedFailure(protocolMalformed(generation = 99))
+
+        assertEquals(ServerConnection.Connected(1), controller.state().server)
+        assertEquals("session-1", controller.state().sessionId)
+        assertEquals(0, client.disconnectCalls)
+        assertEquals(emptyList<Long>(), scheduler.delays)
+    }
+
+    private fun protocolMalformed(generation: Long): ai.zara.app.telemetry.ZaraFailure =
+        ai.zara.app.telemetry.ZaraFailure(
+            subsystem = ai.zara.app.telemetry.ZaraSubsystem.PROTOCOL,
+            operation = ai.zara.app.telemetry.ZaraOperation.STREAM,
+            phase = null,
+            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_MALFORMED,
+            message = "truncated frame",
+            causeClass = "ai.zara.app.runtime.ZaraWireException",
+            serverCode = null,
+            retryable = null,
+            recovery = ai.zara.app.telemetry.ZaraRecovery.RETRYABLE,
+            connectionGeneration = generation,
+            requestId = null,
+            turnId = null,
+        )
+
+    @Test
     fun stale_turn_completion_cannot_mutate_new_generation() {
         val client = FakeTextSessionClient()
         val scheduler = FakeReconnectScheduler()

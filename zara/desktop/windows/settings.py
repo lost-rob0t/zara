@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shlex
 import tempfile
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Optional
@@ -43,6 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from zara.client_enrollment import ClientEnrollmentError, ClientEnrollmentStore
 from zara.config import ZaraConfig
 from zara.desktop.preferences import SettingsDocument, SettingsValidationError
 from zara.desktop.prolog_studio import (
@@ -54,11 +56,13 @@ from zara.desktop.prolog_studio import (
     PrologStudioError,
 )
 from zara.desktop.theme import THEME_REGISTRY
+from zara.pairing import PairingError, PairingClientProgress, pair_client
 
 
 _CATEGORIES = (
     "Appearance",
     "Assistant",
+    "Connections",
     "Voice & Speech",
     "Tools & Privacy",
     "Prolog",
@@ -246,6 +250,8 @@ class SettingsWindow(QWidget):
 
     theme_preview_requested = Signal(str)
     restart_requested = Signal()
+    pairing_progress_observed = Signal(str, str)
+    pairing_finished = Signal(str, str)
 
     def __init__(
         self,
@@ -292,6 +298,7 @@ class SettingsWindow(QWidget):
         self.stack = QStackedWidget()
         self.stack.addWidget(self._appearance_page())
         self.stack.addWidget(self._assistant_page())
+        self.stack.addWidget(self._connections_page())
         self.stack.addWidget(self._voice_page())
         self.stack.addWidget(self._tools_page())
         self.stack.addWidget(self._prolog_page())
@@ -328,6 +335,8 @@ class SettingsWindow(QWidget):
         self.category_list.setCurrentRow(0)
         self.save_button.clicked.connect(self.save_settings)
         self.restart_button.clicked.connect(self.restart_requested.emit)
+        self.pairing_progress_observed.connect(self._on_pairing_progress)
+        self.pairing_finished.connect(self._on_pairing_finished)
 
     def _page(self, title: str, description: str) -> tuple[QWidget, QFormLayout]:
         body = QWidget()
@@ -463,6 +472,96 @@ class SettingsWindow(QWidget):
         prompt.setMaximumHeight(130)
         self._register(form, "agent.system_prompt", "System prompt", prompt)
         return page
+
+    def _connections_page(self) -> QWidget:
+        page, form = self._page(
+            "Connections",
+            "Pair this desktop with a Zara server without copying raw CURVE keys.",
+        )
+        self.pairing_status = QLabel()
+        self.pairing_status.setObjectName("zaraSettingsHint")
+        self.pairing_status.setWordWrap(True)
+        self.pairing_uri_input = QLineEdit()
+        self.pairing_uri_input.setPlaceholderText("zara://pair/v1?...")
+        self.pairing_uri_input.setClearButtonEnabled(True)
+        self.pairing_button = QPushButton("Pair this desktop")
+        self.pairing_button.setObjectName("zaraPrimaryAction")
+        self.pairing_button.clicked.connect(self.start_desktop_pairing)
+
+        actions = QWidget()
+        actions_layout = QHBoxLayout(actions)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(self.pairing_button)
+
+        form.addRow("Status", self.pairing_status)
+        form.addRow("Pairing URI", self.pairing_uri_input)
+        form.addRow("", actions)
+        self._refresh_pairing_status()
+        return page
+
+    def _refresh_pairing_status(self) -> None:
+        try:
+            profile = ClientEnrollmentStore.for_config(self.config).ready_profile()
+        except ClientEnrollmentError as error:
+            self.pairing_status.setText(f"Pairing state error: {error}")
+            return
+        if profile is None:
+            self.pairing_status.setText(
+                "Not paired. Run 'zara pair' on the server, then paste its short-lived URI here."
+            )
+            return
+        fingerprint = profile.server_public_key[:8] + "…" + profile.server_public_key[-8:]
+        self.pairing_status.setText(
+            f"Paired to {profile.endpoint} · server {fingerprint}. Restart Zara to reconnect with it."
+        )
+
+    def start_desktop_pairing(self) -> None:
+        raw_uri = self.pairing_uri_input.text().strip()
+        if not raw_uri:
+            self.pairing_status.setText("Paste the zara://pair/v1 URI from the server.")
+            return
+        self.pairing_button.setEnabled(False)
+        self.pairing_uri_input.setEnabled(False)
+        self.pairing_status.setText("Contacting the Zara pairing broker…")
+
+        def worker() -> None:
+            try:
+                outcome = pair_client(
+                    raw_uri,
+                    config=self.config,
+                    on_progress=lambda progress: self.pairing_progress_observed.emit(
+                        progress.verification_code,
+                        progress.device_id,
+                    ),
+                )
+            except (ClientEnrollmentError, PairingError, OSError, TypeError, ValueError) as error:
+                self.pairing_finished.emit("", str(error))
+                return
+            self.pairing_finished.emit(outcome.endpoint, "")
+
+        threading.Thread(
+            target=worker,
+            name="zara-desktop-pairing",
+            daemon=True,
+        ).start()
+
+    def _on_pairing_progress(self, verification_code: str, device_id: str) -> None:
+        self.pairing_status.setText(
+            f"Verify code {verification_code} on the server, then approve {device_id}."
+        )
+
+    def _on_pairing_finished(self, endpoint: str, error: str) -> None:
+        self.pairing_button.setEnabled(True)
+        self.pairing_uri_input.setEnabled(True)
+        self.pairing_uri_input.clear()
+        if error:
+            self.pairing_status.setText(f"Pairing failed: {error}")
+            return
+        self._refresh_pairing_status()
+        self.feedback_label.setText(
+            f"Desktop paired with {endpoint}. Restart Zara to use the authenticated server."
+        )
 
     def _voice_page(self) -> QWidget:
         page, form = self._page("Voice & Speech", "Wake sensitivity, speech recognition, and voice output.")

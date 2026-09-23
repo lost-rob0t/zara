@@ -57,6 +57,20 @@ def test_start_turn_returns_unique_turn_ids():
     ref.stop()
 
 
+def test_turn_ids_do_not_alias_after_coordinator_restart():
+    first = TurnCoordinator.start()
+    first_reply = first.ask(StartTurn(), timeout=5)
+    first.stop()
+
+    second = TurnCoordinator.start()
+    second_reply = second.ask(StartTurn(), timeout=5)
+
+    assert isinstance(first_reply, TurnStartedReply)
+    assert isinstance(second_reply, TurnStartedReply)
+    assert first_reply.turn_id != second_reply.turn_id
+    second.stop()
+
+
 def test_events_for_active_turn_are_accepted():
     ref = TurnCoordinator.start()
     reply = ref.ask(StartTurn(), timeout=5)

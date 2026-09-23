@@ -29,6 +29,7 @@
   :group 'zara-conversation-symbolic)
 
 (defconst zara-conversation-symbolic--version "ZARA-SYMBOLIC-REPLAY/1")
+(defconst zara-conversation-symbolic--inspection-buffer "*Zara Symbolic Status*")
 (defvar-local zara-conversation-symbolic-projection nil)
 
 (defun zara-conversation-symbolic--exact-integer (object key minimum)
@@ -67,6 +68,8 @@
           (dialogue-state (gethash "dialogue_state" projection :missing)))
       (unless (memq providers-enabled '(t :false))
         (error "symbolic replay providers_enabled must be boolean"))
+      (unless (eq providers-enabled :false)
+        (error "pure-symbolic replay requires providers_enabled=false"))
       (unless (or (eq turn-id :null) (stringp turn-id))
         (error "symbolic replay turn_id must be null or a string"))
       (unless (or (eq project-id :null) (stringp project-id))
@@ -87,10 +90,19 @@
       (zara-conversation-symbolic--array projection key))
     (unless (stringp (gethash "updated_at" projection :missing))
       (error "symbolic replay updated_at must be a string"))
-    (let ((model-calls (gethash "model_calls" projection))
-          (max-model-calls (gethash "max_model_calls" projection)))
-      (when (> model-calls max-model-calls)
-        (error "symbolic replay model_calls exceeds max_model_calls"))))
+    ;; This Emacs surface is specifically the pure-symbolic projection view.
+    ;; Never launder provider-assisted state as symbolic status: all provider
+    ;; authority and accounting must be hard-zero before the projection is
+    ;; admitted for inspection or replay adoption.
+    (let ((max-model-calls (gethash "max_model_calls" projection))
+          (provider-calls (gethash "provider_calls" projection))
+          (model-calls (gethash "model_calls" projection)))
+      (unless (zerop max-model-calls)
+        (error "pure-symbolic replay requires max_model_calls=0"))
+      (unless (zerop provider-calls)
+        (error "pure-symbolic replay requires provider_calls=0"))
+      (unless (zerop model-calls)
+        (error "pure-symbolic replay requires model_calls=0"))))
   projection)
 
 (defun zara-conversation-symbolic--parse (text expected-conversation-id)
@@ -169,6 +181,19 @@ persisted projection while any present non-null value is validated strictly."
          nil
        (zara-conversation-symbolic--validate-projection projection)))))
 
+(defun zara-conversation-symbolic--validate-before-replay-render (payload)
+  "Validate PAYLOAD's symbolic projection before transcript presentation mutates.
+
+Validation reuses the canonical replay-adoption contract but restores the
+current ephemeral projection on every path.  The real adoption still happens
+after a successful transcript render, so this guard adds no competing state
+owner and invalid pure-symbolic state fails before visible replay changes."
+  (let ((previous zara-conversation-symbolic-projection))
+    (unwind-protect
+        (zara-conversation-symbolic--adopt-replay-payload
+         payload (zara-conversation--current-id))
+      (setq-local zara-conversation-symbolic-projection previous))))
+
 (defun zara-conversation-symbolic--projection-value (key)
   "Return KEY from the cached projection, normalizing JSON null to nil."
   (when zara-conversation-symbolic-projection
@@ -187,16 +212,24 @@ With prefix argument REFRESH, read a fresh canonical projection first."
     (let ((status
            (list
             :conversation-id (zara-conversation--current-id)
+            :turn-id (zara-conversation-symbolic--projection-value "turn_id")
             :project-id (zara-conversation-symbolic--projection-value "project_id")
             :project-generation (and projection (gethash "project_generation" projection))
             :dialogue-act (zara-conversation-symbolic--projection-value "dialogue_act")
+            :dialogue-state (and projection (gethash "dialogue_state" projection))
             :outcome (zara-conversation-symbolic--projection-value "outcome")
+            :discourse-entities (and projection (gethash "discourse_entities" projection))
+            :unresolved-questions (and projection (gethash "unresolved_questions" projection))
             :unresolved-question-count
             (and projection (length (gethash "unresolved_questions" projection)))
+            :expert-evidence (and projection (gethash "expert_evidence" projection))
             :expert-evidence-count
             (and projection (length (gethash "expert_evidence" projection)))
+            :verified-facts (and projection (gethash "verified_facts" projection))
             :verified-fact-count
             (and projection (length (gethash "verified_facts" projection)))
+            :verified-outcome-refs
+            (and projection (gethash "verified_outcome_refs" projection))
             :renderer-provenance
             (zara-conversation-symbolic--projection-value "renderer_provenance")
             :providers-enabled
@@ -216,19 +249,119 @@ With prefix argument REFRESH, read a fresh canonical projection first."
                  (or (plist-get status :max-model-calls) "-")))
       status)))
 
+(defun zara-conversation-symbolic--json-ready (value)
+  "Convert validated symbolic VALUE to `json-serialize' container types."
+  (cond
+   ((hash-table-p value)
+    (let ((copy (make-hash-table :test (hash-table-test value))))
+      (maphash
+       (lambda (key member)
+         (puthash key (zara-conversation-symbolic--json-ready member) copy))
+       value)
+      copy))
+   ((listp value)
+    (vconcat (mapcar #'zara-conversation-symbolic--json-ready value)))
+   (t value)))
+
+(defun zara-conversation-symbolic--json (value)
+  "Serialize validated symbolic VALUE for deterministic inspection output."
+  (json-serialize
+   (zara-conversation-symbolic--json-ready value)
+   :null-object :null
+   :false-object :false))
+
+(defun zara-conversation-symbolic--insert-inspection (label value)
+  "Insert inspection LABEL and validated symbolic VALUE in the current buffer."
+  (insert (propertize (concat label "\n") 'face 'bold))
+  (insert (zara-conversation-symbolic--json value) "\n\n"))
+
+;;;###autoload
+(defun zara-conversation-symbolic-inspect ()
+  "Show a fresh read-only view of canonical symbolic conversation evidence.
+
+The view is presentation-only.  It refreshes from Zara's existing durable
+ConversationStore-backed projection reader and never invokes a provider,
+model, expert, effect executor, or alternate history/state owner."
+  (interactive)
+  (let* ((conversation-id (zara-conversation--current-id))
+         (projection (zara-conversation-symbolic-refresh-status))
+         (buffer (get-buffer-create zara-conversation-symbolic--inspection-buffer)))
+    (with-current-buffer buffer
+      (special-mode)
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert (propertize "Zara · Symbolic Conversation Status\n" 'face '(:weight bold :height 1.2)))
+        (insert (format "conversation_id=%s\n\n" conversation-id))
+        (if (null projection)
+            (insert "No persisted symbolic projection.\n")
+          (insert (format "projection_generation=%d\n" (gethash "projection_generation" projection)))
+          (insert (format "runtime_generation=%d\n" (gethash "runtime_generation" projection)))
+          (insert (format "project_generation=%d\n" (gethash "project_generation" projection)))
+          (insert (format "providers_enabled=%s\n"
+                          (if (eq (gethash "providers_enabled" projection) :false)
+                              "false"
+                            "true")))
+          (insert (format "max_model_calls=%d\n" (gethash "max_model_calls" projection)))
+          (insert (format "provider_calls=%d\n" (gethash "provider_calls" projection)))
+          (insert (format "model_calls=%d\n" (gethash "model_calls" projection)))
+          (insert (format "turn_id=%s\n"
+                          (let ((value (gethash "turn_id" projection)))
+                            (if (eq value :null) "null" value))))
+          (insert (format "project_id=%s\n"
+                          (let ((value (gethash "project_id" projection)))
+                            (if (eq value :null) "null" value))))
+          (insert (format "dialogue_act=%s\n" (gethash "dialogue_act" projection)))
+          (insert (format "outcome=%s\n" (gethash "outcome" projection)))
+          (insert (format "renderer_provenance=%s\n\n"
+                          (gethash "renderer_provenance" projection)))
+          (zara-conversation-symbolic--insert-inspection
+           "dialogue_state" (gethash "dialogue_state" projection))
+          (zara-conversation-symbolic--insert-inspection
+           "discourse_entities" (gethash "discourse_entities" projection))
+          (zara-conversation-symbolic--insert-inspection
+           "unresolved_questions" (gethash "unresolved_questions" projection))
+          (zara-conversation-symbolic--insert-inspection
+           "expert_evidence" (gethash "expert_evidence" projection))
+          (zara-conversation-symbolic--insert-inspection
+           "verified_facts" (gethash "verified_facts" projection))
+          (zara-conversation-symbolic--insert-inspection
+           "verified_outcome_refs" (gethash "verified_outcome_refs" projection)))
+        (goto-char (point-min))))
+    (pop-to-buffer buffer)
+    buffer))
+
 ;;;###autoload
 (defun zara-conversation-symbolic-replay ()
-  "Replay canonical transcript, then refresh persisted symbolic presentation state."
+  "Replay one canonical transcript/symbolic snapshot into the Emacs surface.
+
+`zara-conversation-replay' already validates and adopts the symbolic projection
+from the same canonical replay payload after rendering.  Reuse that adopted
+projection instead of issuing a second store read that could race a newer turn
+or project generation and make transcript and symbolic status disagree."
   (interactive)
   (zara-conversation-replay)
-  (zara-conversation-symbolic-refresh-status))
+  zara-conversation-symbolic-projection)
 
 (defun zara-conversation-symbolic--clear-after-switch (&rest _ignored)
   "Fence cached project/discourse status after a conversation switch."
   (setq-local zara-conversation-symbolic-projection nil))
 
+(defun zara-conversation-symbolic--clear-context-after-replay (&rest _ignored)
+  "Fence ephemeral context refs after a successful canonical replay.
+
+A replay may adopt a newer transcript/symbolic snapshot for the same canonical
+conversation.  Context refs are presentation-local selectors, so keeping refs
+from the prior snapshot could make the next follow-up target stale evidence.
+This :after advice runs only when replay returns successfully; failed replay
+leaves the current presentation refs untouched."
+  (setq-local zara-conversation-context-ids nil))
+
+(advice-add 'zara-conversation--render-replay :before
+            #'zara-conversation-symbolic--validate-before-replay-render)
 (advice-add 'zara-conversation-switch :after
             #'zara-conversation-symbolic--clear-after-switch)
+(advice-add 'zara-conversation-replay :after
+            #'zara-conversation-symbolic--clear-context-after-replay)
 
 (provide 'zara-conversation-symbolic)
 ;;; zara-conversation-symbolic.el ends here

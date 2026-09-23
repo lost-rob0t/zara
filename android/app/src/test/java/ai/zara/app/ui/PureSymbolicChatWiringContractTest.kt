@@ -21,8 +21,9 @@ class PureSymbolicChatWiringContractTest {
     @Test
     fun pureSymbolicRouteFencesExistingProviderCapableSubmitPathBehindLazySupplier() {
         val source = activity()
-        val send = source.substringAfter("onSendText = { text, conversation, project ->")
-            .substringBefore("onCreateProject = { name ->")
+        val send = source.substringAfter(
+            "val submitChatText: (String, ConversationRecord, ProjectContext?) -> Unit = { text, conversation, project ->",
+        ).substringBefore("onCreateProject = { name ->")
         val policySubmit = send.substringAfter("executionPolicyController.submit(")
 
         assertTrue(policySubmit.contains("standardTurn = {"))
@@ -35,8 +36,9 @@ class PureSymbolicChatWiringContractTest {
     @Test
     fun chatCanEnableAndDisablePersistedPureSymbolicPolicyWithoutProviderTurn() {
         val source = activity()
-        val send = source.substringAfter("onSendText = { text, conversation, project ->")
-            .substringBefore("onCreateProject = { name ->")
+        val send = source.substringAfter(
+            "val submitChatText: (String, ConversationRecord, ProjectContext?) -> Unit = { text, conversation, project ->",
+        ).substringBefore("onCreateProject = { name ->")
 
         assertTrue(send.contains("\"/symbolic on\" -> ConversationExecutionPolicy.PURE_SYMBOLIC"))
         assertTrue(send.contains("\"/symbolic off\" -> ConversationExecutionPolicy.STANDARD"))
