@@ -233,9 +233,39 @@ class ExpertIdempotencyJournal:
                 )
 
     def commit(self, claim: DurableIdempotencyClaim, result: ExpertResult) -> None:
-        payload = self._encode_result(result)
         db = self.database
         with db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                f"""
+                SELECT registry_generation, runtime_generation
+                FROM {_TABLE}
+                WHERE principal = ? AND workspace = ? AND expert_id = ?
+                  AND expert_operation = ? AND idempotency_key = ?
+                  AND input_digest = ? AND state = 'dispatching'
+                  AND invocation_id = ? AND request_id = ?
+                """,
+                (
+                    *claim.scope,
+                    claim.input_digest,
+                    result.invocation_id,
+                    result.request_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise ExpertInvalidInputError(
+                    "durable idempotency terminal commit lost canonical dispatch identity"
+                )
+
+            # The durable row owns the generation identity admitted before dispatch.
+            # A late completion may observe a newer live registry generation, but
+            # replay must remain bound to the original reservation rather than
+            # becoming corrupt (and thereby losing truthful usage/effect evidence).
+            durable_result = replace(
+                result,
+                resolved_registry_generation=row["registry_generation"],
+                resolved_runtime_generation=row["runtime_generation"],
+            )
+            payload = self._encode_result(durable_result)
             cursor = conn.execute(
                 f"""
                 UPDATE {_TABLE}
