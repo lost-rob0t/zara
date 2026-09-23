@@ -294,10 +294,47 @@ class Device:
                 }
             )
 
-    def capture(self, name: str) -> None:
+    @staticmethod
+    def _rendered_node(node) -> dict:
+        return {
+            "text": node.get("text") or "",
+            "content_description": node.get("content-desc") or "",
+            "class": node.get("class") or "",
+            "bounds": node.get("bounds") or "",
+            "clickable": node.get("clickable") == "true",
+            "enabled": node.get("enabled") == "true",
+        }
+
+    def capture(self, name: str, *, required_actions: tuple[str, ...] = ()) -> None:
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
+
+        rendered_nodes = [self._rendered_node(node) for node in self.nodes()]
+        for label in required_actions:
+            action = next(
+                (
+                    node
+                    for node in rendered_nodes
+                    if label in (node["text"], node["content_description"])
+                ),
+                None,
+            )
+            if action is None or not action["clickable"] or not action["enabled"]:
+                raise AssertionError(f"Required rendered action is not usable: {label}")
+
+        twin = {
+            "state": name,
+            "asserted_actions": list(required_actions),
+            "nodes": rendered_nodes,
+        }
+        twin_data = (
+            json.dumps(twin, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            + "\n"
+        ).encode("utf-8")
+        twin_path = self.output / f"{name}.ui.json"
+        twin_path.write_bytes(twin_data)
+
         path = self.output / f"{name}.png"
         path.write_bytes(data)
         self.screenshots.append(
@@ -305,6 +342,9 @@ class Device:
                 "state": name,
                 "file": path.name,
                 "sha256": hashlib.sha256(data).hexdigest(),
+                "text_twin_file": twin_path.name,
+                "text_twin_sha256": hashlib.sha256(twin_data).hexdigest(),
+                "asserted_actions": list(required_actions),
             }
         )
 
@@ -469,7 +509,10 @@ def exercise_three_menu_ui(device: Device) -> None:
             device.await_label("PLUGIN HOST")
             device.assert_accessible_targets(("Plugins", "Publisher SHA-256", "Choose APK"))
         time.sleep(0.4)
-        device.capture(f"settings-{tab.lower()}")
+        device.capture(
+            f"settings-{tab.lower()}",
+            required_actions=("Choose APK",) if tab == "Plugins" else (),
+        )
 
     device.tap_tab("Plugins")
     device.set_display_profile(
