@@ -12,6 +12,7 @@ from __future__ import annotations
 import inspect
 import json
 import threading
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Optional
@@ -405,6 +406,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 stack = self._delegation_stack()
                 stack.append(frame)
 
+                dispatch_started_ns = time.monotonic_ns()
                 self._lock.release()
                 try:
                     if injected:
@@ -416,6 +418,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                         outcome = handler(**payload)
                 finally:
                     self._lock.acquire()
+                    dispatch_elapsed_ns = time.monotonic_ns() - dispatch_started_ns
                     popped = stack.pop()
                     if popped is not frame:
                         stack.clear()
@@ -445,6 +448,21 @@ class ExpertRegistry(_impl.ExpertRegistry):
                     or self._runtime_generation != admitted_runtime_generation
                 ):
                     raw_outcome["stale"] = True
+                    receipts = (
+                        outcome.get("effect_receipts", ())
+                        if isinstance(outcome, Mapping)
+                        else ()
+                    )
+                    return {
+                        "verdict": "error",
+                        "data": {},
+                        "evidence_refs": [],
+                        "usage": {"model_calls": 0},
+                        "effect_receipts": receipts,
+                    }
+
+                if dispatch_elapsed_ns > admitted_limits.timeout_ms * 1_000_000:
+                    raw_outcome["deadline_exceeded"] = True
                     receipts = (
                         outcome.get("effect_receipts", ())
                         if isinstance(outcome, Mapping)
@@ -510,6 +528,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
             or handler_terminal
             or bool(raw_outcome.get("cancelled"))
             or bool(raw_outcome.get("stale"))
+            or bool(raw_outcome.get("deadline_exceeded"))
         )
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
             if not require_actual_usage:
@@ -618,6 +637,35 @@ class ExpertRegistry(_impl.ExpertRegistry):
                     idempotency_key,
                 )
             raise ExpertStaleGenerationError(stale_message)
+
+        if raw_outcome.get("deadline_exceeded"):
+            deadline_message = "expert completion crossed admitted deadline"
+            if durable_claim is not None:
+                deadline_result = replace(
+                    result,
+                    verdict=ExpertVerdict.UNKNOWN,
+                    data={},
+                    evidence_refs=(),
+                    error_code=ExpertErrorCode.DEADLINE_EXCEEDED,
+                    error_message=deadline_message,
+                )
+                invocation = self._invocations.get(deadline_result.invocation_id)
+                if invocation is not None:
+                    invocation.verdict = deadline_result.verdict
+                    invocation.evidence_refs = deadline_result.evidence_refs
+                    invocation.usage = dict(deadline_result.usage)
+                    invocation.effect_receipts = deadline_result.effect_receipts
+                    invocation.result = deadline_result
+                    invocation.state = "completed"
+                self._commit_durable_result(durable_claim, deadline_result)
+            else:
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertDeadlineExceededError(deadline_message)
 
         return self._commit_durable_result(durable_claim, result)
 
