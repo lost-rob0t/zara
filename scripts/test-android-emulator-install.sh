@@ -207,12 +207,56 @@ for file_key, hash_key in (
             f"expected={expected_hash} actual={actual_hash}"
         )
 
+
+def parse_text_twin(path: Path) -> list[dict[str, str | None]]:
+    text = path.read_text(encoding="utf-8")
+    if text.lstrip().startswith("<"):
+        try:
+            root = ET.fromstring(text)
+        except ET.ParseError as error:
+            raise SystemExit(f"overflow visual text twin is malformed XML: {error}") from error
+        return [
+            {
+                "text": node.get("text"),
+                "content_desc": node.get("content-desc"),
+                "bounds": node.get("bounds"),
+            }
+            for node in root.iter("node")
+        ]
+
+    json_string = r'"(?:\\.|[^"\\])*"'
+    node_pattern = re.compile(
+        rf'^class={json_string} text=(?P<text>{json_string}) '
+        rf'content_desc=(?P<content_desc>{json_string}) '
+        r'enabled=\S+ clickable=\S+ selected=\S+ focused=\S+ '
+        r'bounds=(?P<bounds>\[\d+,\d+\]\[\d+,\d+\])$'
+    )
+    nodes: list[dict[str, str | None]] = []
+    for line in text.splitlines():
+        match = node_pattern.fullmatch(line)
+        if match is None:
+            continue
+        try:
+            label_text = json.loads(match.group("text"))
+            content_desc = json.loads(match.group("content_desc"))
+        except json.JSONDecodeError as error:
+            raise SystemExit(
+                f"overflow visual normalized text twin contains invalid JSON string: {error}"
+            ) from error
+        nodes.append(
+            {
+                "text": label_text,
+                "content_desc": content_desc,
+                "bounds": match.group("bounds"),
+            }
+        )
+    if not nodes:
+        raise SystemExit("overflow visual normalized text twin contains no UI nodes")
+    return nodes
+
+
 text_twin_path = evidence_dir / receipt["text_twin_file"]
-try:
-    text_twin_root = ET.parse(text_twin_path).getroot()
-except ET.ParseError as error:
-    raise SystemExit(f"overflow visual text twin is malformed XML: {error}") from error
-text_twin_nodes = list(text_twin_root.iter("node"))
+text_twin_nodes = parse_text_twin(text_twin_path)
 action_rects = []
 for action in actions:
     label = action.get("label")
@@ -241,7 +285,7 @@ for action in actions:
     matching_label_nodes = [
         node
         for node in text_twin_nodes
-        if label in (node.get("text"), node.get("content-desc"))
+        if label in (node.get("text"), node.get("content_desc"))
     ]
     if not matching_label_nodes:
         raise SystemExit(f"overflow visual text twin is missing action: {label}")
