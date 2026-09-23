@@ -25,6 +25,7 @@ import ai.zara.ui.theme.ZaraTheme
 import ai.zara.ui.theme.themeTokens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,6 +54,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
@@ -136,6 +138,7 @@ fun ZaraApp(
     pinnedServerPublicKey: String?,
     conversationState: ConversationState,
     operationError: String?,
+    turnFailure: TurnFailure?,
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
@@ -165,6 +168,9 @@ fun ZaraApp(
     onRenameConversation: (String, String) -> Unit,
     onMoveConversationToProject: (String, String?) -> Unit,
     onSendText: (String, ConversationRecord, ProjectContext?) -> Unit,
+    onRetryTurn: (String) -> Unit,
+    onReconnectRemote: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
@@ -186,6 +192,7 @@ fun ZaraApp(
     onCopyDiagnostics: () -> Unit,
     onShareDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit,
+    onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
@@ -289,12 +296,16 @@ fun ZaraApp(
                                                 val project = conversation?.projectId?.let(projectState::project)
                                                 ChatSurface(
                                                     state = runtimeState,
+                                                    runtimeMode = runtimeMode,
                                                     localServerState = localServerState,
                                                     conversation = conversation,
                                                     project = project,
-                                                    operationError = operationError,
+                                                    turnFailure = turnFailure,
                                                     operationBusy = operationBusy,
                                                     onSendText = onSendText,
+                                                    onRetryTurn = onRetryTurn,
+                                                    onReconnectRemote = onReconnectRemote,
+                                                    onOpenDiagnostics = onOpenDiagnostics,
                                                     padding = padding,
                                                 )
                                             }
@@ -343,6 +354,7 @@ fun ZaraApp(
                                                 padding = padding,
                                             )
                                             AppSurface.Diagnostics -> DiagnosticsSurface(
+                                                diagnosticsPreview = onExportDiagnostics,
                                                 state = runtimeState,
                                                 sourceSha = sourceSha,
                                                 localServerState = localServerState,
@@ -838,12 +850,16 @@ private fun conversationStatusColor(
 @Composable
 private fun ChatSurface(
     state: RuntimeState,
+    runtimeMode: RuntimeMode,
     localServerState: LocalServerState,
     conversation: ConversationRecord?,
     project: ProjectContext?,
-    operationError: String?,
+    turnFailure: TurnFailure?,
     operationBusy: Boolean,
     onSendText: (String, ConversationRecord, ProjectContext?) -> Unit,
+    onRetryTurn: (String) -> Unit,
+    onReconnectRemote: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -903,7 +919,18 @@ private fun ChatSurface(
                 conversation.turns.forEachIndexed { index, turn ->
                     UserMessage(turn.userText)
                     Spacer(Modifier.size(12.dp))
+                    val lastFailedTurn = turn.success == false &&
+                        index == conversation.turns.lastIndex &&
+                        conversation.status == ConversationStatus.Failed
                     when {
+                        lastFailedTurn && turnFailure != null ->
+                            TurnFailureCard(
+                                failure = turnFailure,
+                                userText = turn.userText,
+                                onRetry = onRetryTurn,
+                                onReconnect = onReconnectRemote,
+                                onOpenDiagnostics = onOpenDiagnostics,
+                            )
                         turn.assistantText != null ->
                             AssistantMessage(turn.assistantText, turn.success == true)
                         conversation.status == ConversationStatus.Running &&
@@ -915,7 +942,6 @@ private fun ChatSurface(
                     }
                 }
             }
-            operationError?.let { ErrorBanner(it) }
         }
 
         CompactComposer(
@@ -932,11 +958,11 @@ private fun ChatSurface(
             },
         )
         Text(
-            when {
-                remoteReady -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
-                localReady -> "LOCAL  •  SYMBOLIC  •  PRIVATE"
-                else -> "LOCAL RUNTIME STARTING"
-            },
+            chatFooter(
+                mode = runtimeMode,
+                server = state.server,
+                enrollment = state.enrollment,
+            ),
             modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
             color = tokens.textMuted,
             textAlign = TextAlign.Center,
@@ -944,6 +970,65 @@ private fun ChatSurface(
             fontSize = 9.sp,
             letterSpacing = 1.6.sp,
         )
+    }
+}
+
+@Composable
+private fun TurnFailureCard(
+    failure: TurnFailure,
+    userText: String,
+    onRetry: (String) -> Unit,
+    onReconnect: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    Surface(
+        color = tokens.surface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, tokens.error),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                failure.title,
+                color = tokens.error,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp,
+                letterSpacing = 1.sp,
+            )
+            Text(
+                failure.explanation,
+                color = tokens.text,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
+            Text(
+                "Code: ${failure.code}",
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
+            Text(
+                "Connection: ${failure.connectionState}  •  Recovery: ${failure.recovery}" +
+                    (failure.incidentId?.let { "  •  $it" } ?: ""),
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (failure.retryPossible) {
+                    AssistChip(onClick = { onRetry(userText) }, label = { Text("Retry") })
+                }
+                if (failure.reconnectPossible) {
+                    AssistChip(onClick = onReconnect, label = { Text("Reconnect") })
+                }
+                AssistChip(onClick = onOpenDiagnostics, label = { Text("Diagnostics") })
+            }
+        }
     }
 }
 
@@ -1406,12 +1491,14 @@ private fun DiagnosticsSurface(
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
+    diagnosticsPreview: () -> String,
     onCopyDiagnostics: () -> Unit,
     onShareDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
     ScreenBody(padding) {
+        val preview = diagnosticsPreview()
         ScreenTitle("Diagnostics", "Bounded runtime state")
         SectionCard("BUILD") {
             KeyValueRow("source", sourceSha.take(12))
@@ -1427,6 +1514,17 @@ private fun DiagnosticsSurface(
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
             KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+        }
+        if (preview.contains("ZARA-LOCAL-DIAGNOSTICS/2")) {
+            SectionCard("DIAGNOSTICS V2") {
+                Text(
+                    preview.lineSequence().takeWhile { it != "--- timeline ---" }
+                        .take(56).joinToString("\n"),
+                    color = LocalZaraTokens.current.textMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+            }
         }
         SectionCard("LOCAL LOG") {
             MutedNotice(
@@ -1785,6 +1883,33 @@ internal fun connectionLabel(connection: ServerConnection): String = when (conne
     is ServerConnection.Connected -> "connected"
     is ServerConnection.Reconnecting -> "reconnecting (attempt ${connection.attempt})"
     is ServerConnection.OfflineDegraded -> "offline (${connection.reason})"
+}
+
+internal fun chatFooter(
+    mode: RuntimeMode,
+    server: ServerConnection,
+    enrollment: EnrollmentReadiness,
+): String {
+    val authenticated = enrollment == EnrollmentReadiness.Ready
+    val transport = when (server) {
+        is ServerConnection.Connected -> "CONNECTED"
+        is ServerConnection.Connecting -> "CONNECTING"
+        is ServerConnection.Reconnecting -> "RECONNECTING (${server.attempt})"
+        is ServerConnection.OfflineDegraded -> "OFFLINE — RECONNECT AVAILABLE"
+        ServerConnection.Disconnected -> "DISCONNECTED"
+    }
+    val symbolic = "SYMBOLIC"
+    return when (mode) {
+        RuntimeMode.Remote -> "REMOTE  •  " +
+            (if (authenticated) "AUTHENTICATED" else "UNENROLLED") +
+            "  •  $transport  •  $symbolic"
+        RuntimeMode.Local -> "LOCAL  •  $symbolic  •  PRIVATE"
+        RuntimeMode.Auto -> if (server is ServerConnection.Connected) {
+            "REMOTE AVAILABLE  •  LOCAL $symbolic  •  PRIVATE"
+        } else {
+            "LOCAL $symbolic  •  REMOTE $transport  •  PRIVATE"
+        }
+    }
 }
 
 internal fun enrollmentLabel(readiness: EnrollmentReadiness): String = when (readiness) {

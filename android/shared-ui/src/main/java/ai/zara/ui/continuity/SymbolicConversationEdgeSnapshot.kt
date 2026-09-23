@@ -39,13 +39,19 @@ data class SymbolicConversationEdgeSnapshot(
         require(runtimeGeneration >= 0) { "runtimeGeneration must be >= 0" }
         require(projectGeneration >= 0) { "projectGeneration must be >= 0" }
         projectId?.let {
-            requireBoundedText(it, MAX_ID_CHARS, "projectId", allowBlank = false)
+            requireBoundedText(it, MAX_PROJECT_ID_CHARS, "projectId", allowBlank = false)
         }
         requireBoundedText(dialogueAct, MAX_ACT_CHARS, "dialogueAct", allowBlank = true)
         validateRefs(discourseEntityRefs, "discourseEntityRefs")
         validateRefs(unresolvedQuestionRefs, "unresolvedQuestionRefs")
         validateRefs(expertEvidenceRefs, "expertEvidenceRefs")
-        validateRefs(verifiedOutcomeRefs, "verifiedOutcomeRefs")
+        validateRefs(
+            verifiedOutcomeRefs,
+            "verifiedOutcomeRefs",
+            maxRefs = MAX_VERIFIED_OUTCOME_REFS,
+            maxChars = MAX_VERIFIED_OUTCOME_REF_CHARS,
+        )
+        validateVerifiedOutcomeRefs()
         requireBoundedText(
             rendererProvenance,
             MAX_RENDERER_CHARS,
@@ -74,19 +80,50 @@ data class SymbolicConversationEdgeSnapshot(
         check(rendererProvenance == ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER) {
             "pure-symbolic edge projection rendererProvenance must be $ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER: $rendererProvenance"
         }
-        check(dialogueAct != "verified" || verifiedOutcomeRefs.isNotEmpty()) {
-            "pure-symbolic verified edge projection requires verified outcome evidence"
+        check(
+            dialogueAct != "verified" ||
+                verifiedOutcomeRefs.any { reference ->
+                    VERIFIED_OUTCOME_V2_REF.matchEntire(reference)
+                        ?.groupValues
+                        ?.get(1)
+                        ?.toLongOrNull() == runtimeGeneration
+                }
+        ) {
+            "pure-symbolic verified edge projection requires fresh current-generation v2 outcome evidence"
         }
         check(dialogueAct != "expert_answer" || expertEvidenceRefs.isNotEmpty()) {
             "pure-symbolic expert_answer edge projection requires expert evidence"
         }
     }
 
-    private fun validateRefs(values: List<String>, label: String) {
-        require(values.size <= MAX_REFS) { "$label exceeds $MAX_REFS entries" }
+    private fun validateVerifiedOutcomeRefs() {
+        verifiedOutcomeRefs.forEach { reference ->
+            if (VERIFIED_OUTCOME_V1_REF.matches(reference)) return@forEach
+            val match = VERIFIED_OUTCOME_V2_REF.matchEntire(reference)
+                ?: throw IllegalArgumentException(
+                    "verifiedOutcomeRefs contains invalid canonical receipt: $reference",
+                )
+            val evidenceGeneration = match.groupValues[1].toLongOrNull()
+                ?: throw IllegalArgumentException(
+                    "verifiedOutcomeRefs contains invalid canonical receipt: $reference",
+                )
+            require(evidenceGeneration <= runtimeGeneration) {
+                "verifiedOutcomeRefs generation exceeds runtimeGeneration: " +
+                    "$evidenceGeneration > $runtimeGeneration"
+            }
+        }
+    }
+
+    private fun validateRefs(
+        values: List<String>,
+        label: String,
+        maxRefs: Int = MAX_REFS,
+        maxChars: Int = MAX_REF_CHARS,
+    ) {
+        require(values.size <= maxRefs) { "$label exceeds $maxRefs entries" }
         require(values.distinct().size == values.size) { "$label contains duplicate references" }
         values.forEach { value ->
-            requireBoundedText(value, MAX_REF_CHARS, label, allowBlank = false)
+            requireBoundedText(value, maxChars, label, allowBlank = false)
         }
     }
 
@@ -98,11 +135,22 @@ data class SymbolicConversationEdgeSnapshot(
 
     companion object {
         const val MAX_REFS = 16
+        const val MAX_VERIFIED_OUTCOME_REFS = 64
         internal const val MAX_ID_CHARS = 128
+        internal const val MAX_PROJECT_ID_CHARS = 512
         internal const val MAX_ACT_CHARS = 96
         internal const val MAX_REF_CHARS = 128
+        internal const val MAX_VERIFIED_OUTCOME_REF_CHARS = 448
         internal const val MAX_RENDERER_CHARS = 256
         internal const val ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER = "symbolic-dcg/v1"
+        private val VERIFIED_OUTCOME_V1_REF = Regex(
+            "^zara\\.verified-outcome/v1:(?:effect|outcome):" +
+                "[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$",
+        )
+        private val VERIFIED_OUTCOME_V2_REF = Regex(
+            "^zara\\.verified-outcome/v2:([1-9][0-9]*):(?:effect|outcome):" +
+                "[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$",
+        )
         internal val ZARA_SYMBOLIC_DIALOGUE_V1_ACTS = setOf(
             "greeting",
             "help",
@@ -144,17 +192,20 @@ object SymbolicConversationEdgeCodec {
             output.writeLong(snapshot.runtimeGeneration)
             output.writeNullableString(
                 snapshot.projectId,
-                SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
+                SymbolicConversationEdgeSnapshot.MAX_PROJECT_ID_CHARS,
             )
             output.writeLong(snapshot.projectGeneration)
             output.writeString(
                 snapshot.dialogueAct,
                 SymbolicConversationEdgeSnapshot.MAX_ACT_CHARS,
             )
-            output.writeRefs(snapshot.discourseEntityRefs)
-            output.writeRefs(snapshot.unresolvedQuestionRefs)
-            output.writeRefs(snapshot.expertEvidenceRefs)
-            output.writeRefs(snapshot.verifiedOutcomeRefs)
+            output.writeRefs(snapshot.discourseEntityRefs, SymbolicConversationEdgeSnapshot.MAX_REF_CHARS)
+            output.writeRefs(snapshot.unresolvedQuestionRefs, SymbolicConversationEdgeSnapshot.MAX_REF_CHARS)
+            output.writeRefs(snapshot.expertEvidenceRefs, SymbolicConversationEdgeSnapshot.MAX_REF_CHARS)
+            output.writeRefs(
+                snapshot.verifiedOutcomeRefs,
+                SymbolicConversationEdgeSnapshot.MAX_VERIFIED_OUTCOME_REF_CHARS,
+            )
             output.writeString(
                 snapshot.rendererProvenance,
                 SymbolicConversationEdgeSnapshot.MAX_RENDERER_CHARS,
@@ -185,13 +236,25 @@ object SymbolicConversationEdgeCodec {
                     conversationId = input.readString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
                     projectionGeneration = input.readLong(),
                     runtimeGeneration = input.readLong(),
-                    projectId = input.readNullableString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
+                    projectId = input.readNullableString(SymbolicConversationEdgeSnapshot.MAX_PROJECT_ID_CHARS),
                     projectGeneration = input.readLong(),
                     dialogueAct = input.readString(SymbolicConversationEdgeSnapshot.MAX_ACT_CHARS),
-                    discourseEntityRefs = input.readRefs(),
-                    unresolvedQuestionRefs = input.readRefs(),
-                    expertEvidenceRefs = input.readRefs(),
-                    verifiedOutcomeRefs = input.readRefs(),
+                    discourseEntityRefs = input.readRefs(
+                        SymbolicConversationEdgeSnapshot.MAX_REFS,
+                        SymbolicConversationEdgeSnapshot.MAX_REF_CHARS,
+                    ),
+                    unresolvedQuestionRefs = input.readRefs(
+                        SymbolicConversationEdgeSnapshot.MAX_REFS,
+                        SymbolicConversationEdgeSnapshot.MAX_REF_CHARS,
+                    ),
+                    expertEvidenceRefs = input.readRefs(
+                        SymbolicConversationEdgeSnapshot.MAX_REFS,
+                        SymbolicConversationEdgeSnapshot.MAX_REF_CHARS,
+                    ),
+                    verifiedOutcomeRefs = input.readRefs(
+                        SymbolicConversationEdgeSnapshot.MAX_VERIFIED_OUTCOME_REFS,
+                        SymbolicConversationEdgeSnapshot.MAX_VERIFIED_OUTCOME_REF_CHARS,
+                    ),
                     rendererProvenance = input.readString(SymbolicConversationEdgeSnapshot.MAX_RENDERER_CHARS),
                     providersEnabled = input.readBoolean(),
                     maxModelCalls = input.readLong(),
@@ -207,20 +270,20 @@ object SymbolicConversationEdgeCodec {
         }
     }
 
-    private fun DataOutputStream.writeRefs(values: List<String>) {
+    private fun DataOutputStream.writeRefs(values: List<String>, maxChars: Int) {
         writeInt(values.size)
         values.forEach { value ->
-            writeString(value, SymbolicConversationEdgeSnapshot.MAX_REF_CHARS)
+            writeString(value, maxChars)
         }
     }
 
-    private fun DataInputStream.readRefs(): List<String> {
+    private fun DataInputStream.readRefs(maxRefs: Int, maxChars: Int): List<String> {
         val count = readInt()
-        require(count in 0..SymbolicConversationEdgeSnapshot.MAX_REFS) {
+        require(count in 0..maxRefs) {
             "symbolic edge reference count is invalid"
         }
         return List(count) {
-            readString(SymbolicConversationEdgeSnapshot.MAX_REF_CHARS)
+            readString(maxChars)
         }
     }
 

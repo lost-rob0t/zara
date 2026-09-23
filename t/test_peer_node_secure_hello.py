@@ -173,6 +173,42 @@ def test_secure_hello_binds_node_to_authenticated_principal_and_session(
         gateway.close(timeout=1.0)
 
 
+def test_secure_hello_publishes_node_before_acknowledgement(
+    zmq_context,
+    transport_config,
+):
+    gateway, dealer, principal, enrolled, _registry = _start_peer(
+        zmq_context,
+        transport_config,
+    )
+    node_mapping = _node_mapping(enrolled)
+    expected = ZaraNode.from_mapping(node_mapping)
+    observed: list[ZaraNode | None] = []
+    original_send = gateway._send
+
+    def checked_send(socket, route, message, payloads=()):
+        if message.type == "hello.ok":
+            observed.append(
+                gateway.node_for_session(principal.principal_id, message.session_id)
+            )
+        return original_send(socket, route, message, payloads)
+
+    gateway._send = checked_send
+    try:
+        hello = _send_hello(
+            dealer,
+            {"versions": [1], "node": node_mapping},
+            "ordered-peer-hello",
+        )
+        assert hello.type == "hello.ok"
+        assert observed == [expected]
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+
+
 def test_secure_hello_publishes_node_binding_before_hello_ok(
     zmq_context,
     transport_config,
