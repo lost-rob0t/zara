@@ -37,7 +37,12 @@ from zara.security_transport import (
     configure_curve_server_socket,
 )
 from zara.server import PrincipalContext
-from zara.zmq_transport import TransportConfig, ZaraZmqGateway, apply_socket_options
+from zara.zmq_transport import (
+    TransportConfig,
+    ZaraZmqGateway,
+    _ApprovalOwner,
+    apply_socket_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +271,49 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         # route survives; this remains as a harmless fallback for old paths.
         self._release_runtime_quota(route, message)
         return super()._enqueue_outbound(route, message, payloads)
+
+    def _release_turn_events_after_accept(self, route: bytes, turn_id: str) -> None:
+        """Bind buffered approval events to the authenticated session before release."""
+
+        with self._lock:
+            state = self._routes.get(route)
+            if state is None or not state.ready:
+                return
+            key = (state.principal_id, turn_id)
+            if self._turn_routes.get(key) != route:
+                return
+            held = self._early_turn_events.get(key)
+            if held is None:
+                return super()._release_turn_events_after_accept(route, turn_id)
+
+            filtered = []
+            terminal_types = {
+                "tool.started",
+                "tool.completed",
+                "tool.failed",
+                "tool.cancelled",
+            }
+            for held_message, held_payloads in held:
+                body = held_message.body or {}
+                tool_run_id = body.get("tool_run_id")
+                if held_message.type == "tool.waiting" and isinstance(tool_run_id, str):
+                    owner_key = (state.principal_id, tool_run_id)
+                    if (
+                        owner_key not in self._approval_owners
+                        and len(self._approval_owners) >= self._config.pending_request_limit
+                    ):
+                        continue
+                    self._approval_owners[owner_key] = _ApprovalOwner(
+                        route=route,
+                        session_id=state.session_id,
+                    )
+                elif held_message.type in terminal_types and isinstance(tool_run_id, str):
+                    self._approval_owners.pop((state.principal_id, tool_run_id), None)
+                filtered.append((held_message, held_payloads))
+            held.clear()
+            held.extend(filtered)
+
+        super()._release_turn_events_after_accept(route, turn_id)
 
     def _run(self) -> None:
         authenticator = RegistryAuthenticator(
