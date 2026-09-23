@@ -9,10 +9,12 @@ from zara.plugins.predicate_authority import (
     PredicateVerdict,
 )
 from zara.plugins.predicate_authority_owner import (
-    PredicateAuthorityProcess,
-    PredicateAuthorityScope,
     PredicateExecutionOutcome,
     RegisteredPredicateBinding,
+)
+from zara.plugins.scoped_predicate_authority import (
+    PredicateAuthorityScope,
+    ScopedPredicateAuthorityProcess,
 )
 
 
@@ -54,7 +56,7 @@ def _request(*, request_id: str, generation: int = 11, sleep_ms: int = 0):
 
 
 def _owner(*, principal: str, workspace: str, activation_id: str, namespace: str):
-    return PredicateAuthorityProcess.start(
+    return ScopedPredicateAuthorityProcess.start(
         scope=PredicateAuthorityScope(
             principal=principal,
             workspace=workspace,
