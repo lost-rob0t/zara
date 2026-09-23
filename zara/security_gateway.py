@@ -15,6 +15,7 @@ from typing import Optional
 import zmq
 
 from zara.node import NodeAuthorityError, ZaraNode, verify_authenticated_node
+from zara.peer_gateway import PeerCallGatewayMixin
 from zara.protocol import ProtocolMessage
 from zara.security import (
     AuthorizationDenied,
@@ -74,7 +75,7 @@ def _security_error(
     )
 
 
-class SecureZaraZmqGateway(ZaraZmqGateway):
+class SecureZaraZmqGateway(PeerCallGatewayMixin, ZaraZmqGateway):
     """ROUTER gateway with mandatory CURVE/ZAP identity and live policy checks."""
 
     def __init__(
@@ -90,6 +91,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         config: Optional[TransportConfig] = None,
         limits=None,
         voice_ingress=None,
+        local_node_id: Optional[str] = None,
+        runtime_id: str = "zara-runtime",
     ) -> None:
         if not isinstance(security_registry, SecurityRegistry):
             raise TypeError("security_registry must be SecurityRegistry")
@@ -119,6 +122,11 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._runtime_quota_holds: set[tuple[str, str]] = set()
         self._hello_route_resets: set[bytes] = set()
         self._principal_subscriptions = {}
+        self._init_peer_gateway(
+            curve_public_key=curve_server.public_key,
+            local_node_id=local_node_id,
+            runtime_id=runtime_id,
+        )
 
     @staticmethod
     def _capability_for(message_type: str) -> Capability:
@@ -136,12 +144,14 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             return Capability.RUNTIME_STATUS
         if message_type in {
             "turn.submit",
+            "node.ask",
+            "node.delegate",
             "audio.input.start",
             "audio.input.chunk",
             "audio.input.commit",
         }:
             return Capability.TURN_SUBMIT
-        if message_type in {"turn.cancel", "audio.input.cancel"}:
+        if message_type in {"turn.cancel", "node.cancel", "audio.input.cancel"}:
             return Capability.TURN_CANCEL
         if message_type in {"tool.approve", "tool.reject"}:
             return Capability.TOOL_APPROVE
@@ -275,6 +285,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             poller = zmq.Poller()
             poller.register(socket, zmq.POLLIN)
             while not self._stop.is_set():
+                self._expire_peer_calls()
                 for principal_id, subscription in tuple(self._principal_subscriptions.items()):
                     self._drain_runtime_subscription(
                         socket,
@@ -294,6 +305,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             for principal_id, _request_id in tuple(self._runtime_quota_holds):
                 self._quotas.release_request(principal_id)
             self._runtime_quota_holds.clear()
+            self._clear_peer_gateway()
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
             self._route_nodes.clear()
@@ -315,6 +327,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             if principal_id is not None:
                 self._quotas.release_connection(principal_id)
         state = super()._drop_route_locked(route)
+        if state is not None and principal_id is not None:
+            self._drop_peer_session(principal_id, state.session_id)
         if (
             not resetting
             and principal_id is not None
@@ -606,7 +620,15 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         replay_key = (principal_id, message.id)
         with self._lock:
             runtime_pending = (
-                message.type in {"turn.submit", "turn.cancel", "tool.approve", "tool.reject"}
+                message.type in {
+                    "turn.submit",
+                    "turn.cancel",
+                    "tool.approve",
+                    "tool.reject",
+                    "node.ask",
+                    "node.delegate",
+                    "node.cancel",
+                }
                 and replay_key in self._inflight
             )
             if runtime_pending:
