@@ -80,3 +80,17 @@ def test_llm_serve_ipc_does_not_export_canonical_model_store_paths():
     assert 'KEY_PATH = "path"' not in protocol
     assert "putString(KEY_PATH, spec.path)" not in protocol
     assert "requireString(bundle, KEY_PATH)" not in protocol
+
+
+def test_llm_serve_signature_boundary_has_installed_adversary_acceptance():
+    build = (ROOT / "android/llm-serve/build.gradle.kts").read_text()
+    gate = (ROOT / "scripts/test-android.sh").read_text()
+    emulator_gate = (ROOT / "scripts/test-android-emulator-install.sh").read_text()
+
+    assert "ZARA_ANDROID_ADVERSARY_KEYSTORE" in build
+    assert 'applicationIdSuffix = ".adversary"' in build
+    assert ":llm-serve:assembleAdversary" in gate
+    assert "llm-serve-adversary.apk" in gate
+    assert "apksigner verify --print-certs" in gate
+    assert "device_local_ai_ipc_acceptance.py" in emulator_gate
+    assert "llm-serve-adversary.apk" in emulator_gate
