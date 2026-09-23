@@ -186,7 +186,12 @@ def assert_typed_error_card(device: Device, expected_code: str) -> None:
     device.capture("recovery-typed-error-card")
 
 
-def assert_diagnostics_names_primary_failure(device: Device, expected_code: str, expected_subsystem: str) -> None:
+def assert_diagnostics_names_primary_failure(
+    device: Device,
+    expected_code: str,
+    expected_subsystem: str,
+    evidence_state: str,
+) -> None:
     open_menu(device, "Settings")
     device.press_back()
     device.reveal("Runtime & local AI")
@@ -197,7 +202,7 @@ def assert_diagnostics_names_primary_failure(device: Device, expected_code: str,
     device.await_contains(f"primary_failure.subsystem={expected_subsystem}", timeout=10.0)
     device.await_contains("primary_failure.operation=", timeout=10.0)
     device.await_contains("primary_failure.last_success=", timeout=10.0)
-    device.capture("recovery-diagnostics-v2")
+    device.capture(evidence_state)
 
 
 def assert_footer_truth(device: Device, fragment: str) -> None:
@@ -221,7 +226,12 @@ def exercise_recovery(device: Device, fixture: dict[str, str]) -> dict[str, obje
     send_chat_turn(device, "trigger malformed", "Remote protocol failed")
     assert_typed_error_card(device, "protocol.malformed")
     evidence["malformed_typed_error"] = True
-    assert_diagnostics_names_primary_failure(device, "protocol.malformed", "protocol")
+    assert_diagnostics_names_primary_failure(
+        device,
+        "protocol.malformed",
+        "protocol",
+        "recovery-malformed-diagnostics-v2",
+    )
     evidence["diagnostics_v2_primary_failure"] = True
 
     send_chat_turn(device, "after malformed recovery", "stock server response")
@@ -232,7 +242,12 @@ def exercise_recovery(device: Device, fixture: dict[str, str]) -> dict[str, obje
     open_chat_and_submit(device, "trigger close")
     time.sleep(9.0)
     assert_footer_truth(device, "REMOTE")
-    assert_diagnostics_names_primary_failure(device, "transport.timeout", "transport")
+    assert_diagnostics_names_primary_failure(
+        device,
+        "transport.timeout",
+        "transport",
+        "recovery-close-diagnostics-v2",
+    )
     evidence["close_typed_error"] = True
 
     send_chat_turn(device, "after close recovery", "stock server response")
