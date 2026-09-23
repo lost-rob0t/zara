@@ -52,6 +52,34 @@ _REQUEST_FIELDS = frozenset(
         "expected_enrollment_generation",
     }
 )
+_CANCEL_FIELDS = frozenset(
+    {"call_id", "turn_id", "expected_enrollment_generation", "reason"}
+)
+_RESULT_FIELDS = frozenset(
+    {
+        "request_id",
+        "status",
+        "source_node_id",
+        "runtime_id",
+        "runtime_generation",
+        "text",
+        "trace_id",
+    }
+)
+_ERROR_FIELDS = frozenset(
+    {
+        "request_id",
+        "status",
+        "code",
+        "message",
+        "retryable",
+        "source_node_id",
+        "runtime_id",
+        "runtime_generation",
+        "trace_id",
+    }
+)
+
 _BUDGET_FIELDS = frozenset(
     {
         "wall_time_ms",
@@ -79,6 +107,18 @@ _REMOTE_ERROR_CODES = frozenset(
 
 class PeerCallAdmissionError(ValueError):
     """A peer call cannot cross the authenticated runtime boundary."""
+
+
+class PeerCallRemoteError(RuntimeError):
+    """Typed safe peer-call failure projected from a remote node."""
+
+    def __init__(self, error: "PeerRemoteError") -> None:
+        if not isinstance(error, PeerRemoteError):
+            raise TypeError("error must be PeerRemoteError")
+        super().__init__(f"{error.code}: {error.message}")
+        self.error = error
+        self.code = error.code
+        self.retryable = error.retryable
 
 
 def _exact_int(name: str, value: Any, minimum: int, maximum: int) -> int:
@@ -422,6 +462,42 @@ class PeerCancelRequest:
         )
         _bounded_text("reason", self.reason, max_bytes=PEER_MAX_ERROR_BYTES)
 
+    @classmethod
+    def from_wire(
+        cls,
+        request_id: str,
+        body: Mapping[str, Any],
+    ) -> "PeerCancelRequest":
+        if not isinstance(body, Mapping):
+            raise PeerCallAdmissionError("peer cancel body must be an object")
+        if set(body) & _AUTHORITY_FIELDS:
+            raise PeerCallAdmissionError(
+                "peer authority is session-derived and cannot be payload-selected"
+            )
+        if set(body) - _CANCEL_FIELDS:
+            raise PeerCallAdmissionError("peer cancel body contains unknown fields")
+        missing = {"call_id", "turn_id", "expected_enrollment_generation"} - set(body)
+        if missing:
+            raise PeerCallAdmissionError("peer cancel body is missing required fields")
+        try:
+            return cls(
+                request_id=request_id,
+                call_id=body["call_id"],
+                turn_id=body["turn_id"],
+                expected_enrollment_generation=body["expected_enrollment_generation"],
+                reason=body.get("reason", "cancelled"),
+            )
+        except (TypeError, ValueError) as error:
+            raise PeerCallAdmissionError(str(error)) from error
+
+    def to_wire_body(self) -> dict[str, Any]:
+        return {
+            "call_id": self.call_id,
+            "turn_id": self.turn_id,
+            "expected_enrollment_generation": self.expected_enrollment_generation,
+            "reason": self.reason,
+        }
+
     def to_runtime_command(self, *, authority: PeerAuthority) -> CancelTurn:
         if Capability.TURN_CANCEL not in authority.capabilities:
             raise PeerCallAdmissionError("authenticated peer lacks turn cancel capability")
@@ -449,6 +525,20 @@ class PeerResult:
         _exact_int("runtime_generation", self.runtime_generation, 0, 2**63 - 1)
         _bounded_text("text", self.text, max_bytes=PEER_MAX_OUTPUT_BYTES, nonempty=False)
         _token("trace_id", self.trace_id)
+
+    @classmethod
+    def from_wire(cls, body: Mapping[str, Any]) -> "PeerResult":
+        if not isinstance(body, Mapping) or set(body) != _RESULT_FIELDS:
+            raise ValueError("peer result body has invalid fields")
+        return cls(
+            request_id=body["request_id"],
+            status=body["status"],
+            source_node_id=body["source_node_id"],
+            runtime_id=body["runtime_id"],
+            runtime_generation=body["runtime_generation"],
+            text=body["text"],
+            trace_id=body["trace_id"],
+        )
 
     @classmethod
     def completed(
@@ -504,6 +594,23 @@ class PeerRemoteError:
         _exact_int("runtime_generation", self.runtime_generation, 0, 2**63 - 1)
         _token("trace_id", self.trace_id)
 
+    @classmethod
+    def from_wire(cls, body: Mapping[str, Any]) -> "PeerRemoteError":
+        if not isinstance(body, Mapping) or set(body) != _ERROR_FIELDS:
+            raise ValueError("peer error body has invalid fields")
+        if body.get("status") != "failed":
+            raise ValueError("peer error status must be failed")
+        return cls(
+            request_id=body["request_id"],
+            code=body["code"],
+            message=body["message"],
+            retryable=body["retryable"],
+            source_node_id=body["source_node_id"],
+            runtime_id=body["runtime_id"],
+            runtime_generation=body["runtime_generation"],
+            trace_id=body["trace_id"],
+        )
+
     def to_wire_body(self) -> dict[str, Any]:
         return {
             "request_id": self.request_id,
@@ -516,6 +623,30 @@ class PeerRemoteError:
             "runtime_generation": self.runtime_generation,
             "trace_id": self.trace_id,
         }
+
+
+def require_live_runtime_budget(request: PeerCallRequest) -> None:
+    """Fail closed for budget dimensions RuntimeHost cannot yet enforce per turn.
+
+    Wall time/deadline and output bytes are enforced by the peer gateway.  The
+    current canonical SubmitTurn seam has no request-scoped token/tool/model or
+    cost meter, so accepting non-zero limits would falsely claim enforcement.
+    """
+
+    if not isinstance(request, PeerCallRequest):
+        raise TypeError("request must be PeerCallRequest")
+    budget = request.budget
+    unsupported = (
+        budget.max_tokens,
+        budget.max_cost_microunits,
+        budget.max_tool_calls,
+        budget.max_model_calls,
+        budget.max_recursion_depth,
+    )
+    if any(unsupported):
+        raise PeerCallAdmissionError(
+            "peer runtime budget requests an unsupported metered dimension"
+        )
 
 
 def project_remote_error(
@@ -557,6 +688,7 @@ __all__ = [
     "PEER_RUNTIME_PROTOCOL",
     "PeerAuthority",
     "PeerCallAdmissionError",
+    "PeerCallRemoteError",
     "PeerCallBudget",
     "PeerCallRequest",
     "PeerCancelRequest",
@@ -564,4 +696,5 @@ __all__ = [
     "PeerResult",
     "admit_peer_call",
     "project_remote_error",
+    "require_live_runtime_budget",
 ]
