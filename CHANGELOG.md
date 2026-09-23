@@ -4,7 +4,6 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
-- Immutable versioned release verification now remains explicit-tag-only, consumes exact successful `master` CI evidence for the tagged source SHA, exercises the exact release APK before publication, and fails closed instead of rewriting an existing release page.
 - Fixed a ZARA/1 wire-ordering race where runtime events for fast symbolically-resolved turns could overtake the `turn.accepted` reply, making every Android/Desktop remote turn fail with `protocol.unexpected_message` (expected turn.accepted). Turn events are now held per-route and flushed after the accepted reply, in order.
 
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
@@ -99,7 +98,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Changed
 
 - The active release line is `0.2.2-alpha`; immutable publication remains gated on exact-head CI, signing, provenance, and version promotion.
-- A validated `version.properties` promotion on `master` can publish the matching immutable alpha release, and an existing tag is accepted only when its source SHA and release manifest match the promoted build exactly.
+- Immutable publication requires an explicit matching `v0.2.2-alpha` tag at an exact approved `master` source SHA; ordinary `master` pushes cannot mint the immutable release, and an existing release fails closed instead of being rewritten.
 - Mutable `android-latest` remains a rolling test channel and is not treated as an immutable semantic release.
 
 ## 0.1.2-alpha
