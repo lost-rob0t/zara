@@ -38,6 +38,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -321,7 +324,7 @@ private fun PluginInstallSettings() {
 }
 
 @Composable
-private fun PluginPickerAction(enabled: Boolean, onClick: () -> Unit) {
+private fun PluginPickerAction(enabled: Boolean, onActivate: () -> Unit) {
     val tokens = LocalZaraTokens.current
     Surface(
         color = if (enabled) tokens.primary else tokens.surface,
@@ -333,10 +336,19 @@ private fun PluginPickerAction(enabled: Boolean, onClick: () -> Unit) {
                 .clickable(
                     enabled = enabled,
                     role = Role.Button,
-                    onClick = onClick,
+                    onClick = onActivate,
                 )
                 .semantics(mergeDescendants = true) {
                     contentDescription = "Choose APK"
+                    role = Role.Button
+                    if (enabled) {
+                        onClick(label = "Choose APK") {
+                            onActivate()
+                            true
+                        }
+                    } else {
+                        disabled()
+                    }
                 }
                 .padding(horizontal = 24.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.Center,
