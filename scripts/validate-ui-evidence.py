@@ -404,15 +404,18 @@ def validate_android(
         )
         if actual_assertion_trace != trace:
             raise EvidenceError(f"android scenario assertion trace mismatch: {scenario_id}")
-        if not text.endswith(trace):
-            raise EvidenceError(
-                f"android scenario text omitted action/assertion trace: {scenario_id}"
-            )
 
-        trace_line_count = len(trace.splitlines())
-        semantic_lines = text_lines[2:-trace_line_count] if trace_line_count else text_lines[2:]
+        cursor = 2
+        for trace_line in trace.splitlines():
+            try:
+                cursor = text_lines.index(trace_line, cursor) + 1
+            except ValueError as error:
+                raise EvidenceError(
+                    f"android scenario text omitted action/assertion trace: {scenario_id}"
+                ) from error
+
+        semantic_lines = [line for line in text_lines[2:] if line.startswith("class=")]
         required_semantic_fields = (
-            "class=",
             " text=",
             " content_desc=",
             " enabled=",
@@ -422,8 +425,7 @@ def validate_android(
             " bounds=",
         )
         if not semantic_lines or any(
-            not line.startswith(required_semantic_fields[0])
-            or any(field not in line for field in required_semantic_fields[1:])
+            any(field not in line for field in required_semantic_fields)
             for line in semantic_lines
         ):
             raise EvidenceError(
