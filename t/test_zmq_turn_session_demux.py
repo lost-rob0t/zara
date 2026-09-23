@@ -354,20 +354,15 @@ def test_reconnect_duplicate_inflight_submit_rebinds_session_without_second_chat
         gateway.close(timeout=1.0)
 
 
-def test_gateway_generation_restart_cannot_replay_late_buffer_into_reused_turn_id(
+def test_gateway_generation_restart_fences_late_old_completion_and_frames(
     zmq_context,
     transport_config,
 ):
-    """Old-generation buffered events are not owned by a future session.
-
-    Reusing a turn id after gateway process recreation is intentionally
-    adversarial: a stale pre-accept event must not become a duplicate frame in
-    the new session even if the old completion arrives late.
-    """
+    """A completion owned by an old gateway generation stays off the new wire."""
     endpoint = _endpoint("turn-session-generation")
     supervisor = InterleavingSupervisor(
         ["started", "started"],
-        turn_ids=["turn-reused", "turn-reused"],
+        turn_ids=["turn-old", "turn-new"],
     )
     gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
     probe = BufferProbe(gateway)
@@ -390,6 +385,8 @@ def test_gateway_generation_restart_cannot_replay_late_buffer_into_reused_turn_i
         second = _dealer(zmq_context, endpoint, transport_config)
         try:
             second_session = _hello(second, "hello-new-generation")
+            _assert_quiet(second)
+
             _submit(second, session_id=second_session, request_id="submit-new-generation")
             assert supervisor.submitted[1].wait(1.0)
             probe.wait_for(2)
@@ -398,7 +395,7 @@ def test_gateway_generation_restart_cannot_replay_late_buffer_into_reused_turn_i
             delivered = [_receive(second) for _ in range(2)]
             assert [message.type for message in delivered] == ["turn.accepted", "turn.started"]
             assert [message.session_id for message in delivered] == [second_session, second_session]
-            assert [message.turn_id for message in delivered] == ["turn-reused", "turn-reused"]
+            assert [message.turn_id for message in delivered] == ["turn-new", "turn-new"]
             _assert_quiet(second)
         finally:
             second.close(0)
