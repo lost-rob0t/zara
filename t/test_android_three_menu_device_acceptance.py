@@ -30,7 +30,8 @@ def test_acceptance_captures_each_settings_tab_and_two_theme_states():
         "About",
     ):
         assert f'"{tab}"' in text
-    assert 'device.capture(f"settings-{tab.lower()}")' in text
+    assert 'f"settings-{tab.lower()}",' in text
+    assert 'required_actions=("Choose APK",) if tab == "Plugins" else (),' in text
     assert '"theme-outrun"' in text
     assert '"theme-light"' in text
 
