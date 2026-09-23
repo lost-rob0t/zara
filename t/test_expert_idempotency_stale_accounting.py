@@ -136,8 +136,14 @@ def _bump_generation(registry: ExpertRegistry) -> None:
             "description": "Generation bump fixture.",
             "source_reference": "t/test_expert_idempotency_stale_accounting.py",
             "reasoning_kind": "symbolic",
-            "operations": [],
-            "applicability": {},
+            "operations": [
+                {
+                    "operation_id": "noop.inspect",
+                    "input_schema": {"fields": []},
+                    "output_schema": {"fields": []},
+                }
+            ],
+            "applicability": {"keywords": ["peer"]},
             "required_capabilities": [],
             "possible_effects": ["none"],
             "supported_engines": [],
@@ -148,7 +154,16 @@ def _bump_generation(registry: ExpertRegistry) -> None:
             "availability": "ready",
         }
     )
-    registry.register(peer, lambda **_payload: {})
+    registry.register(
+        peer,
+        lambda **_payload: {
+            "verdict": "succeeded",
+            "data": {},
+            "evidence_refs": [],
+            "usage": {"model_calls": 0},
+            "effect_receipts": [],
+        },
+    )
 
 
 def _restart_with_drift(
