@@ -3,6 +3,8 @@ import java.util.Properties
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
@@ -54,6 +56,7 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
         val intentFrames = checkNotNull(sources["intent_frames.pl"]) { "intent_frames.pl input is required" }
         val normalizer = checkNotNull(sources["normalizer.pl"]) { "normalizer.pl input is required" }
         val intents = checkNotNull(sources["intents.pl"]) { "intents.pl input is required" }
+        val changelog = checkNotNull(sources["CHANGELOG.md"]) { "CHANGELOG.md input is required" }
         val output = outputDirectory.get().asFile
         output.deleteRecursively()
         project.copy {
@@ -67,6 +70,29 @@ abstract class GeneratePortableSemanticAssets : DefaultTask() {
             from(intents) {
                 into("prolog/shared/kb")
             }
+            from(changelog)
+        }
+    }
+}
+
+abstract class GeneratePortableConversationSchema : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun generate() {
+        val source = sourceFile.get().asFile
+        require(source.isFile) { "canonical conversation_schema.sql is required" }
+        val output = outputDirectory.get().asFile
+        output.deleteRecursively()
+        project.copy {
+            from(source)
+            into(output.resolve("database"))
+            rename { "conversation_schema.sql" }
         }
     }
 }
@@ -180,7 +206,8 @@ androidComponents {
             sourceFiles.from(
                 layout.projectDirectory.file("../../modules/intent_frames.pl"),
                 layout.projectDirectory.file("../../modules/normalizer.pl"),
-                layout.projectDirectory.file("../../kb/intents.pl")
+                layout.projectDirectory.file("../../kb/intents.pl"),
+                layout.projectDirectory.file("../../CHANGELOG.md")
             )
             outputDirectory.convention(
                 layout.buildDirectory.dir("generated/portableSemanticAssets/${variant.name}")
@@ -189,6 +216,18 @@ androidComponents {
         variant.sources.assets?.addGeneratedSourceDirectory(
             generateAssets,
             GeneratePortableSemanticAssets::outputDirectory
+        )
+
+        val schemaTaskName = "generate${variant.name.replaceFirstChar(Char::uppercaseChar)}PortableConversationSchema"
+        val generateSchema = tasks.register<GeneratePortableConversationSchema>(schemaTaskName) {
+            sourceFile.set(layout.projectDirectory.file("../../zara/conversation_schema.sql"))
+            outputDirectory.convention(
+                layout.buildDirectory.dir("generated/portableConversationSchema/${variant.name}")
+            )
+        }
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            generateSchema,
+            GeneratePortableConversationSchema::outputDirectory
         )
     }
 }
@@ -202,6 +241,7 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.jeromq)
     implementation(libs.play.services.wearable)
+    implementation(libs.play.services.code.scanner)
     implementation(libs.libadb.android)
     implementation(libs.conscrypt.android)
     implementation(libs.bcpkix)
@@ -212,4 +252,5 @@ dependencies {
         implementation(samsungHealthAars)
     }
     testImplementation(libs.junit)
+    testImplementation(libs.org.json)
 }

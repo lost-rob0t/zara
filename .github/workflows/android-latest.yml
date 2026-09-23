@@ -1,92 +1,195 @@
 name: Android latest
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
+  push:
+    branches:
+      - master
+  workflow_dispatch:
 
 permissions:
-  actions: read
   contents: write
 
 jobs:
-  publish-android-latest:
-    name: publish direct latest Android APKs
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'master'
+  build-android-latest:
+    name: build exact master Android APKs
+    if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
 
     steps:
-      - name: Check out exact green master SHA
+      - name: Check out exact master SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Download exact-SHA phone APK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: zara-android-debug-${{ github.event.workflow_run.head_sha }}
-          path: dist/phone
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-
-      - name: Download exact-SHA Wear APK artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: zara-wear-debug-${{ github.event.workflow_run.head_sha }}
-          path: dist/wear
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ github.token }}
-
-      - name: Prepare rolling direct-download assets
+      - name: Verify exact source checkout
+        shell: bash
         env:
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$SOURCE_SHA" || {
+            echo "checkout/source mismatch: expected=$SOURCE_SHA actual=$actual" >&2
+            exit 1
+          }
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Resolve strict version context
+        id: version
+        shell: bash
+        run: python scripts/version-context.py --format github-output >> "$GITHUB_OUTPUT"
+
+      - name: Load update-compatible Android signing key
+        shell: bash
+        env:
+          ZARA_ANDROID_DEBUG_KEYSTORE_B64: ${{ secrets.ZARA_ANDROID_DEBUG_KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ZARA_ANDROID_DEBUG_KEYSTORE_B64" ]]; then
+            echo "Zara Android signing secret is unavailable." >&2
+            exit 1
+          fi
+          keystore="$RUNNER_TEMP/zara-android-debug.keystore"
+          printf '%s' "$ZARA_ANDROID_DEBUG_KEYSTORE_B64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+
+      - name: Build and test phone + Wear APKs
+        run: nix develop ./android -c bash scripts/test-android.sh
+
+      - name: Verify update-compatible APK signing certificates
         shell: bash
         run: |
           set -euo pipefail
+          phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          code_editor_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
+          wear_apk="android/wear-app/build/outputs/apk/debug/wear-app-debug.apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$phone_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$code_editor_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$wear_apk"
+
+      - name: Prepare exact-master rolling payload
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          code_editor_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
+          wear_apk="android/wear-app/build/outputs/apk/debug/wear-app-debug.apk"
+          test -f "$phone_apk"
+          test -f "$code_editor_apk"
+          test -f "$wear_apk"
+
           mkdir -p dist/latest
-
-          phone_apk="$(find dist/phone -type f -name 'zara-android-debug-*.apk' -print -quit)"
-          wear_apk="$(find dist/wear -type f -name 'wear-app-debug.apk' -print -quit)"
-          test -n "$phone_apk"
-          test -n "$wear_apk"
-
           cp "$phone_apk" dist/latest/zara-latest.apk
+          cp "$code_editor_apk" dist/latest/zara-code-editor-latest.apk
           cp "$wear_apk" dist/latest/zara-wear-latest.apk
           sha256sum dist/latest/zara-latest.apk > dist/latest/zara-latest.apk.sha256
+          sha256sum dist/latest/zara-code-editor-latest.apk > dist/latest/zara-code-editor-latest.apk.sha256
           sha256sum dist/latest/zara-wear-latest.apk > dist/latest/zara-wear-latest.apk.sha256
 
           phone_sha="$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')"
+          code_editor_sha="$(sha256sum dist/latest/zara-code-editor-latest.apk | awk '{print $1}')"
           wear_sha="$(sha256sum dist/latest/zara-wear-latest.apk | awk '{print $1}')"
           {
             echo "schema=1"
             echo "channel=android-latest"
             echo "mutable=true"
             echo "source_sha=${SOURCE_SHA}"
+            echo "version_name=${VERSION}"
+            echo "version_code=${VERSION_CODE}"
             echo "phone_apk=zara-latest.apk"
             echo "phone_sha256=${phone_sha}"
+            echo "code_editor_apk=zara-code-editor-latest.apk"
+            echo "code_editor_sha256=${code_editor_sha}"
             echo "wear_apk=zara-wear-latest.apk"
             echo "wear_sha256=${wear_sha}"
           } > dist/latest/zara-latest.manifest.txt
 
+      - name: Preserve this master SHA's APK payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-master-${{ github.sha }}
+          path: dist/latest/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-android-latest:
+    name: roll android-latest forward
+    needs: build-android-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: android-latest-publish
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out exact master SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download exact-master rolling payload
+        uses: actions/download-artifact@v4
+        with:
+          name: android-master-${{ github.sha }}
+          path: dist/latest
+
+      - name: Verify rolling payload provenance
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -qx "schema=1" dist/latest/zara-latest.manifest.txt
+          grep -qx "channel=android-latest" dist/latest/zara-latest.manifest.txt
+          grep -qx "mutable=true" dist/latest/zara-latest.manifest.txt
+          grep -qx "source_sha=${SOURCE_SHA}" dist/latest/zara-latest.manifest.txt
+          phone_sha="$(sed -n 's/^phone_sha256=//p' dist/latest/zara-latest.manifest.txt)"
+          code_editor_sha="$(sed -n 's/^code_editor_sha256=//p' dist/latest/zara-latest.manifest.txt)"
+          wear_sha="$(sed -n 's/^wear_sha256=//p' dist/latest/zara-latest.manifest.txt)"
+          test "$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')" = "$phone_sha"
+          test "$(sha256sum dist/latest/zara-code-editor-latest.apk | awk '{print $1}')" = "$code_editor_sha"
+          test "$(sha256sum dist/latest/zara-wear-latest.apk | awk '{print $1}')" = "$wear_sha"
+
       - name: Publish rolling android-latest release
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_SHA: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
 
+          git fetch origin master --tags --force
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/master; then
+            echo "Refusing to publish a source outside master." >&2
+            exit 1
+          fi
+
+          previous="$(git rev-parse -q --verify 'refs/tags/android-latest^{commit}' || true)"
+          if [[ -n "$previous" && "$previous" != "$SOURCE_SHA" ]]; then
+            if git merge-base --is-ancestor "$SOURCE_SHA" "$previous"; then
+              echo "android-latest already points at a newer master build; keeping it there."
+              exit 0
+            fi
+            if ! git merge-base --is-ancestor "$previous" "$SOURCE_SHA"; then
+              echo "Refusing divergent android-latest history." >&2
+              exit 1
+            fi
+          fi
+
           git tag -f android-latest "$SOURCE_SHA"
           git push --force origin refs/tags/android-latest
 
-          notes="Rolling convenience build from the latest fully green master commit. This channel is intentionally mutable; use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
+          notes="Rolling convenience build from master commit ${SOURCE_SHA}. Every master push starts a fresh signed Android/Code Editor/Wear build; this mutable channel advances after that exact build passes its Android/Wear/Code gate. Use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
 
           if gh release view android-latest >/dev/null 2>&1; then
             gh release upload android-latest dist/latest/* --clobber

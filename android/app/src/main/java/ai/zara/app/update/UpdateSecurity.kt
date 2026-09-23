@@ -4,12 +4,27 @@ import java.io.File
 import java.net.URI
 import java.security.MessageDigest
 
+enum class UpdateChannel(val label: String) {
+    Master("Master (fastest green)"),
+    Versioned("Versioned release"),
+}
+
 data class UpdateRelease(
     val version: String,
     val sourceSha: String,
     val apkUrl: String,
     val sha256: String,
-)
+    val channel: UpdateChannel = UpdateChannel.Versioned,
+) {
+    val selectionId: String
+        get() = "${channel.name.lowercase()}:$sourceSha"
+
+    val displayName: String
+        get() = when (channel) {
+            UpdateChannel.Master -> "Master (fastest green) · ${sourceSha.take(12)}"
+            UpdateChannel.Versioned -> "v$version"
+        }
+}
 
 object UpdateSecurity {
     private val sha = Regex("[0-9a-f]{40}")
@@ -22,7 +37,12 @@ object UpdateSecurity {
     )
 
     fun validate(release: UpdateRelease): Result<UpdateRelease> = runCatching {
-        require(isVersion(release.version)) { "Release version is invalid" }
+        when (release.channel) {
+            UpdateChannel.Master ->
+                require(release.version == "master") { "Rolling master version marker is invalid" }
+            UpdateChannel.Versioned ->
+                require(isVersion(release.version)) { "Release version is invalid" }
+        }
         require(release.sourceSha.matches(sha)) { "Release source SHA is invalid" }
         require(release.sha256.matches(digest)) { "Release checksum is invalid" }
         requireTrustedTransport(release.apkUrl)
@@ -56,6 +76,15 @@ object UpdateSecurity {
         if (next.prerelease == null) return true
         if (installed.prerelease == null) return false
         return comparePrerelease(next.prerelease, installed.prerelease) > 0
+    }
+
+    fun isInstallCandidate(
+        release: UpdateRelease,
+        currentVersion: String,
+        currentSourceSha: String,
+    ): Boolean = when (release.channel) {
+        UpdateChannel.Master -> release.sourceSha != currentSourceSha
+        UpdateChannel.Versioned -> isNewer(release.version, currentVersion)
     }
 
     fun verifySha256(file: File, expected: String): Boolean {

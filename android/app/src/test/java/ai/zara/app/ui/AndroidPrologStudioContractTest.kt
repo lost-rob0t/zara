@@ -25,11 +25,19 @@ class AndroidPrologStudioContractTest {
     fun disconnectedChatUsesLocalServerAndRuntimeChoiceIsPersistent() {
         val session = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
         val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val submit = session.substringAfter("fun submitText(")
+            .substringBefore("private fun submitLocalText")
 
         assertTrue(session.contains("LocalZaraServer("))
-        assertTrue(session.contains("RuntimeMode.Local -> return submitLocalText"))
-        assertTrue(session.contains("RuntimeMode.Auto -> if (!remoteConnected) return submitLocalText"))
-        assertTrue(session.contains("RuntimeMode.Remote -> if (!remoteConnected)"))
+        assertTrue(submit.contains("RuntimeMode.Local -> return submitLocalText(text, localConversationId)"))
+        assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoRemoteFirst("))
+        assertTrue(submit.contains("localConversationId = localConversationId"))
+        assertTrue(submit.contains("remoteConversationId = remoteConversationId"))
+        assertTrue(session.contains("private fun submitAutoRemoteFirst("))
+        assertTrue(submit.contains("RuntimeMode.Remote ->"))
+        assertTrue(submit.contains("RemoteUnavailableException"))
+        val failure = File("src/main/java/ai/zara/app/telemetry/ZaraFailure.kt").readText()
+        assertTrue(failure.contains("Remote mode requires an authenticated Zara server"))
         assertTrue(activity.contains("RuntimeModePreferenceStore"))
     }
 

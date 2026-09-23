@@ -1,0 +1,213 @@
+#+title: Remote protocol slice #1299-#1303 — design
+#+property: RAGE_START 36e6d48fa750f30b5493f0c2acc789f3e9300e97
+
+* Problem boundary
+
+Make the Android remote session survive real voice use, make every disconnect
+typed/deterministic/explainable, and make UI + diagnostics tell the truth.
+Non-goals: changing the ZARA/1 wire format, changing providers/models, new
+external deps, Prolog-RLM, desktop client rewrites.
+
+* Architecture
+
+** 1. Typed failure taxonomy (new =ai.zara.app.telemetry.ZaraFailures=)
+
+Closed code set (stable strings, issue #1301):
+=transport.dns | transport.connect | transport.timeout | transport.closed |
+protocol.version_mismatch | protocol.malformed | protocol.unexpected_message |
+protocol.out_of_order | protocol.stale_generation | protocol.unsupported_message |
+protocol.server_error | auth.rejected | voice.capture | voice.stt | voice.submit |
+voice.remote_response | voice.tts | lifecycle.restore | remote.not_connected=
+plus subsystem (transport/protocol/auth/voice/stt/remote_ai/tts/prolog/
+storage/lifecycle), operation (connect/handshake/voice_turn/submit/stream/
+speak/restore), recovery (retrying/retryable/requires_action/fatal/unknown).
+
+Classification: =ZaraFailures.classify(throwable, context)= maps
+=ZaraWireException.code= (new typed property), timeouts, auth, and
+remote-mode preconditions to =ZaraFailure=. =UiOperationFailure= remains for
+legacy surfaces but the chat path renders =ZaraFailure= directly.
+
+** 2. Wire exceptions carry typed codes
+
+=ZaraWireException(message, cause, code, serverCode, retryable)= with default
+=code=protocol.malformed=. Every codec/actor throw site assigns its code:
+unsupported type → =protocol.unsupported_message=; correlation/session/turn
+mismatch → =protocol.out_of_order= or =protocol.stale_generation=; envelope
+violations → =protocol.malformed=; hello version/format rejection →
+=protocol.version_mismatch=; send/transport failures → =transport.*=;
+server =protocol.error= replies rethrow =ZaraWireException= carrying
+=serverCode= + =retryable= with code =protocol.server_error=.
+
+** 3. Codec parity with the server vocabulary
+
+- =ZaraVoiceStreamCodec= decodes =voice.speech.started= (body
+  =pre_speech_samples= ≥ 0) and =voice.speech.ended= (body =reason=) into new
+  =VoiceStreamEvent.SpeechStarted= / =SpeechEnded=. Reducer ignores them for
+  playback but they advance telemetry.
+- =ZaraTextCodec= decodes =turn.cancelled= (reason), =runtime.error=
+  (reason, fatal), =runtime.stopped= (reason). During a turn:
+  =turn.cancelled= → typed =voice.submit=/submit failure =cancelled=;
+  =runtime.error{fatal=true}= → terminal session failure; =fatal=false= →
+  request failure.
+
+** 4. No fake-connected state
+
+- =pollVoiceEvents= death by wire/transport error notifies a new
+  =connectionFailureObserver= (typed) in addition to the stream observer;
+  controller maps it to =connectionLost(reason)= → existing bounded reconnect
+  machinery (gen bump + fencing).
+- Voice-command =ZaraWireException= classified session-desyncing also reports
+  through the same observer.
+- =receiveMessage= demux no longer swallows the voice decode error when the
+  frame is also not a device/text frame: the thrown error is the *voice*
+  stream error (most specific first-observed decoder), keeping typed context.
+
+** 5. Telemetry event log (new =telemetry/ClientEventLog.kt=)
+
+In-memory bounded ring (512) of =ClientEvent=: seq (monotonic), wall time,
+event name (closed families: =remote.connect.begin/ready/failed=,
+=remote.disconnected=, =remote.reconnect.begin/ready/failed=,
+=protocol.handshake.begin/negotiated/failed=, =protocol.message.tx/rx/rejected=,
+=protocol.failed=, =voice.capture.begin/complete/failed=,
+=voice.stt.begin/complete/failed=, =voice.submit.begin/complete/failed=,
+=voice.response.first_chunk/complete/failed=, =voice.tts.begin/complete/failed=,
+=voice.playback.complete=, =voice.turn.failed=,
+=session.restore.begin/complete/failed=), subsystem/operation/phase,
+generation + connectionGeneration, session/request/turn correlation ids,
+outcome, typed code, sanitized bounded message, recovery.
+Metadata only for protocol messages (type+seq+size, never content).
+Wired at: controller transitions, actor connect/handshake/message boundaries,
+voice coordinator stages, app session routing.
+
+** 6. Failure incident tracker (new =telemetry/FailureIncidentTracker.kt=)
+
+Keeps the most recent primary =ZaraFailure= + first/last seen + correlation +
+last_success (last successful event/phase before it). Stale-generation events
+cannot supersede a current-generation incident. Retained until superseded by a
+newer-generation failure or explicit clear.
+
+** 7. ZARA-LOCAL-DIAGNOSTICS/2 (new =diagnostics/DiagnosticsV2.kt=)
+
+Text + JSON forms with identical facts: header (diagnostics_version=2,
+diagnostic_id, captured_at, version/version_code/source_sha, runtime_mode,
+session_id redacted-safe, session_generation, connection_phase,
+enrollment_phase), =primary_failure.*= block (from tracker; present=true
+retained after subsystem reset), remote/protocol context (transport kind,
+connect generation, last connected/disconnected timestamps, negotiated
+protocol version, client/server versions, handshake state, close/error code +
+bounded reason, last rx/tx message type+seq+size, expected next state, pending
+request count, last completed request/turn), voice pipeline stage states
+(not_started/running/complete/failed/cancelled/not_applicable + typed failure
+per stage), explicit state semantics (=not_applicable= in remote-only mode for
+local AI, =unknown= only when genuinely undeterminable with reason), bounded
+ordered failure timeline from =ClientEventLog= (window around primary
+failure). Redaction: reuse + extend sanitize; canary tests for tokens, audio
+bytes, prompt/response text.
+
+Export remains copy/share; v2 supersedes v1 (v1 events still recorded for
+continuity, header replaced). =diagnostics_version= key added.
+
+** 8. Session restore
+
+On =AndroidAppSession.init= with a persisted profile + enrollment Ready and
+mode Remote/Auto: emit =session.restore.begin=, attempt one bounded reconnect
+sequence (existing scheduler/backoff), =session.restore.complete/failed=. No
+restore while mode Local (suspension semantics preserved).
+
+** 9. Remote-mode precondition
+
+=Remote mode requires an authenticated Zara server= fast-fail becomes a typed
+=ZaraFailure(code=remote.not_connected, recovery=requires_action=) surfaced as
+a reconnect-required card, not =operation_failed=.
+
+** 10. UI truth (#1303)
+
+- =ConversationTurn= failure carries structured =TurnFailure(code, subsystem,
+  operation, explanation, connectionState, recovery, incidentId)=.
+  =failTurn= stores it; the error card renders title/explanation/Code/
+  Connection/Recovery + actions (Retry when retryable, Reconnect when
+  transport down, Diagnostics always). Raw sanitized message never rendered.
+- Dedup: turn failures render only the card (no =operationError= banner for
+  chat turns); the banner survives only for non-turn operations.
+  Most-specific-wins by correlation id: a generic wrapper cannot overwrite an
+  existing specific failure for the same turn.
+- Footer truth: pure label function =chatFooter(mode, transport, protocol,
+  enrollment, symbolic)= renders e.g. =REMOTE • AUTHENTICATED • CONNECTED= /
+  =REMOTE • AUTHENTICATED • RECONNECTING (2)= / =REMOTE • OFFLINE — TAP TO
+  RECONNECT= / local variants. Auth validity never implies transport health.
+
+** 11. Deterministic failure fixture (new =android/integration/remote_recovery_fixture.py=)
+
+Self-contained CURVE ROUTER ZARA/1 server reusing stock fixture enrollment
+machinery, controlled via stdin FIFO commands (READY/STOP/…+):
+- =GOOD= turns: hello → capability → turn.submit → scripted streaming
+  response; voice: audio.input.start/chunk/commit acks + =voice.speech.started=
+  → =voice.transcript.partial/final= → =audio.output.start/chunk/done= →
+  turn.completed (exercises the previously-fatal speech markers).
+- =FAIL MALFORMED=: next response prefixed with a truncated multipart frame.
+- =FAIL VERSION=: hello.ok with body.version=2.
+- =FAIL OUT_OF_ORDER=: assistant.delta before turn.accepted.
+- =FAIL CLOSE=: abrupt socket close mid-stream.
+- =FAIL STALE=: after client reconnects, send one frame with the *old*
+  session_id, then continue correctly (client must fence it and still
+  complete the next turn).
+Writes the same 0600 fixture env format so JVM tests and device acceptance
+share it.
+
+** 12. Test layers
+
+- JVM unit/contract (testDebugUnitTest): codec parity, typed codes, event log
+  envelope/bounds/redaction, incident tracker fencing, diagnostics v2 golden
+  fixtures (10 scenarios from #1300), controller state truth, UI label
+  functions + wiring contracts, conversation store structured failure.
+- JVM interop (behind =ZARA_RECOVERY_FIXTURE= env, wired into
+  scripts/test-android.sh): full matrix — connect, text turn, voice turn
+  (start/chunk/commit + streamed response incl. speech markers), each injected
+  failure → typed terminal failure + connectionLost, reconnect, second text
+  turn success, stale-generation fencing.
+- Device E2E (CI emulator, extends test-android-emulator-install.sh): real
+  APK remote connect → text turn → real voice turn (long-press mic via
+  input swipe) → inject failure → assert one specific typed error card +
+  truthful footer (uiautomator text assertions + screenshots) → export
+  Diagnostics v2 (run-as + UI copy path) → reconnect → second turn →
+  activity recreation fencing. Artifacts retained with if:always semantics.
+
+* Invariants
+
+- No path from connected → disconnected without exactly one terminal typed
+  failure event (same correlation/generation).
+- State cleanup never erases the diagnostic cause (tracker retention).
+- Stale-generation events cannot become the primary failure or overwrite
+  current session state.
+- Telemetry/diagnostics never contain secrets, audio bytes, prompt/response
+  bodies; protocol message events are metadata-only.
+- Remote mode never silently reroutes to local; Local mode never auto-connects
+  remote.
+- Existing v1 event consumers (device_remote_acceptance fatal-marker scan)
+  keep working.
+
+* Acceptance criteria → test map
+
+| Criterion (#issue) | Test |
+|---+---|
+| speech markers no longer fatal (#1299) | codec unit + interop voice turn |
+| no fake-connected (#1299) | actor pump test, controller test, interop each failure |
+| typed close/error codes (#1299) | wire exception code tests + interop |
+| reconnect + second turn (#1299) | interop + device E2E |
+| DIAGNOSTICS/2 contract (#1300) | golden fixture tests (10) + canaries |
+| primary_failure retention (#1300) | tracker tests |
+| event families + envelope (#1301) | ClientEventLog tests + wiring |
+| exception-boundary invariant (#1301) | controller/actor tests + interop |
+| stale-gen fencing (#1301) | tracker + interop + device recreate |
+| CI reproduces failure class (#1302) | interop matrix + device recovery acceptance + artifact retention |
+| one specific actionable card (#1303) | UI unit tests + device text assertions |
+| footer truth (#1303) | label function tests + device assertions |
+| dedup (#1303) | MainActivity wiring contract + store tests + device twin |
+
+* Gate
+
+Focused: =nix develop ./android -c gradle :app:testDebugUnitTest --tests '…'=.
+Full: =nix develop -c bash scripts/test-all.sh=; =nix develop ./android -c
+bash scripts/test-android.sh= (JVM+interop); =nix flake check=; =nix build=.
+CI: android job incl. emulator recovery acceptance at exact PR head;
+android-ui-evidence artifact present.

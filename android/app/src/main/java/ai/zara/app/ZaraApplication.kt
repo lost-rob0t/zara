@@ -26,6 +26,10 @@ class ZaraApplication : Application() {
     }
 
     val updateManager: AndroidUpdateManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        AndroidUpdateManager(this, BuildConfig.VERSION_NAME)
+        AndroidUpdateManager(
+            context = this,
+            currentVersion = BuildConfig.VERSION_NAME,
+            currentSourceSha = BuildConfig.SOURCE_SHA,
+        )
     }
 }

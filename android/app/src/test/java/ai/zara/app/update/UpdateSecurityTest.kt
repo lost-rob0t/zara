@@ -22,6 +22,21 @@ class UpdateSecurityTest {
     }
 
     @Test
+    fun rollingMasterCandidateUsesExactSourceShaInsteadOfSemver() {
+        val rolling = UpdateRelease(
+            version = "master",
+            sourceSha = "a".repeat(40),
+            apkUrl = "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-latest.apk",
+            sha256 = "b".repeat(64),
+            channel = UpdateChannel.Master,
+        )
+
+        assertTrue(UpdateSecurity.validate(rolling).isSuccess)
+        assertTrue(UpdateSecurity.isInstallCandidate(rolling, "0.1.2-alpha", "c".repeat(40)))
+        assertFalse(UpdateSecurity.isInstallCandidate(rolling, "0.1.2-alpha", "a".repeat(40)))
+    }
+
+    @Test
     fun downloadedApkMustMatchReleaseSha256() {
         val apk = temporary.newFile("zara.apk")
         apk.writeBytes("signed-apk-placeholder".encodeToByteArray())

@@ -21,6 +21,8 @@ PLUGIN_API_VERSION = "1"
 DEFAULT_EVENT_QUEUE_SIZE = 256
 MAX_EVENT_QUEUE_SIZE = 4096
 MAX_SUBSCRIPTIONS_PER_PLUGIN = 16
+MAX_UNAVAILABLE_REASON_LENGTH = 64
+UNAVAILABLE_REASON_ALLOWED = set("abcdefghijklmnopqrstuvwxyz0123456789._-")
 
 
 @dataclass(frozen=True)
@@ -58,13 +60,51 @@ class RuntimeStatus:
     thread_id: Optional[int]
 
 
+@dataclass(frozen=True)
+class StartupUnavailable:
+    """Canonical ``start()`` result reporting the plugin started but is unusable.
+
+    The plugin did not fail and must not be reported as running. ``reason``
+    is a bounded, non-secret diagnostic code (lowercase letters, digits,
+    ``.``, ``_`` and ``-`` only) so that raw exception or credential text can
+    never leak through diagnostics.
+    """
+
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.reason, str):
+            raise ValueError("unavailable reason must be a string")
+        if not self.reason or len(self.reason) > MAX_UNAVAILABLE_REASON_LENGTH:
+            raise ValueError(
+                "unavailable reason must contain 1 to "
+                f"{MAX_UNAVAILABLE_REASON_LENGTH} characters"
+            )
+        if self.reason[0] not in set("abcdefghijklmnopqrstuvwxyz0123456789"):
+            raise ValueError("unavailable reason must start with a lowercase letter or digit")
+        if any(character not in UNAVAILABLE_REASON_ALLOWED for character in self.reason):
+            raise ValueError(
+                "unavailable reason may contain lowercase letters, digits, '.', '_' and '-'"
+            )
+
+
+@dataclass(frozen=True)
+class CapabilityHandle:
+    """Opaque Core-owned reference to one loaded plugin capability generation."""
+
+    plugin_name: str
+    capability: str
+    generation: int
+    requires_approval: bool
+
+
 class ServicePlugin(ABC):
     """Lifecycle contract returned by a plugin module's ``create_plugin``."""
 
     metadata: PluginMetadata
 
     @abstractmethod
-    def start(self, runtime: "PluginRuntime") -> None:
+    def start(self, runtime: "PluginRuntime") -> StartupUnavailable | None:
         pass
 
     @abstractmethod
@@ -130,6 +170,10 @@ class PluginRuntime:
         worker_join_timeout: float = 5.0,
         advice_registrar: Optional[Callable[[str, str, int, Callable[..., Any]], int]] = None,
         advice_unregistrar: Optional[Callable[[int], bool]] = None,
+        symbol_registrar: Optional[Callable[..., int]] = None,
+        symbol_unregistrar: Optional[Callable[..., bool]] = None,
+        capability_resolver: Optional[Callable[[str], Optional[CapabilityHandle]]] = None,
+        capability_invoker: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._plugin_name = plugin_name
         self._configuration = MappingProxyType(copy.deepcopy(dict(configuration)))
@@ -142,7 +186,12 @@ class PluginRuntime:
         self._worker_join_timeout = worker_join_timeout
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._symbol_registrar = symbol_registrar
+        self._symbol_unregistrar = symbol_unregistrar
+        self._capability_resolver = capability_resolver
+        self._capability_invoker = capability_invoker
         self._advice_registration_ids: list[int] = []
+        self._symbol_registration_ids: list[int] = []
         self._subscriptions: set[bridge.RuntimeEventSubscription] = set()
         self._workers: dict[str, ManagedWorker] = {}
         self._closed = False
@@ -164,6 +213,40 @@ class PluginRuntime:
     def closed(self) -> bool:
         with self._lock:
             return self._closed
+
+    def resolve_capability(self, capability: str) -> CapabilityHandle:
+        if not isinstance(capability, str) or not capability or len(capability) > 128:
+            raise ValueError("capability name must contain 1 to 128 characters")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            resolver = self._capability_resolver
+        if resolver is None:
+            raise RuntimeError("plugin capability composition is not available")
+        handle = resolver(capability)
+        if handle is None:
+            raise LookupError("capability is unavailable")
+        if not isinstance(handle, CapabilityHandle):
+            raise RuntimeError("Core returned an invalid capability handle")
+        return handle
+
+    def invoke_capability(
+        self,
+        handle: CapabilityHandle,
+        request: Mapping[str, Any],
+    ) -> Any:
+        if not isinstance(handle, CapabilityHandle):
+            raise TypeError("handle must be a CapabilityHandle")
+        if not isinstance(request, Mapping):
+            raise TypeError("capability request must be a mapping")
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            invoker = self._capability_invoker
+        if invoker is None:
+            raise RuntimeError("plugin capability composition is not available")
+        structured_request = copy.deepcopy(dict(request))
+        return invoker(self._plugin_name, handle, structured_request)
 
     def dispatch(self, command: RuntimeCommand) -> concurrent.futures.Future:
         if not isinstance(command, RuntimeCommand):
@@ -237,6 +320,53 @@ class PluginRuntime:
             )
         raise RuntimeError("plugin runtime is closed")
 
+    def register_symbol(
+        self,
+        symbol: str,
+        kind: str,
+        value: Any,
+        *,
+        priority: int = 0,
+        docs: str = "",
+        capabilities: Sequence[str] = (),
+        source: str = "",
+    ) -> int:
+        """Register one package-owned symbol in the canonical runtime namespace."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("plugin runtime is closed")
+            registrar = self._symbol_registrar
+            unregistrar = self._symbol_unregistrar
+        if registrar is None or unregistrar is None:
+            raise RuntimeError("programmable symbol registry is not available")
+
+        owner = f"plugin:{self._plugin_name}"
+        registration_id = registrar(
+            symbol=symbol,
+            kind=kind,
+            owner=owner,
+            layer="package",
+            priority=priority,
+            value=value,
+            docs=docs,
+            capabilities=tuple(capabilities),
+            source=source,
+        )
+
+        with self._lock:
+            if not self._closed:
+                self._symbol_registration_ids.append(registration_id)
+                return registration_id
+
+        try:
+            unregistrar(registration_id, owner=owner)
+        except Exception as error:
+            self._failure_callback(
+                f"failed to unregister programmable symbol {registration_id}: {error}"
+            )
+        raise RuntimeError("plugin runtime is closed")
+
     def start_worker(
         self,
         name: str,
@@ -271,9 +401,12 @@ class PluginRuntime:
             workers = tuple(self._workers.values())
             advice_registration_ids = tuple(self._advice_registration_ids)
             advice_unregistrar = self._advice_unregistrar
+            symbol_registration_ids = tuple(self._symbol_registration_ids)
+            symbol_unregistrar = self._symbol_unregistrar
             self._subscriptions.clear()
             self._workers.clear()
             self._advice_registration_ids.clear()
+            self._symbol_registration_ids.clear()
 
         if advice_unregistrar is not None:
             for registration_id in advice_registration_ids:
@@ -282,6 +415,16 @@ class PluginRuntime:
                 except Exception as error:
                     self._failure_callback(
                         f"failed to unregister agent-loop advice {registration_id}: {error}"
+                    )
+
+        if symbol_unregistrar is not None:
+            owner = f"plugin:{self._plugin_name}"
+            for registration_id in symbol_registration_ids:
+                try:
+                    symbol_unregistrar(registration_id, owner=owner)
+                except Exception as error:
+                    self._failure_callback(
+                        f"failed to unregister programmable symbol {registration_id}: {error}"
                     )
 
         for subscription in subscriptions:
@@ -299,6 +442,7 @@ class PluginRuntime:
 
 
 __all__ = [
+    "CapabilityHandle",
     "DEFAULT_EVENT_QUEUE_SIZE",
     "MAX_EVENT_QUEUE_SIZE",
     "MAX_SUBSCRIPTIONS_PER_PLUGIN",
@@ -308,4 +452,5 @@ __all__ = [
     "PluginRuntime",
     "RuntimeStatus",
     "ServicePlugin",
+    "StartupUnavailable",
 ]

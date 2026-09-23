@@ -30,9 +30,9 @@ Do not turn a research document into a feature claim just because the design is 
 
 ** The Zara Book
 
-=docs/book.org= is the canonical teaching surface for users. It should answer how to actually use Zara, not merely how the implementation is organized. It covers desktop/core, voice, Prolog, models, plugins, Android pairing/offline behavior/system integration, Wear direction, security, troubleshooting and advanced operation.
+=docs/book.org= is the canonical teaching surface for users. It should answer how to actually use Zara, not merely how the implementation is organized.
 
-The Book is intentionally status-aware: implemented, evolving and gated behavior must remain clearly separated. Book+Docs Lead #917 owns continuous book maintenance under issue #911; Frontier Research #645 supplies verified research handoffs rather than owning the canonical docs lane.
+The Book is intentionally status-aware: implemented, evolving, and gated behavior must remain clearly separated. Book+Docs Lead #917 owns continuous Book maintenance under issue #911; Frontier Research #645 supplies verified research handoffs rather than owning the canonical docs lane.
 
 * Wiki / feature documentation
 
@@ -77,7 +77,7 @@ See [[file:research/002-unified-copilot-voice-visual-ci.md][research/002-unified
 
 ** Android
 
-Android is a native client in =android/=. The project currently includes typed runtime state, Trealla/NDK symbolic execution, shared semantic fixtures, authenticated JeroMQ/CURVE =ZARA/1= enrollment/transport foundations, and an embedded local-AI service/provider foundation with verified app-private model storage plus separate local language-model and TTS provider surfaces. The full daily-driver assistant UI, real-model/device acceptance, and broader device integration are still active work.
+Android is a native client in =android/=. The project currently includes typed runtime state, Trealla/NDK symbolic execution, shared semantic fixtures, and authenticated JeroMQ/CURVE =ZARA/1= enrollment/transport foundations. The full daily-driver assistant UI and device integration are still active work.
 
 See [[file:../wiki/android.org][wiki/android.org]] and the end-user chapters in [[file:book.org][The Zara Book]].
 
@@ -90,6 +90,6 @@ See [[file:../wiki/android.org][wiki/android.org]] and the end-user chapters in 
 - Mark superseded architectural assumptions rather than silently leaving two conflicting "current" designs.
 - Never describe a security property as complete solely because a happy-path feature landed.
 - When a release gate remains open, say so near the feature claim.
-- For Android, distinguish portable symbolic/runtime foundations from complete assistant UX and real-device/model evidence.
+- For Android, distinguish portable symbolic/runtime foundations from complete assistant UX.
 - For desktop, distinguish the currently shipped two-window code from the design-ready adaptive-window target until consolidation lands.
 - Major user-visible feature changes should update The Zara Book before they are considered fully documented.

@@ -5,11 +5,13 @@ Uses LangChain tools directly. The old custom registry is deprecated.
 """
 
 import logging
+from collections.abc import Mapping
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from langchain_core.tools import BaseTool as LangChainTool
 
 from ..approval import valid_tool_name
+from ..tool_cancellation import bind_tool_cancellation_transport, original_tool
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +65,15 @@ class ToolRegistry:
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
         requires_approval = _tool_requires_approval(tool)
-        self._tools[tool.name] = tool
+        bound_tool = bind_tool_cancellation_transport(tool)
+        self._tools[bound_tool.name] = bound_tool
         if requires_approval:
-            self._registered_approval_required.add(tool.name)
+            self._registered_approval_required.add(bound_tool.name)
 
     def unregister_tool(self, name: str) -> Optional[LangChainTool]:
         tool = self._tools.pop(name, None)
         self._registered_approval_required.discard(name)
-        return tool
+        return original_tool(tool)
 
     def register_tools(self, tools: List[LangChainTool]):
         pending = list(tools)
@@ -86,7 +89,8 @@ class ToolRegistry:
         required_names = [
             tool.name for tool in pending if _tool_requires_approval(tool)
         ]
-        self._tools.update((tool.name, tool) for tool in pending)
+        bound_tools = [bind_tool_cancellation_transport(tool) for tool in pending]
+        self._tools.update((tool.name, tool) for tool in bound_tools)
         self._registered_approval_required.update(required_names)
 
     def unregister_tools(self, names: List[str]) -> None:
@@ -104,10 +108,26 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def requires_approval(self, name: str) -> bool:
-        return (
+        if (
             name in self._configured_approval_required
             or name in self._registered_approval_required
-        )
+        ):
+            return True
+        tool = self._tools.get(name)
+        return tool is not None and _tool_requires_approval(tool)
+
+    def invoke_composed_tool(self, name: str, request: Mapping[str, Any]) -> Any:
+        """Invoke one registry-owned tool without bypassing approval policy."""
+        if not isinstance(request, Mapping):
+            raise TypeError("composed tool request must be a mapping")
+        tool = self.get_tool(name)
+        if tool is None:
+            raise LookupError("tool is unavailable")
+        if self.requires_approval(name):
+            raise PermissionError(
+                "tool requires canonical interactive approval and cannot be invoked directly"
+            )
+        return tool.invoke(dict(request))
 
     async def prepare_async(self) -> None:
         if self.config is None:

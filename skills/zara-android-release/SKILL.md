@@ -56,7 +56,7 @@ The trusted tag or `master` release workflow must produce:
 
 Pull-request CI must publish `zara-android-debug-<sha>` with a phone APK, checksum, and exact-SHA manifest. Do not relabel a PR artifact as a release asset.
 
-A separate post-CI workflow owns the intentionally mutable `android-latest` convenience channel. It runs only after a successful `push` CI run on `master`, moves only the `android-latest` tag, and publishes direct-download `zara-latest.apk` and `zara-wear-latest.apk` assets plus checksums and `zara-latest.manifest.txt`. Never treat `android-latest` as immutable release evidence; its manifest source SHA is the authority for the exact build it currently serves.
+A separate `master`-push workflow owns the intentionally mutable `android-latest` convenience channel. Every `master` push starts an exact-SHA signed Android/Wear build immediately instead of waiting for unrelated repository CI jobs. Each successful build preserves its own exact-SHA Actions payload; the serialized publisher moves only the `android-latest` tag forward and publishes direct-download `zara-latest.apk` and `zara-wear-latest.apk` assets plus checksums and `zara-latest.manifest.txt`. Never treat `android-latest` as immutable release evidence; its manifest source SHA is the authority for the exact build it currently serves.
 
 ## 4. Verify the distributed APK
 

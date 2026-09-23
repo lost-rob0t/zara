@@ -1,89 +1,92 @@
 #+title: Zara Android client
 
-* Status vocabulary
-
-This page is an Android implementation/status companion to [[file:../docs/book.org][The Zara Book]]. Current source and tests outrank roadmap prose.
-
-- *IMPLEMENTED* — present in current code with repository build/test evidence.
-- *ACTIVE / EVOLVING* — real foundations exist, but the user-facing workflow is still changing.
-- *GATED / PLANNED* — designed, proposed, or partially implemented; do not rely on it as shipped behavior.
-- *HARDWARE / VENDOR-GATED* — repository contracts exist, but physical-device or vendor-controlled acceptance is still required.
-
 * Overview
 
-Zara Android is a native client under =android/=. Fresh installs are intentionally *local-first*: the phone can use its portable Prolog/runtime foundation without first enrolling with a remote =zara-server=. Remote mode remains an explicit authenticated option rather than a prerequisite for opening the app.
+The native Android Zara client lives under =android/=. It is a client of the same Zara runtime/service architecture used by Linux rather than a second mobile-only assistant implementation.
 
-Android is still *ACTIVE / EVOLVING* as a complete daily-driver assistant. Several foundations are already implemented and should not be described as merely planned, while physical-device/vendor claims remain separate from JVM/emulator/build evidence.
+The Android project is currently *active / evolving*. Core foundations are real and tested, but the complete daily-driver assistant surface is still being built.
+
+Parent work includes the Android epic/issues around #152, #170–#179, later assistant/UI slices, and Samsung integration work.
 
 * Current implementation status
 
 | Area | Status |
 |------+--------|
-| Gradle/Android application skeleton | *IMPLEMENTED*. |
-| Typed runtime state/reducer | *IMPLEMENTED FOUNDATION*. |
-| Portable Prolog semantic assets + Trealla NDK/JNI | *IMPLEMENTED FOUNDATION*. |
-| Fresh-install local-first runtime mode | *IMPLEMENTED*; explicit versioned Remote choice remains respected. |
-| Embedded =LocalAiService= + =Embedded Local= provider | *IMPLEMENTED FOUNDATION*; real-model performance remains hardware/model-gated. |
-| Verified app-private local model catalog/import/select | *IMPLEMENTED FOUNDATION*. |
-| Offline Android TTS provider | *IMPLEMENTED FOUNDATION*. |
-| Android credential protection + JeroMQ/CURVE enrollment pieces | *IMPLEMENTED FOUNDATION*. |
-| Full authenticated reconnect/session/conversation continuity | *ACTIVE / EVOLVING*. |
-| Closed Prolog =automation/2= + typed Accessibility/special-access request surface | *IMPLEMENTED FOUNDATION*; actual OS grants and privileged backends remain device-controlled. |
-| Phone Watch Setup discovery + Wireless ADB Zara Wear installer | *IMPLEMENTED FOUNDATION*; physical-watch acceptance remains *HARDWARE-GATED*. |
-| Read-only Samsung Health Prolog adapter | *IMPLEMENTED FOUNDATION*; real SDK/device/partner acceptance is *HARDWARE / VENDOR-GATED*. |
-| Complete native daily-driver chat/assistant UX | *ACTIVE / EVOLVING*. |
-| Broader SmartThings and other external integrations | Follow their live issues/PRs; do not infer shipped state from design prose. |
+| Gradle/Android application skeleton | Implemented. |
+| Typed runtime state/reducer | Implemented foundation. |
+| Portable Prolog semantic assets | Implemented. |
+| Trealla NDK/JNI bridge | Implemented foundation. |
+| Cross-runtime semantic fixture/parity coverage | Implemented foundation. |
+| Android credential protection | Implemented foundation. |
+| JeroMQ/CURVE enrollment/auth pieces | Merged foundation. |
+| Server public-key pin handling | Merged; fail-closed replacement behavior has regression coverage. |
+| Full authenticated =ZARA/1= reconnect/session continuity | Active; issue #173 is reopened. |
+| Complete native chat/assistant UI | Active work; not release-complete. |
+| Android Assistant / VoiceInteractionService integration | Active/planned in the Android queue. |
+| Samsung/SmartThings/Termux/device adapters | Follow-on active work, not core-complete. |
 
-A successful APK build is evidence for the build path, not proof that every Assistant, Wear, vendor-SDK, audio-route, or privilege scenario works on physical hardware.
+Do not describe Android as finished merely because an APK builds or authentication code exists.
 
-* Architecture: local and remote are explicit modes
+* Architecture
 
 #+begin_example
-                     Zara Android UI
-                           |
-                    AndroidAppSession
-                      /           \
-             Local mode            Remote mode
-                |                      |
-      Trealla / LocalAiService       ZaraClient
-                |                      |
-     typed device capabilities    CURVE/ZAP ZARA/1
-                                       |
-                                  zara-server
-                                       |
-                                  RuntimeHost
+              Android UI / system integration
+                         |
+                  typed client state
+                         |
+                     ZaraClient
+                         |
+                ZARA/1 over JeroMQ
+                         |
+              CURVE + server-key pin
+                         |
+                    zara-server
+                         |
+                    RuntimeHost
+                         |
+              canonical Zara runtime
 #+end_example
 
-Local mode is not a fake disconnected form of Remote mode. It owns explicitly local symbolic/model/device work. Remote mode connects to the canonical server authority through the authenticated client boundary.
-
-No local model failure should be documented as a successful cloud fallback. No remote capability should be implied to exist while offline. Switching modes must remain visible rather than silently uploading local state.
+Android may run a portable symbolic subset locally through Trealla, but it must not create a separate LLM/tool/memory server runtime on the phone merely to avoid using the shared client boundary.
 
 * Project layout
 
 - =android/= — Gradle project.
-- =android/app/= — main phone application.
-- =android/app/src/main/java/ai/zara/app/runtime/= — typed runtime/client state.
-- =android/app/src/main/java/ai/zara/app/auth/= — enrollment/CURVE client code.
-- =android/app/src/main/java/ai/zara/app/prolog/= — Trealla workspace/runtime helpers.
-- =android/app/src/main/java/ai/zara/app/localai/= — embedded local model/TTS service and provider contracts.
-- =android/app/src/main/java/ai/zara/app/automation/= and =accessibility/= — typed local automation surfaces.
-- =android/app/src/main/java/ai/zara/app/watch/= — phone-side watch discovery/pair/install workflow.
-- =android/app/src/main/java/ai/zara/app/samsunghealth/= — read-only Samsung Health Prolog/gateway adapter.
-- =android/wear-app/= — full Wear application module.
-- =android/wear-voice/= — dedicated Wear voice application module while its shared runtime contract evolves.
+- =android/app/= — application module.
+- =android/app/src/main/java/ai/zara/app/= — Android application code.
+- =android/app/src/main/java/ai/zara/app/runtime/= — typed runtime state and reducer-style client state.
+- =android/app/src/main/java/ai/zara/app/auth/= — credential/enrollment/CURVE client code.
+- =android/app/src/main/java/ai/zara/app/prolog/= — portable Trealla bridge/runtime helpers.
 - =android/app/src/main/cpp/= — thin JNI/NDK bridge for Trealla.
 - =android/app/src/main/assets/prolog/portable/= — portable symbolic source/fixtures.
-- =android/gradle/libs.versions.toml= — pinned dependency catalog.
+- =android/gradle/libs.versions.toml= — version catalog/pins.
+- =android/build-trealla.sh= — Trealla build helper.
+- =android/patch-trealla-module-path.sh= — build integration helper for Trealla module layout.
 
-Application id for the phone and canonical Wear Data Layer peer:
+Application id:
 
 #+begin_example
 ai.zara.app
 #+end_example
 
-* Toolchain and build
+* Toolchain
 
-The Android toolchain is pinned through Nix and Gradle. Current documented values include Gradle 9.5.1, Android Gradle Plugin 9.2.0, JDK 21, compileSdk 37, targetSdk 36 and minSdk 29.
+The Android toolchain is pinned/reproducible through the repository Nix and Gradle setup.
+
+Current documented pins:
+
+| Component | Pin |
+|-----------+-----|
+| Gradle | 9.5.1 (=pkgs.gradle_9=) |
+| Android Gradle Plugin | 9.2.0 |
+| JDK | 21 |
+| compileSdk | 37 |
+| targetSdk | 36 |
+| minSdk | 29 |
+
+The separate Kotlin Android plugin is not used where AGP's built-in Kotlin path owns compilation.
+
+* Build and test
 
 Run the Android repository gate with:
 
@@ -91,144 +94,241 @@ Run the Android repository gate with:
 nix develop ./android -c bash scripts/test-android.sh
 #+end_src
 
-The normal debug APK is:
+The gate is intended to cover the JVM/unit/build path plus the APK secret-marker inspection used by the repository.
+
+The debug APK is produced at the standard Gradle location:
 
 #+begin_example
 android/app/build/outputs/apk/debug/app-debug.apk
 #+end_example
 
-Release/distribution architecture is itself evolving under the fleet release lane. Do not infer immutable release semantics from a green master build. For any downloadable artifact, prefer exact source SHA, signer/checksum evidence, and the currently documented release channel over stale version prose.
+The dedicated Zara Code Editor APK is produced at:
+
+#+begin_example
+android/code-editor/build/outputs/apk/debug/code-editor-debug.apk
+#+end_example
+
+The Android gate verifies the APK signature and manifest/package identity, and
+CI installs and launches =ai.zara.code.editor= on an emulator. The rolling
+=android-latest= publication path additionally verifies that Zara Code carries
+the repository's update-compatible signing certificate before publishing
+=zara-code-editor-latest.apk=.
+
+If Android asks to update an older Zara Code development build and then reports
+that the package appears invalid, the installed development build may have been
+signed with a different ephemeral debug certificate. Android cannot replace an
+installed package with the same application id under a different signing key.
+Uninstall the old =ai.zara.code.editor= build once (Settings > Apps > Zara Code
+> Uninstall, or =adb uninstall ai.zara.code.editor=), then install the current
+=zara-code-editor-latest.apk=. Rolling and immutable publication keep signer
+continuity after that migration.
+
+Zara product/version state is centralized in the repository-root
+=version.properties=. =zara.version= and =android.versionCode= identify the
+source currently being built; =release.target= and
+=release.targetAndroidVersionCode= identify the active release line. Inspect
+the validated machine-readable context with:
+
+#+begin_src sh
+python scripts/version-context.py --format json
+#+end_src
+
+Python packaging, the phone APK, and the Wear APK consume the current values
+from that file. A =master= push validates the context but does not mint an
+immutable versioned release. The separately gated =android-latest= channel
+remains mutable and points at the latest fully green master artifact.
+
+An immutable alpha is published only from an explicit =v*= tag whose name
+matches the current product version *and* only after the current version/code
+have been promoted to the active target (=release_ready=true=). The release
+workflow loads the update-compatible debug signing key from
+=ZARA_ANDROID_DEBUG_KEYSTORE_B64=, verifies the APK signing certificate, and
+attaches the APK, checksum, and provenance manifest. The release APK remains a
+sideloaded debug build; hardware and Assistant-role acceptance remain separate.
+
+A successful =assembleDebug= is necessary, but it is not acceptance for the whole Android assistant.
 
 * Portable Prolog / Trealla
 
-*IMPLEMENTED FOUNDATION*
+Android uses Trealla for the portable symbolic subset selected during the Android runtime bakeoff.
 
-Android runs an explicitly portable Prolog subset through Trealla. The boundary remains intentionally thin: app-private source/workspace state, JNI for native execution, Kotlin typed wrappers, and deterministic semantic fixtures.
+The boundary is intentionally thin:
 
-The goal is semantic parity for the portable subset, not pretending Trealla and server-side SWI-Prolog have identical APIs.
+- portable Prolog source is staged from application assets;
+- JNI exposes the minimal native execution bridge needed by Android;
+- Kotlin wraps that bridge in typed application code;
+- deterministic semantic fixtures compare expected behavior;
+- portable rules should not accidentally depend on SWI-only features.
 
-* Local-first runtime and embedded AI
+The goal is semantic parity for the explicitly portable subset, not API parity between SWI-Prolog and Trealla.
 
-** Local runtime selection
+Core/Linux Zara continues to use SWI-Prolog through the Python application boundary.
 
-*IMPLEMENTED*
+* Authentication and enrollment
 
-Fresh installs default to =Local=. A legacy unversioned Remote preference is migrated once to Local so an upgraded phone is not stranded behind missing server enrollment. A new explicitly selected Remote mode is versioned and remains explicit.
+Android uses the same Zara daemon identity model as other authenticated clients.
 
-Local mode does not manufacture a fake CURVE server pin. Server trust material belongs to Remote mode.
+Merged/current foundations include:
 
-** Embedded local AI
+- Android-side credential encryption/storage boundary;
+- typed enrollment state/repository code;
+- client key material handling;
+- daemon public-key pinning;
+- JeroMQ CURVE socket configuration;
+- Z85 key exchange helpers;
+- bounded plaintext secret lifetime during enrollment operations;
+- explicit rejection of silent server repinning.
 
-*IMPLEMENTED FOUNDATION + HARDWARE/MODEL EVIDENCE EVOLVING*
+The important rule is *fail closed on server identity changes*. A changed server key is not silently accepted as "probably the same server."
 
-The app owns a non-exported =LocalAiService= and an offline-only =Embedded Local= language-model provider. The provider contract includes model catalog/listing, verified install, selection, streaming generation, cancellation and unload. Model files live in app-private storage and are checked against declared identity/version/format/quantization/context/backend/SHA-256 metadata before activation.
+The phone needs an explicit authenticated TCP listener; the default Zara service
+listens only on owner-private local IPC. Start the service with
+=--remote-endpoint tcp://<LAN-IP>:6060 --security-dir <PRIVATE-DIR>= to keep
+local IPC available for the desktop and wake clients while enabling Android.
+Initialize the owner-private security directory with =zara-server
+--security-dir <PRIVATE-DIR> --security-init= while the service is stopped.
+Show its public key with =--security-show-public-key= and pin that key in the
+Android Settings screen. Enroll the phone's CLIENT PUBLIC KEY with
+=--security-enroll-key <Z85-KEY> --security-device-id <DEVICE-ID>=. The phone's
+"enrollment ready" label only confirms local identity and server pinning; it
+does not confirm server-side authorization or a live connection.
 
-Language-model and speech provider families are separate. The initial offline TTS path uses an installed Android voice that does not require a network connection.
+Settings shows the saved server public key after enrollment. If it differs
+from the running server's public key, "Change trusted server key" requires an
+explicit replacement key. It preserves the Android client identity but drops
+the old session and conversation; reconnect from Remote afterward. Remote
+shows =server_hello_timeout= for a hello timeout and
+=capability_negotiation_timeout= for a later capability timeout. These labels
+contain no credentials or raw exception messages.
 
-The built-in embedded language-model runtime currently executes the LiteRT-LM format. The shared descriptor can represent other formats for future providers, but a descriptor is not execution support.
+Issue #173 remains reopened because the full client acceptance is larger than the merged auth primitives. Remaining/continuing work includes complete authenticated connect/hello behavior, reconnect, durable session/conversation continuity, stale-session rejection, and ordinary typed turn/event integration across lifecycle changes.
 
-Real model quality, cold/warm latency, peak RSS, thermals, battery use and device compatibility remain model/device evidence, not something a JVM contract can prove.
+* Runtime state
 
-* Authentication and remote mode
+Android client state should remain typed and reducer-driven rather than letting Activities/Composables each invent their own connection/assistant truth.
 
-*IMPLEMENTED FOUNDATION + ACTIVE / EVOLVING continuity*
+State should represent facts such as:
 
-Remote Android uses server-key pinning, client identity, JeroMQ CURVE/ZAP authentication and explicit server enrollment. A changed server key fails closed rather than silently repinning.
+- disconnected / connecting / authenticating / connected / degraded states;
+- current server/enrollment status;
+- active session/conversation identifiers where valid;
+- current turn/activity state;
+- capability negotiation results;
+- explicit errors that can be rendered honestly by UI.
 
-The server must expose an authenticated TCP endpoint in addition to its normal owner-private local IPC. The expert/manual server shape remains:
+UI recreations must not create a new assistant authority or silently duplicate submitted work.
 
-#+begin_src sh
-zara-server --remote-endpoint tcp://<LAN-IP>:6060 --security-dir <PRIVATE-DIR>
-zara-server --security-dir <PRIVATE-DIR> --security-init
-zara-server --security-dir <PRIVATE-DIR> --security-show-public-key
-zara-server --security-dir <PRIVATE-DIR> \
-  --security-enroll-key <Z85-CLIENT-PUBLIC-KEY> \
-  --security-device-id <DEVICE-ID>
-#+end_src
+* Remote protocol truth and typed failures
 
-Preparing phone identity and pinning a server key is not proof that the server enrolled the device or that a live session exists. Keep identity-created, server-pinned, enrolled, connecting, connected and rejected/degraded states distinct.
+The Android client speaks the same =ZARA/1= vocabulary the server emits:
+=voice.speech.started=, =voice.speech.ended=, =turn.cancelled=,
+=runtime.error=, and =runtime.stopped= are decoded rather than rejected, and
+legal text frames interleaved into the voice stream are tolerated. Wire
+failures carry stable typed codes (for example =protocol.malformed=,
+=protocol.unexpected_message=, =protocol.stale_generation=,
+=protocol.version_mismatch=, =protocol.server_error=, =transport.timeout=,
+=transport.closed=, =remote.not_connected=) plus the server's own error code
+and retryability when present.
 
-* Prolog automation and Android authority
+Invariants:
 
-*IMPLEMENTED FOUNDATION; HIGHER AUTHORITY ACTIVE / GATED*
+- a failed frame can never leave the client in a fake-connected state;
+  session-desyncing failures collapse the connection into the bounded
+  reconnect with a typed reason;
+- stale frames from a previous session/generation are fenced: they are
+  recorded as =protocol.message.rejected= telemetry and dropped without
+  corrupting the current session;
+- the persisted remote session is restored on launch (=session.restore.*=
+  events) instead of silently remaining disconnected after process
+  recreation;
+- every connected-to-disconnected transition has exactly one typed terminal
+  event with the same correlation/generation.
 
-The merged local automation foundation exposes a closed =automation/2= plan with typed actions rather than raw shell/Intent execution. Examples include semantic app opening/search, URI opening, bounded Accessibility selectors/actions and reviewed global actions.
+Chat failures render one structured error card (subsystem, operation, typed
+code, connection state, recovery, incident id, Retry/Reconnect/Diagnostics)
+and the footer separates mode, authentication, and transport truth
+(=REMOTE • AUTHENTICATED • CONNECTED/RECONNECTING/DISCONNECTED • SYMBOLIC=);
+authentication validity is never presented as a live connection.
 
-#+begin_src prolog
-automation(youtube_psytrance,
-    actions([app_search(youtube, "psytrance")])).
-#+end_src
+* Diagnostics
 
-Android remains the authority for special access. Zara can take the user to Assistant, Accessibility, Usage Access, Write Settings, or Overlay grant surfaces; a Prolog rule cannot self-grant those privileges.
+=ZARA-LOCAL-DIAGNOSTICS/2= is the current export: a deterministic text and
+canonical-JSON incident bundle with a retained =primary_failure= block
+(subsystem, operation, phase, typed code, bounded sanitized message/cause,
+first/last seen, request/turn correlation, last successful step, recovery),
+remote/protocol context (transport kind, connect generation, last
+connected/disconnected timestamps, negotiated protocol version, handshake
+state, close code and bounded reason, last RX/TX message metadata, expected
+next state, last completed turn), voice pipeline stage states with explicit
+=not_applicable= semantics, and a correlated ordered timeline from the typed
+telemetry journal. Protocol message records carry metadata only (type,
+sequence, size) — never payloads, credentials, audio, or prompt/response
+text.
 
-Do not confuse the merged typed =standard=/existing automation substrate with proposed unrestricted/root/Shizuku/device-owner authority. Those broader authority contracts remain subject to their live fleet vote, implementation and hardware evidence.
+The deterministic regression layer for this contract is
+=android/integration/remote_recovery_fixture.py= (failure injection: =ARM
+MALFORMED|VERSION_MISMATCH|OUT_OF_ORDER|CLOSE|STALE=) driving the real
+client in =RemoteRecoveryInteropTest= and the installed APK in
+=device_remote_recovery_acceptance.py=.
 
-* Installing Zara Wear from the phone
+* Chat / assistant surface
 
-*IMPLEMENTED FOUNDATION; PHYSICAL-WATCH ACCEPTANCE HARDWARE-GATED*
+The native chat/assistant UI is still active work.
 
-The phone app contains a Watch Setup workflow that discovers Bluetooth-paired watches, Wear Data Layer nodes, and Wireless ADB endpoints. Wireless ADB is used for installation; normal phone↔watch communication can return to Bluetooth/Wear Data Layer afterward.
+The intended direction is:
 
-A practical install flow is:
+- real Android UI rather than an embedded web app;
+- one durable conversation model compatible with desktop/server history;
+- streaming assistant updates;
+- explicit cancellation;
+- clear connection/auth states;
+- voice and typed turns sharing durable conversation identity;
+- Android system-assistant integration without bypassing =ZARA/1= runtime semantics.
 
-1. Pair the Wear OS watch with the phone normally.
-2. Open *Zara Watch Setup* on the phone and allow Nearby/Bluetooth permissions when Android asks.
-3. On the watch, enable Developer options and *Wireless debugging*.
-4. Scan from Zara. A Bluetooth/Data Layer watch may be visible before an ADB endpoint is available.
-5. Choose/use the watch pairing endpoint, enter its IP, pairing port and current six-digit pairing code, then pair.
-6. Return to the watch Wireless debugging screen and use its separate connection port to connect.
-7. Tap *Install Zara Wear*. Zara downloads the rolling Wear APK through the repository helper, verifies the expected artifact/checksum contract, pushes it to the watch and invokes the watch package manager.
-8. After an explicit successful install result, disconnect ADB. The setup flow then rechecks Wear discovery; Bluetooth/Data Layer is the normal phone↔watch path.
+Do not fork protocol message types just because Compose needs a particular widget state. Adapt canonical runtime events into presentation state.
 
-The installer also recognizes/removes the legacy =ai.zara.wear= package after installing the current app identity.
+* Android Assistant role / voice
 
-This repository flow does *not* prove Galaxy Watch5 Pro button mapping, microphone/speaker routing, battery behavior, nearby transport under real disconnect/reconnect, or package update behavior on physical hardware. Those remain human/device acceptance gates.
+The Android goal includes integration with Android's assistant/voice surfaces where supported by the target API level.
 
-* Samsung Health
+The ownership model remains:
 
-*IMPLEMENTED FOUNDATION; HARDWARE / VENDOR-GATED*
+- Android device owns microphone/speaker and OS-level assistant entry points;
+- =zara-server= owns the shared assistant runtime work;
+- local wake/system activation may start a Zara voice session;
+- voice transcript and assistant output should correlate with canonical conversation/turn ids.
 
-Current master includes a read-only Samsung Health integration driven through the existing local Prolog runtime. It exposes readiness, granted permissions and today's steps, sleep duration, heart-rate minimum/maximum, and exercise duration/calories.
+The exact Android system-service implementation remains active work and should not be claimed as shipped until the relevant acceptance tests pass.
 
-The default editable source is =samsung_health.pl=. It resolves only to a closed =samsung_health_action(...)= vocabulary; arbitrary Prolog terms are not translated into vendor SDK calls. A single-thread actor serializes physical reads, and a missing permission fails before the read reaches the vendor gateway.
+* Device integrations
 
-Samsung's Data SDK is an optional local AAR and is intentionally not committed. With no matching =android/app/libs/samsung-health-data-api-*.aar=, ordinary builds remain valid and the typed gateway reports =SDK_MISSING=. With the vendor AAR present, the SDK adapter is compiled.
+Planned/follow-on integrations include Samsung/SmartThings, Termux, and other device-local capabilities.
 
-Permission acquisition is an explicit foreground Activity/user-consent boundary. SDK readiness, app/package authorization and per-data-type permission are separate states.
-
-Do not report the JVM contract as real Samsung Health acceptance. Vendor/device proof requires a compatible physical device, official AAR, supported Samsung Health version, actual permission grant/deny/revoke checks and any required package/signing authorization. The integration is fitness/wellness data only; it does not add diagnosis or treatment behavior.
-
-See [[file:android-samsung-health.org][android-samsung-health.org]] for the detailed Prolog/SDK contract.
-
-* Chat, voice and product UI
-
-*ACTIVE / EVOLVING*
-
-The native app has real runtime/UI foundations, but the complete daily-driver product shell continues to change. Current accepted navigation/product designs must not be labeled merged until their implementation lands on master.
-
-Android device edges own microphone/speaker, OS assistant entry points and permissions. Local symbolic/model operation can work without the server; connected shared-runtime work uses the authenticated Zara client/server boundary.
-
-UI recreation must never create a second assistant authority or silently duplicate submitted work.
+These should be modeled as explicit capabilities/adapters and routed through Zara's normal authorization/runtime model. They should not become arbitrary hidden side effects attached to chat parsing.
 
 * Security rules
 
-Android work must preserve these user-visible invariants:
+Android-specific work must preserve these rules:
 
-1. no long-lived secrets embedded in APK assets/source or exposed in routine logs/screenshots;
-2. changed/unexpected server pins fail closed;
-3. display strings/model text/plugin payloads never override authenticated principal or local privilege authority;
-4. capability availability is not authorization;
-5. Android permissions/special access remain explicit platform grants;
-6. stale session/generation events cannot mutate current state or execute stale effects;
-7. malformed/oversized protocol, Prolog-effect and vendor payloads stay bounded;
-8. local model failure does not silently become cloud success;
-9. emulator/JVM evidence is never reported as physical-device acceptance.
+1. no long-lived secret keys/tokens embedded in APK assets or source;
+2. no private key material in logs, crash text, diagnostics, screenshots, or test artifacts;
+3. changed/unexpected server pins fail closed;
+4. caller-supplied display/user strings never override the authenticated principal;
+5. stale connection/session events cannot mutate current state;
+6. reconnect must not duplicate side-effecting requests;
+7. malformed/oversized protocol input remains bounded;
+8. phone UI/process lifecycle must not be treated as proof that the daemon session or turn resumed.
+
+* Current queue direction
+
+The original queue was roughly =#170 -> #171 -> #172/#173 -> assistant-role/UI -> device adapters=. Several early foundations have now landed, but issue #173 is reopened and the higher-level assistant/UI/device work is still progressing.
+
+Use the live issue state rather than this page as the sole scheduler. This page describes architecture and implementation status, not a frozen work queue.
 
 * Related docs
 
-- [[file:../docs/book.org][The Zara Book]] — canonical user teaching guide.
 - [[file:../docs/architecture.org][docs/architecture.org]] — overall client/runtime ownership.
-- [[file:../docs/server.org][docs/server.org]] — =ZARA/1=, authentication, principals and server runtime.
-- [[file:android-samsung-health.org][android-samsung-health.org]] — Samsung Health integration and vendor gates.
+- [[file:../docs/server.org][docs/server.org]] — =ZARA/1=, auth, principals, voice transport.
+- [[file:../docs/development.org][docs/development.org]] — build/test workflow.
 - =rage/170-android-bakeoff.org= — Trealla/JeroMQ architecture bakeoff evidence.
 - =rage/171-android-skeleton.org= — Android skeleton/toolchain evidence.

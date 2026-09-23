@@ -57,6 +57,17 @@ jobs:
       - name: Run all tests
         run: nix develop -c bash scripts/test-all.sh
 
+      - name: Run formal AGENTIC-15 verification
+        run: |
+          nix develop -c swipl -q \
+            -s verification/agentic_fleet_verify.pl \
+            -g "(agentic_fleet_verify:verify -> halt(0); halt(1))" \
+            -t "halt(1)"
+          nix develop -c swipl -q \
+            -s t/agentic_fleet_verify.pl \
+            -g "(run_tests -> halt(0); halt(1))" \
+            -t "halt(1)"
+
       - name: Run flake checks
         run: nix flake check
 
@@ -127,7 +138,7 @@ jobs:
             image: ubuntu:24.04
             python: python3
           - name: Arch Linux
-            image: archlinux:latest
+            image: ghcr.io/archlinux/archlinux:latest
             python: python
 
     container:
@@ -326,7 +337,7 @@ jobs:
           echo "emulator SDK install failed after 3 attempts" >&2
           exit 1
 
-      - name: Capture Android screenshot evidence
+      - name: Capture Android screenshot evidence and verify Zara Code install
         uses: reactivecircus/android-emulator-runner@v2
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -336,7 +347,9 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: bash -euo pipefail -c 'serial="emulator-5554"; adb -s "$serial" wait-for-device; test "$(adb -s "$serial" get-state)" = "device"; adb -s "$serial" install -r android/app/build/outputs/apk/debug/app-debug.apk; python android/integration/device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output android/app/build/reports/device'
+          script: |
+            serial="emulator-5554"
+            bash scripts/test-android-emulator-install.sh "$serial" "$SOURCE_SHA"
 
       - name: Upload Android UI evidence
         if: always()
@@ -370,6 +383,14 @@ jobs:
         with:
           name: zara-android-debug-${{ github.event.pull_request.head.sha || github.sha }}
           path: artifacts/android-debug/
+          if-no-files-found: warn
+
+      - name: Upload Code Editor debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zara-code-editor-debug-${{ github.event.pull_request.head.sha || github.sha }}
+          path: android/code-editor/build/outputs/apk/debug/code-editor-debug.apk
           if-no-files-found: warn
 
       - name: Upload Wear debug APK
@@ -414,3 +435,29 @@ jobs:
             --source-sha "$SOURCE_SHA" \
             --desktop evidence/desktop/ui/manifest.json \
             --android evidence/android/manifest.json
+
+  agentic-gate:
+    name: agentic formal + live app gate
+    needs:
+      - test
+      - android
+      - evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Re-run formal proof after live-app gates
+        run: |
+          nix develop -c swipl -q \
+            -s verification/agentic_fleet_verify.pl \
+            -g "(agentic_fleet_verify:verify -> halt(0); halt(1))" \
+            -t "halt(1)"
+          echo "AGENTIC-15 formal proof + exact-APK Android automation + dual-surface evidence passed."
