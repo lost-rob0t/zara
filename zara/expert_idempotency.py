@@ -154,9 +154,8 @@ class ExpertIdempotencyJournal:
                     return ClaimDecision(claim=claim, replay=replay, created=False)
                 replay = replace(result, replayed=True)
                 if build_changed and replay.verdict is ExpertVerdict.SUCCEEDED:
-                    replay = self._unknown_result(
-                        row,
-                        handle=handle,
+                    replay = self._stale_success(
+                        replay,
                         message=(
                             "prior idempotent expert success belongs to a different "
                             "expert build"
@@ -164,9 +163,8 @@ class ExpertIdempotencyJournal:
                     )
                     return ClaimDecision(claim=claim, replay=replay, created=False)
                 if generation_changed and replay.verdict is ExpertVerdict.SUCCEEDED:
-                    replay = self._unknown_result(
-                        row,
-                        handle=handle,
+                    replay = self._stale_success(
+                        replay,
                         message=(
                             "prior idempotent expert success belongs to a different "
                             "registry/runtime generation"
@@ -428,6 +426,16 @@ class ExpertIdempotencyJournal:
             error_code=ExpertErrorCode(error_code) if error_code is not None else None,
             error_message=wire["error_message"],
             replayed=False,
+        )
+
+    @staticmethod
+    def _stale_success(result: ExpertResult, *, message: str) -> ExpertResult:
+        return replace(
+            result,
+            verdict=ExpertVerdict.UNKNOWN,
+            error_code=ExpertErrorCode.INTERRUPTED,
+            error_message=message,
+            replayed=True,
         )
 
     @staticmethod
