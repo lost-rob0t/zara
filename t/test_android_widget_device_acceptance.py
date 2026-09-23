@@ -119,6 +119,23 @@ def test_route_action_waits_for_launcher_widget_after_home(tmp_path: Path) -> No
     ]
 
 
+def test_cold_and_warm_route_evidence_fences_process_identity() -> None:
+    source = WIDGET_ACCEPTANCE.read_text(encoding="utf-8")
+    exercise = source.split("def exercise(device: Device, source_sha: str) -> dict:", 1)[1]
+    exercise = exercise.split("\ndef main() -> None:", 1)[0]
+
+    assert "cold_pid = device.require_main_pid()" in exercise
+    assert "device.terminate_main_process(cold_pid)" in exercise
+    assert "device.wait_for_main_pid_absent(cold_pid)" in exercise
+    assert "cold_after_pid = device.tap_action_and_assert_route" in exercise
+    assert "previous_pid=cold_pid" in exercise
+    assert "require_recreated=True" in exercise
+    assert "warm_after_pid = device.tap_action_and_assert_route" in exercise
+    assert "previous_pid=cold_after_pid" in exercise
+    assert "require_recreated=False" in exercise
+    assert "process-death" in exercise
+
+
 def test_widget_acceptance_keeps_talkback_hardware_claim_unproven() -> None:
     source = WIDGET_ACCEPTANCE.read_text(encoding="utf-8")
 
