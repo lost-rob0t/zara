@@ -70,6 +70,7 @@
   (with-temp-buffer
     (insert "alpha beta")
     (buffer-enable-undo)
+    (undo-boundary)
     (let* ((context
             (gethash "result" (zara-test--request "buffer.context")))
            (buffer-id (gethash "buffer_id" context))
