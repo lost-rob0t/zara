@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check-coverage-ratchet.py"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = ROOT / "scripts" / "check-coverage-ratchet.py"
 SPEC = importlib.util.spec_from_file_location("coverage_ratchet", SCRIPT)
 assert SPEC is not None
 assert SPEC.loader is not None
@@ -124,3 +125,13 @@ def test_actual_coverage_must_meet_committed_floor():
             {"line": 49.99, "branch": 40.0, "total": 45.0},
             {"line": 50.0, "branch": 40.0, "total": 45.0},
         )
+
+
+def test_full_repository_gate_reuses_canonical_coverage_authority():
+    source = (ROOT / "scripts" / "test-all.sh").read_text(encoding="utf-8")
+
+    assert "--cov=zara" in source
+    assert "--cov-branch" in source
+    assert 'coverage.json' in source
+    assert source.count("scripts/check-coverage-ratchet.py") == 1
+    assert "coverage-baseline.json" in source
