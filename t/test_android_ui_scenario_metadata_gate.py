@@ -87,7 +87,11 @@ def _write_bundle(tmp_path: Path) -> Path:
     screenshot.write_bytes(PNG)
     screenshot_sha = hashlib.sha256(PNG).hexdigest()
     text = tmp_path / "state.ui.txt"
-    text.write_text('route="chat" runtime={}\n', encoding="utf-8")
+    text.write_text(
+        'route="chat"\n'
+        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n",
+        encoding="utf-8",
+    )
     assertions = tmp_path / "state.assertions.txt"
     assertions.write_text(
         "ACTION 1 capture:state\n"
@@ -126,6 +130,7 @@ def _write_bundle(tmp_path: Path) -> Path:
     )
     manifest = {
         "source_sha": SOURCE_SHA,
+        "apk_sha256": APK_SHA256,
         "passed": True,
         "device": {"api": "35"},
         "screenshots": [
