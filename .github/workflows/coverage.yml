@@ -24,13 +24,48 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
+      - name: Resolve trusted coverage base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          zero_sha=0000000000000000000000000000000000000000
+          case "$EVENT_NAME" in
+            pull_request)
+              test -n "$PR_BASE_REF" || {
+                echo "pull_request coverage base ref is unavailable" >&2
+                exit 1
+              }
+              git fetch --no-tags origin "$PR_BASE_REF"
+              base_ref="origin/$PR_BASE_REF"
+              ;;
+            push)
+              [[ "$PUSH_BEFORE" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "push before SHA is malformed" >&2
+                exit 1
+              }
+              test "$PUSH_BEFORE" != "$zero_sha" || {
+                echo "branch-creation push has no trusted previous coverage base" >&2
+                exit 1
+              }
+              git cat-file -e "${PUSH_BEFORE}^{commit}" || {
+                echo "push before SHA is not available in checkout: $PUSH_BEFORE" >&2
+                exit 1
+              }
+              base_ref="$PUSH_BEFORE"
+              ;;
+            *)
+              echo "unsupported coverage event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          echo "ZARA_COVERAGE_BASE_REF=$base_ref" >> "$GITHUB_ENV"
+
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-
-      - name: Fetch PR base
-        if: github.event_name == 'pull_request'
-        shell: bash
-        run: git fetch --no-tags origin "${{ github.base_ref }}"
 
       - name: Run branch-aware coverage gate
         shell: bash
@@ -38,11 +73,7 @@ jobs:
           ARTIFACT_DIR: ${{ github.workspace }}/artifacts/coverage
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            nix develop -c bash scripts/test-coverage.sh --base-ref "origin/${{ github.base_ref }}"
-          else
-            nix develop -c bash scripts/test-coverage.sh
-          fi
+          nix develop -c bash scripts/test-coverage.sh --base-ref "$ZARA_COVERAGE_BASE_REF"
 
       - name: Upload coverage reports
         if: always()

@@ -74,6 +74,19 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
+def resolve_trusted_base_ref(explicit_base_ref: str | None) -> str | None:
+    env_base_ref = os.environ.get("ZARA_COVERAGE_BASE_REF", "").strip() or None
+    if explicit_base_ref and env_base_ref and explicit_base_ref != env_base_ref:
+        fail(
+            "conflicting trusted coverage base refs: "
+            f"cli={explicit_base_ref!r} env={env_base_ref!r}"
+        )
+    base_ref = explicit_base_ref or env_base_ref
+    if os.environ.get("CI", "").strip().lower() == "true" and not base_ref:
+        fail("trusted coverage base ref is required in CI")
+    return base_ref
+
+
 def check_actual_against_floor(
     metrics: dict[str, float],
     floors: dict[str, float],
@@ -203,6 +216,7 @@ def main() -> int:
     parser.add_argument("--base-ref")
     args = parser.parse_args()
 
+    base_ref = resolve_trusted_base_ref(args.base_ref)
     coverage = load_json(args.coverage)
     policy = load_json(args.policy)
     check_policy_shape(policy)
@@ -212,7 +226,7 @@ def main() -> int:
     check_actual_against_floor(metrics, floors)
 
     base_policy = None
-    if args.base_ref:
+    if base_ref:
         policy_ref_path = args.policy
         if policy_ref_path.is_absolute():
             try:
@@ -223,14 +237,14 @@ def main() -> int:
                     "comparing against a base ref"
                 )
         base_policy = load_policy_from_ref(
-            args.base_ref,
+            base_ref,
             policy_ref_path.as_posix(),
         )
 
     product_python_changed, targets = check_ratchet(
         policy,
         base_policy,
-        args.base_ref,
+        base_ref,
     )
 
     print(
