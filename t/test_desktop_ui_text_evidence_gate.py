@@ -24,7 +24,7 @@ def _load_validator_module():
     return module
 
 
-def test_desktop_validator_rejects_screenshot_only_fixture(tmp_path: Path) -> None:
+def test_desktop_validator_rejects_fixture_missing_text_evidence_after_trace(tmp_path: Path) -> None:
     module = _load_validator_module()
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     screenshot = tmp_path / "copilot-error.png"
@@ -34,7 +34,7 @@ def test_desktop_validator_rejects_screenshot_only_fixture(tmp_path: Path) -> No
     manifest_path.write_text(
         json.dumps(
             {
-                "schema": 1,
+                "schema": 2,
                 "fixtures": [
                     {
                         "state": "error",
@@ -44,6 +44,19 @@ def test_desktop_validator_rejects_screenshot_only_fixture(tmp_path: Path) -> No
                         "theme": "signal-cabin",
                         "source_commit": source_sha,
                         "sha256": hashlib.sha256(payload).hexdigest(),
+                        "actions": ["render:error"],
+                        "assertions": [
+                            {
+                                "name": "same-state-semantics",
+                                "passed": True,
+                                "detail": "state=error",
+                            },
+                            {
+                                "name": "screenshot-png",
+                                "passed": True,
+                                "detail": "captured",
+                            },
+                        ],
                     }
                 ],
             }
@@ -51,5 +64,8 @@ def test_desktop_validator_rejects_screenshot_only_fixture(tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    with pytest.raises(module.EvidenceError, match="desktop fixture text evidence is missing"):
+    with pytest.raises(
+        module.EvidenceError,
+        match="desktop fixture text error evidence is missing",
+    ):
         module.validate_desktop(manifest_path, source_sha)
