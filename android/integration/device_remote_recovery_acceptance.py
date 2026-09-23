@@ -97,6 +97,7 @@ def diagnostics_preview_text(device: Device) -> str:
     try:
         open_menu(device, "Settings")
         device.press_back()
+        device.reveal("Runtime & local AI")
         device.await_label("Runtime & local AI")
         device.tap("Diagnostics")
         lines: list[str] = []
@@ -150,6 +151,7 @@ def connect_recovery_fixture(device: Device, fixture: dict[str, str]) -> dict[st
     device.capture("recovery-connected")
 
     device.press_back()
+    device.reveal("Runtime & local AI")
     device.await_label("Runtime & local AI")
     device.tap("Runtime & local AI")
     device.tap("Remote")
@@ -187,6 +189,7 @@ def assert_typed_error_card(device: Device, expected_code: str) -> None:
 def assert_diagnostics_names_primary_failure(device: Device, expected_code: str, expected_subsystem: str) -> None:
     open_menu(device, "Settings")
     device.press_back()
+    device.reveal("Runtime & local AI")
     device.await_label("Runtime & local AI")
     device.tap("Diagnostics")
     device.await_contains("ZARA-LOCAL-DIAGNOSTICS/2", timeout=10.0)
