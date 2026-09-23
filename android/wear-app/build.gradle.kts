@@ -54,7 +54,7 @@ android {
         getByName("debug") {
             if (debugSigningKeystore != null) {
                 val keyFile = file(debugSigningKeystore)
-                require(keyFile.isFile) { "ZARA_ANDROID_DEBUG_KEYSTORE is missing" }
+                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
                 storeFile = keyFile
                 storePassword = "android"
                 keyAlias = "androiddebugkey"
