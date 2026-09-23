@@ -101,11 +101,25 @@ data class LocalModelSpec(
 data class LocalGenerationRequest(
     val prompt: String,
     val maxOutputTokens: Int = 256,
+    val imagePng: ByteArray? = null,
 ) {
     init {
         require(prompt.isNotBlank()) { "Local model prompt is required" }
         require(prompt.length <= 32_768) { "Local model prompt is too large" }
         require(maxOutputTokens in 1..4_096) { "Local model output limit is outside the supported range" }
+        imagePng?.let { image ->
+            require(image.size in 8..MAX_LOCAL_IMAGE_BYTES) { "Local model image is outside the supported size range" }
+            require(image.copyOfRange(0, PNG_MAGIC.size).contentEquals(PNG_MAGIC)) {
+                "Local model image must be a PNG"
+            }
+        }
+    }
+
+    companion object {
+        const val MAX_LOCAL_IMAGE_BYTES = 16 * 1024 * 1024
+        private val PNG_MAGIC = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        )
     }
 }
 
