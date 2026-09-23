@@ -1,6 +1,9 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.app.conversations.ConversationRecord
+import ai.zara.app.conversations.ConversationState
+import ai.zara.app.conversations.ConversationStatus
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -22,8 +25,10 @@ import ai.zara.ui.theme.ZaraTheme
 import ai.zara.ui.theme.themeTokens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -49,9 +54,12 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -122,20 +130,15 @@ private fun tokensColorScheme(tokens: ZaraSemanticTokens) = darkColorScheme(
     error = tokens.error,
 )
 
-data class RenderedTextTurn(
-    val userText: String,
-    val assistantText: String,
-    val success: Boolean,
-)
-
 @Composable
 fun ZaraApp(
     runtimeState: RuntimeState,
     sourceSha: String,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
-    lastTurn: RenderedTextTurn?,
+    conversationState: ConversationState,
     operationError: String?,
+    turnFailure: TurnFailure?,
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
@@ -159,7 +162,15 @@ fun ZaraApp(
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
     onConnect: (String) -> Unit,
-    onSendText: (String, ProjectContext?) -> Unit,
+    onNewConversation: () -> Unit,
+    onSelectConversation: (String) -> Unit,
+    onToggleConversationPinned: (String, Boolean) -> Unit,
+    onRenameConversation: (String, String) -> Unit,
+    onMoveConversationToProject: (String, String?) -> Unit,
+    onSendText: (String, ConversationRecord, ProjectContext?) -> Unit,
+    onRetryTurn: (String) -> Unit,
+    onReconnectRemote: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
@@ -181,6 +192,7 @@ fun ZaraApp(
     onCopyDiagnostics: () -> Unit,
     onShareDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit,
+    onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
@@ -224,10 +236,25 @@ fun ZaraApp(
                             selected = navigation.menu,
                             state = runtimeState,
                             localState = localServerState,
+                            conversationState = conversationState,
+                            projects = projectState.projects,
                             onSelect = { destination ->
                                 navigation = navigation.selectMenu(destination)
                                 scope.launch { drawerState.close() }
                             },
+                            onNewConversation = {
+                                onNewConversation()
+                                navigation = navigation.selectMenu(AppMenu.Chat)
+                                scope.launch { drawerState.close() }
+                            },
+                            onSelectConversation = { conversationId ->
+                                onSelectConversation(conversationId)
+                                navigation = navigation.selectMenu(AppMenu.Chat)
+                                scope.launch { drawerState.close() }
+                            },
+                            onTogglePinned = onToggleConversationPinned,
+                            onRenameConversation = onRenameConversation,
+                            onMoveConversationToProject = onMoveConversationToProject,
                         )
                     },
                 ) {
@@ -264,16 +291,24 @@ fun ZaraApp(
                                     savedContent.SaveableStateProvider(navigation.route.name) {
                                         val padding = PaddingValues(0.dp)
                                         when (selected) {
-                                            AppSurface.Chat -> ChatSurface(
-                                                state = runtimeState,
-                                                localServerState = localServerState,
-                                                project = projectState.selectedProject,
-                                                lastTurn = lastTurn,
-                                                operationError = operationError,
-                                                operationBusy = operationBusy,
-                                                onSendText = onSendText,
-                                                padding = padding,
-                                            )
+                                            AppSurface.Chat -> {
+                                                val conversation = conversationState.selectedConversation
+                                                val project = conversation?.projectId?.let(projectState::project)
+                                                ChatSurface(
+                                                    state = runtimeState,
+                                                    runtimeMode = runtimeMode,
+                                                    localServerState = localServerState,
+                                                    conversation = conversation,
+                                                    project = project,
+                                                    turnFailure = turnFailure,
+                                                    operationBusy = operationBusy,
+                                                    onSendText = onSendText,
+                                                    onRetryTurn = onRetryTurn,
+                                                    onReconnectRemote = onReconnectRemote,
+                                                    onOpenDiagnostics = onOpenDiagnostics,
+                                                    padding = padding,
+                                                )
+                                            }
                                             AppSurface.Logic -> PrologStudioSurface(
                                                 localState = localServerState,
                                                 sources = prologSources,
@@ -319,6 +354,7 @@ fun ZaraApp(
                                                 padding = padding,
                                             )
                                             AppSurface.Diagnostics -> DiagnosticsSurface(
+                                                diagnosticsPreview = onExportDiagnostics,
                                                 state = runtimeState,
                                                 sourceSha = sourceSha,
                                                 localServerState = localServerState,
@@ -429,9 +465,18 @@ private fun ZaraDrawer(
     selected: AppMenu,
     state: RuntimeState,
     localState: LocalServerState,
+    conversationState: ConversationState,
+    projects: List<ProjectContext>,
     onSelect: (AppMenu) -> Unit,
+    onNewConversation: () -> Unit,
+    onSelectConversation: (String) -> Unit,
+    onTogglePinned: (String, Boolean) -> Unit,
+    onRenameConversation: (String, String) -> Unit,
+    onMoveConversationToProject: (String, String?) -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
+    var showAllPinned by rememberSaveable { mutableStateOf(false) }
+    var showAllRecents by rememberSaveable { mutableStateOf(false) }
     ModalDrawerSheet(
         modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp),
         drawerContainerColor = tokens.surfaceElevated,
@@ -479,14 +524,80 @@ private fun ZaraDrawer(
                 )
             }
 
-            Spacer(Modifier.size(12.dp))
+            TextButton(
+                onClick = onNewConversation,
+                enabled = conversationState.loadFailure == null,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    "＋  New chat",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = tokens.accentCyan,
+                    textAlign = TextAlign.Start,
+                )
+            }
+
+            conversationState.loadFailure?.let { failure ->
+                DrawerHistoryEmpty("History unavailable", failure)
+            }
+
+            Spacer(Modifier.size(6.dp))
             DrawerDividerLabel("PINNED")
-            DrawerHistoryRow("No pinned conversations", "nothing is synced implicitly")
+            if (conversationState.pinnedConversations.isEmpty()) {
+                DrawerHistoryEmpty("No pinned conversations", "Pin a chat from its ⋮ menu")
+            } else {
+                val pinned = if (showAllPinned) {
+                    conversationState.pinnedConversations
+                } else {
+                    conversationState.pinnedConversations.take(6)
+                }
+                pinned.forEach { conversation ->
+                    key(conversation.id) {
+                        ConversationDrawerRow(
+                            conversation = conversation,
+                            selected = conversation.id == conversationState.selectedConversationId,
+                            projects = projects,
+                            onSelect = onSelectConversation,
+                            onTogglePinned = onTogglePinned,
+                            onRenameConversation = onRenameConversation,
+                            onMoveConversationToProject = onMoveConversationToProject,
+                        )
+                    }
+                }
+                if (conversationState.pinnedConversations.size > 6) {
+                    HistoryExpansionAction(showAllPinned) { showAllPinned = !showAllPinned }
+                }
+            }
+
             Spacer(Modifier.size(10.dp))
             DrawerDividerLabel("RECENTS")
-            DrawerHistoryRow("No saved conversations", "local history is not enabled yet")
-            Spacer(Modifier.weight(1f))
+            if (conversationState.recentConversations.isEmpty()) {
+                DrawerHistoryEmpty("No recent conversations", "Start a new chat")
+            } else {
+                val recents = if (showAllRecents) {
+                    conversationState.recentConversations
+                } else {
+                    conversationState.recentConversations.take(10)
+                }
+                recents.forEach { conversation ->
+                    key(conversation.id) {
+                        ConversationDrawerRow(
+                            conversation = conversation,
+                            selected = conversation.id == conversationState.selectedConversationId,
+                            projects = projects,
+                            onSelect = onSelectConversation,
+                            onTogglePinned = onTogglePinned,
+                            onRenameConversation = onRenameConversation,
+                            onMoveConversationToProject = onMoveConversationToProject,
+                        )
+                    }
+                }
+                if (conversationState.recentConversations.size > 10) {
+                    HistoryExpansionAction(showAllRecents) { showAllRecents = !showAllRecents }
+                }
+            }
 
+            Spacer(Modifier.weight(1f))
             Surface(
                 color = tokens.surface,
                 border = BorderStroke(1.dp, tokens.border),
@@ -535,7 +646,7 @@ private fun DrawerDividerLabel(label: String) {
 }
 
 @Composable
-private fun DrawerHistoryRow(title: String, detail: String) {
+private fun DrawerHistoryEmpty(title: String, detail: String) {
     val tokens = LocalZaraTokens.current
     Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp)) {
         Text(title, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
@@ -544,21 +655,211 @@ private fun DrawerHistoryRow(title: String, detail: String) {
 }
 
 @Composable
+private fun HistoryExpansionAction(
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+    ) {
+        Text(
+            if (expanded) "Show less" else "See all…",
+            modifier = Modifier.fillMaxWidth(),
+            color = tokens.textMuted,
+            textAlign = TextAlign.Start,
+        )
+    }
+}
+
+@Composable
+private fun ConversationDrawerRow(
+    conversation: ConversationRecord,
+    selected: Boolean,
+    projects: List<ProjectContext>,
+    onSelect: (String) -> Unit,
+    onTogglePinned: (String, Boolean) -> Unit,
+    onRenameConversation: (String, String) -> Unit,
+    onMoveConversationToProject: (String, String?) -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    var menuExpanded by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    var renameOpen by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    var renameDraft by rememberSaveable(conversation.id) { mutableStateOf(conversation.title) }
+    var moveOpen by rememberSaveable(conversation.id) { mutableStateOf(false) }
+    val projectName = conversation.projectId?.let { projectId ->
+        projects.firstOrNull { it.id == projectId }?.name ?: "project"
+    }
+    val statusLabel = conversation.status.name.lowercase()
+    val detail = listOfNotNull(projectName, statusLabel).joinToString(" · ")
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clickable { onSelect(conversation.id) },
+        color = if (selected) tokens.surface else Color.Transparent,
+        border = if (selected) BorderStroke(1.dp, tokens.borderActive) else null,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(conversationStatusColor(tokens, conversation.status))
+            Column(Modifier.padding(start = 9.dp).weight(1f)) {
+                Text(conversation.title, color = tokens.text, style = MaterialTheme.typography.bodySmall)
+                Text(detail, color = tokens.textMuted, style = MaterialTheme.typography.labelSmall)
+            }
+            Box {
+                TextButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.semantics {
+                        contentDescription = "Actions for ${conversation.title}"
+                    },
+                ) {
+                    Text("⋮", color = tokens.textMuted)
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (conversation.pinned) "Unpin" else "Pin") },
+                        onClick = {
+                            menuExpanded = false
+                            onTogglePinned(conversation.id, !conversation.pinned)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
+                        onClick = {
+                            menuExpanded = false
+                            renameDraft = conversation.title
+                            renameOpen = true
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Move to project") },
+                        onClick = {
+                            menuExpanded = false
+                            moveOpen = true
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    if (renameOpen) {
+        AlertDialog(
+            onDismissRequest = { renameOpen = false },
+            title = { Text("Rename chat") },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it.take(120) },
+                    singleLine = true,
+                    label = { Text("Chat name") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameDraft.isNotBlank(),
+                    onClick = {
+                        onRenameConversation(conversation.id, renameDraft.trim())
+                        renameOpen = false
+                    },
+                ) {
+                    Text("Rename")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renameOpen = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (moveOpen) {
+        AlertDialog(
+            onDismissRequest = { moveOpen = false },
+            title = { Text("Move chat to project") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    TextButton(
+                        onClick = {
+                            onMoveConversationToProject(conversation.id, null)
+                            moveOpen = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            "No project",
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Start,
+                        )
+                    }
+                    projects.forEach { project ->
+                        TextButton(
+                            onClick = {
+                                onMoveConversationToProject(conversation.id, project.id)
+                                moveOpen = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                project.name,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Start,
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { moveOpen = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+private fun conversationStatusColor(
+    tokens: ZaraSemanticTokens,
+    status: ConversationStatus,
+): Color = when (status) {
+    ConversationStatus.Empty -> tokens.border
+    ConversationStatus.Running -> tokens.accentCyan
+    ConversationStatus.Success -> tokens.success
+    ConversationStatus.Failed -> tokens.error
+    ConversationStatus.Interrupted -> tokens.warning
+}
+
+@Composable
 private fun ChatSurface(
     state: RuntimeState,
+    runtimeMode: RuntimeMode,
     localServerState: LocalServerState,
+    conversation: ConversationRecord?,
     project: ProjectContext?,
-    lastTurn: RenderedTextTurn?,
-    operationError: String?,
+    turnFailure: TurnFailure?,
     operationBusy: Boolean,
-    onSendText: (String, ProjectContext?) -> Unit,
+    onSendText: (String, ConversationRecord, ProjectContext?) -> Unit,
+    onRetryTurn: (String) -> Unit,
+    onReconnectRemote: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
     val remoteReady = state.server is ServerConnection.Connected &&
         state.enrollment == EnrollmentReadiness.Ready
     val localReady = localServerState.phase == LocalServerPhase.READY
-    val ready = remoteReady || localReady
+    val ready = conversation != null && (remoteReady || localReady)
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -574,7 +875,7 @@ private fun ChatSurface(
                 .weight(1f)
                 .verticalScroll(rememberScrollState()),
         ) {
-            if (lastTurn == null) {
+            if (conversation == null || conversation.turns.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 360.dp),
                     contentAlignment = Alignment.Center,
@@ -608,11 +909,32 @@ private fun ChatSurface(
                 }
             } else {
                 Spacer(Modifier.size(18.dp))
-                UserMessage(lastTurn.userText)
-                Spacer(Modifier.size(12.dp))
-                AssistantMessage(lastTurn.assistantText, lastTurn.success)
+                conversation.turns.forEachIndexed { index, turn ->
+                    UserMessage(turn.userText)
+                    Spacer(Modifier.size(12.dp))
+                    val lastFailedTurn = turn.success == false &&
+                        index == conversation.turns.lastIndex &&
+                        conversation.status == ConversationStatus.Failed
+                    when {
+                        lastFailedTurn && turnFailure != null ->
+                            TurnFailureCard(
+                                failure = turnFailure,
+                                userText = turn.userText,
+                                onRetry = onRetryTurn,
+                                onReconnect = onReconnectRemote,
+                                onOpenDiagnostics = onOpenDiagnostics,
+                            )
+                        turn.assistantText != null ->
+                            AssistantMessage(turn.assistantText, turn.success == true)
+                        conversation.status == ConversationStatus.Running &&
+                            index == conversation.turns.lastIndex ->
+                            AssistantPendingMessage()
+                    }
+                    if (index != conversation.turns.lastIndex) {
+                        Spacer(Modifier.size(18.dp))
+                    }
+                }
             }
-            operationError?.let { ErrorBanner(it) }
         }
 
         CompactComposer(
@@ -622,18 +944,18 @@ private fun ChatSurface(
             operationBusy = operationBusy,
             onSend = {
                 val message = input.trim()
-                if (message.isNotEmpty()) {
+                if (message.isNotEmpty() && conversation != null) {
                     input = ""
-                    onSendText(message, project)
+                    onSendText(message, conversation, project)
                 }
             },
         )
         Text(
-            when {
-                remoteReady -> "REMOTE  •  AUTHENTICATED  •  SYMBOLIC"
-                localReady -> "LOCAL  •  SYMBOLIC  •  PRIVATE"
-                else -> "LOCAL RUNTIME STARTING"
-            },
+            chatFooter(
+                mode = runtimeMode,
+                server = state.server,
+                enrollment = state.enrollment,
+            ),
             modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
             color = tokens.textMuted,
             textAlign = TextAlign.Center,
@@ -641,6 +963,90 @@ private fun ChatSurface(
             fontSize = 9.sp,
             letterSpacing = 1.6.sp,
         )
+    }
+}
+
+@Composable
+private fun TurnFailureCard(
+    failure: TurnFailure,
+    userText: String,
+    onRetry: (String) -> Unit,
+    onReconnect: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
+) {
+    val tokens = LocalZaraTokens.current
+    Surface(
+        color = tokens.surface,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, tokens.error),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                failure.title,
+                color = tokens.error,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 12.sp,
+                letterSpacing = 1.sp,
+            )
+            Text(
+                failure.explanation,
+                color = tokens.text,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.sp,
+            )
+            Text(
+                "Code: ${failure.code}",
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
+            Text(
+                "Connection: ${failure.connectionState}  •  Recovery: ${failure.recovery}" +
+                    (failure.incidentId?.let { "  •  $it" } ?: ""),
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (failure.retryPossible) {
+                    AssistChip(onClick = { onRetry(userText) }, label = { Text("Retry") })
+                }
+                if (failure.reconnectPossible) {
+                    AssistChip(onClick = onReconnect, label = { Text("Reconnect") })
+                }
+                AssistChip(onClick = onOpenDiagnostics, label = { Text("Diagnostics") })
+            }
+        }
+    }
+}
+
+@Composable
+private fun AssistantPendingMessage() {
+    val tokens = LocalZaraTokens.current
+    Surface(
+        color = tokens.surface,
+        border = BorderStroke(1.dp, tokens.accentCyan),
+        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            StatusDot(tokens.accentCyan)
+            Text(
+                "Working…",
+                modifier = Modifier.padding(start = 10.dp),
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
     }
 }
 
@@ -1078,12 +1484,14 @@ private fun DiagnosticsSurface(
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
+    diagnosticsPreview: () -> String,
     onCopyDiagnostics: () -> Unit,
     onShareDiagnostics: () -> Unit,
     onClearDiagnostics: () -> Unit,
     padding: PaddingValues,
 ) {
     ScreenBody(padding) {
+        val preview = diagnosticsPreview()
         ScreenTitle("Diagnostics", "Bounded runtime state")
         SectionCard("BUILD") {
             KeyValueRow("source", sourceSha.take(12))
@@ -1099,6 +1507,17 @@ private fun DiagnosticsSurface(
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
             KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+        }
+        if (preview.contains("ZARA-LOCAL-DIAGNOSTICS/2")) {
+            SectionCard("DIAGNOSTICS V2") {
+                Text(
+                    preview.lineSequence().takeWhile { it != "--- timeline ---" }
+                        .take(56).joinToString("\n"),
+                    color = LocalZaraTokens.current.textMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                )
+            }
         }
         SectionCard("LOCAL LOG") {
             MutedNotice(
@@ -1457,6 +1876,33 @@ internal fun connectionLabel(connection: ServerConnection): String = when (conne
     is ServerConnection.Connected -> "connected"
     is ServerConnection.Reconnecting -> "reconnecting (attempt ${connection.attempt})"
     is ServerConnection.OfflineDegraded -> "offline (${connection.reason})"
+}
+
+internal fun chatFooter(
+    mode: RuntimeMode,
+    server: ServerConnection,
+    enrollment: EnrollmentReadiness,
+): String {
+    val authenticated = enrollment == EnrollmentReadiness.Ready
+    val transport = when (server) {
+        is ServerConnection.Connected -> "CONNECTED"
+        is ServerConnection.Connecting -> "CONNECTING"
+        is ServerConnection.Reconnecting -> "RECONNECTING (${server.attempt})"
+        is ServerConnection.OfflineDegraded -> "OFFLINE — RECONNECT AVAILABLE"
+        ServerConnection.Disconnected -> "DISCONNECTED"
+    }
+    val symbolic = "SYMBOLIC"
+    return when (mode) {
+        RuntimeMode.Remote -> "REMOTE  •  " +
+            (if (authenticated) "AUTHENTICATED" else "UNENROLLED") +
+            "  •  $transport  •  $symbolic"
+        RuntimeMode.Local -> "LOCAL  •  $symbolic  •  PRIVATE"
+        RuntimeMode.Auto -> if (server is ServerConnection.Connected) {
+            "REMOTE AVAILABLE  •  LOCAL $symbolic  •  PRIVATE"
+        } else {
+            "LOCAL $symbolic  •  REMOTE $transport  •  PRIVATE"
+        }
+    }
 }
 
 internal fun enrollmentLabel(readiness: EnrollmentReadiness): String = when (readiness) {

@@ -13,10 +13,22 @@ from typing import Callable, Iterable, Optional, Sequence
 
 from langchain_core.tools import BaseTool
 
+from zara.agent.tool_cancellation import (
+    _CancellationSignal,
+    _bind_tool_cancellation_signal,
+    _new_tool_cancellation_signal,
+)
 from zara.runtime import events
 from zara.runtime.turn_context import TurnCapabilityLease, current_turn_capability_lease
 
-from .api import CapabilityHandle, PLUGIN_API_VERSION, PluginMetadata, PluginRuntime, RuntimeStatus
+from .api import (
+    CapabilityHandle,
+    PLUGIN_API_VERSION,
+    PluginMetadata,
+    PluginRuntime,
+    RuntimeStatus,
+    StartupUnavailable,
+)
 from .loader import iter_plugin_files, load_plugin_module
 
 logger = logging.getLogger(__name__)
@@ -28,6 +40,7 @@ class PluginState(str, enum.Enum):
     INSTALLED = "installed"
     LOADED = "loaded"
     RUNNING = "running"
+    UNAVAILABLE = "unavailable"
     STOPPED = "stopped"
     FAILED = "failed"
     INCOMPATIBLE = "incompatible"
@@ -62,6 +75,7 @@ class _CapabilityInvocation:
     caller: _PluginRecord
     target: _PluginRecord
     lease: Optional[TurnCapabilityLease]
+    cancellation: _CancellationSignal
     cancelled: bool = False
 
 
@@ -89,6 +103,8 @@ class PluginManager:
         max_workers: int = 8,
         advice_registrar=None,
         advice_unregistrar=None,
+        symbol_registrar=None,
+        symbol_unregistrar=None,
         capability_approval_provider=None,
         capability_invoker=None,
     ) -> None:
@@ -104,6 +120,8 @@ class PluginManager:
         self._tool_unregistrar = tool_unregistrar
         self._advice_registrar = advice_registrar
         self._advice_unregistrar = advice_unregistrar
+        self._symbol_registrar = symbol_registrar
+        self._symbol_unregistrar = symbol_unregistrar
         self._capability_approval_provider = capability_approval_provider
         self._capability_invoker = capability_invoker
         self._publisher = publisher
@@ -309,6 +327,7 @@ class PluginManager:
                 lease = invocation.lease
                 if lease is not None and lease.turn_id == turn_id:
                     invocation.cancelled = True
+                    invocation.cancellation.cancel()
 
     def _invoke_capability(
         self,
@@ -327,6 +346,7 @@ class PluginManager:
         leased_records: tuple[_PluginRecord, ...] = ()
         invocation_id = 0
         invocation: Optional[_CapabilityInvocation] = None
+        cancellation = _new_tool_cancellation_signal()
 
         def register_invocation() -> None:
             nonlocal caller_record, target, leased_records, invocation_id, invocation
@@ -381,8 +401,10 @@ class PluginManager:
                     caller=caller_record,
                     target=target,
                     lease=lease,
+                    cancellation=cancellation,
                 )
                 self._active_capability_invocations[invocation_id] = invocation
+                self._invocation_condition.notify_all()
 
         if lease is None:
             register_invocation()
@@ -391,7 +413,8 @@ class PluginManager:
                 register_invocation()
 
         try:
-            result = invoker(handle.capability, request)
+            with _bind_tool_cancellation_signal(cancellation):
+                result = invoker(handle.capability, request)
             if lease is not None and not lease.active:
                 raise RuntimeError("composed invocation was cancelled or became stale")
             with self._invocation_condition:
@@ -421,6 +444,8 @@ class PluginManager:
             worker_join_timeout=self._lifecycle_timeout,
             advice_registrar=self._advice_registrar,
             advice_unregistrar=self._advice_unregistrar,
+            symbol_registrar=self._symbol_registrar,
+            symbol_unregistrar=self._symbol_unregistrar,
             capability_resolver=lambda capability, caller=record.metadata.name: self._resolve_capability(
                 caller, capability
             ),
@@ -445,9 +470,27 @@ class PluginManager:
             if not callable(start_method):
                 raise TypeError("service plugin must define start(runtime)")
             record.start_called = True
-            await self._call_lifecycle(start_method, runtime)
+            start_result = await self._call_lifecycle(start_method, runtime)
         except Exception as error:
             self._mark_failed(record, f"startup failed: {error}")
+            await self._stop_record(record, preserve_failure=True)
+            return
+
+        if isinstance(start_result, StartupUnavailable):
+            with self._lock:
+                already_failed = record.state is PluginState.FAILED
+            if not already_failed:
+                self._mark_unavailable(record, start_result.reason)
+            self._remove_tools(record)
+            if record.runtime is not None:
+                record.runtime._shutdown()
+            return
+
+        if start_result is not None:
+            self._mark_failed(
+                record,
+                "startup failed: start() must return None or StartupUnavailable",
+            )
             await self._stop_record(record, preserve_failure=True)
             return
 
@@ -503,8 +546,10 @@ class PluginManager:
 
         with self._lock:
             if not preserve_failure and record.state is not PluginState.FAILED:
+                was_unavailable = record.state is PluginState.UNAVAILABLE
                 record.state = PluginState.STOPPED
-                record.error = ""
+                if not was_unavailable:
+                    record.error = ""
             elif preserve_failure and previous_failure and not record.error:
                 record.error = previous_failure
 
@@ -519,6 +564,7 @@ class PluginManager:
             for invocation in self._active_capability_invocations.values():
                 if invocation.caller is record or invocation.target is record:
                     invocation.cancelled = True
+                    invocation.cancellation.cancel()
             return False
 
     async def _call_plugin(self, method, *args):
@@ -528,8 +574,8 @@ class PluginManager:
             operation = asyncio.to_thread(method, *args)
         return await asyncio.wait_for(operation, timeout=self._lifecycle_timeout)
 
-    async def _call_lifecycle(self, method, *args) -> None:
-        await self._call_plugin(method, *args)
+    async def _call_lifecycle(self, method, *args):
+        return await self._call_plugin(method, *args)
 
     def _remove_tools(self, record: _PluginRecord) -> None:
         if not record.tool_names:
@@ -543,6 +589,12 @@ class PluginManager:
 
     def _runtime_failed(self, record: _PluginRecord, message: str) -> None:
         self._mark_failed(record, f"runtime failed: {message}")
+
+    def _mark_unavailable(self, record: _PluginRecord, reason: str) -> None:
+        with self._lock:
+            record.state = PluginState.UNAVAILABLE
+            record.error = reason
+        logger.info("Plugin %s is unavailable: %s", record.metadata.name, reason)
 
     def _mark_failed(self, record: _PluginRecord, message: str) -> None:
         bounded = _bounded_error(message)

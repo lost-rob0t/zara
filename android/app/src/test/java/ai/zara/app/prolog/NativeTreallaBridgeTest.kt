@@ -81,6 +81,28 @@ class NativeTreallaBridgeTest {
     }
 
     @Test
+    fun nativeEvaluationFailureIncludesBoundedMetadataWithoutQueryText() {
+        val api = FakeNativeApi(evaluateError = IllegalStateException("native boom"))
+        val bridge = NativeTreallaBridge(
+            libraryLoader = NativeLibraryLoader { },
+            nativeApi = api,
+        )
+        bridge.initialize("prolog/portable/semantic_core.pl")
+        val query = "private_value(secret, Result)"
+
+        val failure = try {
+            bridge.evaluate(query)
+            throw AssertionError("native evaluation failure must be surfaced")
+        } catch (error: IllegalStateException) {
+            error
+        }
+
+        assertTrue(failure.message?.contains("query_length=${query.length}") == true)
+        assertFalse(failure.message?.contains("private_value") == true)
+        assertTrue(failure.cause?.message?.contains("native boom") == true)
+    }
+
+    @Test
     fun shutdownIsIdempotentAndClosesBridge() {
         val api = FakeNativeApi()
         val bridge = NativeTreallaBridge(
@@ -122,7 +144,8 @@ class NativeTreallaBridgeTest {
     private class FakeNativeApi(
         private val events: MutableList<String> = mutableListOf(),
         private val initializeResult: Boolean = true,
-        private val results: Array<String> = emptyArray()
+        private val results: Array<String> = emptyArray(),
+        private val evaluateError: Throwable? = null,
     ) : TreallaNativeApi {
         var initializeCalls = 0
         var consultCalls = 0
@@ -143,6 +166,7 @@ class NativeTreallaBridgeTest {
 
         override fun evaluate(query: String): Array<String> {
             evaluateCalls += 1
+            evaluateError?.let { throw it }
             return results
         }
 

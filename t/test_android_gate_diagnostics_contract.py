@@ -33,6 +33,7 @@ def test_stock_server_trace_is_bounded_and_literal_only() -> None:
 
     assert {
         ("server", "ready"),
+        ("transport.probe", "ready"),
         ("principal", "opened"),
         ("subscription", "opened"),
         ("turn.submit", "received"),
@@ -46,3 +47,19 @@ def test_stock_server_trace_is_bounded_and_literal_only() -> None:
         'print(f"STOCK_INTEROP phase={phase} outcome={outcome}", '
         "file=sys.stderr, flush=True)"
     ) in source
+
+
+def test_stock_fixture_is_published_only_after_authenticated_transport_probe() -> None:
+    source = Path("android/integration/stock_zara_server_fixture.py").read_text(
+        encoding="utf-8"
+    )
+
+    server_start = source.index("        server.start()")
+    probe_call = source.index("            _wait_for_transport_ready(")
+    fixture_write = source.index("            _write_fixture(", probe_call)
+    ready_publish = source.index('            print("READY", flush=True)', fixture_write)
+
+    assert server_start < probe_call < fixture_write < ready_publish
+    assert "probe.start().result(timeout=5.0)" in source
+    assert "CurveClientConfig(" in source
+    assert "capabilities={Capability.SESSION_BASIC}" in source

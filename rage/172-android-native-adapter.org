@@ -16,7 +16,7 @@
 - Issue #172 remains open and requires deterministic Android packaging plus real cross-runtime fixture execution.
 - Upstream Trealla at commit =b25ccfb8e485a697bb47f1947d6fb8e0ad4e6aaf= exposes a supported embedding API in =src/trealla.h=: =pl_create/pl_destroy=, =pl_consult= / =pl_consult_text=, =pl_query/pl_redo/pl_done=, and canonical =pl_term_text= binding inspection.
 - Upstream documents =pl_term= answer views as query-owned and =pl_term_text= strings as caller-owned via =pl_free=; Zara must copy into JNI strings before advancing/destroying a query.
-- Upstream sample =samples/embed.c= documents the non-obvious query contract: =pl_query= reports error state rather than success, =get_status= identifies the first solution, =pl_redo= destroys an exhausted query, and =pl_done= is only for a still-active query.
+- Upstream sample =samples/embed.c= documents the non-obvious query contract: =pl_query= returns =!error= (API execution success), not goal success; =get_status= identifies the first solution, =pl_redo= destroys an exhausted query, and =pl_done= is only for a still-active query.
 - Current Zara Android build intentionally has no NDK enabled yet; =flake.nix= explicitly records that the Trealla/NDK spike belongs to #172. This Android-only iteration therefore defines the native adapter source/build contract first and does not claim packaged native parity until the repository Android toolchain provides the NDK.
 
 * Design / adversarial review

@@ -3,10 +3,12 @@ agp = "9.2.0"
 kotlin = "2.3.21"
 composeBom = "2026.08.00"
 activityCompose = "1.12.0"
+documentFile = "1.1.0"
 wearCompose = "1.6.2"
 wearComposeMaterial3 = "1.5.0"
 jeromq = "0.6.0"
 playServicesWearable = "20.0.1"
+playServicesCodeScanner = "16.1.0"
 libadbAndroid = "3.1.1"
 conscrypt = "2.5.3"
 bcpkix = "1.81"
@@ -14,6 +16,7 @@ jgit = "7.8.0.202609011348-r"
 litertLm = "0.17.0"
 gson = "2.13.2"
 junit = "4.13.2"
+orgJson = "20260814"
 
 [libraries]
 compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -21,10 +24,12 @@ compose-ui = { group = "androidx.compose.ui", name = "ui" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentFile" }
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }
 wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wearComposeMaterial3" }
 jeromq = { group = "org.zeromq", name = "jeromq", version.ref = "jeromq" }
 play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
+play-services-code-scanner = { group = "com.google.android.gms", name = "play-services-code-scanner", version.ref = "playServicesCodeScanner" }
 libadb-android = { group = "com.github.MuntashirAkon", name = "libadb-android", version.ref = "libadbAndroid" }
 conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk15to18", version.ref = "bcpkix" }
@@ -32,6 +37,7 @@ jgit = { group = "org.eclipse.jgit", name = "org.eclipse.jgit", version.ref = "j
 litert-lm-android = { group = "com.google.ai.edge.litertlm", name = "litertlm-android", version.ref = "litertLm" }
 gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

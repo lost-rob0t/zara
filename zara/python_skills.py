@@ -13,9 +13,11 @@ from .todo_skills import (
     edit_todo,
     export_todos,
     list_todos,
+    open_org_todos,
     reopen_todo,
     schedule_todo,
     search_todos,
+    todo_brief,
 )
 
 
@@ -29,6 +31,8 @@ TODO_SKILLS = frozenset(
         "search_todos",
         "schedule_todo",
         "export_todos",
+        "open_org_todos",
+        "todo_brief",
     }
 )
 
@@ -55,6 +59,8 @@ class PythonSkillRegistry:
             "search_todos": search_todos,
             "schedule_todo": schedule_todo,
             "export_todos": export_todos,
+            "open_org_todos": open_org_todos,
+            "todo_brief": todo_brief,
         }
         self._todo_enabled = True
 
