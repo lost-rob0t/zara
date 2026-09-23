@@ -8,6 +8,11 @@ cd "$repo_root"
 
 code_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+phone_apk_sha256="$(sha256sum "$phone_apk" | awk '{print $1}')"
+if [[ ! "$phone_apk_sha256" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "candidate phone APK did not produce a valid SHA-256" >&2
+  exit 1
+fi
 trealla_library_root="$repo_root/android/app/build/trealla"
 evidence_dir="android/app/build/reports/device"
 instrumentation_log="$evidence_dir/connected-debug-android-test.log"
@@ -16,7 +21,8 @@ instrumentation_log="$evidence_dir/connected-debug-android-test.log"
 # failed acceptance run still leaves exact-head diagnostics instead of an empty
 # artifact slot. This is local CI evidence only; it is not a runtime fallback.
 mkdir -p "$evidence_dir"
-printf 'source_sha=%s\nserial=%s\n' "$source_sha" "$serial" > "$evidence_dir/run-context.txt"
+printf 'source_sha=%s\nserial=%s\napk_sha256=%s\n' \
+  "$source_sha" "$serial" "$phone_apk_sha256" > "$evidence_dir/run-context.txt"
 
 copy_connected_test_diagnostics() {
   local diagnostics_dir="$evidence_dir/instrumentation"
@@ -98,6 +104,7 @@ nix develop "$repo_root/android" -c \
   python3 "$repo_root/android/integration/device_acceptance.py" \
   --serial "$serial" \
   --source-sha "$source_sha" \
+  --apk-sha256 "$phone_apk_sha256" \
   --output android/app/build/reports/device
 
 visual_manifest="$repo_root/android/app/build/reports/device/manifest.json"
