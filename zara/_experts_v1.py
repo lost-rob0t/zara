@@ -69,6 +69,7 @@ _MAX_DECISION_REFS = 16
 _MAX_EVIDENCE_REFS = 32
 _MAX_REF_LENGTH = 128
 _MAX_RECEIPTS = 32
+_MAX_ERROR_MESSAGE = 256
 _SELECTABLE_AVAILABILITY = frozenset(
     {"installed", "available", "ready"}
 )
@@ -264,6 +265,21 @@ def _bounded_text(value: str, *, field_name: str, limit: int) -> str:
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise ValueError(f"{field_name} contains control characters")
     return value
+
+
+def _bounded_error_message(value: Any) -> str:
+    if type(value) is not str:
+        raise ExpertInvalidInputError("error_message must be a string")
+    if not value:
+        return value
+    try:
+        return _bounded_text(
+            value,
+            field_name="error_message",
+            limit=_MAX_ERROR_MESSAGE,
+        )
+    except (TypeError, ValueError) as error:
+        raise ExpertInvalidInputError(str(error)) from error
 
 
 def _bounded_pattern(
@@ -885,6 +901,9 @@ class ExpertResult:
     error_code: Optional[ExpertErrorCode] = None
     error_message: str = ""
     replayed: bool = False
+
+    def __post_init__(self) -> None:
+        _bounded_error_message(self.error_message)
 
 
 @dataclass(frozen=True)
@@ -1692,11 +1711,12 @@ class ExpertRegistry:
                 )
         elif handler_error is not None:
             error_code = ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
-            error_message = f"handler raised: {handler_error!r}"[:256]
+            error_message = f"handler raised: {handler_error!r}"[:_MAX_ERROR_MESSAGE]
         else:
             error_code = ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
             error_message = "handler returned an unparseable outcome"
 
+        error_message = _bounded_error_message(error_message)
         result = ExpertResult(
             protocol=ZARA_EXPERT_PROTOCOL,
             request_id=resolved_request_id,
