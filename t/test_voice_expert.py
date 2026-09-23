@@ -37,8 +37,15 @@ def expert(prolog=None):
     return value
 
 
-def prepare_clone_fixture(monkeypatch, value, *, inventory):
+def prepare_clone_fixture(
+    monkeypatch,
+    value,
+    *,
+    inventory,
+    register_updates_inventory=False,
+):
     monkeypatch.setattr(value, "_require_binary", lambda name: "/bin/ffmpeg")
+    provider_inventory = list(inventory)
 
     def fake_download(url, root):
         path = root / "source.webm"
@@ -52,10 +59,12 @@ def prepare_clone_fixture(monkeypatch, value, *, inventory):
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     async def fake_register(voice_name, wav_path, *, reference_text):
+        if register_updates_inventory and voice_name not in provider_inventory:
+            provider_inventory.append(voice_name)
         return {"ok": True, "voice": voice_name}
 
     async def fake_list():
-        return list(inventory)
+        return list(provider_inventory)
 
     monkeypatch.setattr(value, "_download_youtube_audio", fake_download)
     monkeypatch.setattr(value, "_run", fake_run)
@@ -269,7 +278,12 @@ def test_delete_fails_when_fresh_inventory_still_contains_voice(monkeypatch):
 
 def test_verified_voice_mutations_report_postcondition_evidence(monkeypatch):
     value = expert()
-    prepare_clone_fixture(monkeypatch, value, inventory=["zara", "authorized_voice"])
+    prepare_clone_fixture(
+        monkeypatch,
+        value,
+        inventory=["zara"],
+        register_updates_inventory=True,
+    )
 
     registered = json.loads(
         value.clone_from_youtube(
