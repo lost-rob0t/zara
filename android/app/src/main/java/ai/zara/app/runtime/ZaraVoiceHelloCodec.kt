@@ -59,7 +59,17 @@ object ZaraVoiceHelloCodec {
         rejectAbsent(envelope, "conversation_id", "turn_id", "stream_id", "seq", "trace_id", "content_type", "flags")
         val body = requireObject(envelope, "body")
         rejectUnknown(body, setOf("version", "max_payload_frames", "max_payload_frame_bytes", "max_payload_bytes", "audio_output_format"), "hello.ok body")
-        requireLong(body, "version", exact = 1)
+        val version = body["version"] as? Long
+            ?: throw ZaraWireException(
+                "version must be integer",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_VERSION_MISMATCH,
+            )
+        if (version != 1L) {
+            throw ZaraWireException(
+                "server protocol version $version is not supported",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_VERSION_MISMATCH,
+            )
+        }
         positiveInt(body, "max_payload_frames")
         positiveInt(body, "max_payload_frame_bytes")
         positiveInt(body, "max_payload_bytes")

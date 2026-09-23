@@ -29,7 +29,12 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="microseconds")
 
 
-class ConversationStore:
+# Import after _now_iso exists: the projection module reaches back to this
+# timestamp helper at write time while the canonical store owns the API.
+from .symbolic_projection import SymbolicProjectionMixin  # noqa: E402
+
+
+class ConversationStore(SymbolicProjectionMixin):
     """Durable conversation repository bound to exactly one principal.
 
     Local-owner history uses a platform-neutral storage principal so the same
@@ -54,6 +59,7 @@ class ConversationStore:
             else self._principal.principal_id
         )
         self._ensure_schema()
+        self._ensure_symbolic_policy_columns()
         self._claim_legacy_rows_for_local_owner()
 
     @property
@@ -348,26 +354,98 @@ class ConversationStore:
             for row in rows
         ]
 
+    def _recover_interrupted_turns(self, conversation_id: str) -> None:
+        """Atomically terminalize process-local work left live across restart.
+
+        A fresh process cannot own an old pending/streaming runtime turn. Cancel
+        any pending/streaming canonical messages and independently terminalize
+        a still-pending symbolic projection. The projection recovery must not
+        depend on a message row: a process may die after persisting projection
+        state but before the companion message write reaches SQLite.
+
+        Advancing projection_generation is the stale-callback fence: completion
+        from the dead runtime cannot later overwrite recovered dialogue state or
+        evidence, even for that projection-only crash window.
+        """
+
+        owner = self._storage_principal_id
+        now = _now_iso()
+        with self._db.transaction(immediate=True) as conn:
+            interrupted = conn.execute(
+                """
+                SELECT id, turn_id
+                FROM desktop_messages
+                WHERE conversation_id = ? AND principal_id = ?
+                  AND status IN (?, ?)
+                ORDER BY sequence ASC
+                """,
+                (
+                    conversation_id,
+                    owner,
+                    MessageStatus.PENDING.value,
+                    MessageStatus.STREAMING.value,
+                ),
+            ).fetchall()
+
+            for row in interrupted:
+                conn.execute(
+                    """
+                    UPDATE desktop_messages
+                    SET status = ?,
+                        error = CASE WHEN error = '' THEN ? ELSE error END,
+                        updated_at = ?
+                    WHERE id = ? AND conversation_id = ? AND principal_id = ?
+                    """,
+                    (
+                        MessageStatus.CANCELLED.value,
+                        _INTERRUPTED_ERROR,
+                        now,
+                        row["id"],
+                        conversation_id,
+                        owner,
+                    ),
+                )
+
+            projection_update = conn.execute(
+                """
+                UPDATE desktop_symbolic_projections
+                SET outcome = 'interrupted',
+                    projection_generation = projection_generation + 1,
+                    updated_at = ?
+                WHERE conversation_id = ? AND principal_id = ?
+                  AND outcome = 'pending'
+                """,
+                (now, conversation_id, owner),
+            )
+            if not interrupted and projection_update.rowcount == 0:
+                return
+
+            conn.execute(
+                """
+                UPDATE desktop_conversations
+                SET updated_at = ?
+                WHERE id = ? AND principal_id = ?
+                """,
+                (now, conversation_id, owner),
+            )
+
     def load_state(self, conversation_id: str) -> ConversationState:
         """Load durable history and recover work that cannot still be live.
 
         Runtime turn ownership is process-local to ``RuntimeHost``. If Zara is
         constructing a fresh ``ConversationState`` from SQLite, a previously
         persisted pending/streaming row cannot represent a live turn in this
-        service instance. Mark it interrupted instead of restoring a phantom
-        ``active_turn_id`` that would leave Send disabled forever after a crash
-        or restart.
+        service instance. Recover canonical messages and any pending symbolic
+        projection atomically instead of restoring a phantom active turn or a
+        projection that could still accept a callback from the dead runtime.
         """
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
             raise KeyError(conversation_id)
+        self._recover_interrupted_turns(conversation_id)
         messages = self.load_messages(conversation_id)
-        for message in messages:
-            if message.status in {MessageStatus.PENDING, MessageStatus.STREAMING}:
-                message.status = MessageStatus.CANCELLED
-                if not message.error:
-                    message.error = _INTERRUPTED_ERROR
-                self.save_message(message)
+        conversation = self.get_conversation(conversation_id)
+        assert conversation is not None
         return ConversationState(
             conversation=conversation,
             messages=messages,
