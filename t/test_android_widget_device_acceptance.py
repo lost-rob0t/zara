@@ -17,7 +17,7 @@ def test_emulator_gate_runs_real_launcher_widget_acceptance() -> None:
 def test_widget_acceptance_captures_exact_sha_same_state_evidence() -> None:
     source = WIDGET_ACCEPTANCE.read_text(encoding="utf-8")
 
-    assert "git\", \"rev-parse\", \"HEAD" in source
+    assert '["git", "rev-parse", "HEAD"]' in source
     assert "WidgetEvidenceActivity" in source
     assert "requestPinAppWidget" not in source
     assert "uiautomator" in source
@@ -45,7 +45,7 @@ def test_widget_acceptance_exercises_responsive_theme_runtime_and_process_death_
         "font_scale",
         "2.0",
         "target_width_dp=320",
-        "am\", \"kill\", \"ai.zara.app",
+        '"am", "kill", "ai.zara.app"',
     ):
         assert required in source
 
