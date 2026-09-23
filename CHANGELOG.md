@@ -51,6 +51,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android conversation overflow menus now use Zara semantic surface/text colors, and emulator acceptance fails when an overflow action is semantically present but visually blank, implausibly large, off-screen, or detached from its trigger.
 - Android Auto chat now prefers an authenticated desktop/server session when one is connected instead of silently answering locally first.
 - Android emulator CI now proves the installed APK can complete both a real embedded Local Prolog turn and an authenticated CURVE/ZARA/1 text turn against the stock Zara server.
 - Android remote connections now retain the client CURVE secret for the lifetime of the authenticated socket and deliver the first ZARA/1 hello after the asynchronous CURVE handshake completes, so an enrolled device connects to a secure Zara server over real networks instead of silently failing.

@@ -24,11 +24,11 @@ def test_connected_instrumentation_reinstalls_exact_phone_apk_before_ui_acceptan
     connected_test = ":app:connectedDebugAndroidTest"
     reinstall = 'adb -s "$serial" install -r "$phone_apk"'
     package_check = 'adb -s "$serial" shell cmd package path ai.zara.app | grep -Fq "package:"'
-    device_acceptance = "python android/integration/device_acceptance.py"
+    device_acceptance = 'python3 "$repo_root/android/integration/device_acceptance.py"'
 
     connected_index = source.index(connected_test)
     reinstall_index = source.index(reinstall, connected_index)
     package_index = source.index(package_check, reinstall_index)
-    acceptance_index = source.index(device_acceptance)
+    acceptance_index = source.index(device_acceptance, package_index)
 
     assert connected_index < reinstall_index < package_index < acceptance_index

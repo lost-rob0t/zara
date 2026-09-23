@@ -12,6 +12,8 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 
+from PIL import Image
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -47,6 +49,7 @@ class Device:
         self.screenshots: list[dict] = []
         self.profiles: list[dict] = []
         self.accessibility_semantics: list[dict] = []
+        self.visual_checks: list[dict] = []
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
 
@@ -57,10 +60,7 @@ class Device:
             text=not binary,
         )
 
-    def nodes(self):
-        # Hosted API-35 emulators can occasionally report a successful dump before
-        # the hierarchy file becomes available. Retry only that exact missing-file
-        # condition; command failures and malformed XML still fail immediately.
+    def _hierarchy_text(self) -> str:
         last_error: subprocess.CalledProcessError | None = None
         diagnostic = "no uiautomator diagnostic"
         for attempt in range(1, UI_DUMP_ATTEMPTS + 1):
@@ -75,10 +75,17 @@ class Device:
                     time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
                     continue
                 break
-            return ET.fromstring(hierarchy).iter("node")
+            ET.fromstring(hierarchy)
+            return hierarchy
         raise AssertionError(
             f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
         ) from last_error
+
+    def nodes(self):
+        # Hosted API-35 emulators can occasionally report a successful dump before
+        # the hierarchy file becomes available. Retry only that exact missing-file
+        # condition; command failures and malformed XML still fail immediately.
+        return ET.fromstring(self._hierarchy_text()).iter("node")
 
     def find(self, label: str):
         return next(
@@ -102,6 +109,23 @@ class Device:
             ),
             None,
         )
+
+    def assert_contains_count(self, fragment: str, *, minimum: int) -> None:
+        if minimum < 1:
+            raise ValueError("minimum must be at least one")
+        matches = [
+            node
+            for node in self.nodes()
+            if any(
+                fragment in (node.get(attribute) or "")
+                for attribute in ("text", "content-desc")
+            )
+        ]
+        if len(matches) < minimum:
+            raise AssertionError(
+                f"Expected at least {minimum} UI nodes containing {fragment!r}; "
+                f"found {len(matches)}"
+            )
 
     def size(self) -> tuple[int, int]:
         value = self.adb("shell", "wm", "size")
@@ -182,6 +206,22 @@ class Device:
             str((left + right) // 2),
             str((top + bottom) // 2),
         )
+
+    def tap_contains(self, fragment: str) -> tuple[int, int, int, int]:
+        node = self.find_contains(fragment)
+        if node is None:
+            raise AssertionError(f"Control is not reachable: {fragment}")
+        left, top, right, bottom = self.bounds(node)
+        if right <= left or bottom <= top:
+            raise AssertionError(f"Control has empty bounds: {fragment}")
+        self.adb(
+            "shell",
+            "input",
+            "tap",
+            str((left + right) // 2),
+            str((top + bottom) // 2),
+        )
+        return left, top, right, bottom
 
     def type_text(self, text: str) -> None:
         if not re.fullmatch(r"[A-Za-z0-9_]+", text):
@@ -294,7 +334,138 @@ class Device:
                 }
             )
 
-    def capture(self, name: str) -> None:
+    def capture_text_twin(self, name: str) -> dict:
+        hierarchy = self._hierarchy_text()
+        data = hierarchy.encode("utf-8")
+        path = self.output / f"{name}.xml"
+        path.write_bytes(data)
+        return {
+            "file": path.name,
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+
+    def assert_transient_surface_visible(
+        self,
+        *,
+        trigger_fragment: str,
+        action_labels: tuple[str, ...],
+        screenshot_name: str,
+        trigger_bounds: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        if trigger_bounds is None:
+            trigger = self.find_contains(trigger_fragment)
+            if trigger is None:
+                raise AssertionError(f"Transient-surface trigger is missing: {trigger_fragment}")
+            trigger_bounds = self.bounds(trigger)
+        if trigger_bounds[2] <= trigger_bounds[0] or trigger_bounds[3] <= trigger_bounds[1]:
+            raise AssertionError(f"Transient-surface trigger has empty bounds: {trigger_bounds}")
+
+        action_nodes = []
+        for label in action_labels:
+            node = self.find(label)
+            if node is None:
+                raise AssertionError(f"Transient-surface action is missing: {label}")
+            action_nodes.append((label, node))
+
+        path = self.capture(screenshot_name)
+        screenshot_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        text_twin = self.capture_text_twin(screenshot_name)
+        with Image.open(path) as opened:
+            image = opened.convert("RGB")
+        viewport_width, viewport_height = image.size
+
+        checks: list[dict] = []
+        lefts: list[int] = []
+        tops: list[int] = []
+        rights: list[int] = []
+        bottoms: list[int] = []
+
+        for label, node in action_nodes:
+            left, top, right, bottom = self.bounds(node)
+            if not (0 <= left < right <= viewport_width and 0 <= top < bottom <= viewport_height):
+                raise AssertionError(
+                    f"Transient-surface action escaped viewport: {label} {node.attrib.get('bounds')}"
+                )
+            lefts.append(left)
+            tops.append(top)
+            rights.append(right)
+            bottoms.append(bottom)
+
+            crop = image.crop((left, top, right, bottom)).convert("L")
+            crop_width, crop_height = crop.size
+            edge_inset = max(1, min(6, crop_width // 10, crop_height // 10))
+            if crop_width <= edge_inset * 2 or crop_height <= edge_inset * 2:
+                raise AssertionError(
+                    "Transient-surface action is too small for interior visual evidence: "
+                    f"{label} size={crop_width}x{crop_height} inset={edge_inset}"
+                )
+            content_crop = crop.crop(
+                (edge_inset, edge_inset, crop_width - edge_inset, crop_height - edge_inset)
+            )
+            low, high = content_crop.getextrema()
+            occupied_bins = sum(1 for count in content_crop.histogram() if count)
+            luma_span = int(high) - int(low)
+            if luma_span < 18 or occupied_bins < 4:
+                raise AssertionError(
+                    "Transient-surface action is semantically present but visually blank: "
+                    f"{label} luma_span={luma_span} occupied_bins={occupied_bins}"
+                )
+            checks.append(
+                {
+                    "label": label,
+                    "bounds": node.attrib.get("bounds"),
+                    "content_inset_px": edge_inset,
+                    "luma_span": luma_span,
+                    "occupied_luma_bins": occupied_bins,
+                }
+            )
+
+        union = (
+            min(lefts),
+            min(tops),
+            max(rights),
+            max(bottoms),
+        )
+        union_width = union[2] - union[0]
+        union_height = union[3] - union[1]
+        if union_width > viewport_width * 0.65 or union_height > viewport_height * 0.45:
+            raise AssertionError(
+                "Transient menu occupies implausibly large viewport area: "
+                f"union={union} viewport={viewport_width}x{viewport_height}"
+            )
+
+        trigger_center = (
+            (trigger_bounds[0] + trigger_bounds[2]) // 2,
+            (trigger_bounds[1] + trigger_bounds[3]) // 2,
+        )
+        nearest_x = min(max(trigger_center[0], union[0]), union[2])
+        nearest_y = min(max(trigger_center[1], union[1]), union[3])
+        distance = abs(trigger_center[0] - nearest_x) + abs(trigger_center[1] - nearest_y)
+        if distance > max(viewport_width, viewport_height) * 0.35:
+            raise AssertionError(
+                "Transient menu is not anchored near its trigger: "
+                f"trigger={trigger_bounds} union={union} distance={distance}"
+            )
+
+        self.visual_checks.append(
+            {
+                "state": screenshot_name,
+                "trigger": trigger_fragment,
+                "trigger_bounds": list(trigger_bounds),
+                "action_union": union,
+                "viewport": [viewport_width, viewport_height],
+                "screenshot_file": path.name,
+                "screenshot_sha256": screenshot_sha256,
+                "text_twin_file": text_twin["file"],
+                "text_twin_sha256": text_twin["sha256"],
+                "source_sha": getattr(self, "source_sha", None),
+                "device_api": getattr(self, "device_api", None),
+                "profile": getattr(self, "current_profile", "default"),
+                "actions": checks,
+            }
+        )
+
+    def capture(self, name: str) -> Path:
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
@@ -307,6 +478,7 @@ class Device:
                 "sha256": hashlib.sha256(data).hexdigest(),
             }
         )
+        return path
 
     def launch_surface(self, component: str, label: str) -> None:
         self.adb(
@@ -393,6 +565,7 @@ class Device:
         self.adb(
             "shell", "settings", "put", "system", "font_scale", font_scale_text
         )
+        self.current_profile = name
         self.profiles.append(
             {
                 "name": name,
@@ -421,6 +594,7 @@ class Device:
             self.adb("shell", "settings", "put", "system", "font_scale", "1.0")
         self._size_before_profile = None
         self._font_scale_before_profile = None
+        self.current_profile = "default"
         time.sleep(1.0)
 
 
@@ -443,7 +617,40 @@ def exercise_three_menu_ui(device: Device) -> None:
     for menu in ("Chat", "Workspace", "Settings"):
         device.await_label(menu)
     device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
+
+    # Exercise the real New chat UI twice so the overflow catcher cannot pass on
+    # a synthetic/single-row drawer. Each tap crosses MainActivity's canonical
+    # ConversationStore path, then we reopen the drawer and prove multiple action
+    # triggers exist before capturing any overflow evidence.
+    device.tap_contains("New chat")
+    device.await_label("Chat")
+    device.tap("Open navigation menu")
+    device.await_contains("New chat")
+    device.tap_contains("New chat")
+    device.await_label("Chat")
+    device.tap("Open navigation menu")
+    for menu in ("Chat", "Workspace", "Settings"):
+        device.await_label(menu)
+    device.assert_contains_count("Actions for ", minimum=2)
     device.capture("drawer-open")
+
+    device.await_contains("Actions for ")
+    trigger_bounds = device.tap_contains("Actions for ")
+    device.await_label("Rename")
+    device.await_label("Move to project")
+    pin_label = "Pin" if device.find("Pin") is not None else "Unpin"
+    if device.find(pin_label) is None:
+        raise AssertionError("Conversation overflow did not expose Pin/Unpin")
+    overflow_actions = (pin_label, "Rename", "Move to project")
+    device.assert_accessible_targets(overflow_actions)
+    device.assert_transient_surface_visible(
+        trigger_fragment="Actions for ",
+        trigger_bounds=trigger_bounds,
+        action_labels=overflow_actions,
+        screenshot_name="drawer-conversation-overflow",
+    )
+    device.press_back()
+
     device.tap("Workspace")
     device.await_label("Logic")
     device.capture("workspace-logic")
@@ -536,6 +743,8 @@ def main() -> None:
     source_sha = verified_source_sha(args.source_sha)
     args.output.mkdir(parents=True, exist_ok=True)
     device = Device(args.serial, args.output)
+    device.source_sha = source_sha
+    device.current_profile = "default"
     result = {
         "source_sha": source_sha,
         "serial": args.serial,
@@ -543,6 +752,7 @@ def main() -> None:
         "screenshots": device.screenshots,
         "profiles": device.profiles,
         "accessibility_semantics": device.accessibility_semantics,
+        "visual_checks": device.visual_checks,
         # UIAutomator semantics are useful accessibility evidence, but they are not
         # proof of real TalkBack spoken traversal. Keep that hardware/service claim false.
         "talkback_spoken_traversal": False,
@@ -556,6 +766,7 @@ def main() -> None:
                 "shell", "settings", "get", "system", "font_scale"
             ).strip(),
         }
+        device.device_api = result["device"]["api"]
         exercise_three_menu_ui(device)
         result["passed"] = True
     except BaseException as error:
