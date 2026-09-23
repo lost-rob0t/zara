@@ -178,6 +178,29 @@ def test_release_staging_is_verified_before_the_publication_transition() -> None
     )
 
 
+def test_staged_release_cleanup_is_owned_retry_safe_and_never_deletes_published() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "Recover stale owned draft from prior interrupted run" in workflow
+    assert "Cleanup unpublished owned staged release" in workflow
+    assert "zara-staging:${GITHUB_REPOSITORY}:${GITHUB_SHA}:run=" in workflow
+    assert "if: always() && steps.stage.outputs.release_id != ''" in workflow
+    assert "STAGED_RELEASE_ID: ${{ steps.stage.outputs.release_id }}" in workflow
+    assert 'release.get("target_commitish") != os.environ["STAGED_SOURCE"]' in workflow
+    assert 'release.get("name") != os.environ["STAGED_TITLE"]' in workflow
+    assert 'release.get("draft") is not True' in workflow
+    assert 'print("keep")' in workflow
+    assert 'print("delete")' in workflow
+    assert '-f name="Zara $TAG"' in workflow
+    assert "trap cleanup_failed_draft ERR" not in workflow
+    assert workflow.index("Recover stale owned draft from prior interrupted run") < workflow.index(
+        "Stage GitHub versioned release as draft"
+    )
+    assert workflow.index("Verify published release bytes, metadata, signer, and notes") < workflow.index(
+        "Cleanup unpublished owned staged release"
+    )
+
+
 def test_versioned_release_uses_canonical_notes_and_exact_downloaded_bytes() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
