@@ -10,7 +10,7 @@ import base64
 import hashlib
 import ipaddress
 import os
-import tempfile
+import stat
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -209,13 +209,24 @@ class Qwen3TTSClient:
             handle.close()
 
     def _voice_mutation_lock_path(self, name: str) -> Path:
-        runtime_dir = os.getenv("XDG_RUNTIME_DIR")
-        if runtime_dir:
-            root = Path(runtime_dir) / "zarathushtra" / "qwen3-voice-locks"
-        else:
-            uid = str(os.getuid()) if hasattr(os, "getuid") else "user"
-            root = Path(tempfile.gettempdir()) / f"zarathushtra-qwen3-{uid}"
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not hasattr(os, "getuid"):
+            raise RuntimeError(
+                "Qwen voice registry mutation requires a canonical POSIX principal identity"
+            )
+
+        uid = os.getuid()
+        root = Path("/tmp") / f"zarathushtra-qwen3-{uid}"
+        root.mkdir(mode=0o700, exist_ok=True)
+        root_stat = root.lstat()
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or root_stat.st_uid != uid
+            or root_stat.st_mode & 0o077
+        ):
+            raise RuntimeError(
+                "Qwen voice mutation lock namespace is not private to the current principal"
+            )
+
         authority = self._voice_mutation_authority()
         digest = hashlib.sha256(
             f"{authority}\0{name}".encode("utf-8")
