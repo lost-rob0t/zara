@@ -5,6 +5,7 @@ import ai.zara.app.history.HistoryMessageRole
 import ai.zara.app.history.HistoryMessageStatus
 import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.fencePendingSymbolicProject
+import ai.zara.app.history.rollbackEmptyConversationCreation
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -85,13 +86,24 @@ class CanonicalConversationStore(
         }
         val id = normalizeId(idFactory())
         require(history.getConversation(id) == null) { "Conversation id already exists" }
+        val previousMetadata = metadata
         history.createConversation(DEFAULT_TITLE, conversationId = id)
         metadata = metadata.copy(
             selectedConversationId = id,
             conversations = metadata.conversations +
                 (id to ConversationUiMetadata(projectId = cleanProjectId)),
         )
-        persistMetadata()
+        try {
+            persistMetadata()
+        } catch (error: Throwable) {
+            metadata = previousMetadata
+            try {
+                history.rollbackEmptyConversationCreation(id)
+            } catch (rollbackError: Throwable) {
+                error.addSuppressed(rollbackError)
+            }
+            throw error
+        }
         return checkNotNull(snapshot().conversation(id))
     }
 
