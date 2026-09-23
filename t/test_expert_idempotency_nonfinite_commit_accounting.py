@@ -49,6 +49,43 @@ class NonFiniteModelHandler:
 
 
 @dataclass
+class NonFiniteUsageHandler:
+    calls: int = 0
+
+    def __call__(self, *, expert_operation: str, **payload: Any) -> dict[str, Any]:
+        assert expert_operation == "score.compute"
+        assert payload == {"subject": "fixture"}
+        self.calls += 1
+        return {
+            "verdict": "succeeded",
+            "data": {"score": 1.0},
+            "evidence_refs": ["evidence:nonfinite-usage:v1"],
+            "usage": {
+                "model_calls": 1,
+                "details": {"temperature": float("inf")},
+            },
+            "effect_receipts": [RECEIPT],
+        }
+
+
+@dataclass
+class NonFiniteReceiptHandler:
+    calls: int = 0
+
+    def __call__(self, *, expert_operation: str, **payload: Any) -> dict[str, Any]:
+        assert expert_operation == "score.compute"
+        assert payload == {"subject": "fixture"}
+        self.calls += 1
+        return {
+            "verdict": "succeeded",
+            "data": {"score": 1.0},
+            "evidence_refs": ["evidence:nonfinite-receipt:v1"],
+            "usage": {"model_calls": 1},
+            "effect_receipts": [{**RECEIPT, "confidence": float("nan")}],
+        }
+
+
+@dataclass
 class CountingReplacementHandler:
     calls: int = 0
 
@@ -130,20 +167,11 @@ def _invoke(
     )
 
 
-def test_nonfinite_terminal_preserves_known_usage_and_effect_receipt_across_restart(
-    tmp_path: Path,
+def _assert_restart_replay(
+    path: Path,
+    *,
+    expected_receipts: tuple[dict[str, Any], ...],
 ) -> None:
-    path = tmp_path / "nonfinite-terminal.db"
-    database = DatabaseManager(path)
-    handler = NonFiniteModelHandler()
-    registry, handle = _activate(database, handler)
-
-    with pytest.raises(ExpertInvalidInputError, match="canonical JSON"):
-        _invoke(registry, handle, max_model_calls=1)
-
-    assert handler.calls == 1
-    database.close()
-
     restarted_database = DatabaseManager(path)
     replacement = CountingReplacementHandler()
     restarted_registry, restarted_handle = _activate(restarted_database, replacement)
@@ -164,7 +192,7 @@ def test_nonfinite_terminal_preserves_known_usage_and_effect_receipt_across_rest
     assert replay.data == {}
     assert replay.evidence_refs == ()
     assert replay.usage == {"model_calls": 1}
-    assert replay.effect_receipts == (RECEIPT,)
+    assert replay.effect_receipts == expected_receipts
     assert replacement.calls == 0, "fail-closed terminal replay must never redispatch"
 
     replay_again = _invoke(restarted_registry, restarted_handle, max_model_calls=1)
@@ -174,3 +202,51 @@ def test_nonfinite_terminal_preserves_known_usage_and_effect_receipt_across_rest
     assert replay_again.effect_receipts == replay.effect_receipts
     assert replacement.calls == 0
     restarted_database.close()
+
+
+def test_nonfinite_terminal_preserves_known_usage_and_effect_receipt_across_restart(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "nonfinite-terminal.db"
+    database = DatabaseManager(path)
+    handler = NonFiniteModelHandler()
+    registry, handle = _activate(database, handler)
+
+    with pytest.raises(ExpertInvalidInputError, match="canonical JSON"):
+        _invoke(registry, handle, max_model_calls=1)
+
+    assert handler.calls == 1
+    database.close()
+    _assert_restart_replay(path, expected_receipts=(RECEIPT,))
+
+
+def test_nonfinite_nested_usage_preserves_model_ledger_and_valid_receipt(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "nonfinite-usage.db"
+    database = DatabaseManager(path)
+    handler = NonFiniteUsageHandler()
+    registry, handle = _activate(database, handler)
+
+    with pytest.raises(ExpertInvalidInputError, match="canonical JSON"):
+        _invoke(registry, handle, max_model_calls=1)
+
+    assert handler.calls == 1
+    database.close()
+    _assert_restart_replay(path, expected_receipts=(RECEIPT,))
+
+
+def test_nonfinite_receipt_stays_fail_closed_without_redispatch(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "nonfinite-receipt.db"
+    database = DatabaseManager(path)
+    handler = NonFiniteReceiptHandler()
+    registry, handle = _activate(database, handler)
+
+    with pytest.raises(ExpertInvalidInputError, match="canonical JSON"):
+        _invoke(registry, handle, max_model_calls=1)
+
+    assert handler.calls == 1
+    database.close()
+    _assert_restart_replay(path, expected_receipts=())
