@@ -17,12 +17,12 @@ def _component(value: str, field_name: str) -> bytes:
 
 
 def derive_notification_id(*, source_peer: str, platform_identity: str, generation: int) -> str:
-    """Derive one stable Zara identity from source ownership + platform generation.
+    """Derive one stable Zara identity for all generations of a platform notification.
 
     Platform adapters (#906 on Android, Linux notification ingress, Wear relay)
-    should use this before publishing ``NotificationEvent``. Length-prefixing
-    prevents delimiter ambiguity and the generation makes platform replacement
-    semantics explicit rather than content-dependent.
+    should use this before publishing ``NotificationEvent``. The stable identity
+    is owned by source peer plus platform identity; ``generation`` remains the
+    monotonic replacement/staleness fence carried by the event itself.
     """
 
     if isinstance(generation, bool) or not isinstance(generation, int) or generation < 1:
@@ -30,7 +30,6 @@ def derive_notification_id(*, source_peer: str, platform_identity: str, generati
     parts = (
         _component(source_peer, "source_peer"),
         _component(platform_identity, "platform_identity"),
-        str(generation).encode("ascii"),
     )
     digest = hashlib.sha256()
     digest.update(b"ZARA-NOTIFICATION/1\0")
