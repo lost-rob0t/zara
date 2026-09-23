@@ -1,0 +1,39 @@
+* Run identity
+- Consumed issue :: #863
+- Branch :: =rage/863-reconcile-current-master=
+- RAGE start commit :: =eb76a2a07162f61272385e0875fa76d5e70c4301=
+
+** Reconciliation evidence
+
+- Conflicted files: MainActivity.kt, t/test_peer_node_secure_hello.py,
+  zara/__main__.py, zara/security_gateway.py.
+- Gateway hunks resolved to master's before_send peer-node commit
+  mechanism; both peer-hello regression harnesses retained and green
+  (6/6 in t/test_peer_node_secure_hello.py).
+- Security/transport/pairing focused suites green:
+  44 passed (gateway, transport, peer-hello, pairing broker,
+  16-letter code).
+- Post-merge Kotlin breakage: the pairing-aware ZaraApp overload in
+  PairingZaraApp.kt predated master's turnFailure/onRetryTurn/
+  onReconnectRemote/onOpenDiagnostics/onExportDiagnostics params;
+  wrapper signature + delegation updated. :app:compileDebugKotlin
+  green afterwards.
+- Pre-existing on pure origin/master (NOT from this merge):
+  WearFoundationContractTest.wearApplicationsKeepApi30CompatibilityFloor
+  fails ("Shared UI must not raise the effective Wear minimum above
+  API 30") — surfaced by the #1391 area; flagged for reviewers, gated
+  by the repo's authoritative android+wear lane.
+
+** Gate (reconciliation head)
+
+- Full Android gate green: =nix develop ./android -c bash
+  scripts/test-android.sh= (stock-server interop with real runtime
+  events, all module JVM suites, emulator-free contracts, APK builds,
+  installability + secret inspection).
+- Gate repair included: WearFoundationContractTest raw-string regex
+  broken by #1391 failed on pure master too; single-backslash fix,
+  test green. Blocks the =:app= lane for everyone otherwise.
+- Python focused suites green (44 security/transport/pairing tests).
+- Remaining exact-head authority: PR CI lanes (test, android+wear,
+  deep regression, dual-surface, agentic live app) — merge on green
+  via auto-merge.

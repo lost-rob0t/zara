@@ -39,6 +39,7 @@ android {
 
     defaultConfig {
         applicationId = "ai.zara.app"
+        // Compatibility floor: Galaxy Watch5 Pro-class Wear OS hardware and newer.
         minSdk = 30
         targetSdk = 36
         versionCode = zaraAndroidVersionCode

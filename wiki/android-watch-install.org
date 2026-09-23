@@ -1,5 +1,11 @@
 #+title: Zara Android Watch Installation
 
+* Supported watch baseline
+
+Zara Wear intentionally keeps =minSdk = 30= for both the main watch client and the focused voice APK. API 30 is the compatibility floor for the Galaxy Watch5 Pro target; newer watches, including newer Galaxy Watch generations, remain supported as long as they satisfy that floor.
+
+=compileSdk= and =targetSdk= may advance independently. Raising the Wear =minSdk= above 30 is a compatibility-breaking change and must update the Wear foundation contract test and this support policy explicitly.
+
 * Transport model
 
 Wear OS 3 and newer do not support Bluetooth ADB. Zara therefore separates the watch workflow into two transports:

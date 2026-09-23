@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Termux bridge/Wear debug APKs + secret inspection.
-# Run via: nix develop .#android -c bash scripts/test-android.sh
+# Run via: nix develop ./android -c bash scripts/test-android.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -59,6 +59,44 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
+recovery_dir="$(mktemp -d)"
+recovery_fixture="$recovery_dir/fixture.env"
+recovery_log="$recovery_dir/server.log"
+recovery_pid=""
+cleanup_recovery() {
+  if [[ -n "$recovery_pid" ]] && kill -0 "$recovery_pid" 2>/dev/null; then
+    kill "$recovery_pid" 2>/dev/null || true
+    wait "$recovery_pid" 2>/dev/null || true
+  fi
+  rm -rf "$recovery_dir"
+}
+trap 'cleanup_interop; cleanup_recovery' EXIT
+
+nix develop "$repo_root" -c env \
+  PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$repo_root/android/integration/remote_recovery_fixture.py" \
+  --fixture-file "$recovery_fixture" </dev/null >"$recovery_log" 2>&1 &
+recovery_pid=$!
+
+for _ in $(seq 1 1200); do
+  if [[ -f "$recovery_fixture" ]] && grep -qx 'READY' "$recovery_log"; then
+    break
+  fi
+  if ! kill -0 "$recovery_pid" 2>/dev/null; then
+    cat "$recovery_log" >&2
+    echo "remote recovery fixture exited before readiness" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -f "$recovery_fixture" ]] || ! grep -qx 'READY' "$recovery_log"; then
+  cat "$recovery_log" >&2
+  echo "remote recovery fixture did not become ready" >&2
+  exit 1
+fi
+chmod 600 "$recovery_fixture"
+export ZARA_RECOVERY_FIXTURE="$recovery_fixture"
+
 gradle_log="$(mktemp)"
 if ! gradle --no-daemon \
   :app:testDebugUnitTest \
@@ -77,6 +115,7 @@ if ! gradle --no-daemon \
   mkdir -p "$diagnostics_dir"
   tail -n 240 "$gradle_log" > "$diagnostics_dir/gradle-failure-tail.log"
   cp "$interop_log" "$diagnostics_dir/stock-zara-server.log"
+  cp "$recovery_log" "$diagnostics_dir/remote-recovery-fixture.log" 2>/dev/null || true
   cat "$interop_log" >&2
   echo "stock ZaraServer Android/Wear/Code/Termux interop gate failed" >&2
   exit 1
@@ -87,6 +126,11 @@ printf 'STOP\n' >&9
 wait "$interop_pid"
 interop_pid=""
 unset ZARA_STOCK_FIXTURE
+
+kill "$recovery_pid" 2>/dev/null || true
+wait "$recovery_pid" 2>/dev/null || true
+recovery_pid=""
+unset ZARA_RECOVERY_FIXTURE
 
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 code_apk="code-editor/build/outputs/apk/debug/code-editor-debug.apk"

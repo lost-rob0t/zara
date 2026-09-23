@@ -218,6 +218,59 @@ State should represent facts such as:
 
 UI recreations must not create a new assistant authority or silently duplicate submitted work.
 
+* Remote protocol truth and typed failures
+
+The Android client speaks the same =ZARA/1= vocabulary the server emits:
+=voice.speech.started=, =voice.speech.ended=, =turn.cancelled=,
+=runtime.error=, and =runtime.stopped= are decoded rather than rejected, and
+legal text frames interleaved into the voice stream are tolerated. Wire
+failures carry stable typed codes (for example =protocol.malformed=,
+=protocol.unexpected_message=, =protocol.stale_generation=,
+=protocol.version_mismatch=, =protocol.server_error=, =transport.timeout=,
+=transport.closed=, =remote.not_connected=) plus the server's own error code
+and retryability when present.
+
+Invariants:
+
+- a failed frame can never leave the client in a fake-connected state;
+  session-desyncing failures collapse the connection into the bounded
+  reconnect with a typed reason;
+- stale frames from a previous session/generation are fenced: they are
+  recorded as =protocol.message.rejected= telemetry and dropped without
+  corrupting the current session;
+- the persisted remote session is restored on launch (=session.restore.*=
+  events) instead of silently remaining disconnected after process
+  recreation;
+- every connected-to-disconnected transition has exactly one typed terminal
+  event with the same correlation/generation.
+
+Chat failures render one structured error card (subsystem, operation, typed
+code, connection state, recovery, incident id, Retry/Reconnect/Diagnostics)
+and the footer separates mode, authentication, and transport truth
+(=REMOTE • AUTHENTICATED • CONNECTED/RECONNECTING/DISCONNECTED • SYMBOLIC=);
+authentication validity is never presented as a live connection.
+
+* Diagnostics
+
+=ZARA-LOCAL-DIAGNOSTICS/2= is the current export: a deterministic text and
+canonical-JSON incident bundle with a retained =primary_failure= block
+(subsystem, operation, phase, typed code, bounded sanitized message/cause,
+first/last seen, request/turn correlation, last successful step, recovery),
+remote/protocol context (transport kind, connect generation, last
+connected/disconnected timestamps, negotiated protocol version, handshake
+state, close code and bounded reason, last RX/TX message metadata, expected
+next state, last completed turn), voice pipeline stage states with explicit
+=not_applicable= semantics, and a correlated ordered timeline from the typed
+telemetry journal. Protocol message records carry metadata only (type,
+sequence, size) — never payloads, credentials, audio, or prompt/response
+text.
+
+The deterministic regression layer for this contract is
+=android/integration/remote_recovery_fixture.py= (failure injection: =ARM
+MALFORMED|VERSION_MISMATCH|OUT_OF_ORDER|CLOSE|STALE=) driving the real
+client in =RemoteRecoveryInteropTest= and the installed APK in
+=device_remote_recovery_acceptance.py=.
+
 * Chat / assistant surface
 
 The native chat/assistant UI is still active work.
