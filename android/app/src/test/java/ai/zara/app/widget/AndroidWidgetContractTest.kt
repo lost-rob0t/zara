@@ -1,6 +1,7 @@
 package ai.zara.app.widget
 
 import java.io.File
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,16 +25,23 @@ class AndroidWidgetContractTest {
     }
 
     @Test
-    fun `widget clicks are bounded app routes and style is Prolog owned`() {
+    fun `widget clicks enter the canonical AppNavigation through a bounded bridge`() {
         val provider = File("src/main/java/ai/zara/app/widget/ZaraWidgetProvider.kt").readText()
-        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
-        val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val bridge = File("src/main/java/ai/zara/app/widget/WidgetNavigationRequest.kt").readText()
+        val navigation = File("src/main/java/ai/zara/app/ui/AppNavigation.kt").readText()
         val style = File("src/main/assets/prolog/widget_styles.pl").readText()
 
         assertTrue(provider.contains("WidgetRoute"))
-        assertTrue(provider.contains("PendingIntent.getActivity"))
-        assertTrue(activity.contains("WIDGET_ROUTE"))
-        assertTrue(shell.contains("requestedSurface"))
+        assertTrue(provider.contains("FLAG_IMMUTABLE"))
+        assertTrue(provider.contains("WidgetRouteReceiver"))
+        assertTrue(bridge.contains("AppRoute"))
+        assertTrue(bridge.contains("WidgetRoute.entries"))
+        assertTrue(bridge.contains("MainActivity::class.java"))
+        assertTrue(navigation.contains("WidgetNavigationRequest"))
+        assertTrue(navigation.contains("selectRoute"))
+        assertFalse("widgets must not create a second navigation owner", provider.contains("requestedSurface"))
+        assertFalse("widgets must not create a second AppNavigation", bridge.contains("AppNavigation("))
+
         assertTrue(style.contains("zara_widget_stylesheet(1)."))
         assertTrue(style.contains("widget_color("))
         assertTrue(style.contains("widget_metric("))
@@ -43,7 +51,29 @@ class AndroidWidgetContractTest {
     }
 
     @Test
-    fun `themes screen provides import export reset and live widget refresh`() {
+    fun `widget routes are the current canonical route whitelist`() {
+        val style = File("src/main/java/ai/zara/app/widget/WidgetStyle.kt").readText()
+        listOf(
+            "CHAT(\"chat\", AppRoute.Chat)",
+            "VOICE(\"voice\", AppRoute.Voice)",
+            "LOGIC(\"logic\", AppRoute.Logic)",
+            "PROJECTS(\"projects\", AppRoute.Projects)",
+            "SCHEDULED(\"scheduled\", AppRoute.Scheduled)",
+            "RUNTIME(\"runtime\", AppRoute.Runtime)",
+            "CONNECTION(\"connection\", AppRoute.Connection)",
+            "PERMISSIONS(\"permissions\", AppRoute.Permissions)",
+            "APPEARANCE(\"appearance\", AppRoute.Appearance)",
+            "PLUGINS(\"plugins\", AppRoute.Plugins)",
+            "UPDATES(\"updates\", AppRoute.Updates)",
+            "DIAGNOSTICS(\"diagnostics\", AppRoute.Diagnostics)",
+            "ABOUT(\"about\", AppRoute.About)",
+        ).forEach { contract -> assertTrue("missing route $contract", style.contains(contract)) }
+        assertFalse("legacy parallel themes route must not survive", style.contains("THEMES(\"themes\""))
+        assertFalse("legacy parallel remote route must not survive", style.contains("REMOTE(\"remote\""))
+    }
+
+    @Test
+    fun `appearance owns widget style import export reset and live refresh`() {
         val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
         val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
 
