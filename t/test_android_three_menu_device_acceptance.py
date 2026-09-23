@@ -85,7 +85,6 @@ def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects
     assert 'device_remote_acceptance.py' in gate
 
 
-
 def test_drawer_conversation_overflow_has_pixel_and_geometry_catcher():
     text = source()
     android_flake = ANDROID_FLAKE.read_text(encoding="utf-8")
@@ -103,6 +102,31 @@ def test_drawer_conversation_overflow_has_pixel_and_geometry_catcher():
     assert 'union_height > viewport_height * 0.45' in text
     assert 'Transient menu is not anchored near its trigger' in text
     assert 'pkgs.python3Packages.pillow' in android_flake
+
+
+def test_visual_gate_binds_preopen_trigger_and_same_state_text_twin():
+    text = source()
+
+    assert 'trigger_bounds = device.tap_contains("Actions for ")' in text
+    assert 'trigger_bounds=trigger_bounds' in text
+    assert 'def capture_text_twin(' in text
+    assert '"screenshot_sha256": screenshot_sha256' in text
+    assert '"text_twin_sha256": text_twin["sha256"]' in text
+    assert '"source_sha": getattr(self, "source_sha", None)' in text
+    assert '"device_api": getattr(self, "device_api", None)' in text
+
+
+def test_emulator_gate_verifies_visual_receipt_files_hashes_and_source_identity():
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+
+    assert 'visual_manifest="$repo_root/android/app/build/reports/device/manifest.json"' in gate
+    assert 'drawer-conversation-overflow' in gate
+    assert 'screenshot_sha256' in gate
+    assert 'text_twin_sha256' in gate
+    assert 'hashlib.sha256' in gate
+    assert 'receipt.get("source_sha") != expected_source_sha' in gate
+    assert 'receipt.get("device_api") != data.get("device", {}).get("api")' in gate
+    assert 'expected_actions = {"Pin", "Unpin", "Rename", "Move to project"}' in gate
 
 
 def test_remote_gate_fails_closed_when_app_diagnostics_are_missing_or_fatal():
