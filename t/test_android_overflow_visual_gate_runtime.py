@@ -13,6 +13,8 @@ assert SPEC is not None and SPEC.loader is not None
 DEVICE_ACCEPTANCE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEVICE_ACCEPTANCE)
 Device = DEVICE_ACCEPTANCE.Device
+SOURCE_SHA = "a" * 40
+APK_SHA256 = "b" * 64
 
 
 def node(*, bounds: tuple[int, int, int, int], label: str) -> ET.Element:
@@ -33,6 +35,18 @@ def synthetic_device(tmp_path: Path, image: Image.Image) -> Device:
     screenshot_bytes = path.read_bytes()
     hierarchy = "<hierarchy><node text='Rename'/></hierarchy>"
     device = Device("synthetic", tmp_path)
+    device.source_sha = SOURCE_SHA
+    device.apk_sha256 = APK_SHA256
+    device.device_api = "35"
+    device.current_profile = "default"
+    device.current_route = "chat"
+    device.runtime_evidence = {
+        "mode": None,
+        "runtime_id": None,
+        "model": None,
+        "quantization": None,
+        "phase": None,
+    }
     trigger = node(bounds=(100, 20, 140, 34), label="Actions for test")
     action = node(bounds=(40, 40, 120, 80), label="Rename")
     device.find_contains = lambda fragment: trigger if fragment == "Actions for " else None
