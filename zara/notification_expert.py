@@ -57,7 +57,7 @@ def notification_spam_descriptor() -> ExpertDescriptor:
             },
             "required_capabilities": [],
             "possible_effects": ["none"],
-            "supported_engines": ["prolog"],
+            "supported_engines": ["swipl"],
             "supported_platforms": ["linux", "android", "wear"],
             "fallback_policy": "fail_closed",
             "delegation_policy": "never",
