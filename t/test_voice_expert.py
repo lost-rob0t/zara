@@ -260,6 +260,26 @@ def test_clone_rejects_preexisting_target_before_registration(monkeypatch):
     assert attempted_registrations == []
 
 
+def test_delete_rejects_absent_target_before_mutation(monkeypatch):
+    value = expert()
+    attempted_deletions = []
+
+    async def fake_list():
+        return ["zara"]
+
+    async def fake_delete(voice_name):
+        attempted_deletions.append(voice_name)
+        return {"ok": True, "voice": voice_name}
+
+    monkeypatch.setattr(value, "_qwen_list_voices", fake_list)
+    monkeypatch.setattr(value, "_qwen_delete_voice", fake_delete)
+
+    with pytest.raises(RuntimeError, match="does not exist"):
+        value.delete_voice("authorized_voice")
+
+    assert attempted_deletions == []
+
+
 def test_delete_fails_when_fresh_inventory_still_contains_voice(monkeypatch):
     value = expert()
 
