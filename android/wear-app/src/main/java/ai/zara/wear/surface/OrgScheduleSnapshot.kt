@@ -31,22 +31,31 @@ data class OrgScheduleAllocation(
 data class OrgScheduleSnapshot(
     val generatedAtEpochMillis: Long,
     val allocations: List<OrgScheduleAllocation>,
+    val currentOrNextId: String?,
     val currentOrNextTitle: String?,
 ) {
     init {
         require(generatedAtEpochMillis >= 0L) { "generatedAtEpochMillis must not be negative" }
         require(allocations.size <= MAX_LANES) { "Org schedule snapshot supports at most $MAX_LANES lanes" }
-        require(allocations.map(OrgScheduleAllocation::id).distinct().size == allocations.size) {
+        val allocationIds = allocations.map(OrgScheduleAllocation::id)
+        require(allocationIds.distinct().size == allocations.size) {
             "Org schedule allocation ids must be unique"
         }
-        require(currentOrNextTitle == null || currentOrNextTitle.isNotBlank()) {
-            "currentOrNextTitle must be null or non-blank"
+        require((currentOrNextId == null) == (currentOrNextTitle == null)) {
+            "current/next todo id and title must be present together"
+        }
+        if (currentOrNextId != null) {
+            require(currentOrNextId.isNotBlank()) { "currentOrNextId must not be blank" }
+            require(currentOrNextTitle!!.isNotBlank()) { "currentOrNextTitle must not be blank" }
+            require(currentOrNextId in allocationIds) {
+                "currentOrNextId must reference an allocation in this snapshot"
+            }
         }
     }
 
     companion object {
         const val MAX_LANES = 6
-        val EMPTY = OrgScheduleSnapshot(0L, emptyList(), null)
+        val EMPTY = OrgScheduleSnapshot(0L, emptyList(), null, null)
     }
 }
 
@@ -65,6 +74,7 @@ object OrgScheduleSnapshotCodec {
     fun encode(snapshot: OrgScheduleSnapshot): String = buildString {
         append("schema=").append(SCHEMA).append('\n')
         append("generated=").append(snapshot.generatedAtEpochMillis).append('\n')
+        snapshot.currentOrNextId?.let { append("next_id=").append(escape(it)).append('\n') }
         snapshot.currentOrNextTitle?.let { append("next=").append(escape(it)).append('\n') }
         snapshot.allocations.forEach { allocation ->
             append("allocation=")
@@ -86,7 +96,9 @@ object OrgScheduleSnapshotCodec {
         if (lines.firstOrNull() != "schema=$SCHEMA") return null
 
         var generatedAt: Long? = null
+        var nextId: String? = null
         var nextTitle: String? = null
+        var nextIdSeen = false
         var nextSeen = false
         val allocations = mutableListOf<OrgScheduleAllocation>()
         val ids = mutableSetOf<String>()
@@ -96,6 +108,13 @@ object OrgScheduleSnapshotCodec {
                 line.startsWith("generated=") -> {
                     if (generatedAt != null) return null
                     generatedAt = line.removePrefix("generated=").toLongOrNull() ?: return null
+                }
+                line.startsWith("next_id=") -> {
+                    if (nextIdSeen) return null
+                    nextIdSeen = true
+                    val decoded = decodeEscaped(line.removePrefix("next_id=")) ?: return null
+                    if (decoded.isBlank()) return null
+                    nextId = decoded
                 }
                 line.startsWith("next=") -> {
                     if (nextSeen) return null
@@ -137,7 +156,7 @@ object OrgScheduleSnapshotCodec {
 
         val generated = generatedAt ?: return null
         return runCatching {
-            OrgScheduleSnapshot(generated, allocations, nextTitle)
+            OrgScheduleSnapshot(generated, allocations, nextId, nextTitle)
         }.getOrNull()
     }
 
