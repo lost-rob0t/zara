@@ -369,6 +369,27 @@ def test_hook_crosses_canonical_effect_plane_once_and_requires_fresh_verificatio
     assert again == ()
 
 
+def test_hook_execution_rejects_forged_decision_before_authorization_or_effect(tmp_path: Path) -> None:
+    _, store = _store(tmp_path)
+    policy = Policy()
+    policy.hook_actions = (TypedHookAction("auto-dismiss", "dismiss"),)
+    router = NotificationRouter(local_peer_id="phone", policy=policy, store=store)
+    event = _event(notification_id="n:hook-forged")
+    decision = router.route(event, _peers(), now_ms=NOW)
+    forged = replace(
+        decision,
+        hooks=(TypedHookAction("forged-open", "open"),),
+    )
+    plane = EffectPlane()
+
+    with pytest.raises(NotificationDenied, match="durable route decision"):
+        router.execute_hooks(event, forged, plane, now_ms=NOW + 1)
+
+    assert plane.authorizations == []
+    assert plane.executed == []
+    assert plane.verified == []
+
+
 def test_action_from_remote_sink_routes_to_source_owner_and_stale_generation_is_fenced(tmp_path: Path) -> None:
     _, store = _store(tmp_path)
     router = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store)
