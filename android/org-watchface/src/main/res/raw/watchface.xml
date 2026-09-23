@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="utf-8"?>
+<WatchFace width="450" height="450">
+    <Scene>
+        <PartDraw x="0" y="0" width="450" height="450">
+            <Ellipse x="5" y="5" width="440" height="440">
+                <Fill color="#FF000000" />
+            </Ellipse>
+            <Arc centerX="225" centerY="225" width="414" height="414"
+                startAngle="0" endAngle="359.9">
+                <Stroke color="#FF252525" thickness="2" />
+            </Arc>
+            <Line startX="225" startY="25" endX="225" endY="43">
+                <Stroke color="#FFFFFFFF" thickness="3" cap="ROUND" />
+            </Line>
+            <Line startX="425" startY="225" endX="407" endY="225">
+                <Stroke color="#FFFFFFFF" thickness="3" cap="ROUND" />
+            </Line>
+            <Line startX="225" startY="425" endX="225" endY="407">
+                <Stroke color="#FFFFFFFF" thickness="3" cap="ROUND" />
+            </Line>
+            <Line startX="25" startY="225" endX="43" endY="225">
+                <Stroke color="#FFFFFFFF" thickness="3" cap="ROUND" />
+            </Line>
+        </PartDraw>
+
+        <!-- RANGED_VALUE_MIN/MAX are minutes in the current 12-hour dial [0,720]. -->
+        <ComplicationSlot slotId="1" displayName="@string/schedule_lane_1"
+            x="0" y="0" width="450" height="450"
+            supportedTypes="RANGED_VALUE EMPTY" isCustomizable="false">
+            <BoundingArc centerX="225" centerY="225" width="410" height="410"
+                thickness="12" startAngle="0" endAngle="359.9" />
+            <DefaultProviderPolicy
+                primaryProvider="ai.zara.app/ai.zara.wear.complications.OrgSchedule1ComplicationService"
+                primaryProviderType="RANGED_VALUE"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="RANGED_VALUE">
+                <PartDraw x="0" y="0" width="450" height="450">
+                    <Variant mode="AMBIENT" target="alpha" value="110" />
+                    <Arc centerX="225" centerY="225" width="410" height="410"
+                        startAngle="0" endAngle="0">
+                        <Transform target="startAngle" value="[COMPLICATION.RANGED_VALUE_MIN] * 0.5" />
+                        <Transform target="endAngle" value="[COMPLICATION.RANGED_VALUE_MAX] * 0.5" />
+                        <Stroke color="#FFE53935" thickness="10" cap="ROUND" />
+                    </Arc>
+                </PartDraw>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <ComplicationSlot slotId="2" displayName="@string/schedule_lane_2"
+            x="0" y="0" width="450" height="450"
+            supportedTypes="RANGED_VALUE EMPTY" isCustomizable="false">
+            <BoundingArc centerX="225" centerY="225" width="386" height="386"
+                thickness="10" startAngle="0" endAngle="359.9" />
+            <DefaultProviderPolicy
+                primaryProvider="ai.zara.app/ai.zara.wear.complications.OrgSchedule2ComplicationService"
+                primaryProviderType="RANGED_VALUE"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="RANGED_VALUE">
+                <PartDraw x="0" y="0" width="450" height="450">
+                    <Variant mode="AMBIENT" target="alpha" value="100" />
+                    <Arc centerX="225" centerY="225" width="386" height="386"
+                        startAngle="0" endAngle="0">
+                        <Transform target="startAngle" value="[COMPLICATION.RANGED_VALUE_MIN] * 0.5" />
+                        <Transform target="endAngle" value="[COMPLICATION.RANGED_VALUE_MAX] * 0.5" />
+                        <Stroke color="#FFFF6B6B" thickness="8" cap="ROUND" />
+                    </Arc>
+                </PartDraw>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <ComplicationSlot slotId="3" displayName="@string/schedule_lane_3"
+            x="0" y="0" width="450" height="450"
+            supportedTypes="RANGED_VALUE EMPTY" isCustomizable="false">
+            <BoundingArc centerX="225" centerY="225" width="364" height="364"
+                thickness="10" startAngle="0" endAngle="359.9" />
+            <DefaultProviderPolicy
+                primaryProvider="ai.zara.app/ai.zara.wear.complications.OrgSchedule3ComplicationService"
+                primaryProviderType="RANGED_VALUE"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="RANGED_VALUE">
+                <PartDraw x="0" y="0" width="450" height="450">
+                    <Variant mode="AMBIENT" target="alpha" value="90" />
+                    <Arc centerX="225" centerY="225" width="364" height="364"
+                        startAngle="0" endAngle="0">
+                        <Transform target="startAngle" value="[COMPLICATION.RANGED_VALUE_MIN] * 0.5" />
+                        <Transform target="endAngle" value="[COMPLICATION.RANGED_VALUE_MAX] * 0.5" />
+                        <Stroke color="#FFE57373" thickness="8" cap="ROUND" />
+                    </Arc>
+                </PartDraw>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <ComplicationSlot slotId="4" displayName="@string/schedule_lane_4"
+            x="0" y="0" width="450" height="450"
+            supportedTypes="RANGED_VALUE EMPTY" isCustomizable="false">
+            <BoundingArc centerX="225" centerY="225" width="342" height="342"
+                thickness="10" startAngle="0" endAngle="359.9" />
+            <DefaultProviderPolicy
+                primaryProvider="ai.zara.app/ai.zara.wear.complications.OrgSchedule4ComplicationService"
+                primaryProviderType="RANGED_VALUE"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="RANGED_VALUE">
+                <PartDraw x="0" y="0" width="450" height="450">
+                    <Variant mode="AMBIENT" target="alpha" value="80" />
+                    <Arc centerX="225" centerY="225" width="342" height="342"
+                        startAngle="0" endAngle="0">
+                        <Transform target="startAngle" value="[COMPLICATION.RANGED_VALUE_MIN] * 0.5" />
+                        <Transform target="endAngle" value="[COMPLICATION.RANGED_VALUE_MAX] * 0.5" />
+                        <Stroke color="#FFEF9A9A" thickness="8" cap="ROUND" />
+                    </Arc>
+                </PartDraw>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <ComplicationSlot slotId="5" displayName="@string/schedule_lane_5"
+            x="0" y="0" width="450" height="450"
+            supportedTypes="RANGED_VALUE EMPTY" isCustomizable="false">
+            <BoundingArc centerX="225" centerY="225" width="320" height="320"
+                thickness="10" startAngle="0" endAngle="359.9" />
+            <DefaultProviderPolicy
+                primaryProvider="ai.zara.app/ai.zara.wear.complications.OrgSchedule5ComplicationService"
+                primaryProviderType="RANGED_VALUE"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="RANGED_VALUE">
+                <PartDraw x="0" y="0" width="450" height="450">
+                    <Variant mode="AMBIENT" target="alpha" value="70" />
+                    <Arc centerX="225" centerY="225" width="320" height="320"
+                        startAngle="0" endAngle="0">
+                        <Transform target="startAngle" value="[COMPLICATION.RANGED_VALUE_MIN] * 0.5" />
+                        <Transform target="endAngle" value="[COMPLICATION.RANGED_VALUE_MAX] * 0.5" />
+                        <Stroke color="#FFF2B8B5" thickness="8" cap="ROUND" />
+                    </Arc>
+                </PartDraw>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <ComplicationSlot slotId="6" displayName="@string/schedule_lane_6"
+            x="0" y="0" width="450" height="450"
+            supportedTypes="RANGED_VALUE EMPTY" isCustomizable="false">
+            <BoundingArc centerX="225" centerY="225" width="298" height="298"
+                thickness="10" startAngle="0" endAngle="359.9" />
+            <DefaultProviderPolicy
+                primaryProvider="ai.zara.app/ai.zara.wear.complications.OrgSchedule6ComplicationService"
+                primaryProviderType="RANGED_VALUE"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="RANGED_VALUE">
+                <PartDraw x="0" y="0" width="450" height="450">
+                    <Variant mode="AMBIENT" target="alpha" value="60" />
+                    <Arc centerX="225" centerY="225" width="298" height="298"
+                        startAngle="0" endAngle="0">
+                        <Transform target="startAngle" value="[COMPLICATION.RANGED_VALUE_MIN] * 0.5" />
+                        <Transform target="endAngle" value="[COMPLICATION.RANGED_VALUE_MAX] * 0.5" />
+                        <Stroke color="#FFF5D0CE" thickness="8" cap="ROUND" />
+                    </Arc>
+                </PartDraw>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <ComplicationSlot slotId="7" displayName="@string/next_todo"
+            x="110" y="300" width="230" height="58"
+            supportedTypes="SHORT_TEXT EMPTY" isCustomizable="false">
+            <BoundingRoundBox x="0" y="0" width="230" height="58" cornerRadius="29" />
+            <DefaultProviderPolicy
+                primaryProvider="ai.zara.app/ai.zara.wear.complications.OrgNextTodoComplicationService"
+                primaryProviderType="SHORT_TEXT"
+                defaultSystemProvider="EMPTY"
+                defaultSystemProviderType="EMPTY" />
+            <Complication type="SHORT_TEXT">
+                <PartText x="0" y="0" width="230" height="58">
+                    <Variant mode="AMBIENT" target="alpha" value="0" />
+                    <Text align="CENTER" ellipsis="true" maxLines="1">
+                        <Font family="SYNC_TO_DEVICE" size="18" color="#FFEAEAEA">
+                            <Template><![CDATA[%s]]><Parameter expression="[COMPLICATION.TEXT]" /></Template>
+                        </Font>
+                    </Text>
+                </PartText>
+            </Complication>
+            <Complication type="EMPTY" />
+        </ComplicationSlot>
+
+        <PartDraw x="0" y="0" width="450" height="450" pivotX="0.5" pivotY="0.5">
+            <Transform target="angle" value="[HOUR_0_11_MINUTE] * 30" />
+            <Line startX="225" startY="232" endX="225" endY="132">
+                <Stroke color="#FFFFFFFF" thickness="10" cap="ROUND" />
+            </Line>
+        </PartDraw>
+
+        <PartDraw x="0" y="0" width="450" height="450" pivotX="0.5" pivotY="0.5">
+            <Transform target="angle" value="[MINUTE_SECOND] * 6" />
+            <Line startX="225" startY="235" endX="225" endY="88">
+                <Stroke color="#FFFFFFFF" thickness="6" cap="ROUND" />
+            </Line>
+        </PartDraw>
+
+        <PartDraw x="0" y="0" width="450" height="450" pivotX="0.5" pivotY="0.5">
+            <Variant mode="AMBIENT" target="alpha" value="0" />
+            <Transform target="angle" value="[SECOND] * 6" />
+            <Line startX="225" startY="250" endX="225" endY="67">
+                <Stroke color="#FFE53935" thickness="3" cap="ROUND" />
+            </Line>
+        </PartDraw>
+
+        <PartDraw x="0" y="0" width="450" height="450">
+            <Ellipse x="218" y="218" width="14" height="14">
+                <Fill color="#FFFFFFFF" />
+            </Ellipse>
+            <Ellipse x="222" y="222" width="6" height="6">
+                <Fill color="#FFE53935" />
+            </Ellipse>
+        </PartDraw>
+    </Scene>
+</WatchFace>

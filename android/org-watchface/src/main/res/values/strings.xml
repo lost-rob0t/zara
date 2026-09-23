@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="watch_face_name">Zara Org Time</string>
+    <string name="schedule_lane_1">Org schedule 1</string>
+    <string name="schedule_lane_2">Org schedule 2</string>
+    <string name="schedule_lane_3">Org schedule 3</string>
+    <string name="schedule_lane_4">Org schedule 4</string>
+    <string name="schedule_lane_5">Org schedule 5</string>
+    <string name="schedule_lane_6">Org schedule 6</string>
+    <string name="next_todo">Current or next Org todo</string>
+</resources>

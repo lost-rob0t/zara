@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
 - Wear can now display push-fed Org schedule allocations through six ranged complications plus a current/next todo complication, with stale snapshot rollback rejected and stable todo tap identities fenced from PendingIntent aliasing.
+- Wear can now install a resource-only Org Time Watch Face Format dial that renders those canonical schedule complications as six 12-hour allocation arcs plus current/next todo text, with empty-state fallbacks and ambient suppression of transient details.
 
 ### Fixed
 

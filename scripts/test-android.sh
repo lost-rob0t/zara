@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Termux bridge/Wear debug APKs + secret inspection.
-# Run via: nix develop ./android -c bash scripts/test-android.sh
+# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Termux bridge/Wear/watch-face debug APKs + secret inspection.
+# Run via: nix develop .#android -c bash scripts/test-android.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,6 +12,27 @@ cd "$repo_root/android"
 
 bash "$repo_root/scripts/test-pair-android-qr.sh"
 bash "$repo_root/scripts/test-android-semantic-parity.sh"
+
+watchface_manifest="org-watchface/src/main/AndroidManifest.xml"
+watchface_xml="org-watchface/src/main/res/raw/watchface.xml"
+grep -q 'android:hasCode="false"' "$watchface_manifest"
+grep -q 'com.google.wear.watchface.format.version' "$watchface_manifest"
+grep -q '<WatchFace width="450" height="450">' "$watchface_xml"
+slot_count="$(grep -c '<ComplicationSlot ' "$watchface_xml")"
+if (( slot_count != 7 )); then
+  echo "WFF complication slot count must be exactly 7, got $slot_count" >&2
+  exit 1
+fi
+if find org-watchface/src/main -type f \( -name '*.kt' -o -name '*.java' -o -name '*.class' \) -print -quit | grep -q .; then
+  echo "WFF package must remain resource-only" >&2
+  exit 1
+fi
+for lane in 1 2 3 4 5 6; do
+  grep -q "OrgSchedule${lane}ComplicationService" "$watchface_xml"
+done
+grep -q 'OrgNextTodoComplicationService' "$watchface_xml"
+grep -q '\[COMPLICATION.RANGED_VALUE_MIN\] \* 0.5' "$watchface_xml"
+grep -q '\[COMPLICATION.RANGED_VALUE_MAX\] \* 0.5' "$watchface_xml"
 
 export ZARA_TREALLA_LIBRARY_ROOT="$PWD/app/build/trealla"
 bash ./build-trealla.sh
@@ -110,14 +131,15 @@ if ! gradle --no-daemon \
   :code-editor:assembleDebug \
   :termux-bridge:assembleDebug \
   :wear-app:assembleDebug \
-  :wear-voice:assembleDebug 2>&1 | tee "$gradle_log"; then
+  :wear-voice:assembleDebug \
+  :org-watchface:assembleDebug 2>&1 | tee "$gradle_log"; then
   diagnostics_dir="app/build/reports/semantic-parity"
   mkdir -p "$diagnostics_dir"
   tail -n 240 "$gradle_log" > "$diagnostics_dir/gradle-failure-tail.log"
   cp "$interop_log" "$diagnostics_dir/stock-zara-server.log"
   cp "$recovery_log" "$diagnostics_dir/remote-recovery-fixture.log" 2>/dev/null || true
   cat "$interop_log" >&2
-  echo "stock ZaraServer Android/Wear/Code/Termux interop gate failed" >&2
+  echo "stock ZaraServer Android/Wear/Code/Termux/watch-face interop gate failed" >&2
   exit 1
 fi
 rm -f "$gradle_log"
@@ -137,17 +159,19 @@ code_apk="code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 termux_bridge_apk="termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 voice_apk="wear-voice/build/outputs/apk/debug/wear-voice-debug.apk"
+watchface_apk="org-watchface/build/outputs/apk/debug/org-watchface-debug.apk"
 test -f "$phone_apk"
 test -f "$code_apk"
 test -f "$termux_bridge_apk"
 test -f "$wear_apk"
 test -f "$voice_apk"
+test -f "$watchface_apk"
 
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$phone_apk" "ai.zara.app"
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$code_apk" "ai.zara.code.editor"
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$termux_bridge_apk" "ai.zara.termux.bridge"
 
-for apk in "$phone_apk" "$code_apk" "$termux_bridge_apk" "$wear_apk" "$voice_apk"; do
+for apk in "$phone_apk" "$code_apk" "$termux_bridge_apk" "$wear_apk" "$voice_apk" "$watchface_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
@@ -173,5 +197,10 @@ if grep -Fq "android.permission.INTERNET" <<<"$voice_permissions"; then
   echo "Wear Voice permission gate FAILED: focused strict-local APK requests INTERNET" >&2
   exit 1
 fi
+watchface_permissions="$($aapt2 dump permissions "$watchface_apk")"
+if grep -q '^uses-permission:' <<<"$watchface_permissions"; then
+  echo "Org watch face permission gate FAILED: resource-only watch face requests permissions" >&2
+  exit 1
+fi
 
-echo "android/wear/code/termux gate ok: $phone_apk $code_apk $termux_bridge_apk $wear_apk $voice_apk"
+echo "android/wear/code/termux/watch-face gate ok: $phone_apk $code_apk $termux_bridge_apk $wear_apk $voice_apk $watchface_apk"
