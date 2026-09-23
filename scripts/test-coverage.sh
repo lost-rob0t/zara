@@ -24,6 +24,11 @@ esac
 export ARTIFACT_DIR="${ARTIFACT_DIR:-$repo_root/artifacts/coverage}"
 mkdir -p "$ARTIFACT_DIR"
 
+fixture_dir="$repo_root/t/fixtures/audio"
+trap 'rm -rf "$fixture_dir"' EXIT
+rm -rf "$fixture_dir"
+python "$repo_root/scripts/generate-audio-fixtures.py" "$fixture_dir" >/dev/null
+
 python -m pytest \
   -q \
   -o faulthandler_timeout=15 \
