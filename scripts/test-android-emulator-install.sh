@@ -98,7 +98,7 @@ nix develop "$repo_root/android" -c \
   python3 "$repo_root/android/integration/device_acceptance.py" \
   --serial "$serial" \
   --source-sha "$source_sha" \
-  --output "$repo_root/android/app/build/reports/device"
+  --output android/app/build/reports/device
 
 # The visual acceptance above is intentionally broad. This second gate proves
 # the installed APK's real Android Keystore -> CURVE -> JeroMQ -> ZARA/1 path
