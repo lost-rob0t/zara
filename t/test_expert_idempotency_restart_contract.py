@@ -54,6 +54,26 @@ class OneModelCallDispatchCounter(DispatchCounter):
 
 
 @dataclass
+class EffectDispatchCounter(DispatchCounter):
+    def handler(self, **_payload: Any) -> dict[str, Any]:
+        self.calls += 1
+        return {
+            "verdict": "succeeded",
+            "data": {"summary": "effect completed and was observed in the original process"},
+            "evidence_refs": ["evidence:restart-fixture:effect-v1"],
+            "usage": {"model_calls": 0},
+            "effect_receipts": [
+                {
+                    "effect_id": "effect:restart-fixture:timer",
+                    "verified_outcome_ref": (
+                        "zara.verified-outcome/v2:1:outcome:postcondition/timer-600"
+                    ),
+                }
+            ],
+        }
+
+
+@dataclass
 class BlockingDispatchCounter(DispatchCounter):
     entered: threading.Event = field(default_factory=threading.Event)
     release: threading.Event = field(default_factory=threading.Event)
@@ -220,6 +240,39 @@ def test_restart_replay_cannot_bypass_stricter_zero_model_budget(tmp_path: Path)
         )
 
     assert counter.calls == 1, "budget rejection must not redispatch the durable invocation"
+
+
+def test_effectful_success_requires_fresh_postcondition_after_process_recreation(
+    tmp_path: Path,
+) -> None:
+    counter = EffectDispatchCounter()
+    path = tmp_path / "effect-replay.db"
+
+    first_db = _fresh_database(path)
+    first_registry, first_port, first_handle = _runtime(counter, first_db)
+    first = first_port.invoke(_request(first_registry, first_handle))
+    assert first.verdict is ExpertVerdict.SUCCEEDED
+    assert first.usage == {"model_calls": 0}
+    assert first.effect_receipts
+    assert counter.calls == 1
+    first_db.close()
+
+    restarted_db = _fresh_database(path)
+    restarted_registry, restarted_port, restarted_handle = _runtime(
+        counter,
+        restarted_db,
+    )
+    replay = restarted_port.invoke(_request(restarted_registry, restarted_handle))
+
+    assert counter.calls == 1, "effectful retry must never repeat an uncertain prior effect"
+    assert replay.replayed is True
+    assert replay.verdict is ExpertVerdict.UNKNOWN
+    assert replay.error_code is ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
+    assert replay.activation_id == first.activation_id
+    assert replay.invocation_id == first.invocation_id
+    assert replay.request_id == first.request_id
+    assert replay.usage == first.usage == {"model_calls": 0}
+    assert replay.effect_receipts == first.effect_receipts
 
 
 def test_restart_same_key_changed_input_is_conflict_not_dispatch(tmp_path: Path) -> None:
