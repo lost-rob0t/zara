@@ -63,7 +63,9 @@ class FakeRequestContext:
 class FakeSession:
     def __init__(self):
         self.requests: list[dict] = []
-        self.responses: dict[tuple[str, str], FakeResponse] = {}
+        self.responses: dict[
+            tuple[str, str], FakeResponse | list[FakeResponse]
+        ] = {}
         self.closed = False
 
     def _respond(self, method: str, url: str):
@@ -71,9 +73,14 @@ class FakeSession:
         return FakeRequestContext(self._next_response(method, url))
 
     def _next_response(self, method: str, url: str) -> FakeResponse:
-        for (rmethod, rurl), response in self.responses.items():
-            if rmethod == method and rurl in url:
-                return response
+        for (rmethod, rurl), configured in self.responses.items():
+            if rmethod != method or rurl not in url:
+                continue
+            if isinstance(configured, list):
+                if configured:
+                    return configured.pop(0)
+                return FakeResponse(status=500, body=b"response sequence exhausted")
+            return configured
         return FakeResponse(status=404, body=b"not found")
 
     def get(self, url, **kwargs):
@@ -175,6 +182,10 @@ async def test_list_voices_parses_the_registry():
 @pytest.mark.asyncio
 async def test_register_voice_posts_base64_wav_and_transcript(tmp_path: Path):
     session = FakeSession()
+    session.responses[("GET", "/v1/audio/voices")] = [
+        FakeResponse(payload={"voices": []}),
+        FakeResponse(payload={"voices": [{"name": "zara"}]}),
+    ]
     session.responses[("POST", "/v1/audio/voices")] = FakeResponse(payload={"ok": True})
     audio = tmp_path / "zara.wav"
     audio.write_bytes(wav_bytes())
@@ -183,7 +194,8 @@ async def test_register_voice_posts_base64_wav_and_transcript(tmp_path: Path):
     result = await client.register_voice("zara", str(audio), "Exact words spoken.")
 
     assert result == {"ok": True}
-    body = session.requests[0]["kwargs"]["json"]
+    request = next(row for row in session.requests if row["method"] == "POST")
+    body = request["kwargs"]["json"]
     assert body["name"] == "zara"
     assert body["ref_text"] == "Exact words spoken."
     assert base64.b64decode(body["wav_b64"]) == wav_bytes()
@@ -200,13 +212,17 @@ async def test_register_voice_missing_file_raises():
 @pytest.mark.asyncio
 async def test_delete_voice_uses_the_named_route():
     session = FakeSession()
+    session.responses[("GET", "/v1/audio/voices")] = [
+        FakeResponse(payload={"voices": [{"name": "zara"}]}),
+        FakeResponse(payload={"voices": []}),
+    ]
     session.responses[("DELETE", "/v1/audio/voices/zara")] = FakeResponse(payload={"ok": True})
     client = client_with(session)
 
     await client.delete_voice("zara")
 
-    assert session.requests[0]["method"] == "DELETE"
-    assert session.requests[0]["url"].endswith("/v1/audio/voices/zara")
+    request = next(row for row in session.requests if row["method"] == "DELETE")
+    assert request["url"].endswith("/v1/audio/voices/zara")
 
 
 @pytest.mark.asyncio
