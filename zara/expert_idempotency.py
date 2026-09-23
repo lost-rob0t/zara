@@ -135,6 +135,20 @@ class ExpertIdempotencyJournal:
                 )
                 return ClaimDecision(claim=claim, replay=replay, created=False)
 
+            if (
+                row["registry_generation"] != handle.registry_generation
+                or row["runtime_generation"] != handle.runtime_generation
+            ):
+                replay = self._unknown_result(
+                    row,
+                    handle=handle,
+                    message=(
+                        "prior idempotent expert execution belongs to a different "
+                        "registry/runtime generation"
+                    ),
+                )
+                return ClaimDecision(claim=claim, replay=replay, created=False)
+
             if row["state"] == "completed" and row["result_json"]:
                 try:
                     result = self._decode_result(row["result_json"], row)
