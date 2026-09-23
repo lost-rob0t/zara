@@ -130,13 +130,9 @@ def test_overflow_visual_gate_uses_preopen_trigger_bounds_after_trigger_disappea
 def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
     tmp_path: Path,
 ) -> None:
-    """Review evidence must bind pixels and UI semantics from the popup state."""
+    """Review evidence must bind pixels and the capture-fenced scenario text twin."""
     device = synthetic_device(tmp_path, text_like_image())
     screenshot = tmp_path / "bound-evidence.png"
-    twin = tmp_path / "overflow.xml"
-    twin.write_text("<hierarchy><node text='Rename'/></hierarchy>", encoding="utf-8")
-    twin_sha = hashlib.sha256(twin.read_bytes()).hexdigest()
-    device.capture_text_twin = lambda state: {"file": twin.name, "sha256": twin_sha}
 
     device.assert_transient_surface_visible(
         trigger_fragment="Actions for ",
@@ -145,10 +141,13 @@ def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
         screenshot_name="bound-evidence",
     )
 
+    scenario = device.scenario_evidence[-1]
     receipt = device.visual_checks[-1]
+    twin = tmp_path / scenario["text_evidence"]["file"]
     assert receipt["screenshot_sha256"] == hashlib.sha256(screenshot.read_bytes()).hexdigest()
-    assert receipt["text_twin_file"] == twin.name
-    assert receipt["text_twin_sha256"] == twin_sha
+    assert receipt["text_twin_file"] == scenario["text_evidence"]["file"]
+    assert receipt["text_twin_sha256"] == scenario["text_evidence"]["sha256"]
+    assert receipt["text_twin_sha256"] == hashlib.sha256(twin.read_bytes()).hexdigest()
 
 
 def test_overflow_visual_receipt_reuses_capture_bound_text_evidence(
