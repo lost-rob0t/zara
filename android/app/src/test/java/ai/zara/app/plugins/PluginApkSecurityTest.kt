@@ -116,6 +116,38 @@ class PluginApkSecurityTest {
     }
 
     @Test
+    fun rejectsUnsafeArchiveIdentityMetadataBeforeReview() {
+        fun validate(
+            packageName: String = "example.plugin",
+            versionName: String = "1.2.3",
+            versionCode: Long = 7,
+            minSdk: Int = 24,
+            sdkInt: Int = 35,
+            hasSplits: Boolean = false,
+        ) = PluginApkSecurity.validateIdentity(
+            packageName = packageName,
+            hostPackageName = "ai.zara.app",
+            certificates = listOf(digest),
+            versionName = versionName,
+            versionCode = versionCode,
+            minSdk = minSdk,
+            sdkInt = sdkInt,
+            hasSplits = hasSplits,
+        )
+
+        validate()
+        listOf("plugin", "1bad.plugin", "bad-.plugin", "bad..plugin").forEach { packageName ->
+            expectFailure<IllegalArgumentException> { validate(packageName = packageName) }
+        }
+        expectFailure<IllegalArgumentException> { validate(versionCode = -1) }
+        expectFailure<IllegalArgumentException> { validate(versionName = "bad\u0000label") }
+        expectFailure<IllegalArgumentException> { validate(versionName = "x".repeat(129)) }
+        expectFailure<IllegalArgumentException> { validate(minSdk = 36, sdkInt = 35) }
+        expectFailure<IllegalArgumentException> { validate(minSdk = 0) }
+        expectFailure<IllegalArgumentException> { validate(hasSplits = true) }
+    }
+
+    @Test
     fun onlyAcceptsTheCurrentInstallationCallback() {
         check(PluginApkSecurity.matchesCallback(42, "nonce", 42, "nonce"))
         check(!PluginApkSecurity.matchesCallback(42, "nonce", 41, "nonce"))
