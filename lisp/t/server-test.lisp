@@ -11,6 +11,10 @@
         (server nil))
     (unwind-protect
          (progn
+           ;; Let the child install its TERM ignore before exercising shutdown.
+           ;; Without this synchronization the test can falsely pass if STOP-SERVER
+           ;; wins the launch race and signals the shell before TRAP executes.
+           (sleep 0.1d0)
            (setf server
                  (zara::%make-server
                   :process process
