@@ -193,9 +193,10 @@ def test_existing_tag_ref_is_release_source_authority_not_target_commitish() -> 
     recovery = _workflow_step(workflow, "Recover stale owned draft from prior interrupted run")
     stage = _workflow_step(workflow, "Stage GitHub versioned release as draft")
     staged_verify = _workflow_step(workflow, "Verify staged release bytes, metadata, signer, and notes")
+    publish = _workflow_step(workflow, "Publish verified GitHub versioned release")
     cleanup = _workflow_step(workflow, "Cleanup unpublished owned staged release")
 
-    for step in (recovery, stage, staged_verify, cleanup):
+    for step in (recovery, stage, staged_verify, publish, cleanup):
         assert 'git rev-list -n 1 "$TAG"' in step
         assert 'release.get("target_commitish")' not in step
 
