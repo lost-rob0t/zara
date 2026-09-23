@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class LocalAiRemoteGenerationTicketTest {
@@ -64,5 +65,20 @@ class LocalAiRemoteGenerationTicketTest {
 
         deliveryThread.join(2_000)
         terminateThread.join(2_000)
+    }
+
+    @Test
+    fun callbackFailureTerminatesTicketAndFencesLateDelivery() {
+        val ticket = LocalAiRemoteGenerationTicket()
+        try {
+            ticket.deliver { error("socket closed") }
+            fail("chunk consumer failure must escape to the remote client")
+        } catch (_: IllegalStateException) {
+        }
+
+        var lateDelivery = false
+        assertFalse(ticket.deliver { lateDelivery = true })
+        assertFalse(lateDelivery)
+        assertFalse(ticket.terminate())
     }
 }
