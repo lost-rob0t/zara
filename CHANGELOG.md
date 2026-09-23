@@ -4,13 +4,32 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+- Fixed a ZARA/1 wire-ordering race where runtime events for fast symbolically-resolved turns could overtake the `turn.accepted` reply, making every Android/Desktop remote turn fail with `protocol.unexpected_message` (expected turn.accepted). Turn events are now held per-route and flushed after the accepted reply, in order.
+
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
+
+### Fixed
+
+- Desktop pure-symbolic project switches now fence stale clarification, discourse, expert, and verified-fact context before the next turn, matching project-scoped Android semantics without enabling provider or model fallback.
+- Native Emacs symbolic replay now validates provider/model hard-zero state before replacing the live transcript, so a rejected replay leaves the visible presentation and cached symbolic status untouched.
+- Android remote sessions no longer break after a successful voice turn: the client now decodes the server's `voice.speech.started`/`voice.speech.ended` markers and the legal `turn.cancelled`/`runtime.error`/`runtime.stopped` lifecycle messages it previously rejected as protocol errors, and interleaved text frames no longer kill the voice stream.
+- A failed remote frame can no longer leave Android in a fake-connected state: voice pump death and session-desyncing protocol/transport failures now collapse the connection with a typed reason and drive the existing bounded reconnect.
+- Android restores a persisted remote session on launch with `session.restore` telemetry instead of silently staying disconnected after process recreation.
+- Android chat failures now render one specific, actionable error card (failed subsystem, operation, stable typed code, connection state, recovery, incident id, Retry/Reconnect/Diagnostics actions) instead of umbrella `protocol_error`/`operation_failed`, and no longer duplicate the failure into a second banner.
+- The Android chat footer now separates mode, authentication, and transport/protocol truth (`REMOTE • AUTHENTICATED • CONNECTED/RECONNECTING/DISCONNECTED`) instead of showing `REMOTE • AUTHENTICATED • SYMBOLIC` regardless of connection health.
+
+### Added
+
+- Android emits typed, correlation-aware telemetry events (`remote.*`, `protocol.*`, `voice.*`, `session.restore.*`) with monotonic sequences, generation fencing, and metadata-only protocol message records, so no connected-to-disconnected transition is unexplained.
+- `ZARA-LOCAL-DIAGNOSTICS/2` incident bundle (text + canonical JSON) with a retained primary-failure block, remote/protocol context, voice pipeline stage states with explicit `not_applicable` semantics, and a correlated ordered timeline; pasting it into a bug report or AI chat identifies the failed subsystem, operation, typed code, last-good step, and correlation ids.
+- CI now reproduces the reported remote voice → protocol failure → recovery class end to end: a deterministic failure-injecting ZARA/1 fixture drives the real Android client (JVM matrix: malformed frame, version mismatch, out-of-order, close mid-stream, stale generation after reconnect) and the installed APK on the emulator (text + real voice turn, injected failures, typed UI error, Diagnostics v2, reconnect, second turn, recreation fencing), with evidence retained on success and failure.
 
 ### Added
 
 - Native Emacs chat can now keep a stable canonical Zara conversation identity, consume strict `turn.accepted`/`assistant.complete` events, inspect/switch conversation state while idle, and cancel the runtime-minted turn through canonical `CancelTurn`; late or malformed events fail closed without provider/model fallback or an Emacs-owned transcript store.
 - Desktop can now select the provider-free `pure_symbolic` conversation execution policy before any daemon/model runtime is constructed; symbolic replies use Zara's canonical Prolog dialogue renderer, report exact zero provider/model usage, and fail closed on unsupported context instead of falling back to a model.
 - ZARA-SYNC/1 now defines bounded version vectors, stale-delta fencing, content-addressed block manifests, tombstones, and opaque encrypted revisions, with tiny intermediate blocks rejected while allowing a short final tail block.
+- Zara server pairing now supports short-lived QR bootstrap and a single-use 16-letter human pairing-code primitive while keeping long-term client/server trust on authenticated CURVE/ZAP; Android pairing material stays client-owned and desktop paired profiles remain owner-private.
 - Authenticated ZARA/1 peers can now attach a bounded `ZaraNode` descriptor to the secure hello handshake; Zara binds that metadata to the existing CURVE/ZAP enrollment and exact principal/session, rejects identity/generation mismatches, and never treats advertised device features as authorization grants.
 - A running local Zara server now exposes owner-only live control that can lazily create its durable CURVE identity and idempotently activate an authenticated remote ZARA/1 listener without a daemon restart; pairing clients can consume the returned endpoint and public-key metadata.
 - The daemon now logs a warning for every denied CURVE/ZAP client authentication, including the presented public key, so unenrolled or mistyped client keys are diagnosable server-side instead of failing silently.

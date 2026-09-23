@@ -37,6 +37,7 @@ android {
 
     defaultConfig {
         applicationId = "ai.zara.wear.voice"
+        // Keep the focused voice APK aligned with the main Wear API 30 floor.
         minSdk = 30
         targetSdk = 36
         versionCode = zaraAndroidVersionCode

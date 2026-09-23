@@ -69,7 +69,9 @@ def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects
     gate = EMULATOR_GATE.read_text(encoding="utf-8")
     assert 'type_printable_ascii(device, "?- Result = zara_ready.")' in remote
     assert 'type_printable_ascii(device, "set a timer for 2 hours")' in remote
-    assert 'device.await_contains("timer.set", timeout=20.0)' in remote
+    assert 'device.await_contains("timer.set"' in remote
+    assert 'if "local_model.generate.begin" in local_diagnostics:' in remote
+    assert '"local_natural_turn_completed": True' in remote
     assert 'device.adb("shell", command)' in remote
     assert 'device.adb("shell", "sh", "-c", command)' not in remote
     assert '"local_turn_completed": True' in remote

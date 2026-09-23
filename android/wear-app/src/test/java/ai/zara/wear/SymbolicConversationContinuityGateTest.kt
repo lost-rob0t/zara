@@ -161,6 +161,68 @@ class SymbolicConversationContinuityGateTest {
         )
     }
 
+    @Test
+    fun refusesForgedStaleOrFutureVerifiedOutcomeEvidence() {
+        assertFalse(
+            accepts(
+                null,
+                fixture(
+                    dialogueAct = "verified",
+                    verifiedOutcomeRefs = listOf("outcome:postcondition:forged"),
+                ),
+            ),
+        )
+        assertFalse(
+            accepts(
+                null,
+                fixture(
+                    runtimeGeneration = 9,
+                    dialogueAct = "verified",
+                    verifiedOutcomeRefs = listOf(
+                        "zara.verified-outcome/v1:outcome:postcondition:legacy",
+                    ),
+                ),
+            ),
+        )
+        assertFalse(
+            accepts(
+                null,
+                fixture(
+                    runtimeGeneration = 9,
+                    dialogueAct = "verified",
+                    verifiedOutcomeRefs = listOf(
+                        "zara.verified-outcome/v2:8:outcome:postcondition:stale",
+                    ),
+                ),
+            ),
+        )
+        assertFalse(
+            accepts(
+                null,
+                fixture(
+                    runtimeGeneration = 9,
+                    dialogueAct = "verified",
+                    verifiedOutcomeRefs = listOf(
+                        "zara.verified-outcome/v2:10:outcome:postcondition:future",
+                    ),
+                ),
+            ),
+        )
+        assertTrue(
+            accepts(
+                null,
+                fixture(
+                    runtimeGeneration = 9,
+                    dialogueAct = "verified",
+                    verifiedOutcomeRefs = listOf(
+                        "zara.verified-outcome/v1:outcome:postcondition:legacy",
+                        "zara.verified-outcome/v2:9:outcome:postcondition:fresh",
+                    ),
+                ),
+            ),
+        )
+    }
+
     private fun accepts(
         current: SymbolicConversationEdgeSnapshot?,
         incoming: SymbolicConversationEdgeSnapshot,
@@ -194,6 +256,7 @@ class SymbolicConversationContinuityGateTest {
         maxModelCalls: Long = 0,
         modelCalls: Long = 0,
         providerCalls: Long = 0,
+        verifiedOutcomeRefs: List<String> = emptyList(),
     ) = SymbolicConversationEdgeSnapshot(
         principalId = principalId,
         conversationId = conversationId,
@@ -205,7 +268,7 @@ class SymbolicConversationContinuityGateTest {
         discourseEntityRefs = listOf("entity:dotfiles"),
         unresolvedQuestionRefs = emptyList(),
         expertEvidenceRefs = listOf("expert:dotfiles:1"),
-        verifiedOutcomeRefs = listOf("outcome:verified:1"),
+        verifiedOutcomeRefs = verifiedOutcomeRefs,
         rendererProvenance = rendererProvenance,
         providersEnabled = providersEnabled,
         maxModelCalls = maxModelCalls,
