@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import multiprocessing
+import os
 from pathlib import Path
 
 import pytest
@@ -105,26 +107,38 @@ def test_equivalent_loopback_aliases_share_voice_mutation_lock_identity():
 
 
 class SharedRegistryClient(Qwen3TTSClient):
-    def __init__(self, endpoint: str, registry: set[str]):
+    def __init__(self, endpoint: str, registry):
         super().__init__(endpoint)
         self.registry = registry
         self.mutations = 0
 
     async def list_voices(self) -> list[str]:
-        return sorted(self.registry)
+        return sorted(self.registry.keys() if hasattr(self.registry, "keys") else self.registry)
 
     async def _register_voice_unlocked(self, body: dict) -> dict:
         self.mutations += 1
         await asyncio.sleep(0.05)
-        self.registry.add(str(body["name"]))
+        if hasattr(self.registry, "__setitem__"):
+            self.registry[str(body["name"])] = True
+        else:
+            self.registry.add(str(body["name"]))
         return {"ok": True, "name": body["name"]}
+
+    async def _delete_voice_unlocked(self, name: str) -> dict:
+        self.mutations += 1
+        await asyncio.sleep(0.05)
+        if hasattr(self.registry, "pop"):
+            self.registry.pop(name, None)
+        else:
+            self.registry.discard(name)
+        return {"ok": True, "name": name}
 
 
 @pytest.mark.asyncio
 async def test_loopback_aliases_serialize_one_shared_registry_mutation(tmp_path: Path):
     audio = tmp_path / "authorized.wav"
     audio.write_bytes(b"RIFFxxxxWAVEfmt data")
-    registry: set[str] = set()
+    registry: dict[str, bool] = {}
     localhost = SharedRegistryClient("http://localhost:7860", registry)
     ipv4 = SharedRegistryClient("http://127.0.0.1:7860", registry)
 
@@ -141,4 +155,79 @@ async def test_loopback_aliases_serialize_one_shared_registry_mutation(tmp_path:
     assert isinstance(failures[0], RuntimeError)
     assert "already exists" in str(failures[0])
     assert localhost.mutations + ipv4.mutations == 1
-    assert registry == {"same_voice"}
+    assert set(registry) == {"same_voice"}
+
+
+def _cross_process_mutation_worker(
+    operation: str,
+    registry,
+    audio_path: str,
+    runtime_dir: str | None,
+    barrier,
+    result_queue,
+) -> None:
+    if runtime_dir is None:
+        os.environ.pop("XDG_RUNTIME_DIR", None)
+    else:
+        os.environ["XDG_RUNTIME_DIR"] = runtime_dir
+    client = SharedRegistryClient("http://localhost:7860", registry)
+    barrier.wait(timeout=10)
+    try:
+        if operation == "register":
+            result = asyncio.run(
+                client.register_voice("same_voice", audio_path, "fixture")
+            )
+        else:
+            result = asyncio.run(client.delete_voice("same_voice"))
+    except Exception as exc:
+        result_queue.put(("error", type(exc).__name__, str(exc)))
+    else:
+        result_queue.put(("success", result))
+
+
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="POSIX lock namespace contract")
+@pytest.mark.parametrize("operation", ["register", "delete"])
+def test_same_principal_processes_share_voice_lock_despite_runtime_env(
+    operation: str,
+    tmp_path: Path,
+):
+    available_methods = multiprocessing.get_all_start_methods()
+    if "fork" not in available_methods:
+        pytest.skip("cross-process advisory lock contract requires fork")
+    context = multiprocessing.get_context("fork")
+    audio = tmp_path / "authorized.wav"
+    audio.write_bytes(b"RIFFxxxxWAVEfmt data")
+    manager = context.Manager()
+    registry = manager.dict({"same_voice": True} if operation == "delete" else {})
+    barrier = context.Barrier(2)
+    result_queue = context.Queue()
+    runtime_dir = str(tmp_path / "alternate-runtime")
+    processes = [
+        context.Process(
+            target=_cross_process_mutation_worker,
+            args=(operation, registry, str(audio), runtime_dir, barrier, result_queue),
+        ),
+        context.Process(
+            target=_cross_process_mutation_worker,
+            args=(operation, registry, str(audio), None, barrier, result_queue),
+        ),
+    ]
+
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=15)
+        assert process.exitcode == 0
+
+    results = [result_queue.get(timeout=2) for _ in processes]
+    successes = [result for result in results if result[0] == "success"]
+    failures = [result for result in results if result[0] == "error"]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert failures[0][1] == "RuntimeError"
+    if operation == "register":
+        assert "already exists" in failures[0][2]
+        assert set(registry.keys()) == {"same_voice"}
+    else:
+        assert "does not exist" in failures[0][2]
+        assert set(registry.keys()) == set()
