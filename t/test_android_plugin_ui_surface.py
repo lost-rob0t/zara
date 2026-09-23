@@ -72,15 +72,15 @@ def test_install_flow_is_explicit_and_does_not_gain_broad_package_visibility():
     assert "android.permission.MANAGE_EXTERNAL_STORAGE" not in permissions
 
 
-def test_plugin_picker_exposes_label_on_the_actionable_semantics_node():
+def test_plugin_picker_reuses_primary_action_semantics_owner():
     surface = (KOTLIN / "ui/PluginSettingsSurface.kt").read_text()
     picker = surface.split("private fun PluginPickerAction", 1)[1].split(
         "@Composable\nprivate fun PluginDigestRow", 1
     )[0]
-    assert ".clickable(" in picker
-    assert "role = Role.Button" in picker
-    assert "semantics(mergeDescendants = true)" in picker
-    assert 'contentDescription = "Choose APK"' in picker
+    assert 'PrimaryAction("Choose APK", enabled, onActivate)' in picker
+    assert ".clickable(" not in picker
+    assert ".semantics(" not in picker
+    assert "onClick(label" not in picker
 
 
 def test_standalone_apk_policy_rejects_unsafe_archive_metadata_before_review():
