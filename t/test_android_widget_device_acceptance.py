@@ -1,8 +1,22 @@
+import importlib.util
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 
 WIDGET_ACCEPTANCE = Path("android/integration/widget_device_acceptance.py")
 EMULATOR_GATE = Path("scripts/test-android-emulator-install.sh")
+
+
+def _load_widget_acceptance():
+    spec = importlib.util.spec_from_file_location(
+        "widget_device_acceptance_test_module",
+        WIDGET_ACCEPTANCE,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_emulator_gate_runs_real_launcher_widget_acceptance() -> None:
@@ -54,6 +68,55 @@ def test_widget_acceptance_exercises_responsive_theme_runtime_and_process_death_
     assert "LOCAL UNKNOWN" in source
     assert "Chat" in source
     assert "Runtime" in source
+
+
+def test_route_action_waits_for_launcher_widget_after_home(tmp_path: Path) -> None:
+    module = _load_widget_acceptance()
+    device = module.Device("emulator-5554", tmp_path)
+    action_node = ET.fromstring(
+        '<node text="CHAT" clickable="true" enabled="true" bounds="[0,0][10,10]" />'
+    )
+    ready = {"value": False}
+
+    device.home = lambda: None
+
+    def wait_for(label: str, timeout: float = module.WAIT_SECONDS):
+        if label == "CHAT":
+            ready["value"] = True
+            return action_node
+        assert label == "Chat"
+        return ET.Element("node")
+
+    def hierarchy():
+        assert ready["value"], "route action queried launcher before widget settled"
+        root = ET.Element("hierarchy")
+        root.append(action_node)
+        return root
+
+    device.wait_for = wait_for
+    device.hierarchy = hierarchy
+    device.tap_node = lambda node: None
+    device._action_assertion = lambda root, label: {
+        "label": label,
+        "clickable": True,
+        "enabled": True,
+    }
+
+    device.tap_action_and_assert_route("CHAT", "Chat", "route-cold")
+
+    assert device.route_assertions == [
+        {
+            "scenario": "route-cold",
+            "action": "CHAT",
+            "expected_route": "Chat",
+            "passed": True,
+            "owner": {
+                "label": "CHAT",
+                "clickable": True,
+                "enabled": True,
+            },
+        }
+    ]
 
 
 def test_widget_acceptance_keeps_talkback_hardware_claim_unproven() -> None:
