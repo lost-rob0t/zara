@@ -390,7 +390,7 @@ class ExpertIdempotencyJournal:
 
     @staticmethod
     def _decode_result(payload: str, row: Any) -> ExpertResult:
-        wire = json.loads(payload)
+        wire = json.loads(payload, parse_constant=_reject_non_finite_json_constant)
         if not isinstance(wire, dict):
             raise ValueError("durable expert result must be an object")
         required = {
@@ -526,3 +526,7 @@ def _synthetic_id(prefix: str, row: Any) -> str:
         )
     )
     return f"{prefix}:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:32]}"
+
+
+def _reject_non_finite_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
