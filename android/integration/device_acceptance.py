@@ -110,6 +110,23 @@ class Device:
             None,
         )
 
+    def assert_contains_count(self, fragment: str, *, minimum: int) -> None:
+        if minimum < 1:
+            raise ValueError("minimum must be at least one")
+        matches = [
+            node
+            for node in self.nodes()
+            if any(
+                fragment in (node.get(attribute) or "")
+                for attribute in ("text", "content-desc")
+            )
+        ]
+        if len(matches) < minimum:
+            raise AssertionError(
+                f"Expected at least {minimum} UI nodes containing {fragment!r}; "
+                f"found {len(matches)}"
+            )
+
     def size(self) -> tuple[int, int]:
         value = self.adb("shell", "wm", "size")
         return tuple(map(int, re.findall(r"(\d+)x(\d+)", value)[-1]))
@@ -600,6 +617,21 @@ def exercise_three_menu_ui(device: Device) -> None:
     for menu in ("Chat", "Workspace", "Settings"):
         device.await_label(menu)
     device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
+
+    # Exercise the real New chat UI twice so the overflow catcher cannot pass on
+    # a synthetic/single-row drawer. Each tap crosses MainActivity's canonical
+    # ConversationStore path, then we reopen the drawer and prove multiple action
+    # triggers exist before capturing any overflow evidence.
+    device.tap_contains("New chat")
+    device.await_label("Chat")
+    device.tap("Open navigation menu")
+    device.await_contains("New chat")
+    device.tap_contains("New chat")
+    device.await_label("Chat")
+    device.tap("Open navigation menu")
+    for menu in ("Chat", "Workspace", "Settings"):
+        device.await_label(menu)
+    device.assert_contains_count("Actions for ", minimum=2)
     device.capture("drawer-open")
 
     device.await_contains("Actions for ")
