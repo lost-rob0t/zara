@@ -42,12 +42,14 @@ class AndroidUpdateManager(
     private val context: Context,
     private val currentVersion: String,
     private val currentSourceSha: String,
+    private val currentVersionCode: Long,
     private val releasesUrl: String = "https://api.github.com/repos/lost-rob0t/zara/releases?per_page=20",
     private val rollingManifestUrl: String =
         "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-latest.manifest.txt",
 ) : AutoCloseable {
     private data class Candidate(
         val release: UpdateRelease,
+        val masterManifest: MasterUpdateManifest? = null,
     )
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
@@ -56,6 +58,7 @@ class AndroidUpdateManager(
     private val updateDirectory = File(context.cacheDir, "verified-updates")
     @Volatile private var current = UpdateState(UpdatePhase.IDLE)
     @Volatile private var candidate: Candidate? = null
+    @Volatile private var availableCandidates: Map<String, Candidate> = emptyMap()
     @Volatile private var observer: ((UpdateState) -> Unit)? = null
     @Volatile private var closed = false
 
@@ -68,39 +71,51 @@ class AndroidUpdateManager(
 
     fun check(): CompletableFuture<UpdateState> = submit {
         candidate = null
+        availableCandidates = emptyMap()
         update(UpdateState(UpdatePhase.CHECKING))
         try {
             val releases = JSONArray(readText(releasesUrl, MAX_METADATA_BYTES))
-            val versioned = (0 until releases.length())
-                .mapNotNull { index -> releaseCandidate(releases.getJSONObject(index))?.release }
-                .filter { release ->
-                    UpdateSecurity.isInstallCandidate(release, currentVersion, currentSourceSha)
+            val versionedCandidates = (0 until releases.length())
+                .mapNotNull { index -> releaseCandidate(releases.getJSONObject(index)) }
+                .filter { candidate ->
+                    UpdateSecurity.isInstallCandidate(
+                        candidate.release,
+                        currentVersion,
+                        currentSourceSha,
+                    )
                 }
                 .sortedWith { left, right ->
                     when {
-                        UpdateSecurity.isNewer(left.version, right.version) -> -1
-                        UpdateSecurity.isNewer(right.version, left.version) -> 1
+                        UpdateSecurity.isNewer(left.release.version, right.release.version) -> -1
+                        UpdateSecurity.isNewer(right.release.version, left.release.version) -> 1
                         else -> 0
                     }
                 }
-            val rolling = runCatching { rollingMasterCandidate() }
+            val rollingCandidate = runCatching { rollingMasterCandidate() }
                 .getOrNull()
-                ?.takeIf { release ->
-                    UpdateSecurity.isInstallCandidate(release, currentVersion, currentSourceSha)
+                ?.takeIf { candidate ->
+                    candidate.masterManifest?.isUpdateFor(
+                        currentSourceSha = currentSourceSha,
+                        currentVersion = currentVersion,
+                        currentVersionCode = currentVersionCode,
+                    ) == true
                 }
-            val choices = buildList {
-                rolling?.let(::add)
-                addAll(versioned)
+            val candidates = buildList {
+                rollingCandidate?.let(::add)
+                addAll(versionedCandidates)
             }
-            val selected = choices.firstOrNull()
-            candidate = selected?.let(::Candidate)
-            if (selected == null) {
+            availableCandidates = candidates.associateBy { it.release.selectionId }
+            val selectedCandidate = candidates.firstOrNull()
+            candidate = selectedCandidate
+            val choices = candidates.map { it.release }
+            if (selectedCandidate == null) {
                 UpdateState(
                     phase = UpdatePhase.CURRENT,
                     message = "Zara is current",
                     choices = choices,
                 )
             } else {
+                val selected = selectedCandidate.release
                 UpdateState(
                     phase = UpdatePhase.AVAILABLE,
                     release = selected,
@@ -115,6 +130,7 @@ class AndroidUpdateManager(
             }.also(::update)
         } catch (error: Throwable) {
             candidate = null
+            availableCandidates = emptyMap()
             UpdateState(
                 UpdatePhase.FAILED,
                 message = error.message ?: "Update check failed",
@@ -126,23 +142,26 @@ class AndroidUpdateManager(
         check(current.phase !in setOf(UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING)) {
             "Updater is busy"
         }
-        val selected = current.choices.firstOrNull { it.selectionId == selectionId }
+        val selected = availableCandidates[selectionId]
             ?: error("Selected update is no longer available")
-        check(UpdateSecurity.isInstallCandidate(selected, currentVersion, currentSourceSha)) {
+        check(current.choices.any { it.selectionId == selectionId }) {
+            "Selected update is stale; refresh versions"
+        }
+        check(UpdateSecurity.isInstallCandidate(selected.release, currentVersion, currentSourceSha)) {
             "Selected update is already installed or older"
         }
-        candidate = Candidate(selected)
+        candidate = selected
         current.copy(
             phase = UpdatePhase.AVAILABLE,
-            release = selected,
+            release = selected.release,
             progressPercent = null,
             downloadedApk = null,
-            message = if (selected.channel == UpdateChannel.Master) {
+            message = if (selected.release.channel == UpdateChannel.Master) {
                 "Master (fastest green) selected"
             } else {
                 "Versioned release selected"
             },
-            selectedId = selected.selectionId,
+            selectedId = selected.release.selectionId,
         ).also(::update)
     }
 
@@ -181,6 +200,9 @@ class AndroidUpdateManager(
             check(UpdateSecurity.verifySha256(destination, selected.release.sha256)) {
                 destination.delete()
                 "Downloaded APK checksum does not match release metadata"
+            }
+            selected.masterManifest?.let { manifest ->
+                verifyMasterApk(destination, manifest)
             }
             UpdateState(
                 UpdatePhase.READY,
@@ -301,32 +323,29 @@ class AndroidUpdateManager(
         }
     }
 
-    private fun rollingMasterCandidate(): UpdateRelease {
-        val manifest = readText(rollingManifestUrl, MAX_MANIFEST_BYTES)
-            .lineSequence()
-            .map(String::trim)
-            .filter { it.isNotEmpty() && !it.startsWith("#") }
-            .associate { line ->
-                val separator = line.indexOf('=')
-                require(separator > 0) { "Rolling master manifest is malformed" }
-                line.substring(0, separator) to line.substring(separator + 1)
-            }
-        require(manifest["schema"] == "1") { "Rolling master manifest schema is unsupported" }
-        require(manifest["channel"] == "android-latest") { "Rolling master channel is invalid" }
-        require(manifest["mutable"] == "true") { "Rolling master manifest must declare mutability" }
-        val sourceSha = manifest["source_sha"] ?: error("Rolling master source SHA is missing")
-        val apkName = manifest["phone_apk"] ?: error("Rolling master APK name is missing")
-        require(apkName == "zara-latest.apk") { "Rolling master APK name is unexpected" }
-        val sha256 = manifest["phone_sha256"] ?: error("Rolling master checksum is missing")
-        val apkUrl = rollingManifestUrl.substringBeforeLast('/') + "/" + apkName
-        val release = UpdateRelease(
-            version = "master",
-            sourceSha = sourceSha,
-            apkUrl = apkUrl,
-            sha256 = sha256,
-            channel = UpdateChannel.Master,
-        )
-        return UpdateSecurity.validate(release).getOrThrow()
+    private fun verifyMasterApk(apk: File, manifest: MasterUpdateManifest) {
+        val info = context.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+        check(info != null && info.packageName == context.packageName) {
+            "Master update is not a Zara phone APK"
+        }
+        check(
+            info.versionName == manifest.versionName &&
+                info.longVersionCode == manifest.versionCode
+        ) {
+            "Master update APK version does not match its provenance manifest"
+        }
+        check(info.longVersionCode >= currentVersionCode) {
+            "Master update would downgrade the installed app"
+        }
+    }
+
+    private fun rollingMasterCandidate(): Candidate {
+        val apkUrl = MasterUpdateManifest.DOWNLOAD_PREFIX + MasterUpdateManifest.APK_NAME
+        val manifest = MasterUpdateManifest.parse(
+            readText(rollingManifestUrl, MasterUpdateManifest.MAX_MANIFEST_BYTES),
+            apkUrl,
+        ).getOrThrow()
+        return Candidate(manifest.release, masterManifest = manifest)
     }
 
     private fun releaseCandidate(json: JSONObject): Candidate? {
