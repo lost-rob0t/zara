@@ -335,3 +335,80 @@ def test_peer_call_rejects_stale_session_before_runtime_dispatch(
     finally:
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
+
+
+def test_authenticated_peer_delegate_uses_same_runtime_authority(
+    zmq_context,
+    transport_config,
+):
+    gateway, client, supervisor, _registry, enrolled = _start_pair(
+        zmq_context, transport_config
+    )
+    try:
+        result = client.peer_call(
+            _request(
+                enrolled.generation,
+                request_id="peer-delegate-1",
+                operation="node.delegate",
+                content="delegate this safely",
+            )
+        ).result(timeout=1.5)
+        assert result.text == "peer:delegate this safely"
+        assert sum(isinstance(command, SubmitTurn) for _, command in supervisor.commands) == 1
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_peer_call_generation_and_deadline_fail_before_runtime_dispatch(
+    zmq_context,
+    transport_config,
+):
+    gateway, client, supervisor, _registry, enrolled = _start_pair(
+        zmq_context, transport_config
+    )
+    try:
+        with pytest.raises(PeerCallRemoteError, match="invalid"):
+            client.peer_call(
+                _request(
+                    enrolled.generation + 1,
+                    request_id="peer-stale-generation",
+                    expected_enrollment_generation=enrolled.generation + 1,
+                )
+            ).result(timeout=1.5)
+        with pytest.raises(PeerCallRemoteError, match="invalid"):
+            client.peer_call(
+                _request(
+                    enrolled.generation,
+                    request_id="peer-expired",
+                    deadline_ns=max(1, time.time_ns() - 1),
+                )
+            ).result(timeout=1.5)
+        assert supervisor.commands == []
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
+
+
+def test_peer_runtime_failure_projects_safe_typed_remote_error(
+    zmq_context,
+    transport_config,
+):
+    gateway, client, supervisor, _registry, enrolled = _start_pair(
+        zmq_context, transport_config
+    )
+    try:
+        def fail_submit(_principal, _command):
+            raise RuntimeError("secret traceback /home/operator/.keys")
+
+        supervisor.submit = fail_submit
+        with pytest.raises(PeerCallRemoteError) as raised:
+            client.peer_call(
+                _request(enrolled.generation, request_id="peer-runtime-fail")
+            ).result(timeout=1.5)
+        assert raised.value.code == "runtime_error"
+        assert str(raised.value) == "runtime_error: peer runtime failed"
+        assert "secret" not in str(raised.value)
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
