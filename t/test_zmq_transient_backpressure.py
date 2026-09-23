@@ -41,6 +41,11 @@ def _live_gateway(route: bytes) -> ZaraZmqGateway:
             ready=True,
         )
     }
+    # Keep the focused transport fixture faithful to the production gateway's
+    # acceptance-barrier state without constructing unrelated runtime owners.
+    gateway._turn_routes = {}
+    gateway._early_turn_events = OrderedDict()
+    gateway._turns_awaiting_accept = set()
     return gateway
 
 
