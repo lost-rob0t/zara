@@ -54,6 +54,9 @@ class WearSurfaceContractTest {
         assertTrue(contract.contains("ai.zara.action.WEAR_VOICE"))
         assertTrue(contract.contains("ai.zara.action.OPEN_ORG_TODO"))
         assertTrue(contract.contains("ORG_TODO_ID"))
+        assertTrue(contract.contains("require(todoId.isNotBlank())"))
+        assertTrue(contract.contains("appendPath(todoId)"))
+        assertTrue(contract.contains(".setData("))
 
         val tile = File("src/main/java/ai/zara/wear/surface/ZaraTileService.kt").readText()
         val status = File("src/main/java/ai/zara/wear/surface/ZaraStatusComplicationService.kt").readText()
