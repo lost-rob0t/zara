@@ -25,6 +25,7 @@ jobs:
           fetch-depth: 0
 
       - name: Resolve trusted coverage base
+        id: coverage-base
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -62,7 +63,7 @@ jobs:
               exit 1
               ;;
           esac
-          echo "ZARA_COVERAGE_BASE_REF=$base_ref" >> "$GITHUB_ENV"
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -71,6 +72,7 @@ jobs:
         shell: bash
         env:
           ARTIFACT_DIR: ${{ github.workspace }}/artifacts/coverage
+          ZARA_COVERAGE_BASE_REF: ${{ steps.coverage-base.outputs.base_ref }}
         run: |
           set -euo pipefail
           nix develop -c bash scripts/test-coverage.sh --base-ref "$ZARA_COVERAGE_BASE_REF"
