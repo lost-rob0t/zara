@@ -469,6 +469,7 @@ def exercise_three_menu_ui(device: Device) -> None:
         time.sleep(0.4)
         device.capture(f"settings-{capture_name}")
         device.press_back()
+        device.reveal("Runtime & local AI")
         device.await_label("Runtime & local AI")
 
     device.tap("Appearance")
@@ -480,6 +481,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("theme-light")
     device.tap("Outrun")
     device.press_back()
+    device.reveal("Runtime & local AI")
     device.await_label("Runtime & local AI")
 
     open_menu(device, "Chat")
@@ -522,6 +524,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-connection-draft")
 
     device.press_back()
+    device.reveal("Runtime & local AI")
     device.await_label("Runtime & local AI")
     device.press_back()
     device.await_label("Chat")
