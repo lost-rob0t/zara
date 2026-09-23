@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import subprocess
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -112,6 +113,41 @@ def test_nodes_reports_successful_dump_that_created_no_hierarchy(
         list(device.nodes())
 
     assert cat_attempts == module.UI_DUMP_ATTEMPTS
+
+
+def test_capture_rejects_split_rendered_action_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    unlabeled_click_owner = ET.fromstring(
+        '<node text="" content-desc="" class="android.view.View" '
+        'bounds="[205,2034][875,2126]" clickable="true" enabled="true" />'
+    )
+    labeled_click_owner = ET.fromstring(
+        '<node text="Choose APK" content-desc="" class="android.widget.TextView" '
+        'bounds="[408,2057][672,2102]" clickable="true" enabled="true" />'
+    )
+
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **_kwargs: b"\x89PNG\r\n\x1a\nfixture"
+        if arguments[:2] == ("exec-out", "screencap")
+        else "",
+    )
+    monkeypatch.setattr(
+        device,
+        "nodes",
+        lambda: iter((unlabeled_click_owner, labeled_click_owner)),
+    )
+
+    with pytest.raises(
+        AssertionError,
+        match=r"Required rendered action has a distinct unlabeled clickable owner: Choose APK",
+    ):
+        device.capture("settings-plugins", required_actions=("Choose APK",))
 
 
 def test_await_label_dismisses_release_notes_that_appear_after_launch(
