@@ -85,6 +85,29 @@ def _require_hashed_file(
     return file_value, expected_hash
 
 
+def _require_text(path: Path, *, label: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise EvidenceError(f"{label} is not valid UTF-8 text: {path}: {error}") from error
+
+
+def _assertion_trace(actions: list[str], assertions: list[dict[str, Any]]) -> str:
+    lines = [f"ACTION {index} {action}" for index, action in enumerate(actions, 1)]
+    lines.extend(
+        " ".join(
+            (
+                "ASSERT",
+                "PASS" if assertion["passed"] else "FAIL",
+                assertion["name"],
+                assertion["detail"],
+            )
+        ).rstrip()
+        for assertion in assertions
+    )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 def validate_desktop(manifest_path: Path, source_sha: str) -> int:
     manifest = _load_manifest(manifest_path)
     fixtures = manifest.get("fixtures")
@@ -134,6 +157,9 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
         raise EvidenceError(
             f"android source SHA mismatch: expected {source_sha}, got {manifest.get('source_sha')}"
         )
+    manifest_apk_sha256 = _require_sha256(
+        manifest.get("apk_sha256"), label="android manifest apk_sha256"
+    )
     if manifest.get("passed") is not True:
         raise EvidenceError("android acceptance manifest must record passed=true")
     screenshots = manifest.get("screenshots")
@@ -194,10 +220,12 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
 
         if scenario.get("source_sha") != source_sha:
             raise EvidenceError(f"android scenario source SHA mismatch: {scenario_id}")
-        _require_sha256(
+        scenario_apk_sha256 = _require_sha256(
             scenario.get("apk_sha256"),
             label=f"android scenario apk_sha256 {scenario_id}",
         )
+        if scenario_apk_sha256 != manifest_apk_sha256:
+            raise EvidenceError(f"android scenario apk_sha256 mismatch: {scenario_id}")
         if scenario.get("device_api") != manifest_device_api:
             raise EvidenceError(f"android scenario device API mismatch: {scenario_id}")
         profile = scenario.get("profile")
@@ -248,16 +276,38 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
             scenario.get("screenshot"),
             label=f"android scenario screenshot {scenario_id}",
         )
-        _require_hashed_file(
+        text_file, _ = _require_hashed_file(
             manifest_path.parent,
             scenario.get("text_evidence"),
             label=f"android scenario text {scenario_id}",
         )
-        _require_hashed_file(
+        assertion_file, _ = _require_hashed_file(
             manifest_path.parent,
             scenario.get("assertion_evidence"),
             label=f"android scenario assertions {scenario_id}",
         )
+
+        text_lines = _require_text(
+            _safe_child(manifest_path.parent, text_file),
+            label=f"android scenario text {scenario_id}",
+        ).splitlines()
+        expected_route = f"route={json.dumps(route, ensure_ascii=False)}"
+        expected_runtime = (
+            "runtime="
+            + json.dumps(runtime, sort_keys=True, separators=(",", ":"))
+        )
+        if not text_lines or text_lines[0] != expected_route:
+            raise EvidenceError(f"android scenario text route mismatch: {scenario_id}")
+        if len(text_lines) < 2 or text_lines[1] != expected_runtime:
+            raise EvidenceError(f"android scenario text runtime mismatch: {scenario_id}")
+
+        actual_assertion_trace = _require_text(
+            _safe_child(manifest_path.parent, assertion_file),
+            label=f"android scenario assertion trace {scenario_id}",
+        )
+        if actual_assertion_trace != _assertion_trace(actions, assertions):
+            raise EvidenceError(f"android scenario assertion trace mismatch: {scenario_id}")
+
         screenshot_entry = screenshots_by_state.get(state)
         if screenshot_entry is None:
             raise EvidenceError(f"android scenario has no screenshot manifest entry: {scenario_id}")
