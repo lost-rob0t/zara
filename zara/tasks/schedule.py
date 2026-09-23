@@ -8,7 +8,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from ..database import DatabaseManager, get_database
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_CRON_SEARCH_MINUTES = 366 * 24 * 60 * 5
 _MAX_INTERVAL_MINUTES = 366 * 24 * 60
-_INTERVAL_RE = re.compile(r"^@every\\s+([1-9][0-9]{0,5})([mhd])$", re.IGNORECASE)
+_INTERVAL_RE = re.compile(r"^@every\s+([1-9][0-9]{0,5})([mhd])$", re.IGNORECASE)
 _SCHEDULE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$")
 _CRON_ALIASES = {
     "@hourly": "0 * * * *",
@@ -129,7 +129,7 @@ class IntervalExpression:
         return cls(f"@every {amount}{unit}", timedelta(minutes=minutes))
 
     def next_after(self, value: datetime) -> datetime:
-        return value + self.interval
+        return _add_elapsed(value, self.interval)
 
 
 ScheduleExpression = CronExpression | IntervalExpression
@@ -141,6 +141,24 @@ def parse_schedule_expression(expression: str) -> ScheduleExpression:
     return CronExpression.parse(expression)
 
 
+def _timeline_value(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value
+    return value.astimezone(timezone.utc)
+
+
+def _add_elapsed(
+    value: datetime,
+    delta: timedelta,
+    *,
+    result_timezone=None,
+) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value + delta
+    target = value.astimezone(timezone.utc) + delta
+    return target.astimezone(result_timezone or value.tzinfo)
+
+
 def _next_future_run(
     expression: ScheduleExpression,
     *,
@@ -148,11 +166,29 @@ def _next_future_run(
     now: datetime,
 ) -> datetime:
     if isinstance(expression, IntervalExpression):
-        if now < due_at:
+        due_timeline = _timeline_value(due_at)
+        now_timeline = _timeline_value(now)
+        if now_timeline < due_timeline:
+            if (
+                due_at.tzinfo is not None
+                and due_at.utcoffset() is not None
+                and now.tzinfo is not None
+                and now.utcoffset() is not None
+            ):
+                return due_at.astimezone(now.tzinfo)
             return due_at
-        elapsed = now - due_at
+        elapsed = now_timeline - due_timeline
         steps = int(elapsed // expression.interval) + 1
-        return due_at + expression.interval * steps
+        result_timezone = (
+            now.tzinfo
+            if now.tzinfo is not None and now.utcoffset() is not None
+            else None
+        )
+        return _add_elapsed(
+            due_at,
+            expression.interval * steps,
+            result_timezone=result_timezone,
+        )
     return expression.next_after(now)
 
 
