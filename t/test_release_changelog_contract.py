@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +32,88 @@ def _workflow_step(workflow: str, name: str) -> str:
     start = workflow.index(marker)
     next_step = workflow.find("\n      - name: ", start + len(marker))
     return workflow[start:] if next_step == -1 else workflow[start:next_step]
+
+
+def _first_python_heredoc(step: str) -> str:
+    marker = "<<'PY'\n"
+    start = step.index(marker) + len(marker)
+    end = step.index("\nPY\n", start)
+    return step[start:end]
+
+
+def _run_recovery_selector(
+    *,
+    tmp_path: Path,
+    release: dict[str, object],
+    source_sha: str,
+) -> subprocess.CompletedProcess[str]:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    recovery = _workflow_step(workflow, "Recover stale owned draft from prior interrupted run")
+    pages = tmp_path / "releases.json"
+    release_id = tmp_path / "release.id"
+    pages.write_text(json.dumps([[release]]), encoding="utf-8")
+    env = os.environ.copy()
+    env.update(
+        {
+            "RELEASE_TAG": "v1.2.3",
+            "OWNED_TITLE_PREFIX": (
+                "Zara v1.2.3 [zara-staging:lost-rob0t/zara:"
+                f"{source_sha}:run="
+            ),
+        }
+    )
+    return subprocess.run(
+        [sys.executable, "-", str(pages), str(release_id)],
+        input=_first_python_heredoc(recovery),
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+
+def _run_recovery_tag_fence(
+    *,
+    tmp_path: Path,
+    source_sha: str,
+    resolved_tag_sha: str,
+) -> subprocess.CompletedProcess[str]:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    recovery = _workflow_step(workflow, "Recover stale owned draft from prior interrupted run")
+    run_marker = "        run: |\n"
+    run_body = recovery.split(run_marker, 1)[1]
+    prefix = run_body.split('          draft_pages=', 1)[0]
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    git = bin_dir / "git"
+    git.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = rev-list ]; then\n"
+        "  printf '%s\\n' \"$FAKE_TAG_SHA\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 97\n",
+        encoding="utf-8",
+    )
+    git.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "TAG": "v1.2.3",
+            "STAGED_SOURCE": source_sha,
+            "FAKE_TAG_SHA": resolved_tag_sha,
+            "PATH": f"{bin_dir}{os.pathsep}{env.get('PATH', '')}",
+        }
+    )
+    return subprocess.run(
+        ["bash", "-c", textwrap.dedent(prefix)],
+        text=True,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
 
 
 def test_release_notes_preserve_canonical_markdown_section() -> None:
@@ -202,6 +289,62 @@ def test_existing_tag_ref_is_release_source_authority_not_target_commitish() -> 
 
     assert 'test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"' in workflow
     assert '--verify-tag' in stage
+
+
+def test_recovery_accepts_owned_draft_with_default_target_commitish(
+    tmp_path: Path,
+) -> None:
+    source_sha = "a" * 40
+    release_id = 42
+    result = _run_recovery_selector(
+        tmp_path=tmp_path,
+        source_sha=source_sha,
+        release={
+            "id": release_id,
+            "draft": True,
+            "tag_name": "v1.2.3",
+            "name": (
+                "Zara v1.2.3 [zara-staging:lost-rob0t/zara:"
+                f"{source_sha}:run=17:attempt=1]"
+            ),
+            "target_commitish": "master",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "release.id").read_text(encoding="utf-8") == f"{release_id}\n"
+
+
+def test_recovery_rejects_tag_mismatch_even_when_target_commitish_matches_source(
+    tmp_path: Path,
+) -> None:
+    source_sha = "b" * 40
+    release_id = 43
+    selector = _run_recovery_selector(
+        tmp_path=tmp_path,
+        source_sha=source_sha,
+        release={
+            "id": release_id,
+            "draft": True,
+            "tag_name": "v1.2.3",
+            "name": (
+                "Zara v1.2.3 [zara-staging:lost-rob0t/zara:"
+                f"{source_sha}:run=18:attempt=1]"
+            ),
+            "target_commitish": source_sha,
+        },
+    )
+    assert selector.returncode == 0, selector.stderr
+    assert (tmp_path / "release.id").read_text(encoding="utf-8") == f"{release_id}\n"
+
+    result = _run_recovery_tag_fence(
+        tmp_path=tmp_path,
+        source_sha=source_sha,
+        resolved_tag_sha="c" * 40,
+    )
+
+    assert result.returncode != 0
+    assert "expected exact release source" in result.stderr
 
 
 def test_staged_release_cleanup_is_owned_retry_safe_and_never_deletes_published() -> None:
