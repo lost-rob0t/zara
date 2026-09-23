@@ -32,6 +32,11 @@ _DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\(|$)")
 class SymbolicProjectionPort(Protocol):
     """Runtime-neutral persistence port supplied by a product composition root."""
 
+    def load_dialogue_state(
+        self,
+        conversation_id: str,
+    ) -> tuple[str, Optional[str], int]: ...
+
     def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]: ...
 
     def load_previous_response_act(self, conversation_id: str) -> str | None: ...
@@ -205,18 +210,26 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
         adapter = self._projection_adapter
         if adapter is None or conversation_id is None:
             return "[]", None, 0
-        context, generation = adapter.load_dialogue_context(conversation_id)
+
+        state_loader = getattr(adapter, "load_dialogue_state", None)
+        if state_loader is not None:
+            if not callable(state_loader):
+                raise RuntimeError("symbolic projection dialogue-state loader is invalid")
+            state = state_loader(conversation_id)
+            if not isinstance(state, tuple) or len(state) != 3:
+                raise RuntimeError("symbolic projection returned invalid dialogue state")
+            context, previous_act, generation = state
+        else:
+            # Legacy/custom ports may supply only context. Do not compose a prior
+            # response act from a second projection read: that would permit a
+            # cross-generation follow-up snapshot.
+            context, generation = adapter.load_dialogue_context(conversation_id)
+            previous_act = None
+
         if type(generation) is not int or generation < 0:
             raise RuntimeError("symbolic projection returned an invalid generation")
-
-        previous_act: Optional[str] = None
-        previous_loader = getattr(adapter, "load_previous_response_act", None)
-        if previous_loader is not None:
-            if not callable(previous_loader):
-                raise RuntimeError("symbolic projection previous-act loader is invalid")
-            previous_act = previous_loader(conversation_id)
-            if previous_act is not None:
-                previous_act = _bounded_response_act_term(previous_act)
+        if previous_act is not None:
+            previous_act = _bounded_response_act_term(previous_act)
 
         return _bounded_context_term(context), previous_act, generation
 
