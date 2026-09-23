@@ -9,11 +9,12 @@ import org.junit.Test
 class OrgScheduleSnapshotTest {
     @Test
     fun codecRoundTripsCanonicalAllocationMetadata() {
+        val todoId = "5021ae0b-6b2f-4dc2-92c9-cc79b8ed1ed6"
         val snapshot = OrgScheduleSnapshot(
             generatedAtEpochMillis = 1_789_614_000_000L,
             allocations = listOf(
                 OrgScheduleAllocation(
-                    id = "5021ae0b-6b2f-4dc2-92c9-cc79b8ed1ed6",
+                    id = todoId,
                     title = "Build Org face | verify",
                     status = "STRT",
                     startMinute = 360,
@@ -23,6 +24,7 @@ class OrgScheduleSnapshotTest {
                     source = "agenda/zara.org",
                 ),
             ),
+            currentOrNextId = todoId,
             currentOrNextTitle = "Build Org face",
         )
 
@@ -35,6 +37,8 @@ class OrgScheduleSnapshotTest {
         assertNull(OrgScheduleSnapshotCodec.decode("schema=2\ngenerated=1\n"))
         assertNull(OrgScheduleSnapshotCodec.decode("schema=1\nnext=Task\n"))
         assertNull(OrgScheduleSnapshotCodec.decode("schema=1\ngenerated=1\ngenerated=2\n"))
+        assertNull(OrgScheduleSnapshotCodec.decode("schema=1\ngenerated=1\nnext=Task\n"))
+        assertNull(OrgScheduleSnapshotCodec.decode("schema=1\ngenerated=1\nnext_id=id\n"))
         assertNull(
             OrgScheduleSnapshotCodec.decode(
                 "schema=1\ngenerated=1\nallocation=id|task|TODO|500|400||||\n",
@@ -55,15 +59,61 @@ class OrgScheduleSnapshotTest {
     }
 
     @Test
+    fun currentOrNextTodoRequiresStableAllocationIdentity() {
+        val allocation = OrgScheduleAllocation(
+            id = "task-1",
+            title = "Task",
+            status = "TODO",
+            startMinute = 10,
+            endMinute = 20,
+            priority = null,
+            tags = emptyList(),
+            source = null,
+        )
+
+        assertTrue(
+            runCatching {
+                OrgScheduleSnapshot(1L, listOf(allocation), null, "Task")
+            }.isFailure,
+        )
+        assertTrue(
+            runCatching {
+                OrgScheduleSnapshot(1L, listOf(allocation), "task-1", null)
+            }.isFailure,
+        )
+        assertTrue(
+            runCatching {
+                OrgScheduleSnapshot(1L, listOf(allocation), "missing", "Task")
+            }.isFailure,
+        )
+        assertEquals(
+            "task-1",
+            OrgScheduleSnapshot(1L, listOf(allocation), "task-1", "Task").currentOrNextId,
+        )
+    }
+
+    @Test
     fun staleOrConflictingSnapshotCannotRollBackAcceptedCacheState() {
         val current = OrgScheduleSnapshot(
             generatedAtEpochMillis = 200L,
             allocations = emptyList(),
+            currentOrNextId = null,
             currentOrNextTitle = null,
         )
         val newer = current.copy(generatedAtEpochMillis = 201L)
         val identical = current.copy()
-        val conflictingSameGeneration = current.copy(currentOrNextTitle = "conflict")
+        val conflictingSameGeneration = current.copy(allocations = listOf(
+            OrgScheduleAllocation(
+                id = "conflict",
+                title = "Conflict",
+                status = "TODO",
+                startMinute = 1,
+                endMinute = 2,
+                priority = null,
+                tags = emptyList(),
+                source = null,
+            ),
+        ))
         val stale = current.copy(generatedAtEpochMillis = 199L)
 
         assertTrue(shouldAcceptOrgScheduleSnapshot(current, newer))
@@ -90,7 +140,7 @@ class OrgScheduleSnapshotTest {
             valid.copy(id = "a$index", startMinute = index, endMinute = index + 1)
         }
         assertTrue(
-            runCatching { OrgScheduleSnapshot(1L, tooMany, null) }.isFailure,
+            runCatching { OrgScheduleSnapshot(1L, tooMany, null, null) }.isFailure,
         )
     }
 }
