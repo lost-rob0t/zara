@@ -85,6 +85,28 @@
             rev = treallaRevision;
             hash = "sha256-YgyPP7TTAssdoGINUZCmDs2azHTbxgKA0ZZ9G3df2Cw=";
           };
+
+          treallaBuildSupport = pkgs.runCommand "zara-trealla-android-build-support" { } ''
+            mkdir -p "$out"
+            cp ${./build-trealla.sh} "$out/build-trealla.sh"
+            cp ${./patch-trealla-module-path.sh} "$out/patch-trealla-module-path.sh"
+            chmod +x "$out/build-trealla.sh" "$out/patch-trealla-module-path.sh"
+          '';
+
+          treallaLibraries = pkgs.runCommand "zara-trealla-android-libraries-${treallaRevision}" {
+            nativeBuildInputs = [
+              pkgs.gnumake
+              pkgs.gcc
+              pkgs.python3
+            ];
+          } ''
+            export ANDROID_NDK_ROOT=${androidSdk}/libexec/android-sdk/ndk/${androidEnv.ndk-bundle.version}
+            export ZARA_TREALLA_SOURCE_DIR=${treallaSource}
+            export ZARA_TREALLA_LIBRARY_ROOT="$out"
+            bash ${treallaBuildSupport}/build-trealla.sh >/dev/null
+            test -f "$out/arm64-v8a/libtrealla.a"
+            test -f "$out/x86_64/libtrealla.a"
+          '';
         in
         {
           devShells.default = pkgs.mkShell {
@@ -107,6 +129,7 @@
               export JAVA_HOME=${pkgs.jdk21.home}
               export ZARA_ANDROID_NDK_VERSION=${androidEnv.ndk-bundle.version}
               export ZARA_TREALLA_SOURCE_DIR=${treallaSource}
+              export ZARA_TREALLA_LIBRARY_ROOT=${treallaLibraries}
               echo "Zara Android toolchain ready: Gradle 9 + JDK 21 + SDK 37 + NDK ${androidEnv.ndk-bundle.version}"
             '';
           };
