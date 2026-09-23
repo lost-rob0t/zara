@@ -69,6 +69,7 @@
 (ert-deftest zara-bridge-edit-preview-apply-is-revision-safe-and-undoable ()
   (with-temp-buffer
     (insert "alpha beta")
+    (buffer-enable-undo)
     (let* ((context
             (gethash "result" (zara-test--request "buffer.context")))
            (buffer-id (gethash "buffer_id" context))
