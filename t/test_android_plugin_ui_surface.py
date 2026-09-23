@@ -63,6 +63,7 @@ def test_install_flow_is_explicit_and_does_not_gain_broad_package_visibility():
     assert "Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES" in surface
     assert "setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_REQUIRED)" in installer
     assert "PluginApkSecurity.copyVerified(input, output, candidate.sha256)" in installer
+    assert ".setData(Uri.parse(PluginApkSecurity.callbackIdentity(sessionId, nonce)))" in installer
     permissions = {
         item.get(ANDROID + "name") for item in manifest.findall("uses-permission")
     }
