@@ -71,9 +71,17 @@ def test_capture_emits_exact_source_scenario_bundle(
     assert record["source_sha"] == SOURCE_SHA
     assert record["device_api"] == "35"
     assert record["profile"] == "default"
-    assert record["actions"] == ["tap:Open navigation menu"]
+    assert record["actions"] == [
+        "tap:Open navigation menu",
+        "capture:contract-state",
+    ]
     assert record["assertions"] == [
-        {"name": "chat-visible", "passed": True, "detail": "Chat is visible"}
+        {"name": "chat-visible", "passed": True, "detail": "Chat is visible"},
+        {
+            "name": "screenshot-png",
+            "passed": True,
+            "detail": "device returned PNG screenshot evidence",
+        },
     ]
 
     for key in ("screenshot", "text_evidence", "assertion_evidence"):
@@ -91,7 +99,12 @@ def test_capture_emits_exact_source_scenario_bundle(
         encoding="utf-8"
     )
     assert "ACTION 1 tap:Open navigation menu" in assertion_text
+    assert "ACTION 2 capture:contract-state" in assertion_text
     assert "ASSERT PASS chat-visible Chat is visible" in assertion_text
+    assert (
+        "ASSERT PASS screenshot-png device returned PNG screenshot evidence"
+        in assertion_text
+    )
 
 
 def test_capture_rejects_duplicate_scenario_without_overwriting_first_bundle(
@@ -182,7 +195,12 @@ def test_failed_assertion_can_be_retained_in_failure_scenario_bundle(
             "name": "restart-postcondition",
             "passed": False,
             "detail": "expected durable state was absent",
-        }
+        },
+        {
+            "name": "screenshot-png",
+            "passed": True,
+            "detail": "device returned PNG screenshot evidence",
+        },
     ]
     assert (tmp_path / "failure.png").is_file()
     assert (tmp_path / "failure.ui.txt").is_file()
