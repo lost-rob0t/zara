@@ -154,9 +154,20 @@ class ExpertIdempotencyJournal:
                         message="durable idempotency result is corrupt or unverifiable",
                     )
                     return ClaimDecision(claim=claim, replay=replay, created=False)
+                replay = replace(result, replayed=True)
+                if replay.effect_receipts:
+                    replay = replace(
+                        replay,
+                        verdict=ExpertVerdict.UNKNOWN,
+                        error_code=ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME,
+                        error_message=(
+                            "durable effectful expert result requires fresh postcondition "
+                            "verification after process recreation"
+                        ),
+                    )
                 return ClaimDecision(
                     claim=claim,
-                    replay=replace(result, replayed=True),
+                    replay=replay,
                     created=False,
                 )
 
