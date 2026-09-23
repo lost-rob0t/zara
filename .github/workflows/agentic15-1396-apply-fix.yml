@@ -1,0 +1,62 @@
+name: Temporary #1396 transport patch
+
+on:
+  push:
+    branches:
+      - agentic15/1396-session-demux-hardening
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agentic15/1396-session-demux-hardening
+          fetch-depth: 0
+      - name: Apply canonical session-demux hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          transport = Path("zara/zmq_transport.py")
+          text = transport.read_text()
+
+          old_reset = """            self._turn_routes.clear()\n            self._approval_owners.clear()\n"""
+          new_reset = """            self._turn_routes.clear()\n            self._early_turn_events.clear()\n            self._turns_awaiting_accept.clear()\n            self._approval_owners.clear()\n"""
+          assert text.count(old_reset) == 1, text.count(old_reset)
+          text = text.replace(old_reset, new_reset, 1)
+
+          old_demux = """                    route = self._turn_routes.get((principal_id, event.turn_id))\n            if route is None and event.turn_id is None and event.conversation_id:\n                matches = [\n                    candidate\n                    for candidate, state in self._routes.items()\n                    if state.ready\n                    and state.principal_id == principal_id\n                    and state.conversation_id == event.conversation_id\n                ]\n                if len(matches) == 1:\n                    route = matches[0]\n"""
+          new_demux = """                    route = self._turn_routes.get((principal_id, event.turn_id))\n                    if route is None:\n                        acceptance_pending = any(\n                            inflight_principal == principal_id\n                            and isinstance(inflight.command, SubmitTurn)\n                            and inflight.command.conversation_id == event.conversation_id\n                            for (inflight_principal, _request_id), inflight in self._inflight.items()\n                        )\n                        if acceptance_pending:\n                            self._buffer_early_turn_event(\n                                principal_id,\n                                event.turn_id,\n                                (message, ()),\n                            )\n                            continue\n                        if event.conversation_id:\n                            matches = [\n                                candidate\n                                for candidate, state in self._routes.items()\n                                if state.ready\n                                and state.principal_id == principal_id\n                                and state.conversation_id == event.conversation_id\n                            ]\n                            if len(matches) == 1:\n                                route = matches[0]\n            if route is None and event.turn_id is None and event.conversation_id:\n                with self._lock:\n                    matches = [\n                        candidate\n                        for candidate, state in self._routes.items()\n                        if state.ready\n                        and state.principal_id == principal_id\n                        and state.conversation_id == event.conversation_id\n                    ]\n                    if len(matches) == 1:\n                        route = matches[0]\n"""
+          assert text.count(old_demux) == 1, text.count(old_demux)
+          text = text.replace(old_demux, new_demux, 1)
+          transport.write_text(text)
+
+          test_path = Path("t/test_zmq_turn_session_demux.py")
+          tests = test_path.read_text()
+          old_ids = '        turn_ids=["turn-old", "turn-new"],\n'
+          new_ids = '        turn_ids=["turn-reused", "turn-reused"],\n'
+          assert tests.count(old_ids) == 1, tests.count(old_ids)
+          tests = tests.replace(old_ids, new_ids, 1)
+          old_expected = '            assert [message.turn_id for message in delivered] == ["turn-new", "turn-new"]\n'
+          new_expected = '            assert [message.turn_id for message in delivered] == ["turn-reused", "turn-reused"]\n'
+          assert tests.count(old_expected) == 1, tests.count(old_expected)
+          tests = tests.replace(old_expected, new_expected, 1)
+          test_path.write_text(tests)
+          PY
+          git diff --check
+          git diff -- zara/zmq_transport.py t/test_zmq_turn_session_demux.py
+      - name: Commit focused fix
+        shell: bash
+        run: |
+          git config user.name "agentic15-bot"
+          git config user.email "agentic15-bot@users.noreply.github.com"
+          git add zara/zmq_transport.py t/test_zmq_turn_session_demux.py
+          git diff --cached --check
+          git commit -m "fix(protocol): fence pending turn acceptance ownership"
+          git push origin HEAD:agentic15/1396-session-demux-hardening
