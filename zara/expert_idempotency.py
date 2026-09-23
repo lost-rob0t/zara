@@ -414,6 +414,10 @@ class ExpertIdempotencyJournal:
             raise ValueError("durable expert result has an unexpected shape")
         if wire["protocol"] != ZARA_EXPERT_PROTOCOL:
             raise ValueError("durable expert result protocol mismatch")
+        for key in ("resolved_registry_generation", "resolved_runtime_generation"):
+            value = wire[key]
+            if type(value) is not int or value < 0:
+                raise ValueError(f"durable expert result {key} is invalid")
         for key, column in (
             ("request_id", "request_id"),
             ("invocation_id", "invocation_id"),
