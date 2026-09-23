@@ -27,25 +27,27 @@ def test_notification_policy_is_user_reloadable_without_rebuild(tmp_path: Path) 
     config_dir.mkdir(parents=True)
     (config_dir / "config.pl").write_text(
         "kb_notification_policy:notification_route_policy(default, desktop_only).\n"
-        "kb_notification_policy:notification_content_policy('com.example.chat', full_content).\n",
+        "kb_notification_policy:notification_content_policy('com.example.chat', full_content).\n"
+        "kb_notification_policy:notification_feedback('com.example.chat', always_allow).\n",
         encoding="utf-8",
     )
     goal = (
         "consult('main.pl'),"
         "kb_notification_policy:notification_route_target('com.example.chat', P1),"
         "kb_notification_policy:notification_content_mode('com.example.chat', C1),"
+        "kb_notification_policy:notification_spam_decision('com.example.chat', 99, true, none, D1, R1),"
         "config_loader:user_local_config_path(Path),"
         "open(Path, write, S),"
         "write_term(S, kb_notification_policy:notification_route_policy(default, watch_only), [quoted(true)]),"
         "write(S, '.'),nl(S),close(S),"
         "config_loader:reload_user_config,"
         "kb_notification_policy:notification_route_target('com.example.chat', P2),"
-        "format('~w|~w|~w~n',[P1,C1,P2])"
+        "format('~w|~w|~w|~w|~w~n',[P1,C1,P2,D1,R1])"
     )
     result = _run_swipl(tmp_path, goal)
 
     assert result.returncode == 0, result.stderr
-    assert "desktop_only|full_content|watch_only" in result.stdout
+    assert "desktop_only|full_content|watch_only|allow|explicit_always_allow" in result.stdout
 
 
 def test_notification_config_rejects_untyped_executable_hook(tmp_path: Path) -> None:
