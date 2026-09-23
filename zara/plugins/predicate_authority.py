@@ -99,6 +99,10 @@ def _validate_inert(value: Any, *, depth: int, budget: list[int]) -> None:
         for key, item in value.items():
             if not isinstance(key, str) or not key or len(key) > MAX_STRING_LENGTH:
                 raise PredicateAuthorityError("argument object keys must be bounded strings")
+            if key in _FORBIDDEN_REQUEST_FIELDS:
+                raise PredicateAuthorityError(
+                    f"caller argument field {key!r} is reserved authority metadata"
+                )
             _validate_inert(item, depth=depth + 1, budget=budget)
         return
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
