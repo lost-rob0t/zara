@@ -105,6 +105,7 @@ python3 - "$visual_manifest" "$repo_root/android/app/build/reports/device" "$sou
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 import xml.etree.ElementTree as ET
 
@@ -131,6 +132,43 @@ if receipt.get("device_api") != data.get("device", {}).get("api"):
     raise SystemExit("overflow visual receipt device API differs from manifest device state")
 if receipt.get("profile") != "default":
     raise SystemExit("overflow visual receipt was not captured in the default display profile")
+
+
+def plain_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+viewport = receipt.get("viewport")
+if (
+    not isinstance(viewport, list)
+    or len(viewport) != 2
+    or not all(plain_int(value) and value > 0 for value in viewport)
+):
+    raise SystemExit("overflow visual receipt omitted valid viewport")
+viewport_width, viewport_height = viewport
+
+
+def valid_rect(value):
+    if (
+        not isinstance(value, list)
+        or len(value) != 4
+        or not all(plain_int(coordinate) for coordinate in value)
+    ):
+        return False
+    left, top, right, bottom = value
+    return (
+        0 <= left < right <= viewport_width
+        and 0 <= top < bottom <= viewport_height
+    )
+
+
+trigger_bounds = receipt.get("trigger_bounds")
+if not valid_rect(trigger_bounds):
+    raise SystemExit("overflow visual receipt omitted valid trigger_bounds")
+
+declared_action_union = receipt.get("action_union")
+if not valid_rect(declared_action_union):
+    raise SystemExit("overflow visual receipt omitted valid action_union")
 
 expected_actions = {"Pin", "Unpin", "Rename", "Move to project"}
 actions = receipt.get("actions")
@@ -168,6 +206,7 @@ try:
 except ET.ParseError as error:
     raise SystemExit(f"overflow visual text twin is malformed XML: {error}") from error
 text_twin_nodes = list(text_twin_root.iter("node"))
+action_rects = []
 for action in actions:
     label = action.get("label")
     bounds = action.get("bounds")
@@ -175,6 +214,23 @@ for action in actions:
         raise SystemExit("overflow visual receipt contains an action without a label")
     if not isinstance(bounds, str) or not bounds:
         raise SystemExit(f"overflow visual receipt action omitted bounds: {label}")
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+    if match is None:
+        raise SystemExit(f"overflow visual receipt action omitted valid bounds: {label}")
+    action_rect = [int(value) for value in match.groups()]
+    if not valid_rect(action_rect):
+        raise SystemExit(f"overflow visual receipt action bounds exceed viewport: {label}")
+    action_rects.append(action_rect)
+    for field, minimum in (
+        ("content_inset_px", 1),
+        ("luma_span", 18),
+        ("occupied_luma_bins", 4),
+    ):
+        value = action.get(field)
+        if not plain_int(value) or value < minimum:
+            raise SystemExit(
+                f"overflow visual receipt action omitted valid {field}: {label}"
+            )
     matching_label_nodes = [
         node
         for node in text_twin_nodes
@@ -187,6 +243,15 @@ for action in actions:
             "overflow visual text twin action bounds differ from receipt: "
             f"{label} expected={bounds}"
         )
+
+computed_action_union = [
+    min(rect[0] for rect in action_rects),
+    min(rect[1] for rect in action_rects),
+    max(rect[2] for rect in action_rects),
+    max(rect[3] for rect in action_rects),
+]
+if declared_action_union != computed_action_union:
+    raise SystemExit("overflow visual receipt action_union differs from action bounds")
 
 screenshots = data.get("screenshots")
 if not isinstance(screenshots, list):
