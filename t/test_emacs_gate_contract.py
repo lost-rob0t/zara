@@ -20,6 +20,13 @@ def test_full_regression_gate_pins_emacs_to_repository_nixpkgs() -> None:
     assert '-l "$repo_root/emacs/zara-test.el"' in gate
 
 
+def test_full_regression_gate_retains_native_emacs_output_artifact() -> None:
+    gate = (REPO_ROOT / "scripts" / "test-all.sh").read_text(encoding="utf-8")
+
+    assert 'tee "$ARTIFACT_DIR/emacs-ert.log"' in gate
+    assert "set -euo pipefail" in gate
+
+
 def test_flake_check_executes_native_emacs_ert() -> None:
     flake = (REPO_ROOT / "flake.nix").read_text(encoding="utf-8")
 
