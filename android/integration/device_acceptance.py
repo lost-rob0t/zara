@@ -181,13 +181,24 @@ class Device:
         )
         if record is None:
             raise AssertionError(f"Rendered-state scenario record is missing: {scenario_id}")
-        record["assertions"].append(
-            {
-                "name": _bounded_evidence_text(assertion_name),
-                "passed": True,
-                "detail": _bounded_evidence_text(detail),
-            }
-        )
+        assertion = {
+            "name": _bounded_evidence_text(assertion_name),
+            "passed": True,
+            "detail": _bounded_evidence_text(detail),
+        }
+        record["assertions"].append(assertion)
+        text_evidence = record.get("text_evidence")
+        if not isinstance(text_evidence, dict):
+            raise AssertionError(f"Rendered-state text evidence is missing: {scenario_id}")
+        text_file = text_evidence.get("file")
+        if not isinstance(text_file, str) or not text_file:
+            raise AssertionError(f"Rendered-state text evidence file is missing: {scenario_id}")
+        text_path = self.output / text_file
+        if not text_path.is_file():
+            raise AssertionError(f"Rendered-state text evidence file is absent: {text_file}")
+        with text_path.open("a", encoding="utf-8") as stream:
+            stream.write(self._assertion_evidence_text([], [assertion]))
+        text_evidence["sha256"] = hashlib.sha256(text_path.read_bytes()).hexdigest()
         self._persist_scenario_record(name, record)
 
     def _hierarchy_text(self) -> str:
@@ -652,11 +663,22 @@ class Device:
         normalized_after = normalized_ui_text(hierarchy_after)
         if normalized_before != normalized_after:
             raise AssertionError("UI changed while screenshot evidence was captured")
+
+        actions = [*self._pending_actions, f"capture:{name}"]
+        assertions = [
+            *self._pending_assertions,
+            {
+                "name": "screenshot-png",
+                "passed": True,
+                "detail": "device returned PNG screenshot evidence",
+            },
+        ]
         evidence_header = (
             f"route={json.dumps(route, ensure_ascii=False)}\n"
             f"runtime={json.dumps(runtime_snapshot, sort_keys=True, separators=(',', ':'))}\n"
         )
-        text_evidence = evidence_header + normalized_after
+        trace = self._assertion_evidence_text(actions, assertions)
+        text_evidence = evidence_header + trace + normalized_after
 
         path = self.output / f"{name}.png"
         text_path = self.output / f"{name}.ui.txt"
@@ -672,15 +694,6 @@ class Device:
             }
         )
 
-        actions = [*self._pending_actions, f"capture:{name}"]
-        assertions = [
-            *self._pending_assertions,
-            {
-                "name": "screenshot-png",
-                "passed": True,
-                "detail": "device returned PNG screenshot evidence",
-            },
-        ]
         record = {
             "scenario_id": scenario_id,
             "source_sha": getattr(self, "source_sha", None),
