@@ -145,6 +145,18 @@ def _non_string_error_message(wire: dict[str, Any]) -> None:
     wire["error_message"] = {"message": "corrupt"}
 
 
+def _boolean_registry_generation(wire: dict[str, Any]) -> None:
+    value = wire["resolved_registry_generation"]
+    assert type(value) is int and value in (0, 1)
+    wire["resolved_registry_generation"] = bool(value)
+
+
+def _boolean_runtime_generation(wire: dict[str, Any]) -> None:
+    value = wire["resolved_runtime_generation"]
+    assert type(value) is int and value in (0, 1)
+    wire["resolved_runtime_generation"] = bool(value)
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -156,6 +168,8 @@ def _non_string_error_message(wire: dict[str, Any]) -> None:
         _oversized_usage_mapping,
         _oversized_error_message,
         _non_string_error_message,
+        _boolean_registry_generation,
+        _boolean_runtime_generation,
     ],
     ids=[
         "receipt-count",
@@ -166,6 +180,8 @@ def _non_string_error_message(wire: dict[str, Any]) -> None:
         "usage-mapping",
         "error-message-length",
         "error-message-type",
+        "registry-generation-type",
+        "runtime-generation-type",
     ],
 )
 def test_out_of_contract_durable_terminal_fails_closed_without_redispatch(
