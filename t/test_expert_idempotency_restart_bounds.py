@@ -235,6 +235,8 @@ def test_out_of_contract_durable_terminal_fails_closed_without_redispatch(
         ("activation_id", "invalid activation id"),
         ("expert_version", "v" * 65),
         ("manifest_digest", "m" * 193),
+        ("invocation_id", "i" * 129),
+        ("request_id", "r" * 129),
     ],
     ids=[
         "registry-generation",
@@ -242,6 +244,8 @@ def test_out_of_contract_durable_terminal_fails_closed_without_redispatch(
         "activation-id",
         "expert-version",
         "manifest-digest",
+        "invocation-id",
+        "request-id",
     ],
 )
 def test_corrupt_durable_row_metadata_projects_safe_current_identity_without_redispatch(
@@ -258,8 +262,8 @@ def test_corrupt_durable_row_metadata_projects_safe_current_identity_without_red
     assert counter.calls == 1
 
     first_db.execute(
-        f"UPDATE expert_idempotency_v1 SET {column} = ? WHERE invocation_id = ?",
-        (corrupt_value, first.invocation_id),
+        f"UPDATE expert_idempotency_v1 SET {column} = ? WHERE idempotency_key = ?",
+        (corrupt_value, "idempotency:restart-bounds"),
     )
     first_db.close()
 
@@ -271,8 +275,16 @@ def test_corrupt_durable_row_metadata_projects_safe_current_identity_without_red
     assert recovered.replayed is True
     assert recovered.verdict is ExpertVerdict.UNKNOWN
     assert recovered.error_code is ExpertErrorCode.INTERRUPTED
-    assert recovered.invocation_id == first.invocation_id
-    assert recovered.request_id == first.request_id
+    if column == "invocation_id":
+        assert recovered.invocation_id.startswith("inv:")
+        assert recovered.invocation_id != corrupt_value
+    else:
+        assert recovered.invocation_id == first.invocation_id
+    if column == "request_id":
+        assert recovered.request_id.startswith("req:")
+        assert recovered.request_id != corrupt_value
+    else:
+        assert recovered.request_id == first.request_id
     assert recovered.activation_id == restarted_handle.activation_id
     assert recovered.expert_id == restarted_handle.expert_id
     assert recovered.expert_version == restarted_handle.expert_version
