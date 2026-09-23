@@ -1,7 +1,5 @@
 package ai.zara.app.ui
 
-import ai.zara.app.widget.WidgetNavigationRequest
-
 enum class AppMenu(val label: String, val glyph: String) {
     Chat("Chat", "⌂"),
     Workspace("Workspace", "λ"),
@@ -29,22 +27,16 @@ fun routesFor(menu: AppMenu): List<AppRoute> = AppRoute.entries.filter { it.menu
 fun usesNavigationRail(availableWidthDp: Float): Boolean =
     availableWidthDp.isFinite() && availableWidthDp >= 600f
 
-private fun pendingWidgetRoute(menu: AppMenu): AppRoute? =
-    WidgetNavigationRequest.peek()?.takeIf { it.menu == menu }
-
 data class AppNavigation(
-    val menu: AppMenu = WidgetNavigationRequest.peek()?.menu ?: AppMenu.Chat,
-    val chat: AppRoute = pendingWidgetRoute(AppMenu.Chat) ?: AppRoute.Chat,
-    val workspace: AppRoute = pendingWidgetRoute(AppMenu.Workspace) ?: AppRoute.Logic,
-    val settings: AppRoute = pendingWidgetRoute(AppMenu.Settings) ?: AppRoute.Runtime,
+    val menu: AppMenu = AppMenu.Chat,
+    val chat: AppRoute = AppRoute.Chat,
+    val workspace: AppRoute = AppRoute.Logic,
+    val settings: AppRoute = AppRoute.Runtime,
 ) {
     init {
         require(chat.menu == AppMenu.Chat)
         require(workspace.menu == AppMenu.Workspace)
         require(settings.menu == AppMenu.Settings)
-        WidgetNavigationRequest.peek()?.let { requested ->
-            if (route == requested) WidgetNavigationRequest.consume(requested)
-        }
     }
 
     val route: AppRoute
