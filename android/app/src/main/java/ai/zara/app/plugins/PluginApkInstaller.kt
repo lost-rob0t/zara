@@ -258,11 +258,23 @@ internal class PluginApkInstaller(private val context: Context) {
         val certificates = info.signingInfo?.apkContentsSigners?.map { signature ->
             PluginApkSecurity.hex(MessageDigest.getInstance("SHA-256").digest(signature.toByteArray()))
         }.orEmpty()
-        PluginApkSecurity.validateIdentity(info.packageName, context.packageName, certificates)
+        val versionName = info.versionName ?: info.longVersionCode.toString()
+        val minSdk = info.applicationInfo?.minSdkVersion ?: 1
+        val hasSplits = !info.splitNames.isNullOrEmpty()
+        PluginApkSecurity.validateIdentity(
+            packageName = info.packageName,
+            hostPackageName = context.packageName,
+            certificates = certificates,
+            versionName = versionName,
+            versionCode = info.longVersionCode,
+            minSdk = minSdk,
+            sdkInt = Build.VERSION.SDK_INT,
+            hasSplits = hasSplits,
+        )
         return PluginApkCandidate(
             apk.name,
             info.packageName,
-            (info.versionName ?: info.longVersionCode.toString()).take(120),
+            versionName,
             checksum,
             certificates,
         )
