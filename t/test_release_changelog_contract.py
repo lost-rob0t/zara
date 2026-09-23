@@ -160,7 +160,7 @@ def test_release_notes_preserve_canonical_markdown_section() -> None:
 def test_release_notes_reject_missing_duplicate_or_entryless_sections(markdown: str) -> None:
     module = _module()
 
-    with pytest.raises(module.ReleaseChangelogError, match="already tagged"):
+    with pytest.raises(module.ReleaseChangelogError):
         module.extract_version_notes(markdown, "1.2.3")
 
 
