@@ -74,7 +74,13 @@ def test_install_flow_is_explicit_and_does_not_gain_broad_package_visibility():
 
 def test_plugin_picker_exposes_label_on_the_actionable_semantics_node():
     surface = (KOTLIN / "ui/PluginSettingsSurface.kt").read_text()
-    assert 'semantics(mergeDescendants = true) { contentDescription = "Choose APK" }' in surface
+    picker = surface.split("private fun PluginPickerAction", 1)[1].split(
+        "@Composable\nprivate fun PluginDigestRow", 1
+    )[0]
+    assert ".clickable(" in picker
+    assert "role = Role.Button" in picker
+    assert "semantics(mergeDescendants = true)" in picker
+    assert 'contentDescription = "Choose APK"' in picker
 
 
 def test_standalone_apk_policy_rejects_unsafe_archive_metadata_before_review():
