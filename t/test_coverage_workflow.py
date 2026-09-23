@@ -27,7 +27,7 @@ def _assert_step_local_coverage_base(text: str, consumer: str, next_step: str) -
 
 def test_full_ci_scopes_trusted_coverage_base_to_test_suite() -> None:
     text = _read(CI_WORKFLOW)
-    _assert_step_local_coverage_base(text, "Run test suite", "Run formal AGENTIC-15 verification")
+    _assert_step_local_coverage_base(text, "Run all tests", "Run formal AGENTIC-15 verification")
 
     formal_and_later = text[text.index("- name: Run formal AGENTIC-15 verification") :]
     assert "ZARA_COVERAGE_BASE_REF:" not in formal_and_later
@@ -35,7 +35,7 @@ def test_full_ci_scopes_trusted_coverage_base_to_test_suite() -> None:
 
 def test_standalone_coverage_scopes_trusted_base_to_coverage_gate() -> None:
     text = _read(COVERAGE_WORKFLOW)
-    _assert_step_local_coverage_base(text, "Run coverage gate", "Upload coverage artifact")
+    _assert_step_local_coverage_base(text, "Run branch-aware coverage gate", "Upload coverage reports")
 
-    upload_and_later = text[text.index("- name: Upload coverage artifact") :]
+    upload_and_later = text[text.index("- name: Upload coverage reports") :]
     assert "ZARA_COVERAGE_BASE_REF:" not in upload_and_later
