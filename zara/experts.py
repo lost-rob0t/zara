@@ -287,6 +287,35 @@ class ExpertRegistry(_impl.ExpertRegistry):
         self._durable_claims.pop(result.invocation_id, None)
         return result
 
+    def _commit_durable_rejection(
+        self,
+        claim: Optional[DurableIdempotencyClaim],
+        result: ExpertResult,
+        *,
+        error_code: ExpertErrorCode,
+        error_message: str,
+    ) -> bool:
+        if claim is None:
+            return False
+        rejected = replace(
+            result,
+            verdict=ExpertVerdict.UNKNOWN,
+            data={},
+            evidence_refs=(),
+            error_code=error_code,
+            error_message=error_message,
+        )
+        invocation = self._invocations.get(rejected.invocation_id)
+        if invocation is not None:
+            invocation.verdict = rejected.verdict
+            invocation.evidence_refs = rejected.evidence_refs
+            invocation.usage = dict(rejected.usage)
+            invocation.effect_receipts = rejected.effect_receipts
+            invocation.result = rejected
+            invocation.state = "completed"
+        self._commit_durable_result(claim, rejected)
+        return True
+
     def _invoke_unlocked(
         self,
         handle: ActivationHandle,
@@ -568,36 +597,6 @@ class ExpertRegistry(_impl.ExpertRegistry):
             aggregate_model_calls = model_calls + delegated_model_calls
             charge_model_calls = aggregate_model_calls
 
-        if delegation_parent is not None and charge_model_calls:
-            if charge_model_calls > delegation_parent.remaining_model_calls:
-                # Actual work already happened. Exhaust the inherited allowance and
-                # preserve the full consumed count before failing closed so a caller
-                # cannot catch this error and immediately spend the same budget again.
-                delegation_parent.delegated_model_calls += charge_model_calls
-                delegation_parent.remaining_model_calls = 0
-                self._discard_invalid_success(
-                    result,
-                    handle,
-                    expert_operation,
-                    idempotency_key,
-                )
-                raise ExpertBudgetExceededError(
-                    "delegated expert aggregate usage exceeds parent model-call budget"
-                )
-            delegation_parent.remaining_model_calls -= charge_model_calls
-            delegation_parent.delegated_model_calls += charge_model_calls
-
-        if aggregate_model_calls > admitted_limits.max_model_calls:
-            self._discard_invalid_success(
-                result,
-                handle,
-                expert_operation,
-                idempotency_key,
-            )
-            raise ExpertBudgetExceededError(
-                "expert aggregate usage.model_calls exceeds admitted max_model_calls"
-            )
-
         if not result.replayed and aggregate_model_calls != result.usage.get("model_calls"):
             aggregate_usage = dict(result.usage)
             aggregate_usage["model_calls"] = aggregate_model_calls
@@ -606,6 +605,47 @@ class ExpertRegistry(_impl.ExpertRegistry):
             if invocation is not None:
                 invocation.usage = aggregate_usage
                 invocation.result = result
+
+        if delegation_parent is not None and charge_model_calls:
+            if charge_model_calls > delegation_parent.remaining_model_calls:
+                delegation_parent.delegated_model_calls += charge_model_calls
+                delegation_parent.remaining_model_calls = 0
+                budget_message = (
+                    "delegated expert aggregate usage exceeds parent model-call budget"
+                )
+                if not self._commit_durable_rejection(
+                    durable_claim,
+                    result,
+                    error_code=ExpertErrorCode.BUDGET_EXCEEDED,
+                    error_message=budget_message,
+                ):
+                    self._discard_invalid_success(
+                        result,
+                        handle,
+                        expert_operation,
+                        idempotency_key,
+                    )
+                raise ExpertBudgetExceededError(budget_message)
+            delegation_parent.remaining_model_calls -= charge_model_calls
+            delegation_parent.delegated_model_calls += charge_model_calls
+
+        if aggregate_model_calls > admitted_limits.max_model_calls:
+            budget_message = (
+                "expert aggregate usage.model_calls exceeds admitted max_model_calls"
+            )
+            if not self._commit_durable_rejection(
+                durable_claim,
+                result,
+                error_code=ExpertErrorCode.BUDGET_EXCEEDED,
+                error_message=budget_message,
+            ):
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertBudgetExceededError(budget_message)
 
         if raw_outcome.get("stale"):
             stale_message = (
@@ -740,7 +780,6 @@ class ExpertRegistry(_impl.ExpertRegistry):
         self._invocations.pop(result.invocation_id, None)
         if idempotency_key is None:
             return
-        # Compatibility cleanup for callers that bypass the durable public path.
         key = (
             handle.principal,
             result.expert_id,
