@@ -8,6 +8,7 @@ import java.util.Locale
 
 internal object PluginApkSecurity {
     const val MAX_APK_BYTES = 256L * 1024 * 1024
+    private val packagePattern = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")
     private val sha256Pattern = Regex("[0-9a-fA-F]{64}")
     private val callbackNoncePattern = Regex("[A-Za-z0-9-]{1,80}")
 
@@ -45,11 +46,32 @@ internal object PluginApkSecurity {
     }
 
     fun validateIdentity(packageName: String, hostPackageName: String, certificates: List<String>) {
-        require(packageName.isNotBlank() && packageName.length <= 255) { "The APK has no valid package identity." }
+        require(packageName.length <= 255 && packagePattern.matches(packageName)) {
+            "The APK has no valid package identity."
+        }
         require(packageName != hostPackageName) { "Use Settings > Updates to update Zara itself." }
         require(certificates.size in 1..8 && certificates.all(sha256Pattern::matches)) {
             "The APK has no readable signing certificate."
         }
+    }
+
+    fun validateIdentity(
+        packageName: String,
+        hostPackageName: String,
+        certificates: List<String>,
+        versionName: String,
+        versionCode: Long,
+        minSdk: Int,
+        sdkInt: Int,
+        hasSplits: Boolean,
+    ) {
+        validateIdentity(packageName, hostPackageName, certificates)
+        require(versionCode >= 0) { "The APK version is invalid." }
+        require(versionName.length <= 128 && versionName.none(Char::isISOControl)) {
+            "The APK version label is invalid."
+        }
+        require(minSdk in 1..sdkInt) { "The APK requires a newer Android version." }
+        require(!hasSplits) { "Select a standalone APK, not a split APK." }
     }
 
     fun callbackIdentity(sessionId: Int, nonce: String): String {
