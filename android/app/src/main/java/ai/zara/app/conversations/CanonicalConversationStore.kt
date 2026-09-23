@@ -112,8 +112,14 @@ class CanonicalConversationStore(
         ensureMetadataHealthy()
         val id = normalizeId(conversationId)
         require(history.getConversation(id) != null) { "Unknown conversation: $id" }
+        val previousMetadata = metadata
         metadata = metadata.copy(selectedConversationId = id)
-        persistMetadata()
+        try {
+            persistMetadata()
+        } catch (error: Throwable) {
+            metadata = previousMetadata
+            throw error
+        }
         return snapshot()
     }
 
@@ -456,10 +462,16 @@ class CanonicalConversationStore(
         transform: (ConversationUiMetadata) -> ConversationUiMetadata,
     ) {
         val current = metadata.conversations[conversationId] ?: ConversationUiMetadata()
+        val previousMetadata = metadata
         metadata = metadata.copy(
             conversations = metadata.conversations + (conversationId to transform(current)),
         )
-        persistMetadata()
+        try {
+            persistMetadata()
+        } catch (error: Throwable) {
+            metadata = previousMetadata
+            throw error
+        }
     }
 
     private fun loadMetadata(): ConversationUiMetadataState {
