@@ -131,16 +131,20 @@ def enroll_live_server(fixture: dict[str, str], public_key: str) -> None:
         raise AssertionError("Stock Zara server enrolled a different Android public key")
 
 
+def read_app_diagnostics(device: Device) -> str:
+    return device.adb(
+        "shell",
+        "run-as",
+        APP_PACKAGE,
+        "cat",
+        APP_DIAGNOSTICS_PATH,
+    )
+
+
 def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
     evidence: dict[str, object] = {}
     try:
-        diagnostics = device.adb(
-            "shell",
-            "run-as",
-            APP_PACKAGE,
-            "cat",
-            APP_DIAGNOSTICS_PATH,
-        )
+        diagnostics = read_app_diagnostics(device)
         path = output / "remote-app-diagnostics.log"
         path.write_text(diagnostics, encoding="utf-8")
         evidence["app_diagnostics"] = path.name
@@ -182,8 +186,8 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     # First prove the embedded Android Local server through the installed UI.
     open_menu(device, "Settings")
-    device.tap_tab("Runtime")
-    device.await_contains("LOCAL ZARA SERVER", timeout=20.0)
+    device.tap("Runtime & local AI")
+    device.await_contains("LOCAL RUNTIME", timeout=20.0)
     device.await_label("ready", timeout=20.0)
     device.tap("Local")
     open_menu(device, "Chat")
@@ -195,19 +199,29 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.await_contains("zara_ready", timeout=20.0)
     device.await_contains("LOCAL", timeout=5.0)
 
-    # Readiness alone is not enough: prove normal Local chat crosses the
-    # loaded portable semantic module instead of only accepting raw Prolog.
+    # Readiness alone is insufficient for the zero-model gate. Exercise ordinary
+    # natural language through the installed APK before any enrollment/network
+    # setup, require a deterministic portable-core result, and prove the optional
+    # local-model fallback was never entered for either Local turn.
     device.tap("Ask anything…")
     type_printable_ascii(device, "set a timer for 2 hours")
     device.press_back()
     device.tap("↑")
     device.await_contains("timer.set", timeout=20.0)
     device.await_contains("LOCAL", timeout=5.0)
-    device.capture("local-text-turn")
+    local_diagnostics = read_app_diagnostics(device)
+    if "local_model.generate.begin" in local_diagnostics:
+        raise AssertionError("Installed Local symbolic turn entered the local-model fallback")
+    if "local_model.generate.complete" in local_diagnostics:
+        raise AssertionError("Installed Local symbolic turn completed through the local model")
+    device.capture("local-natural-symbolic-turn")
 
     # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
-    device.tap_tab("Connection")
+    device.await_contains("LOCAL RUNTIME", timeout=20.0)
+    device.press_back()
+    device.await_label("Runtime & local AI")
+    device.tap("Connection")
     device.await_label("Create client identity")
     device.tap("Create client identity")
     device.await_label("CLIENT PUBLIC KEY")
@@ -234,7 +248,9 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     # Force the exact Remote routing policy for the turn so a Local response
     # cannot accidentally satisfy this end-to-end gate.
-    device.tap_tab("Runtime")
+    device.press_back()
+    device.await_label("Runtime & local AI")
+    device.tap("Runtime & local AI")
     device.tap("Remote")
     open_menu(device, "Chat")
     device.await_label("Ask anything…", timeout=10.0)
@@ -251,6 +267,8 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
         "endpoint": android_endpoint,
         "reverse_mapping": reverse_mapping.splitlines(),
         "local_turn_completed": True,
+        "local_natural_turn_completed": True,
+        "local_model_fallback_observed": False,
         "client_enrolled": True,
         "server_pin_verified": True,
         "connected": True,

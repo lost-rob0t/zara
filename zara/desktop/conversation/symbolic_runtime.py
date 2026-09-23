@@ -12,6 +12,7 @@ from .symbolic_projection import SymbolicConversationProjection
 
 _CONTEXT_PROJECT_ID = "prolog_context_project_id"
 _CONTEXT_PROJECT_GENERATION = "prolog_context_project_generation"
+_MAX_EXPERT_EVIDENCE_CHARS = 128
 
 
 def _dialogue_context_matches_project(projection: SymbolicConversationProjection) -> bool:
@@ -28,23 +29,49 @@ def _dialogue_context_matches_project(projection: SymbolicConversationProjection
     )
 
 
+def _bounded_expert_evidence_ref(value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError("expert evidence reference must be text")
+    if not value or len(value) > _MAX_EXPERT_EVIDENCE_CHARS:
+        raise ValueError(
+            f"expert evidence reference must be 1..{_MAX_EXPERT_EVIDENCE_CHARS} characters"
+        )
+    if any(ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F for character in value):
+        raise ValueError("expert evidence reference contains control characters")
+    return value
+
+
 class PureSymbolicProjectionAdapter:
     """Persist pure-symbolic dialogue context in the canonical conversation store."""
 
     def __init__(self, store) -> None:
         self.store = store
 
-    def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]:
+    def load_dialogue_state(self, conversation_id: str) -> tuple[str, str | None, int]:
+        """Read context and prior act from one canonical projection generation."""
         projection = self.store.load_symbolic_projection(conversation_id)
         if projection is None:
-            return "[]", 0
+            return "[]", None, 0
         projection.assert_pure_symbolic()
         if not _dialogue_context_matches_project(projection):
-            return "[]", projection.projection_generation
+            return "[]", None, projection.projection_generation
+
         context = projection.dialogue_state.get("prolog_context_term", "[]")
         if not isinstance(context, str):
             raise TypeError("persisted symbolic dialogue context must be text")
-        return context, projection.projection_generation
+        response_act = projection.dialogue_state.get("response_act_term")
+        if response_act is not None and not isinstance(response_act, str):
+            raise TypeError("persisted symbolic response act must be text")
+        return context, response_act, projection.projection_generation
+
+    def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]:
+        context, _response_act, generation = self.load_dialogue_state(conversation_id)
+        return context, generation
+
+    def load_previous_response_act(self, conversation_id: str) -> str | None:
+        """Return the current-project prior act from the canonical projection owner."""
+        _context, response_act, _generation = self.load_dialogue_state(conversation_id)
+        return response_act
 
     def commit_turn(
         self,
@@ -57,6 +84,7 @@ class PureSymbolicProjectionAdapter:
         response_act_term: str,
         context_term: str,
         renderer_provenance: str,
+        expert_evidence_ref: str | None = None,
     ) -> None:
         current = self.store.load_symbolic_projection(conversation_id)
         current_generation = current.projection_generation if current is not None else 0
@@ -84,6 +112,25 @@ class PureSymbolicProjectionAdapter:
             expert_evidence = []
             verified_facts = []
 
+        is_error = dialogue_act == "error"
+        if is_error and current is not None and project_context_is_current:
+            prior_context = current.dialogue_state.get("prolog_context_term", "[]")
+            if not isinstance(prior_context, str):
+                raise TypeError("persisted symbolic dialogue context must be text")
+            context_term = prior_context
+            prior_response_act = current.dialogue_state.get("response_act_term")
+            if prior_response_act is not None:
+                if not isinstance(prior_response_act, str):
+                    raise TypeError("persisted symbolic response act must be text")
+                response_act_term = prior_response_act
+
+        if dialogue_act == "expert_answer":
+            expert_evidence = [
+                {"ref": _bounded_expert_evidence_ref(expert_evidence_ref)}
+            ]
+        elif expert_evidence_ref is not None:
+            raise RuntimeError("non-expert symbolic dialogue returned expert evidence")
+
         dialogue_state["prolog_context_term"] = context_term
         dialogue_state["response_act_term"] = response_act_term
         dialogue_state[_CONTEXT_PROJECT_ID] = current.project_id if current else None
@@ -91,11 +138,14 @@ class PureSymbolicProjectionAdapter:
             current.project_generation if current else 0
         )
 
-        unresolved_questions = [
-            item
-            for item in prior_questions
-            if item.get("source") != "symbolic_dialogue"
-        ]
+        if is_error:
+            unresolved_questions = prior_questions
+        else:
+            unresolved_questions = [
+                item
+                for item in prior_questions
+                if item.get("source") != "symbolic_dialogue"
+            ]
         if dialogue_act == "clarify":
             unresolved_questions.append(
                 {
@@ -110,7 +160,7 @@ class PureSymbolicProjectionAdapter:
             projection_generation=expected_generation + 1,
             runtime_generation=(current.runtime_generation if current else 0) + 1,
             turn_id=turn_id,
-            outcome="success",
+            outcome="error" if is_error else "success",
             project_id=current.project_id if current else None,
             project_generation=current.project_generation if current else 0,
             dialogue_act=dialogue_act,

@@ -73,6 +73,8 @@ def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects
     assert 'type_printable_ascii(device, "?- Result = zara_ready.")' in remote
     assert 'type_printable_ascii(device, "set a timer for 2 hours")' in remote
     assert 'device.await_contains("timer.set", timeout=20.0)' in remote
+    assert 'if "local_model.generate.begin" in local_diagnostics:' in remote
+    assert '"local_natural_turn_completed": True' in remote
     assert 'device.adb("shell", command)' in remote
     assert 'device.adb("shell", "sh", "-c", command)' not in remote
     assert '"local_turn_completed": True' in remote
@@ -99,3 +101,18 @@ def test_remote_gate_fails_closed_when_app_diagnostics_are_missing_or_fatal():
     assert 'fatal_markers = data.get("fatal_log_markers")' in gate
     assert 'if not isinstance(fatal_markers, list):' in gate
     assert 'if fatal_markers:' in gate
+
+
+def test_remote_gates_follow_settings_overview_instead_of_removed_tabs():
+    for path in (
+        REMOTE_ACCEPTANCE,
+        Path("android/integration/device_remote_recovery_acceptance.py"),
+    ):
+        remote = path.read_text(encoding="utf-8")
+        for removed_tab in ("Runtime", "Connection", "Diagnostics"):
+            assert f'device.tap_tab("{removed_tab}")' not in remote, path
+        assert 'device.tap("Runtime & local AI")' in remote
+        assert 'device.press_back()' in remote
+    remote = REMOTE_ACCEPTANCE.read_text(encoding="utf-8")
+    assert 'device.await_contains("LOCAL RUNTIME", timeout=20.0)' in remote
+    assert 'LOCAL ZARA SERVER' not in remote

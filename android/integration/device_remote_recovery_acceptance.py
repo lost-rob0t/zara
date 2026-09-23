@@ -96,7 +96,9 @@ def open_chat_and_submit(device: Device, text: str) -> None:
 def diagnostics_preview_text(device: Device) -> str:
     try:
         open_menu(device, "Settings")
-        device.tap_tab("Diagnostics")
+        device.press_back()
+        device.await_label("Runtime & local AI")
+        device.tap("Diagnostics")
         lines: list[str] = []
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
@@ -126,7 +128,7 @@ def connect_recovery_fixture(device: Device, fixture: dict[str, str]) -> dict[st
     device.start()
 
     open_menu(device, "Settings")
-    device.tap_tab("Connection")
+    device.tap("Connection")
     device.await_label("Create client identity")
     device.tap("Create client identity")
     device.await_label("CLIENT PUBLIC KEY")
@@ -147,7 +149,9 @@ def connect_recovery_fixture(device: Device, fixture: dict[str, str]) -> dict[st
     device.await_label("connected", timeout=20.0)
     device.capture("recovery-connected")
 
-    device.tap_tab("Runtime")
+    device.press_back()
+    device.await_label("Runtime & local AI")
+    device.tap("Runtime & local AI")
     device.tap("Remote")
     open_menu(device, "Chat")
     return {"endpoint": android_endpoint, "client_public": client_public}
@@ -182,7 +186,9 @@ def assert_typed_error_card(device: Device, expected_code: str) -> None:
 
 def assert_diagnostics_names_primary_failure(device: Device, expected_code: str, expected_subsystem: str) -> None:
     open_menu(device, "Settings")
-    device.tap_tab("Diagnostics")
+    device.press_back()
+    device.await_label("Runtime & local AI")
+    device.tap("Diagnostics")
     device.await_contains("ZARA-LOCAL-DIAGNOSTICS/2", timeout=10.0)
     device.await_contains(f"primary_failure.code={expected_code}", timeout=10.0)
     device.await_contains(f"primary_failure.subsystem={expected_subsystem}", timeout=10.0)

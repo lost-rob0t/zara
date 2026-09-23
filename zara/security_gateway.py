@@ -9,6 +9,7 @@ revocation takes effect without restarting the daemon.
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import time
 from typing import Optional
 
@@ -37,6 +38,8 @@ from zara.security_transport import (
 )
 from zara.server import PrincipalContext
 from zara.zmq_transport import TransportConfig, ZaraZmqGateway, apply_socket_options
+
+logger = logging.getLogger(__name__)
 
 
 class _PreloadedSocket:
@@ -252,12 +255,17 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._release_runtime_quota_key(key)
         super()._remember_response(key, command, response)
 
-    def _enqueue_outbound(self, route: bytes, message: ProtocolMessage) -> bool:
+    def _enqueue_outbound(
+        self,
+        route: bytes,
+        message: ProtocolMessage,
+        payloads=(),
+    ) -> bool:
         # Runtime completions are delivered asynchronously by the base gateway.
         # The _remember_response completion hook releases the quota even when no
         # route survives; this remains as a harmless fallback for old paths.
         self._release_runtime_quota(route, message)
-        return super()._enqueue_outbound(route, message)
+        return super()._enqueue_outbound(route, message, payloads)
 
     def _run(self) -> None:
         authenticator = RegistryAuthenticator(
@@ -286,6 +294,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 if ready.get(socket) == zmq.POLLIN:
                     self._receive(socket)
         except BaseException as error:
+            logger.exception("secure gateway poller crashed")
             if not self._started.done():
                 self._started.set_exception(error)
         finally:
