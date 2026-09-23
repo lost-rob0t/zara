@@ -382,10 +382,11 @@ def validate_android(
             label=f"android scenario assertions {scenario_id}",
         )
 
-        text_lines = _require_text(
+        text = _require_text(
             _safe_child(manifest_path.parent, text_file),
             label=f"android scenario text {scenario_id}",
-        ).splitlines()
+        )
+        text_lines = text.splitlines()
         expected_route = f"route={json.dumps(route, ensure_ascii=False)}"
         expected_runtime = (
             "runtime="
@@ -396,12 +397,17 @@ def validate_android(
         if len(text_lines) < 2 or text_lines[1] != expected_runtime:
             raise EvidenceError(f"android scenario text runtime mismatch: {scenario_id}")
 
+        trace = _assertion_trace(actions, assertions)
         actual_assertion_trace = _require_text(
             _safe_child(manifest_path.parent, assertion_file),
             label=f"android scenario assertion trace {scenario_id}",
         )
-        if actual_assertion_trace != _assertion_trace(actions, assertions):
+        if actual_assertion_trace != trace:
             raise EvidenceError(f"android scenario assertion trace mismatch: {scenario_id}")
+        if not text.endswith(trace):
+            raise EvidenceError(
+                f"android scenario text omitted action/assertion trace: {scenario_id}"
+            )
 
         screenshot_entry = screenshots_by_state.get(state)
         if screenshot_entry is None:
