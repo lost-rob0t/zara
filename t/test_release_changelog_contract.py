@@ -165,8 +165,10 @@ def test_release_staging_is_verified_before_the_publication_transition() -> None
     assert "Verify staged release bytes, metadata, signer, and notes" in workflow
     assert "Publish verified GitHub versioned release" in workflow
     assert "--draft" in workflow
-    assert 'gh release delete "$TAG" --yes' in workflow
-    assert 'gh release edit "$TAG" --draft=false' in workflow
+    assert "gh release edit" not in workflow
+    assert '--method DELETE "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in workflow
+    assert '--method PATCH "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in workflow
+    assert "-F draft=false" in workflow
     assert workflow.index("Stage GitHub versioned release as draft") < workflow.index(
         "Verify staged release bytes, metadata, signer, and notes"
     )
@@ -186,8 +188,10 @@ def test_versioned_release_uses_canonical_notes_and_exact_downloaded_bytes() -> 
     assert 'adb -s "$serial" install -r "$APK"' in workflow
     assert "android/integration/device_acceptance.py" in workflow
     assert "versioned-release-device-${{ github.sha }}" in workflow
+    assert "Verify staged release bytes, metadata, signer, and notes" in workflow
+    assert 'cmp "$APK" "$staged_apk"' in workflow
     assert "Verify published release bytes, metadata, signer, and notes" in workflow
-    assert 'cmp "$APK" "$published_apk"' in workflow
+    assert 'gh release download "$TAG"' in workflow
 
 
 def test_release_notes_are_available_to_github_desktop_and_android() -> None:
