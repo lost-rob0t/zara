@@ -51,17 +51,63 @@ def _write_android_evidence(root: Path, source_sha: str, *, passed: bool = True)
     payload = _png_bytes("android")
     screenshot = evidence / "empty-shell.png"
     screenshot.write_bytes(payload)
+    screenshot_sha = hashlib.sha256(payload).hexdigest()
+
+    text_evidence = evidence / "empty-shell.ui.txt"
+    text_evidence.write_text(
+        'class="android.widget.TextView" text="Chat" content_desc="" '
+        'enabled=true clickable=false selected=true focused=false bounds=[20,40][180,96]\n',
+        encoding="utf-8",
+    )
+    assertion_evidence = evidence / "empty-shell.assertions.txt"
+    assertion_evidence.write_text(
+        "ACTION 1 capture:empty-shell\n"
+        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n",
+        encoding="utf-8",
+    )
+    scenario = {
+        "scenario_id": "android.ui.empty-shell",
+        "source_sha": source_sha,
+        "device_api": "35",
+        "profile": "default",
+        "actions": ["capture:empty-shell"],
+        "assertions": [
+            {
+                "name": "screenshot-png",
+                "passed": True,
+                "detail": "device returned PNG screenshot evidence",
+            }
+        ],
+        "screenshot": {
+            "file": screenshot.name,
+            "sha256": screenshot_sha,
+        },
+        "text_evidence": {
+            "file": text_evidence.name,
+            "sha256": hashlib.sha256(text_evidence.read_bytes()).hexdigest(),
+        },
+        "assertion_evidence": {
+            "file": assertion_evidence.name,
+            "sha256": hashlib.sha256(assertion_evidence.read_bytes()).hexdigest(),
+        },
+    }
+    (evidence / "empty-shell.json").write_text(
+        json.dumps(scenario, sort_keys=True),
+        encoding="utf-8",
+    )
     manifest = {
         "source_sha": source_sha,
         "serial": "emulator-5554",
         "passed": passed,
+        "device": {"api": "35"},
         "screenshots": [
             {
                 "state": "empty-shell",
                 "file": screenshot.name,
-                "sha256": hashlib.sha256(payload).hexdigest(),
+                "sha256": screenshot_sha,
             }
         ],
+        "scenarios": [scenario],
     }
     manifest_path = evidence / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
