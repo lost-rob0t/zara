@@ -79,3 +79,40 @@ def test_checkpoint_continuity_rejects_final_snapshot_from_pre_restart_turn() ->
 
     with pytest.raises(AssertionError, match=r"terminal restart-safe `why\?` turn"):
         module.assert_checkpoint_continuity(checkpoints, final_projection("turn-1"))
+
+
+def test_checkpoint_continuity_rejects_conversation_identity_swap_after_recreation() -> None:
+    module = load_acceptance_module()
+    checkpoints = [
+        expert_checkpoint("expert-answer", "turn-1"),
+        expert_checkpoint("expert-follow-up-after-restart", "turn-2"),
+    ]
+    checkpoints[1]["conversation_id"] = "conversation-2"
+
+    with pytest.raises(AssertionError, match="replaced canonical conversation identity"):
+        module.assert_checkpoint_continuity(checkpoints, final_projection("turn-2"))
+
+
+def test_checkpoint_continuity_rejects_expert_evidence_swap_after_recreation() -> None:
+    module = load_acceptance_module()
+    checkpoints = [
+        expert_checkpoint("expert-answer", "turn-1"),
+        expert_checkpoint("expert-follow-up-after-restart", "turn-2"),
+    ]
+    checkpoints[1]["expert_evidence"] = [{"ref": "expert:diagnosis:2"}]
+
+    with pytest.raises(AssertionError, match="replaced the admitted canonical expert evidence ref"):
+        module.assert_checkpoint_continuity(checkpoints, final_projection("turn-2"))
+
+
+def test_checkpoint_continuity_rejects_final_snapshot_evidence_swap() -> None:
+    module = load_acceptance_module()
+    checkpoints = [
+        expert_checkpoint("expert-answer", "turn-1"),
+        expert_checkpoint("expert-follow-up-after-restart", "turn-2"),
+    ]
+    projection = final_projection("turn-2")
+    projection["expert_evidence"] = [{"ref": "expert:diagnosis:2"}]
+
+    with pytest.raises(AssertionError, match="replaced the admitted canonical expert evidence ref"):
+        module.assert_checkpoint_continuity(checkpoints, projection)
