@@ -222,15 +222,22 @@ def test_duplicate_loop_and_storm_are_bounded_but_explicit_allow_wins(tmp_path: 
     policy = Policy()
     router = NotificationRouter(local_peer_id="phone", policy=policy, store=store)
 
-    first = router.route(_event(notification_id="n:dup"), _peers(), now_ms=NOW)
-    duplicate = router.route(_event(notification_id="n:dup"), _peers(), now_ms=NOW + 1)
+    event = _event(notification_id="n:dup")
+    first = router.route(event, _peers(), now_ms=NOW)
+    exact_replay = router.route(event, _peers(watch_time=NOW + 20), now_ms=NOW + 1)
+    duplicate = router.route(replace(event, generation=2), _peers(), now_ms=NOW + 2)
     loop = router.route(
         _event(notification_id="n:loop", origin_chain=("desktop", "phone")),
         _peers(),
-        now_ms=NOW + 2,
+        now_ms=NOW + 3,
     )
 
     assert first.decision == "allow"
+    assert exact_replay.duplicate is True
+    assert exact_replay.decision == first.decision
+    assert exact_replay.sinks == first.sinks
+    assert exact_replay.presentation == first.presentation
+    assert exact_replay.evidence == first.evidence
     assert duplicate.decision == "group"
     assert duplicate.sinks == ()
     assert duplicate.duplicate is True
@@ -263,7 +270,8 @@ def test_duplicate_loop_and_storm_are_bounded_but_explicit_allow_wins(tmp_path: 
 def test_restart_reuses_shared_database_for_dedupe_and_feedback(tmp_path: Path) -> None:
     db1, store1 = _store(tmp_path)
     router1 = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store1)
-    router1.route(_event(notification_id="n:restart"), _peers(), now_ms=NOW)
+    event = _event(notification_id="n:restart")
+    first = router1.route(event, _peers(), now_ms=NOW)
     store1.set_feedback(
         principal_id="user:alice",
         workspace_id="ws:main",
@@ -279,10 +287,18 @@ def test_restart_reuses_shared_database_for_dedupe_and_feedback(tmp_path: Path) 
         policy=Policy(),
         store=NotificationRouterStore(db2),
     )
+    exact_replay = router2.route(event, _peers(watch_time=NOW + 20), now_ms=NOW + 1)
+    assert exact_replay.duplicate is True
+    assert exact_replay.decision == first.decision
+    assert exact_replay.sinks == first.sinks
+    assert exact_replay.presentation == first.presentation
+    assert exact_replay.evidence == first.evidence
+    assert "spam:explicit_always_allow" not in exact_replay.evidence
+
     after_restart = router2.route(
-        _event(notification_id="n:restart"),
+        replace(event, generation=2),
         _peers(),
-        now_ms=NOW + 1,
+        now_ms=NOW + 2,
     )
     assert after_restart.duplicate is True
     assert after_restart.decision == "allow"
@@ -313,8 +329,10 @@ def test_equal_generation_divergent_replay_is_rejected_and_exact_replay_preserve
 
     replay = router2.route(event, _peers(watch_time=NOW + 20), now_ms=NOW + 2)
     assert replay.duplicate is True
-    assert replay.decision == "group"
-    assert replay.sinks == ()
+    assert replay.decision == first.decision
+    assert replay.sinks == first.sinks
+    assert replay.presentation == first.presentation
+    assert replay.evidence == first.evidence
 
     plane = EffectPlane()
     request = NotificationActionRequest(
