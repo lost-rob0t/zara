@@ -91,6 +91,6 @@ def test_llm_serve_signature_boundary_has_installed_adversary_acceptance():
     assert 'applicationIdSuffix = ".adversary"' in build
     assert ":llm-serve:assembleAdversary" in gate
     assert "llm-serve-adversary.apk" in gate
-    assert "apksigner verify --print-certs" in gate
+    assert '"$apksigner" verify --print-certs' in gate
     assert "device_local_ai_ipc_acceptance.py" in emulator_gate
     assert "llm-serve-adversary.apk" in emulator_gate
