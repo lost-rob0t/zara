@@ -239,6 +239,7 @@ class ExpertIdempotencyJournal:
                 )
 
     def commit(self, claim: DurableIdempotencyClaim, result: ExpertResult) -> None:
+        serialization_error: Optional[ExpertInvalidInputError] = None
         db = self.database
         with db.transaction(immediate=True) as conn:
             row = conn.execute(
@@ -271,7 +272,37 @@ class ExpertIdempotencyJournal:
                 resolved_registry_generation=row["registry_generation"],
                 resolved_runtime_generation=row["runtime_generation"],
             )
-            payload = self._encode_result(durable_result)
+            try:
+                payload = self._encode_result(durable_result)
+            except ExpertInvalidInputError as error:
+                # Handler work is already known to have completed.  Do not turn a
+                # serialization rejection into an "interrupted" row that erases
+                # known budget/effect accounting.  Persist only canonical fields
+                # that are still trustworthy and fail closed to the live caller.
+                model_calls = durable_result.usage.get("model_calls")
+                if type(model_calls) is not int or model_calls < 0:
+                    raise
+                safe_receipts = tuple(
+                    receipt
+                    for receipt in durable_result.effect_receipts
+                    if self._is_canonical_json(receipt)
+                )
+                durable_result = replace(
+                    durable_result,
+                    verdict=ExpertVerdict.UNKNOWN,
+                    data={},
+                    evidence_refs=(),
+                    usage={"model_calls": model_calls},
+                    effect_receipts=safe_receipts,
+                    error_code=ExpertErrorCode.INVALID_INPUT,
+                    error_message=(
+                        "completed expert result was not canonical JSON; "
+                        "known accounting was preserved fail-closed"
+                    ),
+                )
+                payload = self._encode_result(durable_result)
+                serialization_error = error
+
             cursor = conn.execute(
                 f"""
                 UPDATE {_TABLE}
@@ -294,6 +325,12 @@ class ExpertIdempotencyJournal:
                 raise ExpertInvalidInputError(
                     "durable idempotency terminal commit lost canonical dispatch identity"
                 )
+
+        if serialization_error is not None:
+            raise ExpertInvalidInputError(
+                "durable expert result is not canonical JSON data; "
+                "stored fail-closed terminal with known accounting"
+            ) from serialization_error
 
     def interrupt(self, claim: DurableIdempotencyClaim) -> None:
         db = self.database
@@ -354,6 +391,19 @@ class ExpertIdempotencyJournal:
             """
         )
         self._schema_ready = True
+
+    @staticmethod
+    def _is_canonical_json(value: Any) -> bool:
+        try:
+            json.dumps(
+                value,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError):
+            return False
+        return True
 
     @staticmethod
     def _encode_result(result: ExpertResult) -> str:
