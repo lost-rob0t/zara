@@ -74,7 +74,12 @@ class EffectPlane:
 
     def verify(self, request: NotificationActionRequest, receipt: Mapping[str, Any], *, owner_peer: str) -> Mapping[str, Any]:
         self.verified.append(request.request_id)
-        return {"ok": True, "observed_owner_peer": owner_peer, "receipt_id": receipt["receipt_id"]}
+        return {
+            "ok": True,
+            "observed_owner_peer": owner_peer,
+            "receipt_id": receipt["receipt_id"],
+            "generation": request.generation,
+        }
 
 
 class StaleVerificationPlane(EffectPlane):
