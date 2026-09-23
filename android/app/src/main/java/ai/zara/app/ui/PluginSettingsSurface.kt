@@ -219,7 +219,6 @@ private fun PluginInstallSettings() {
         installer.permissionResult()
     }
     val busy = state.phase == PluginInstallPhase.VERIFYING || state.phase == PluginInstallPhase.INSTALLING
-    val checksumValid = runCatching { PluginApkSecurity.normalizeSha256(checksum) }.isSuccess
 
     SectionCard("INSTALL APK") {
         MutedNotice(
@@ -235,18 +234,23 @@ private fun PluginInstallSettings() {
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().testTag("plugin-apk-checksum"),
         )
-        PrimaryAction("Choose APK", checksumValid && !busy) {
-            uiError = null
-            requestedChecksum = checksum
-            try {
-                documentPicker.launch(
-                    arrayOf(
-                        "application/vnd.android.package-archive",
-                        "application/octet-stream",
-                    ),
-                )
-            } catch (_: RuntimeException) {
-                uiError = "Android's file picker could not open. Check that a document provider is available."
+        PrimaryAction("Choose APK", !busy) {
+            val normalizedChecksum = normalizedPluginChecksumOrNull(checksum)
+            if (normalizedChecksum == null) {
+                uiError = "Enter the publisher's 64-character SHA-256."
+            } else {
+                uiError = null
+                requestedChecksum = normalizedChecksum
+                try {
+                    documentPicker.launch(
+                        arrayOf(
+                            "application/vnd.android.package-archive",
+                            "application/octet-stream",
+                        ),
+                    )
+                } catch (_: RuntimeException) {
+                    uiError = "Android's file picker could not open. Check that a document provider is available."
+                }
             }
         }
     }
@@ -324,6 +328,9 @@ private fun PluginDigestRow(label: String, value: String) {
         )
     }
 }
+
+internal fun normalizedPluginChecksumOrNull(value: String): String? =
+    runCatching { PluginApkSecurity.normalizeSha256(value) }.getOrNull()
 
 private fun summarize(values: List<String>): String {
     if (values.isEmpty()) return "none"
