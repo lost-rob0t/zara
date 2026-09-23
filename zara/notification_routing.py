@@ -1077,7 +1077,6 @@ class NotificationRouter:
             "workspace_id": request.workspace_id,
             "notification_id": request.notification_id,
             "generation": request.generation,
-            "sink_peer": request.sink_peer,
             "action": request.action,
             "argument": request.argument,
         }
