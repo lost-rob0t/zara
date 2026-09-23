@@ -69,3 +69,14 @@ def test_llm_serve_reuses_actor_runtime_instead_of_creating_second_inference_cor
     assert "LiteRtLocalLlmBackend(" not in engine
     assert "LocalAiRemoteClient" in engine
     assert "Cannot replace the active model during generation" not in engine
+
+
+def test_llm_serve_ipc_does_not_export_canonical_model_store_paths():
+    protocol = (
+        ROOT
+        / "android/app/src/main/java/ai/zara/app/localai/LocalAiRemoteProtocol.kt"
+    ).read_text()
+
+    assert 'KEY_PATH = "path"' not in protocol
+    assert "putString(KEY_PATH, spec.path)" not in protocol
+    assert "requireString(bundle, KEY_PATH)" not in protocol
