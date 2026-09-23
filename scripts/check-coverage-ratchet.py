@@ -32,12 +32,16 @@ def load_policy_from_ref(ref: str, path: str) -> dict[str, Any] | None:
 
 
 def changed_paths(base_ref: str) -> list[str]:
-    result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{base_ref}...HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        fail(f"unable to diff trusted base ref {base_ref!r}")
+        raise AssertionError("unreachable") from error
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -103,7 +107,21 @@ def check_ratchet(
     base_policy: dict[str, Any] | None,
     base_ref: str | None,
 ) -> tuple[bool, dict[str, float] | None]:
+    paths = changed_paths(base_ref) if base_ref else []
+    product_python_changed = any(
+        path.startswith("zara/") and path.endswith(".py") for path in paths
+    )
+
+    # The first release integration can legitimately add the canonical policy
+    # to a base that did not have it. That bootstrap is safe only when the
+    # candidate does not also change reachable production Python. Otherwise a
+    # missing/foreign base policy would silently bypass the +2 ratchet.
     if base_policy is None:
+        if product_python_changed:
+            fail(
+                "base coverage policy is missing while reachable production "
+                "Python changed; reconcile the canonical policy before measuring"
+            )
         return False, None
 
     current = policy_floors(policy)
@@ -120,10 +138,6 @@ def check_ratchet(
                 f"to {current[name]:.2f}%"
             )
 
-    paths = changed_paths(base_ref) if base_ref else []
-    product_python_changed = any(
-        path.startswith("zara/") and path.endswith(".py") for path in paths
-    )
     targets = {
         name: min(ultimate, base[name] + target)
         for name in ("line", "branch", "total")
