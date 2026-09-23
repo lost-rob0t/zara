@@ -236,7 +236,7 @@ def test_nonfinite_nested_usage_preserves_model_ledger_and_valid_receipt(
     _assert_restart_replay(path, expected_receipts=(RECEIPT,))
 
 
-def test_nonfinite_receipt_stays_fail_closed_without_redispatch(
+def test_nonfinite_receipt_preserves_canonical_effect_accounting_without_redispatch(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "nonfinite-receipt.db"
@@ -249,4 +249,4 @@ def test_nonfinite_receipt_stays_fail_closed_without_redispatch(
 
     assert handler.calls == 1
     database.close()
-    _assert_restart_replay(path, expected_receipts=())
+    _assert_restart_replay(path, expected_receipts=(RECEIPT,))
