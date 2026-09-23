@@ -42,6 +42,49 @@ def verified_source_sha(claimed_source_sha: str | None) -> str:
     return actual_source_sha
 
 
+def _bounded_evidence_text(value: object, *, limit: int = 240) -> str:
+    text = str(value).replace("\r", " ").replace("\n", " ").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def normalized_ui_text(hierarchy: str) -> str:
+    """Return a deterministic non-OCR text twin for one UIAutomator hierarchy."""
+
+    root = ET.fromstring(hierarchy)
+    rows: list[tuple[str, ...]] = []
+    for node in root.iter("node"):
+        row = (
+            node.get("class") or "",
+            node.get("text") or "",
+            node.get("content-desc") or "",
+            node.get("enabled") or "",
+            node.get("clickable") or "",
+            node.get("selected") or "",
+            node.get("focused") or "",
+            node.get("bounds") or "",
+        )
+        rows.append(row)
+    rows.sort()
+    lines = [
+        " ".join(
+            (
+                f"class={json.dumps(row[0], ensure_ascii=False)}",
+                f"text={json.dumps(row[1], ensure_ascii=False)}",
+                f"content_desc={json.dumps(row[2], ensure_ascii=False)}",
+                f"enabled={row[3]}",
+                f"clickable={row[4]}",
+                f"selected={row[5]}",
+                f"focused={row[6]}",
+                f"bounds={row[7]}",
+            )
+        )
+        for row in rows
+    ]
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
 class Device:
     def __init__(self, serial: str, output: Path) -> None:
         self.serial = serial
@@ -50,6 +93,10 @@ class Device:
         self.profiles: list[dict] = []
         self.accessibility_semantics: list[dict] = []
         self.visual_checks: list[dict] = []
+        self.scenario_evidence: list[dict] = []
+        self._pending_actions: list[str] = []
+        self._pending_assertions: list[dict] = []
+        self._captured_scenarios: set[str] = set()
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
 
@@ -59,6 +106,82 @@ class Device:
             timeout=30,
             text=not binary,
         )
+
+    def record_action(self, action: str) -> None:
+        self._pending_actions.append(_bounded_evidence_text(action))
+
+    def record_assertion(self, name: str, *, passed: bool, detail: str) -> None:
+        self._pending_assertions.append(
+            {
+                "name": _bounded_evidence_text(name),
+                "passed": bool(passed),
+                "detail": _bounded_evidence_text(detail),
+            }
+        )
+
+    @staticmethod
+    def _scenario_id(name: str) -> str:
+        if re.fullmatch(r"[a-z0-9][a-z0-9-]*", name) is None:
+            raise AssertionError(f"Rendered-state scenario name is not stable: {name!r}")
+        return f"android.ui.{name}"
+
+    @staticmethod
+    def _assertion_evidence_text(actions: list[str], assertions: list[dict]) -> str:
+        lines = [f"ACTION {index} {action}" for index, action in enumerate(actions, 1)]
+        lines.extend(
+            " ".join(
+                (
+                    "ASSERT",
+                    "PASS" if assertion["passed"] else "FAIL",
+                    assertion["name"],
+                    assertion["detail"],
+                )
+            ).rstrip()
+            for assertion in assertions
+        )
+        return "\n".join(lines) + ("\n" if lines else "")
+
+    def _persist_scenario_record(self, name: str, record: dict) -> None:
+        assertion_text = self._assertion_evidence_text(
+            record["actions"], record["assertions"]
+        )
+        assertion_path = self.output / f"{name}.assertions.txt"
+        assertion_path.write_text(assertion_text, encoding="utf-8")
+        record["assertion_evidence"] = {
+            "file": assertion_path.name,
+            "sha256": hashlib.sha256(assertion_path.read_bytes()).hexdigest(),
+        }
+        (self.output / f"{name}.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _append_scenario_assertion(
+        self,
+        name: str,
+        *,
+        assertion_name: str,
+        detail: str,
+    ) -> None:
+        scenario_id = self._scenario_id(name)
+        record = next(
+            (
+                item
+                for item in self.scenario_evidence
+                if item.get("scenario_id") == scenario_id
+            ),
+            None,
+        )
+        if record is None:
+            raise AssertionError(f"Rendered-state scenario record is missing: {scenario_id}")
+        record["assertions"].append(
+            {
+                "name": _bounded_evidence_text(assertion_name),
+                "passed": True,
+                "detail": _bounded_evidence_text(detail),
+            }
+        )
+        self._persist_scenario_record(name, record)
 
     def _hierarchy_text(self) -> str:
         last_error: subprocess.CalledProcessError | None = None
@@ -126,6 +249,11 @@ class Device:
                 f"Expected at least {minimum} UI nodes containing {fragment!r}; "
                 f"found {len(matches)}"
             )
+        self.record_assertion(
+            "contains-count",
+            passed=True,
+            detail=f"fragment={fragment!r} count={len(matches)} minimum={minimum}",
+        )
 
     def size(self) -> tuple[int, int]:
         value = self.adb("shell", "wm", "size")
@@ -206,6 +334,7 @@ class Device:
             str((left + right) // 2),
             str((top + bottom) // 2),
         )
+        self.record_action(f"tap:{label}")
 
     def tap_contains(self, fragment: str) -> tuple[int, int, int, int]:
         node = self.find_contains(fragment)
@@ -221,12 +350,14 @@ class Device:
             str((left + right) // 2),
             str((top + bottom) // 2),
         )
+        self.record_action(f"tap_contains:{fragment}")
         return left, top, right, bottom
 
     def type_text(self, text: str) -> None:
         if not re.fullmatch(r"[A-Za-z0-9_]+", text):
             raise AssertionError("Acceptance text must be adb-input-safe")
         self.adb("shell", "input", "text", text)
+        self.record_action(f"type_text:length={len(text)}")
         time.sleep(0.4)
 
     def dismiss_pixel_launcher_anr(self) -> bool:
@@ -250,6 +381,7 @@ class Device:
             str((left + right) // 2),
             str((top + bottom) // 2),
         )
+        self.record_action("dismiss-system-launcher-anr")
         time.sleep(0.2)
         return True
 
@@ -283,6 +415,7 @@ class Device:
                     str((left + right) // 2),
                     str((top + bottom) // 2),
                 )
+                self.record_action("dismiss-release-notes")
                 time.sleep(0.2)
                 return True
             if self.dismiss_pixel_launcher_anr():
@@ -300,6 +433,9 @@ class Device:
             if self.dismiss_pixel_launcher_anr():
                 continue
             if self.find(label) is not None:
+                self.record_assertion(
+                    "label-visible", passed=True, detail=f"label={label!r}"
+                )
                 return
             if self.dismiss_release_notes():
                 continue
@@ -312,6 +448,9 @@ class Device:
             if self.dismiss_pixel_launcher_anr():
                 continue
             if self.find_contains(fragment) is not None:
+                self.record_assertion(
+                    "text-retained", passed=True, detail=f"fragment={fragment!r}"
+                )
                 return
             time.sleep(0.2)
         raise AssertionError(f"Screen did not retain text containing {fragment}")
@@ -332,6 +471,11 @@ class Device:
                     "clickable": node.get("clickable"),
                     "enabled": node.get("enabled"),
                 }
+            )
+            self.record_assertion(
+                "accessible-target",
+                passed=True,
+                detail=f"label={label!r} bounds={node.get('bounds')}",
             )
 
     def capture_text_twin(self, name: str) -> dict:
@@ -464,20 +608,69 @@ class Device:
                 "actions": checks,
             }
         )
+        self._append_scenario_assertion(
+            screenshot_name,
+            assertion_name="transient-surface-visible",
+            detail=(
+                f"actions={','.join(action_labels)} viewport={viewport_width}x{viewport_height}"
+            ),
+        )
 
     def capture(self, name: str) -> Path:
+        scenario_id = self._scenario_id(name)
+        if scenario_id in self._captured_scenarios:
+            raise AssertionError(f"Duplicate rendered-state scenario: {scenario_id}")
+
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
+        hierarchy = self._hierarchy_text()
+        text_evidence = normalized_ui_text(hierarchy)
+
         path = self.output / f"{name}.png"
+        text_path = self.output / f"{name}.ui.txt"
         path.write_bytes(data)
+        text_path.write_text(text_evidence, encoding="utf-8")
+        screenshot_hash = hashlib.sha256(data).hexdigest()
+        text_hash = hashlib.sha256(text_path.read_bytes()).hexdigest()
         self.screenshots.append(
             {
                 "state": name,
                 "file": path.name,
-                "sha256": hashlib.sha256(data).hexdigest(),
+                "sha256": screenshot_hash,
             }
         )
+
+        actions = [*self._pending_actions, f"capture:{name}"]
+        assertions = [
+            *self._pending_assertions,
+            {
+                "name": "screenshot-png",
+                "passed": True,
+                "detail": "device returned PNG screenshot evidence",
+            },
+        ]
+        record = {
+            "scenario_id": scenario_id,
+            "source_sha": getattr(self, "source_sha", None),
+            "device_api": getattr(self, "device_api", None),
+            "profile": getattr(self, "current_profile", "default"),
+            "actions": actions,
+            "assertions": assertions,
+            "screenshot": {
+                "file": path.name,
+                "sha256": screenshot_hash,
+            },
+            "text_evidence": {
+                "file": text_path.name,
+                "sha256": text_hash,
+            },
+        }
+        self._persist_scenario_record(name, record)
+        self.scenario_evidence.append(record)
+        self._captured_scenarios.add(scenario_id)
+        self._pending_actions.clear()
+        self._pending_assertions.clear()
         return path
 
     def launch_surface(self, component: str, label: str) -> None:
@@ -495,6 +688,7 @@ class Device:
             "-n",
             component,
         )
+        self.record_action(f"launch:{component}")
         self.dismiss_pixel_launcher_anr()
         self.dismiss_release_notes()
         self.await_label(label)
@@ -513,10 +707,12 @@ class Device:
 
     def start(self) -> None:
         self.adb("shell", "am", "force-stop", "ai.zara.app")
+        self.record_action("force-stop:ai.zara.app")
         self.launch_surface("ai.zara.app/.MainActivity", "Chat")
 
     def press_back(self) -> None:
         self.adb("shell", "input", "keyevent", "4")
+        self.record_action("press-back")
         time.sleep(0.5)
 
     def recreate(self) -> None:
@@ -541,6 +737,7 @@ class Device:
             "-n",
             "ai.zara.app/.MainActivity",
         )
+        self.record_action("process-recreate:ai.zara.app")
         time.sleep(0.8)
 
     def set_display_profile(
@@ -574,6 +771,9 @@ class Device:
                 "font_scale": font_scale_text,
             }
         )
+        self.record_action(
+            f"display-profile:{name}:width_dp={target_width_dp}:font_scale={font_scale_text}"
+        )
         time.sleep(1.2)
 
     def restore_profile(self) -> None:
@@ -595,6 +795,7 @@ class Device:
         self._size_before_profile = None
         self._font_scale_before_profile = None
         self.current_profile = "default"
+        self.record_action("display-profile:restore")
         time.sleep(1.0)
 
 
@@ -753,6 +954,7 @@ def main() -> None:
         "profiles": device.profiles,
         "accessibility_semantics": device.accessibility_semantics,
         "visual_checks": device.visual_checks,
+        "scenarios": device.scenario_evidence,
         # UIAutomator semantics are useful accessibility evidence, but they are not
         # proof of real TalkBack spoken traversal. Keep that hardware/service claim false.
         "talkback_spoken_traversal": False,
@@ -772,6 +974,11 @@ def main() -> None:
     except BaseException as error:
         result["failure"] = str(error)
         try:
+            device.record_assertion(
+                "acceptance-exception",
+                passed=False,
+                detail=type(error).__name__,
+            )
             device.capture("failure")
         except Exception as capture_error:
             result["capture_failure"] = str(capture_error)
