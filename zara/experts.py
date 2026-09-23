@@ -10,6 +10,7 @@ and validates the shared usage ledger before accepting a terminal result.
 from __future__ import annotations
 
 import inspect
+import json
 import threading
 from collections.abc import Mapping
 from dataclasses import replace
@@ -17,6 +18,7 @@ from typing import Any, Optional
 
 from . import _experts_v1 as _impl
 from ._experts_v1 import *  # noqa: F401,F403
+from .expert_idempotency import DurableIdempotencyClaim, ExpertIdempotencyJournal
 
 
 _ORIGINAL_HANDLER_ATTR = "__zara_original_expert_handler__"
@@ -65,6 +67,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
     """Canonical registry with dispatch, delegation, generation and usage fences."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        database = kwargs.pop("database", None)
         super().__init__(*args, **kwargs)
         # Expert handlers may synchronously delegate back into this registry.
         # Reentrancy preserves the one canonical state machine without forcing a
@@ -76,6 +79,10 @@ class ExpertRegistry(_impl.ExpertRegistry):
         # can fence every still-live nested invocation atomically.
         self._invocation_parent: dict[str, str] = {}
         self._invocation_children: dict[str, set[str]] = {}
+        # The journal is a persistence projection owned by this registry. It does
+        # not dispatch, mint authority, or expose an alternate history surface.
+        self._durable_idempotency = ExpertIdempotencyJournal(database)
+        self._durable_claims: dict[str, DurableIdempotencyClaim] = {}
 
     def _delegation_stack(self) -> list[_DelegationFrame]:
         stack = getattr(self._delegation_state, "stack", None)
@@ -199,6 +206,86 @@ class ExpertRegistry(_impl.ExpertRegistry):
             ),
         )
 
+    def _durable_idempotency_preflight_unlocked(
+        self,
+        handle: ActivationHandle,
+        expert_operation: str,
+        input: dict[str, Any],
+        idempotency_key: Optional[str],
+    ) -> tuple[Optional[DurableIdempotencyClaim], Optional[ExpertResult]]:
+        """Atomically reserve or recover one canonical idempotent invocation."""
+
+        if idempotency_key is None:
+            return None, None
+        _impl._bounded_pattern(
+            idempotency_key,
+            field_name="idempotency_key",
+            pattern=_impl._PORTABLE,
+            limit=128,
+        )
+        record = self._resolve_record_unlocked(handle)
+        if (
+            handle.registry_generation != self._registry_generation
+            or handle.runtime_generation != self._runtime_generation
+        ):
+            raise ExpertStaleGenerationError(
+                f"activation handle generation "
+                f"({handle.registry_generation}/{handle.runtime_generation}) is stale "
+                f"against registry ({self._registry_generation}/{self._runtime_generation})"
+            )
+        descriptor = self._resolve_active_state_unlocked(record)
+        resolved_input = dict(input)
+        try:
+            _impl._validate_input_value(resolved_input)
+            serialized = json.dumps(
+                resolved_input,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        except (TypeError, ValueError) as error:
+            raise ExpertInvalidInputError(
+                f"input payload is not bounded JSON data: {error}"
+            ) from error
+        if len(serialized) > _impl._MAX_INPUT_BYTES:
+            raise ExpertInvalidInputError("input payload exceeds bounded size")
+        operation = next(
+            (item for item in descriptor.operations if item.operation_id == expert_operation),
+            None,
+        )
+        if operation is None:
+            raise ExpertUnsupportedOperationError(
+                f"expert {descriptor.expert_id!r} does not declare operation "
+                f"{expert_operation!r}"
+            )
+        self._validate_input_against_operation(operation, resolved_input)
+        decision = self._durable_idempotency.claim_or_replay(
+            principal=handle.principal,
+            workspace=handle.workspace,
+            expert_id=descriptor.expert_id,
+            expert_operation=expert_operation,
+            idempotency_key=idempotency_key,
+            input_digest=_impl._input_digest(serialized),
+            handle=handle,
+        )
+        return decision.claim if decision.created else None, decision.replay
+
+    def _commit_durable_result(
+        self,
+        claim: Optional[DurableIdempotencyClaim],
+        result: ExpertResult,
+    ) -> ExpertResult:
+        if claim is None:
+            return result
+        try:
+            self._durable_idempotency.commit(claim, result)
+        except Exception:
+            self._durable_idempotency.interrupt(claim)
+            self._durable_claims.pop(result.invocation_id, None)
+            self._invocations.pop(result.invocation_id, None)
+            raise
+        self._durable_claims.pop(result.invocation_id, None)
+        return result
+
     def _invoke_unlocked(
         self,
         handle: ActivationHandle,
@@ -221,6 +308,15 @@ class ExpertRegistry(_impl.ExpertRegistry):
         admitted_runtime_generation = self._runtime_generation
         delegation_parent = self._delegation_parent()
         admitted_limits = self._admit_limits_unlocked(handle, limits)
+        durable_claim, durable_replay = self._durable_idempotency_preflight_unlocked(
+            handle,
+            expert_operation,
+            input,
+            idempotency_key,
+        )
+        if durable_replay is not None:
+            return durable_replay
+        durable_started = False
         registered_handler = self._handlers.get(handle.expert_id)
         handler = (
             self._original_handler(registered_handler)
@@ -235,6 +331,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
             injected = self._handler_declares_host_operation(handler)
 
             def dispatch_handler(**payload: Any) -> Any:
+                nonlocal durable_started
                 invocation_id = next(reversed(self._invocations))
                 invocation = self._invocations[invocation_id]
                 if (
@@ -245,6 +342,15 @@ class ExpertRegistry(_impl.ExpertRegistry):
                     raise ExpertInvalidInputError(
                         "expert dispatch lost its canonical invocation record"
                     )
+
+                if durable_claim is not None:
+                    self._durable_idempotency.mark_dispatching(
+                        durable_claim,
+                        invocation_id=invocation.invocation_id,
+                        request_id=invocation.request_id,
+                    )
+                    durable_started = True
+                    self._durable_claims[invocation.invocation_id] = durable_claim
 
                 descriptor = self._descriptors.get(handle.expert_id)
                 if descriptor is None:
@@ -350,9 +456,16 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 expert_operation,
                 input,
                 admitted_limits,
-                idempotency_key,
+                None if durable_claim is not None else idempotency_key,
                 request_id,
             )
+        except Exception:
+            if durable_claim is not None:
+                if durable_started:
+                    self._durable_idempotency.interrupt(durable_claim)
+                else:
+                    self._durable_idempotency.release_unstarted(durable_claim)
+            raise
         finally:
             if (
                 handler is not None
@@ -386,7 +499,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
         )
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
             if not require_actual_usage:
-                return result
+                return self._commit_durable_result(durable_claim, result)
             self._discard_invalid_success(
                 result,
                 handle,
@@ -472,7 +585,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 "expert completion crossed a registry/runtime generation change"
             )
 
-        return result
+        return self._commit_durable_result(durable_claim, result)
 
     def cancel(self, invocation_id: str) -> dict[str, Any]:
         """Cancel one invocation and every still-live canonical descendant."""
@@ -535,13 +648,17 @@ class ExpertRegistry(_impl.ExpertRegistry):
         expert_operation: str,
         idempotency_key: Optional[str],
     ) -> None:
-        """Fail closed without leaving a replayable result in the registry."""
+        """Fail closed without leaving a replayable terminal success."""
 
         if result.replayed:
             return
+        claim = self._durable_claims.pop(result.invocation_id, None)
+        if claim is not None:
+            self._durable_idempotency.interrupt(claim)
         self._invocations.pop(result.invocation_id, None)
         if idempotency_key is None:
             return
+        # Compatibility cleanup for callers that bypass the durable public path.
         key = (
             handle.principal,
             result.expert_id,
