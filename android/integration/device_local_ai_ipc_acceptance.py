@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -197,9 +198,45 @@ def main() -> None:
         "signed_client_reached_owner": False,
         "owner_process_recreated": False,
         "passed": False,
+        "stage": "setup",
         "screenshots": [],
     }
+    manifest = args.output / "local-ai-ipc-manifest.json"
+    previous_excepthook = sys.excepthook
 
+    def persist_failure(exc_type, exc_value, exc_tb) -> None:
+        evidence["passed"] = False
+        evidence["failure"] = {
+            "type": exc_type.__name__[:96],
+            "message": str(exc_value)[:512],
+        }
+        try:
+            device.adb("shell", "rm", "-f", UI_DUMP)
+            device.adb("shell", "uiautomator", "dump", UI_DUMP)
+            raw = device.adb("shell", "cat", UI_DUMP)
+            ui_dump = args.output / "local-ai-ipc-failure-ui.xml"
+            ui_dump.write_text(raw, encoding="utf-8")
+            evidence["failure_ui_dump"] = ui_dump.name
+        except Exception as capture_error:
+            evidence["failure_ui_dump_error"] = str(capture_error)[:256]
+        try:
+            screenshot = args.output / "local-ai-ipc-failure.png"
+            digest = device.capture(screenshot)
+            evidence["failure_screenshot"] = {
+                "file": screenshot.name,
+                "sha256": digest,
+            }
+        except Exception as capture_error:
+            evidence["failure_screenshot_error"] = str(capture_error)[:256]
+        manifest.write_text(
+            json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        previous_excepthook(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = persist_failure
+
+    evidence["stage"] = "wrong_signer"
     device.uninstall(ADVERSARY_PACKAGE)
     device.install(args.adversary_apk)
     try:
@@ -219,6 +256,7 @@ def main() -> None:
         device.force_stop(ADVERSARY_PACKAGE)
         device.uninstall(ADVERSARY_PACKAGE)
 
+    evidence["stage"] = "same_lineage"
     device.install(args.llm_serve_apk)
     device.force_stop(NORMAL_PACKAGE)
     device.launch(NORMAL_PACKAGE)
@@ -242,6 +280,7 @@ def main() -> None:
     # llm-serve process and its LocalAiRemoteClient stay alive, so the next
     # request must observe binder death and rebind to a newly created canonical
     # owner process instead of constructing a second runtime.
+    evidence["stage"] = "owner_rebind"
     device.kill_owner_process(pid_before)
     device.wait_pid_gone(pid_before)
     device.tap("Start server")
@@ -254,8 +293,9 @@ def main() -> None:
     digest = device.capture(screenshot)
     evidence["screenshots"].append({"file": screenshot.name, "sha256": digest})
 
+    evidence["stage"] = "complete"
     evidence["passed"] = True
-    manifest = args.output / "local-ai-ipc-manifest.json"
+    sys.excepthook = previous_excepthook
     manifest.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
