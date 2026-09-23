@@ -76,7 +76,7 @@ def _descriptor() -> ExpertDescriptor:
             "name": "Deadline Replay Fixture",
             "description": "Deadline completion and durable replay accounting fixture.",
             "source_reference": "t/test_expert_idempotency_deadline_replay.py",
-            "reasoning_kind": "symbolic",
+            "reasoning_kind": "hybrid",
             "operations": [
                 {
                     "operation_id": "route.diagnose",
