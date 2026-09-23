@@ -39,6 +39,9 @@ data class OrgScheduleSnapshot(
         require(allocations.map(OrgScheduleAllocation::id).distinct().size == allocations.size) {
             "Org schedule allocation ids must be unique"
         }
+        require(currentOrNextTitle == null || currentOrNextTitle.isNotBlank()) {
+            "currentOrNextTitle must be null or non-blank"
+        }
     }
 
     companion object {
@@ -97,7 +100,9 @@ object OrgScheduleSnapshotCodec {
                 line.startsWith("next=") -> {
                     if (nextSeen) return null
                     nextSeen = true
-                    nextTitle = decodeEscaped(line.removePrefix("next="))?.ifBlank { null } ?: return null
+                    val decoded = decodeEscaped(line.removePrefix("next=")) ?: return null
+                    if (decoded.isBlank()) return null
+                    nextTitle = decoded
                 }
                 line.startsWith("allocation=") -> {
                     if (allocations.size >= OrgScheduleSnapshot.MAX_LANES) return null
@@ -109,9 +114,9 @@ object OrgScheduleSnapshotCodec {
                     val status = decodeEscaped(fields[2]) ?: return null
                     val start = fields[3].toIntOrNull() ?: return null
                     val end = fields[4].toIntOrNull() ?: return null
-                    val priority = decodeEscaped(fields[5])?.ifBlank { null } ?: return null
-                    val tags = decodeEscaped(fields[6])?.split(',')?.filter { it.isNotBlank() } ?: return null
-                    val source = decodeEscaped(fields[7])?.ifBlank { null } ?: return null
+                    val priorityRaw = decodeEscaped(fields[5]) ?: return null
+                    val tagsRaw = decodeEscaped(fields[6]) ?: return null
+                    val sourceRaw = decodeEscaped(fields[7]) ?: return null
                     val allocation = runCatching {
                         OrgScheduleAllocation(
                             id = id,
@@ -119,9 +124,9 @@ object OrgScheduleSnapshotCodec {
                             status = status,
                             startMinute = start,
                             endMinute = end,
-                            priority = priority,
-                            tags = tags,
-                            source = source,
+                            priority = priorityRaw.ifBlank { null },
+                            tags = tagsRaw.split(',').filter { it.isNotBlank() },
+                            source = sourceRaw.ifBlank { null },
                         )
                     }.getOrNull() ?: return null
                     allocations += allocation
