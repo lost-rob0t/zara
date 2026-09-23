@@ -189,6 +189,7 @@ _THEME_REGISTRY: dict[str, ThemeDefinition] = {
 THEME_REGISTRY: Mapping[str, ThemeDefinition] = MappingProxyType(_THEME_REGISTRY)
 _BUILTIN_THEME_KEYS = frozenset(_THEME_REGISTRY)
 _LOADED_THEME_PACKAGES: set[str] = set()
+_CONFIG_THEME_KEYS: set[str] = set()
 _ACTIVE_THEME_KEY = "signal-cabin"
 
 
@@ -257,12 +258,13 @@ def register_theme(
 
 
 def unregister_theme(key: str) -> bool:
-    """Remove one non-built-in theme and its package-load marker."""
+    """Remove one non-built-in theme and its ownership markers."""
     _validate_theme_key(key)
     if key in _BUILTIN_THEME_KEYS:
         raise ValueError("built-in themes cannot be unregistered")
     removed = _THEME_REGISTRY.pop(key, None) is not None
     _LOADED_THEME_PACKAGES.discard(key)
+    _CONFIG_THEME_KEYS.discard(key)
     global _ACTIVE_THEME_KEY
     if _ACTIVE_THEME_KEY == key:
         _ACTIVE_THEME_KEY = "signal-cabin"
@@ -344,6 +346,17 @@ def load_theme_packages(
         _LOADED_THEME_PACKAGES.add(name)
 
 
+def _build_config_themes(config: Mapping[str, Any]) -> dict[str, ThemeDefinition]:
+    definitions: dict[str, ThemeDefinition] = {}
+    for key, spec in config.items():
+        if not isinstance(key, str) or not isinstance(spec, Mapping):
+            raise ValueError("each [themes.<name>] entry must be a TOML table")
+        if key in _BUILTIN_THEME_KEYS or key in _LOADED_THEME_PACKAGES:
+            raise ValueError(f"configured theme {key!r} conflicts with a non-config theme")
+        definitions[key] = theme_from_mapping(key, spec)
+    return definitions
+
+
 def configure_theme_registry(
     config: Mapping[str, Any] | None = None,
     *,
@@ -356,10 +369,18 @@ def configure_theme_registry(
     if config is not None:
         if not isinstance(config, Mapping):
             raise ValueError("[themes] must be a TOML table")
-        for key, spec in config.items():
-            if not isinstance(key, str) or not isinstance(spec, Mapping):
-                raise ValueError("each [themes.<name>] entry must be a TOML table")
-            register_theme(theme_from_mapping(key, spec), replace=True)
+        definitions = _build_config_themes(config)
+        incoming_keys = set(definitions)
+        removed_keys = _CONFIG_THEME_KEYS - incoming_keys
+        for key in removed_keys:
+            _THEME_REGISTRY.pop(key, None)
+        for key, definition in definitions.items():
+            register_theme(definition, replace=key in _CONFIG_THEME_KEYS)
+        _CONFIG_THEME_KEYS.clear()
+        _CONFIG_THEME_KEYS.update(incoming_keys)
+        global _ACTIVE_THEME_KEY
+        if _ACTIVE_THEME_KEY in removed_keys:
+            _ACTIVE_THEME_KEY = "signal-cabin"
     return set_active_theme(active_theme if active_theme is not None else _ACTIVE_THEME_KEY)
 
 
