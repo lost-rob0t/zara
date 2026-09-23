@@ -197,9 +197,26 @@ class ExpertIdempotencyJournal:
                     created=False,
                 )
 
+            replay_handle = handle
+            try:
+                replay_handle = ActivationHandle(
+                    activation_id=row["activation_id"],
+                    principal=row["principal"],
+                    workspace=row["workspace"],
+                    expert_id=row["expert_id"],
+                    expert_version=row["expert_version"],
+                    manifest_digest=row["manifest_digest"],
+                    registry_generation=row["registry_generation"],
+                    runtime_generation=row["runtime_generation"],
+                )
+            except (TypeError, ValueError):
+                # A malformed nonterminal journal row must not leak corrupt
+                # authority identity.  The current validated handle remains the
+                # safe projection, while replay stays UNKNOWN and never dispatches.
+                pass
             replay = self._unknown_result(
                 row,
-                handle=handle,
+                handle=replay_handle,
                 message=(
                     "prior idempotent expert execution belongs to a different expert build"
                     if build_changed
