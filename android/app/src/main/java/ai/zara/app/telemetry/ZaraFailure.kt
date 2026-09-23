@@ -65,6 +65,7 @@ data class ZaraFailure(
     val connectionGeneration: Long?,
     val requestId: String?,
     val turnId: String?,
+    val protocolEvidence: ProtocolFailureEvidence? = null,
 )
 
 object ZaraFailures {

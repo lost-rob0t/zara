@@ -204,6 +204,7 @@ class SessionTelemetry(
     }
 
     fun onClientFailure(failure: ZaraFailure, eventName: String) {
+        if (tracker.record(failure) == null) return
         journal.record(
             eventName,
             subsystem = failure.subsystem,
@@ -221,7 +222,6 @@ class SessionTelemetry(
             lastCloseCode = failure.code
             lastCloseReason = failure.message
         }
-        tracker.record(failure)
     }
 
     fun onTurnCompleted(turnId: String?) {

@@ -1,0 +1,113 @@
+#+title: Android text protocol failure evidence
+
+* Problem and evidence
+The September 23 Android report on source
+=f94da1289ede13ec4d58cefb73bc0b86648bb65e= reached a negotiated remote session,
+then repeatedly failed submit with =protocol.unexpected_message= and
+=expected turn.accepted=. A successful reconnect did not prove that a turn
+worked. The report contained no actual reply type or request correlation.
+
+The text actor previously discarded the decoded message identity at the
+acceptance check. It reported a generation-aware failure, but the app's
+future-completion callback classified the same exception without that
+context. The incident tracker could replace the richer first report with
+that sparse callback. Existing live protocol telemetry fields were not
+wired to the dealer and expected state/pending count were null.
+
+The supplied report cannot identify which unexpected message was received.
+The assistant.delta fixture below is a reproduction of the failure class,
+not a claim about the original server's reply.
+
+* Ownership and invariants
+The existing =ZaraTextClientActor= executor remains the sole text socket
+owner. =TextTurnProtocolTrace= is an actor-local bounded recorder, not a
+second transport, reader, dispatcher, or mutable connection authority.
+
+- Capture receive byte/frame counts before decoding, including malformed frames.
+- Capture typed text metadata before session, request and expected-message checks.
+- Advance from awaiting acceptance only after the existing receipt checks pass.
+- Snapshot the failing request before connection-failure notification or cleanup.
+- Preserve the snapshot across a later reconnect; never project it as live state.
+- Keep at most 32 metadata records, a dropped-record count, and independent
+  last-RX/original-submit metadata, so stream volume cannot erase the submit.
+- Do not retain envelope/body objects, prompts, reply text, audio, keys, or
+  ByteArray references. Bound identifiers to 128 characters and type to 64.
+- A transmit record says =attempted=, not delivered or server-acknowledged.
+- Suppress one matching sparse completion callback following a rich failure;
+  do not suppress later known-generation attempts, different operations, or
+  unrelated failures. Clearing the tracker clears this guard too.
+
+* Additive Diagnostics v2 export
+The marker and existing fields stay compatible. New fields appear under
+=primary_failure= only when failure-time text evidence is available:
+
+| Field                         | Meaning                                      |
+|-------------------------------+----------------------------------------------|
+| evidence_scope                | failed_text_turn                             |
+| failure_session_id            | Failing session, not current reconnected one |
+| phase                         | awaiting_turn_accepted or completion         |
+| request_id                    | Locally minted submit request                |
+| connection_generation         | Failing actor generation                     |
+| expected_message_type         | Required receipt or terminal response        |
+| actual_message_type           | Last decoded text message, else unknown      |
+| actual_message_id/reply_to     | Received identity and correlation metadata   |
+| actual_session_id/turn_id/seq  | Received, not yet trusted, event metadata     |
+| last_rx_bytes/frame_count     | Multipart shape, available before decode     |
+| last_rx_state                 | decoded or undecoded by this text tracer     |
+| last_tx_message_type/bytes     | Original submit attempt metadata             |
+| last_tx_state                 | attempted                                    |
+| pending_requests              | 1 before validated receipt, 0 after          |
+| receive_timeout_ms            | Existing per-receive timeout, not turn limit |
+| turn_elapsed_ms               | Monotonic elapsed time since submit began    |
+| trace_dropped_messages        | Records evicted from the bounded trace       |
+
+The text includes =--- protocol failure trace ---=. JSON includes a root
+=protocol_failure_trace= array of metadata maps. Trace sizes and sequences
+are JSON numbers; existing v2 fact-value string types remain unchanged.
+Missing metadata is explicitly unknown/null, not invented from a new session.
+
+* Scope limits
+This slice captures session-desynchronizing failures during text submits.
+It does not yet wire all live =remote.last_rx_*= / =remote.last_tx_*= fields,
+hello negotiation, voice-pump failures, successful-turn telemetry, or
+ordinary non-desynchronizing server rejections. Interleaved voice/device
+frames retain shape but are not typed by the text-specific recorder.
+
+Protocol ordering, accepted message types, deadlines, retry/backoff policy,
+model selection and server behavior are unchanged. This does not fix or
+prove the root cause of the original unexpected message. No request is
+replayed automatically and a reconnect is not labeled turn success.
+
+* Verification
+** Added repository tests
+=ProtocolFailureEvidenceTest=: initial context, decoded metadata, malformed
+frames, validated phase transition, immutable snapshots, bounded history,
+and metadata bounds/control characters.
+
+=ZaraTextClientProtocolEvidenceTest=: real text actor with deterministic
+fake dealer; unexpected first reply; sparse completion callback; reconnect;
+text/JSON export; private prompt/reply sentinel exclusion; malformed reply;
+wrong reply correlation; validated receipt then fatal runtime failure.
+
+=ProtocolIncidentDeduplicationTest=: single-use duplicate guard, newer
+attempts, distinct operations, stale generation fencing, and clear/reset.
+
+** Local executed evidence
+A dependency-free Kotlin/JVM harness first failed with unresolved
+=TextTurnProtocolTrace=, then passed 26 assertions after the recorder was
+implemented. Kotlin 1.9.0 and Java 21 were used. These are recorder assertions,
+not execution of the full Android/JUnit integration suite.
+
+The editing environment did not provide Nix, Gradle/Android SDK, or a
+working repository checkout. Full repository and Android validation are
+not claimed. Exact-head GitHub Actions is required before merge:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+Run the repository Android/Wear gate with the three new JUnit classes,
+existing text-client, telemetry, diagnostics, recovery and packaging tests.
+Require a matching-source installed APK reproduction before claiming the
+reported phone/server fault is fixed. Do not substitute an older green
+commit, fake dealer coverage, or recorder-only assertions for that evidence.
