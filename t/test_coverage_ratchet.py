@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -114,6 +116,43 @@ def test_non_product_change_can_hold_floor_but_never_lower_it(monkeypatch):
         )
 
 
+def test_missing_base_policy_cannot_bypass_python_change_ratchet(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        coverage_ratchet,
+        "changed_paths",
+        lambda base: calls.append(base) or ["zara/server.py"],
+    )
+
+    with pytest.raises(SystemExit):
+        coverage_ratchet.check_ratchet(
+            policy(80.0, 66.8, 76.8),
+            None,
+            "origin/release/0.3.x",
+        )
+
+    assert calls == ["origin/release/0.3.x"]
+
+
+def test_missing_base_policy_bootstraps_only_nonproduct_changes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        coverage_ratchet,
+        "changed_paths",
+        lambda base: calls.append(base) or ["coverage-baseline.json"],
+    )
+
+    changed, targets = coverage_ratchet.check_ratchet(
+        policy(80.0, 66.8, 76.8),
+        None,
+        "origin/release/0.3.x",
+    )
+
+    assert calls == ["origin/release/0.3.x"]
+    assert changed is False
+    assert targets is None
+
+
 def test_actual_coverage_must_meet_committed_floor():
     coverage_ratchet.check_actual_against_floor(
         {"line": 50.0, "branch": 40.0, "total": 45.0},
@@ -135,3 +174,32 @@ def test_full_repository_gate_reuses_canonical_coverage_authority():
     assert 'coverage.json' in source
     assert source.count("scripts/check-coverage-ratchet.py") == 1
     assert "coverage-baseline.json" in source
+
+
+def test_coverage_entrypoint_rejects_unknown_arguments_before_pytest(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    marker = tmp_path / "python-ran"
+    fake_python = fake_bin / "python"
+    fake_python.write_text(
+        "#!/bin/sh\nprintf ran > \"$COVERAGE_PYTHON_MARKER\"\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+    env["COVERAGE_PYTHON_MARKER"] = str(marker)
+    env["ARTIFACT_DIR"] = str(tmp_path / "artifacts")
+
+    result = subprocess.run(
+        ["/bin/bash", str(ROOT / "scripts" / "test-coverage.sh"), "--bogus"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert not marker.exists()
