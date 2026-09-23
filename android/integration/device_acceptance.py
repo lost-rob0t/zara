@@ -354,8 +354,18 @@ class Device:
             bottoms.append(bottom)
 
             crop = image.crop((left, top, right, bottom)).convert("L")
-            low, high = crop.getextrema()
-            occupied_bins = sum(1 for count in crop.histogram() if count)
+            crop_width, crop_height = crop.size
+            edge_inset = max(1, min(6, crop_width // 10, crop_height // 10))
+            if crop_width <= edge_inset * 2 or crop_height <= edge_inset * 2:
+                raise AssertionError(
+                    "Transient-surface action is too small for interior visual evidence: "
+                    f"{label} size={crop_width}x{crop_height} inset={edge_inset}"
+                )
+            content_crop = crop.crop(
+                (edge_inset, edge_inset, crop_width - edge_inset, crop_height - edge_inset)
+            )
+            low, high = content_crop.getextrema()
+            occupied_bins = sum(1 for count in content_crop.histogram() if count)
             luma_span = int(high) - int(low)
             if luma_span < 18 or occupied_bins < 4:
                 raise AssertionError(
@@ -366,6 +376,7 @@ class Device:
                 {
                     "label": label,
                     "bounds": node.attrib.get("bounds"),
+                    "content_inset_px": edge_inset,
                     "luma_span": luma_span,
                     "occupied_luma_bins": occupied_bins,
                 }
