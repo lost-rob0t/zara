@@ -14,6 +14,16 @@ _CONTEXT_PROJECT_ID = "prolog_context_project_id"
 _CONTEXT_PROJECT_GENERATION = "prolog_context_project_generation"
 
 
+def _dialogue_context_has_project_provenance(
+    projection: SymbolicConversationProjection,
+) -> bool:
+    dialogue_state = projection.dialogue_state
+    return (
+        _CONTEXT_PROJECT_ID in dialogue_state
+        or _CONTEXT_PROJECT_GENERATION in dialogue_state
+    )
+
+
 def _dialogue_context_matches_project(projection: SymbolicConversationProjection) -> bool:
     dialogue_state = projection.dialogue_state
     context_project_id = dialogue_state.get(_CONTEXT_PROJECT_ID)
@@ -69,7 +79,9 @@ class PureSymbolicProjectionAdapter:
             current.assert_pure_symbolic()
 
         project_context_is_current = (
-            current is None or _dialogue_context_matches_project(current)
+            current is None
+            or not _dialogue_context_has_project_provenance(current)
+            or _dialogue_context_matches_project(current)
         )
         if project_context_is_current:
             dialogue_state = dict(current.dialogue_state) if current is not None else {}
