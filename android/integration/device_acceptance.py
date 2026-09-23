@@ -305,6 +305,46 @@ class Device:
             "enabled": node.get("enabled") == "true",
         }
 
+    @staticmethod
+    def _rendered_bounds(node: dict) -> tuple[int, int, int, int]:
+        values = [int(value) for value in re.findall(r"\d+", node["bounds"])]
+        if len(values) != 4:
+            raise AssertionError(f"Malformed rendered bounds: {node['bounds']!r}")
+        return tuple(values)
+
+    @classmethod
+    def _assert_named_action_owner(cls, rendered_nodes: list[dict], label: str) -> None:
+        action = next(
+            (
+                node
+                for node in rendered_nodes
+                if label in (node["text"], node["content_description"])
+                and node["clickable"]
+                and node["enabled"]
+            ),
+            None,
+        )
+        if action is None:
+            raise AssertionError(f"Required rendered action is not usable: {label}")
+
+        left, top, right, bottom = cls._rendered_bounds(action)
+        for node in rendered_nodes:
+            if node is action or not node["clickable"] or not node["enabled"]:
+                continue
+            if node["text"] or node["content_description"]:
+                continue
+            other_left, other_top, other_right, other_bottom = cls._rendered_bounds(node)
+            contains_action = (
+                other_left <= left
+                and other_top <= top
+                and other_right >= right
+                and other_bottom >= bottom
+            )
+            if contains_action:
+                raise AssertionError(
+                    f"Required rendered action has a distinct unlabeled clickable owner: {label}"
+                )
+
     def capture(self, name: str, *, required_actions: tuple[str, ...] = ()) -> None:
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -312,16 +352,7 @@ class Device:
 
         rendered_nodes = [self._rendered_node(node) for node in self.nodes()]
         for label in required_actions:
-            action = next(
-                (
-                    node
-                    for node in rendered_nodes
-                    if label in (node["text"], node["content_description"])
-                ),
-                None,
-            )
-            if action is None or not action["clickable"] or not action["enabled"]:
-                raise AssertionError(f"Required rendered action is not usable: {label}")
+            self._assert_named_action_owner(rendered_nodes, label)
 
         twin = {
             "state": name,

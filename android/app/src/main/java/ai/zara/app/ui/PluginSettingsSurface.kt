@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -325,7 +326,27 @@ private fun PluginInstallSettings() {
 
 @Composable
 private fun PluginPickerAction(enabled: Boolean, onActivate: () -> Unit) {
-    PrimaryAction("Choose APK", enabled, onActivate)
+    val tokens = LocalZaraTokens.current
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = if (enabled) tokens.accent else tokens.surfaceElevated,
+        contentColor = if (enabled) Color.Black else tokens.textMuted,
+        shape = MaterialTheme.shapes.small,
+    ) {
+        Text(
+            "Choose APK",
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    enabled = enabled,
+                    role = Role.Button,
+                    onClick = onActivate,
+                )
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelLarge,
+        )
+    }
 }
 
 @Composable
