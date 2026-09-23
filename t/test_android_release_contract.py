@@ -19,7 +19,6 @@ def test_android_release_candidate_apk_uploads_require_green_gate():
     for upload_name in (
         "Upload exact-SHA phone debug APK",
         "Upload Code Editor debug APK",
-        "Upload LLM Serve debug APK",
         "Upload Wear debug APK",
     ):
         step = android_job.split(f"      - name: {upload_name}\n", 1)[1].split("\n      - name:", 1)[0]
@@ -45,9 +44,6 @@ def test_each_master_push_builds_and_rolls_direct_latest_apks():
     assert "zara-code-editor-latest.apk" in workflow
     assert "code_editor_apk=zara-code-editor-latest.apk" in workflow
     assert "code_editor_sha256=${code_editor_sha}" in workflow
-    assert "zara-llm-serve-latest.apk" in workflow
-    assert "llm_serve_apk=zara-llm-serve-latest.apk" in workflow
-    assert "llm_serve_sha256=${llm_serve_sha}" in workflow
     assert "zara-wear-latest.apk" in workflow
     assert "android-latest" in workflow
     assert "mutable=true" in workflow
@@ -62,8 +58,6 @@ def test_release_assets_use_semver_name_and_record_provenance():
     assert "zara-android-${VERSION}.manifest.txt" in workflow
     assert "zara-code-editor-${VERSION}.apk" in workflow
     assert "zara-code-editor-${VERSION}.manifest.txt" in workflow
-    assert "zara-llm-serve-${VERSION}.apk" in workflow
-    assert "zara-llm-serve-${VERSION}.manifest.txt" in workflow
     assert "source_sha=${GITHUB_SHA}" in workflow
     assert "version_name=${VERSION}" in workflow
     assert "version_code=${VERSION_CODE}" in workflow
@@ -111,25 +105,3 @@ def test_android_latest_verifies_code_editor_stable_signer_before_publish():
     workflow = (ROOT / ".github/workflows/android-latest.yml").read_text()
 
     assert 'scripts/check-android-apk-signer.sh "$code_editor_apk"' in workflow
-
-
-def test_llm_serve_release_uses_update_compatible_signing_key():
-    build = (ROOT / "android/llm-serve/build.gradle.kts").read_text()
-
-    assert 'providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE")' in build
-    assert 'applicationId = "ai.zara.llmserve"' in build
-    assert 'signingConfigs' in build
-
-
-def test_android_gate_validates_llm_serve_apk_structure():
-    gate = (ROOT / "scripts/test-android.sh").read_text()
-
-    assert ':llm-serve:testDebugUnitTest' in gate
-    assert ':llm-serve:assembleDebug' in gate
-    assert 'check-android-apk-installable.sh" "$llm_serve_apk" "ai.zara.llmserve"' in gate
-
-
-def test_android_latest_verifies_llm_serve_stable_signer_before_publish():
-    workflow = (ROOT / ".github/workflows/android-latest.yml").read_text()
-
-    assert 'scripts/check-android-apk-signer.sh "$llm_serve_apk"' in workflow

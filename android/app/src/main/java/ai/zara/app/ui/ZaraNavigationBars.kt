@@ -54,8 +54,6 @@ internal fun ZaraNavigationRail(selected: AppMenu, onSelect: (AppMenu) -> Unit) 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ZaraRouteTabs(navigation: AppNavigation, onSelect: (AppRoute) -> Unit) {
-    if (navigation.menu == AppMenu.Settings) return
-
     val tokens = LocalZaraTokens.current
     val routes = routesFor(navigation.menu)
     ScrollableTabRow(

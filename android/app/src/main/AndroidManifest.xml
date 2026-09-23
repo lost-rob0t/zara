@@ -2,11 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <permission
-        android:name="ai.zara.app.permission.LOCAL_AI"
-        android:protectionLevel="signature" />
-
-    <uses-permission android:name="ai.zara.app.permission.LOCAL_AI" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -105,8 +100,7 @@
 
         <service
             android:name=".localai.LocalAiService"
-            android:exported="true"
-            android:permission="ai.zara.app.permission.LOCAL_AI"
+            android:exported="false"
             android:process=":voice" />
 
         <service

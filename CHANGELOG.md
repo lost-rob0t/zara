@@ -25,7 +25,6 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Added
 
 - A standalone Zara LLM Serve APK provides loopback-only, bounded Ollama-compatible inference endpoints using Zara's existing local-model store and actor-owned inference runtime, with explicit model metadata and SHA-256-verified private imports.
-- Zara configuration now supports host-owned per-client LLM profiles for local or cloud provider/model routing; profile tables reject API keys and other credential fields.
 - Android Runtime & local AI settings can now import SHA-256-verified app-private LiteRT-LM models, list installed models, select/load them, unload model memory, and inspect the active model/backend/context without leaving Local mode.
 - Android Settings now uses a grouped overview with focused child screens instead of an eight-item horizontal tab strip, while Chat and Workspace retain their compact tab navigation.
 - Android emits typed, correlation-aware telemetry events (`remote.*`, `protocol.*`, `voice.*`, `session.restore.*`) with monotonic sequences, generation fencing, and metadata-only protocol message records, so no connected-to-disconnected transition is unexplained.

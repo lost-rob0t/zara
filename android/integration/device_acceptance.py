@@ -295,14 +295,10 @@ class Device:
             )
 
     def capture(self, name: str) -> None:
-        path = self.output / f"{name}.png"
-        if path.exists() or any(
-            screenshot.get("state") == name for screenshot in self.screenshots
-        ):
-            raise AssertionError(f"duplicate screenshot evidence state: {name}")
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
+        path = self.output / f"{name}.png"
         path.write_bytes(data)
         self.screenshots.append(
             {
@@ -457,26 +453,22 @@ def exercise_three_menu_ui(device: Device) -> None:
         device.capture(f"workspace-{tab.lower()}")
 
     open_menu(device, "Settings")
-    device.await_label("Runtime & local AI")
-    device.capture("settings-overview")
-    for label, capture_name in (
-        ("Runtime & local AI", "runtime"),
-        ("Connection", "connection"),
-        ("Permissions", "permissions"),
-        ("Appearance", "appearance"),
-        ("Plugins", "plugins"),
-        ("Updates", "updates"),
-        ("Diagnostics", "diagnostics"),
-        ("About", "about"),
+    for tab in (
+        "Runtime",
+        "Connection",
+        "Permissions",
+        "Appearance",
+        "Plugins",
+        "Updates",
+        "Diagnostics",
+        "About",
     ):
-        device.tap(label)
+        device.tap_tab(tab)
+        device.assert_accessible_targets((tab,))
         time.sleep(0.4)
-        device.capture(f"settings-{capture_name}")
-        device.press_back()
-        device.reveal("Runtime & local AI")
-        device.await_label("Runtime & local AI")
+        device.capture(f"settings-{tab.lower()}")
 
-    device.tap("Appearance")
+    device.tap_tab("Appearance")
     device.tap("Outrun")
     time.sleep(0.4)
     device.capture("theme-outrun")
@@ -484,9 +476,6 @@ def exercise_three_menu_ui(device: Device) -> None:
     time.sleep(0.4)
     device.capture("theme-light")
     device.tap("Outrun")
-    device.press_back()
-    device.reveal("Runtime & local AI")
-    device.await_label("Runtime & local AI")
 
     open_menu(device, "Chat")
     device.set_display_profile(
@@ -518,7 +507,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-chat-draft")
 
     open_menu(device, "Settings")
-    device.tap("Connection")
+    device.tap_tab("Connection")
     device.await_label("tcp://host:port")
     device.tap("tcp://host:port")
     device.type_text("ui_connection_draft")
@@ -528,8 +517,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-connection-draft")
 
     device.press_back()
-    device.reveal("Runtime & local AI")
-    device.await_label("Runtime & local AI")
+    device.await_label("Runtime")
     device.press_back()
     device.await_label("Chat")
     device.capture("back-to-chat")

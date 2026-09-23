@@ -28,7 +28,6 @@ object AppNavigationWiringContract {
 
     fun tabsAreScrollableAndLabeled() {
         val source = bars()
-        check(source.contains("if (navigation.menu == AppMenu.Settings) return"))
         check(source.contains("ScrollableTabRow("))
         check(source.contains("routesFor(navigation.menu)"))
         check(source.contains("selected = route == navigation.route"))
@@ -40,14 +39,11 @@ object AppNavigationWiringContract {
         val settings = app().substringAfter("private fun SettingsSurface(")
             .substringBefore("private fun DiagnosticsSurface(")
         check(settings.contains("when (section)"))
-        val overview = settings.substringAfter("AppRoute.Settings -> {").substringBefore("AppRoute.Runtime -> {")
         val runtime = settings.substringAfter("AppRoute.Runtime -> {").substringBefore("AppRoute.Permissions -> {")
         val permissions = settings.substringAfter("AppRoute.Permissions -> {").substringBefore("AppRoute.Connection -> {")
         val connection = settings.substringAfter("AppRoute.Connection -> {").substringBefore("AppRoute.Updates -> {")
         val updates = settings.substringAfter("AppRoute.Updates -> {").substringBefore("else ->")
-        check(overview.contains("SettingsOverviewContent("))
-        check(runtime.contains("LOCAL RUNTIME"))
-        check(runtime.contains("LocalModelSettingsCard("))
+        check(runtime.contains("LOCAL ZARA SERVER"))
         check(runtime.contains("onSetLocalEmbeddingEnabled"))
         check(!runtime.contains("IDENTITY"))
         check(permissions.contains("ASSISTANT"))

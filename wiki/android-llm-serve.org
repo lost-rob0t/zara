@@ -27,23 +27,11 @@ Model installation is app-private and SHA-256 verified. The user supplies model
 id, version, backend, context size, and an explicit declared quantization.
 Unknown or omitted quantization is not guessed.
 
-* Zara configuration
+* Loopback use
 
-A Zara process on the same Android device can use the service as an Ollama
-provider:
-
-#+begin_src toml
-[client_profiles.phone-local.llm]
-provider = "ollama"
-endpoint = "http://127.0.0.1:11434/api/chat"
-model = "zara-local"
-#+end_src
-
-Select that profile locally with =ZARA_CLIENT_PROFILE=phone-local=, or bind a
-known client id through =[client_pins]=.
-
-A different profile can pin the mobile client to OpenRouter while desktop or
-another local process remains on this loopback service.
+The compatibility endpoint is local to the device at =127.0.0.1:11434=. This
+APK does not own Zara's host/provider routing configuration and does not store
+provider credentials.
 
 * Security boundary
 
@@ -52,4 +40,4 @@ another local process remains on this loopback service.
 - request body/header/message sizes are bounded;
 - model bytes stay in app-private storage;
 - model output has no device-action authority;
-- API credentials are not stored in client profile tables.
+- provider/API credentials are not stored by LLM Serve.

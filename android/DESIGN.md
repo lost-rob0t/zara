@@ -106,17 +106,17 @@ Workspace
 Settings
 ```
 
-Chat and Workspace use horizontally scrollable, labeled tab bars. Settings follows Android's settings pattern instead: a grouped overview list opens focused child screens.
+Each primary menu has a horizontally scrollable, labeled tab bar:
 
 ```text
 Chat:      Chat | Voice
 Workspace: Logic | Projects | Scheduled
-Settings:  overview -> Runtime & local AI / Connection / Permissions / Appearance / Plugins / Updates / Diagnostics / About
+Settings:  Runtime | Connection | Permissions | Appearance | Plugins | Updates | Diagnostics | About
 ```
 
 Compact windows use the left modal drawer. At an available window width of at least 600dp, a persistent left navigation rail exposes the same three menus. The menu button still opens history on wide windows. Do not add a competing bottom navigation bar.
 
-Keep the last selected route independently for each menu. Route-keyed saved state preserves existing saveable form values, chat drafts, and scroll positions across route changes and recreation; it is not a new runtime or durable history database. Back closes the drawer first, otherwise returns from a secondary route to its menu root, then to Chat, then delegates app exit to Android.
+Keep the last selected tab independently for each menu. Route-keyed saved state preserves existing saveable form values, chat drafts, and scroll positions across tab changes and recreation; it is not a new runtime or durable history database. Back closes the drawer first, otherwise returns from a secondary tab to its menu root, then to Chat, then delegates app exit to Android.
 
 Below primary destinations in the drawer:
 
@@ -303,9 +303,9 @@ Never expose credentials, raw private plugin config, transcripts by default, or 
 
 Settings groups user-controlled configuration and links to dedicated diagnostic/about surfaces. Runtime facts and source code belong under Logic/Diagnostics unless they are directly editable user settings.
 
-Use one grouped Settings overview and focused child screens rather than an eight-item horizontal tab strip or one long form. Runtime & local AI owns Auto/Local/Remote routing, verified on-device model install/selection/unload, embedded model state, and local embeddings. Connection owns identity, server trust and connection. Permissions owns Assistant-role onboarding and microphone access. Appearance, Plugins, Updates, Diagnostics, and About remain separate child screens with the same semantic tokens and compact hierarchy.
+Render only the selected tab's content rather than one long form. Runtime owns local/remote routing and embeddings. Connection owns identity, server trust and connection. Permissions owns Assistant-role onboarding and microphone access. Appearance, Plugins, Updates, Diagnostics, and About remain separate tabs with the same semantic tokens and compact hierarchy.
 
-Opening a Settings child screen must not request permissions, begin capture, change trust, connect, load a newly selected file, or install an update. Those operations remain explicit actions using the existing callbacks and authority boundaries. Local model import uses Android's document picker, copies the selected =.litertlm= payload into app-private storage, computes and verifies SHA-256, and never turns Local mode into network fallback.
+Opening a tab must not request permissions, begin capture, change trust, connect, or install an update. Those operations remain explicit actions using the existing callbacks and authority boundaries.
 
 ## Implementation boundary and reuse rule
 
@@ -343,7 +343,7 @@ Every visual implementation issue must produce deterministic screenshot evidence
 - smallest supported layout with IME/composer visible;
 - one representative alternate theme.
 
-For #934, additionally capture the three-menu drawer, wide-window rail, the Settings overview and every child screen, and route/form restoration at narrow widths and increased font scale. Source-wiring tests and pure navigation tests do not satisfy this visual gate.
+For #934, additionally capture the three-menu drawer, wide-window rail, every Settings tab, and tab/form restoration at narrow widths and increased font scale. Source-wiring tests and pure navigation tests do not satisfy this visual gate.
 
 Compare screenshots against the canonical reference for hierarchy, density, geometry and visual language, with the explicit #934 navigation revision above. Pixel identity is not required; unapproved structural drift is.
 

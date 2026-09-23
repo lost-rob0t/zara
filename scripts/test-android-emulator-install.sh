@@ -8,8 +8,6 @@ cd "$repo_root"
 
 code_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
-llm_serve_apk="android/llm-serve/build/outputs/apk/debug/llm-serve-debug.apk"
-llm_serve_adversary_apk="android/llm-serve/build/outputs/apk/adversary/llm-serve-adversary.apk"
 trealla_library_root="$repo_root/android/app/build/trealla"
 evidence_dir="android/app/build/reports/device"
 instrumentation_log="$evidence_dir/connected-debug-android-test.log"
@@ -47,17 +45,6 @@ adb -s "$serial" shell pidof ai.zara.code.editor >/dev/null
 adb -s "$serial" shell am force-stop ai.zara.code.editor
 
 adb -s "$serial" install -r "$phone_apk"
-test -f "$llm_serve_apk"
-test -f "$llm_serve_adversary_apk"
-python android/integration/device_local_ai_ipc_acceptance.py \
-  --serial "$serial" \
-  --source-sha "$source_sha" \
-  --phone-apk "$phone_apk" \
-  --llm-serve-apk "$llm_serve_apk" \
-  --adversary-apk "$llm_serve_adversary_apk" \
-  --output "$evidence_dir"
-adb -s "$serial" shell am force-stop ai.zara.llmserve || true
-adb -s "$serial" uninstall ai.zara.llmserve >/dev/null 2>&1 || true
 # GitHub's hosted Pixel image can leave its launcher process in an ANR dialog over
 # an otherwise healthy Zara activity. Quiesce only that OS-owned package before
 # acceptance instead of hiding global error dialogs or masking Zara failures.

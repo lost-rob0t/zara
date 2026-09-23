@@ -13,7 +13,6 @@ on:
       - setup.py
       - android/app/build.gradle.kts
       - android/code-editor/build.gradle.kts
-      - android/llm-serve/build.gradle.kts
       - android/wear-app/build.gradle.kts
       - .github/workflows/release.yml
 
@@ -118,13 +117,10 @@ jobs:
           mkdir -p dist
           apk="dist/zara-android-${VERSION}.apk"
           code_editor_apk="dist/zara-code-editor-${VERSION}.apk"
-          llm_serve_apk="dist/zara-llm-serve-${VERSION}.apk"
           cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
           cp android/code-editor/build/outputs/apk/debug/code-editor-debug.apk "$code_editor_apk"
-          cp android/llm-serve/build/outputs/apk/debug/llm-serve-debug.apk "$llm_serve_apk"
           sha256sum "$apk" > "${apk}.sha256"
           sha256sum "$code_editor_apk" > "${code_editor_apk}.sha256"
-          sha256sum "$llm_serve_apk" > "${llm_serve_apk}.sha256"
           {
             echo "schema=1"
             echo "source_sha=${GITHUB_SHA}"
@@ -141,30 +137,18 @@ jobs:
             echo "apk=$(basename "$code_editor_apk")"
             echo "apk_sha256=$(sha256sum "$code_editor_apk" | awk '{print $1}')"
           } > "dist/zara-code-editor-${VERSION}.manifest.txt"
-          {
-            echo "schema=1"
-            echo "source_sha=${GITHUB_SHA}"
-            echo "version_name=${VERSION}"
-            echo "version_code=${VERSION_CODE}"
-            echo "apk=$(basename "$llm_serve_apk")"
-            echo "apk_sha256=$(sha256sum "$llm_serve_apk" | awk '{print $1}')"
-          } > "dist/zara-llm-serve-${VERSION}.manifest.txt"
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
           echo "code_editor_apk=$code_editor_apk" >> "$GITHUB_OUTPUT"
           echo "code_editor_manifest=dist/zara-code-editor-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
-          echo "llm_serve_apk=$llm_serve_apk" >> "$GITHUB_OUTPUT"
-          echo "llm_serve_manifest=dist/zara-llm-serve-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
 
       - name: Verify update-compatible Android signing certificates
         env:
           APK: ${{ steps.artifact.outputs.apk }}
           CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
-          LLM_SERVE_APK: ${{ steps.artifact.outputs.llm_serve_apk }}
         run: |
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
-          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$LLM_SERVE_APK"
 
       - name: Publish GitHub prerelease
         env:
@@ -176,8 +160,6 @@ jobs:
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
           CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
           CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
-          LLM_SERVE_APK: ${{ steps.artifact.outputs.llm_serve_apk }}
-          LLM_SERVE_MANIFEST: ${{ steps.artifact.outputs.llm_serve_manifest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -197,10 +179,7 @@ jobs:
                 "$(basename "$MANIFEST")" \
                 "$(basename "$CODE_EDITOR_APK")" \
                 "$(basename "${CODE_EDITOR_APK}.sha256")" \
-                "$(basename "$CODE_EDITOR_MANIFEST")" \
-                "$(basename "$LLM_SERVE_APK")" \
-                "$(basename "${LLM_SERVE_APK}.sha256")" \
-                "$(basename "$LLM_SERVE_MANIFEST")"
+                "$(basename "$CODE_EDITOR_MANIFEST")"
               do
                 if ! grep -Fxq "$required" <<< "$assets"; then
                   echo "Release $TAG is missing required asset $required." >&2
@@ -216,12 +195,8 @@ jobs:
               gh release download "$TAG" \
                 --dir "$existing_dir" \
                 --pattern "$(basename "$CODE_EDITOR_MANIFEST")"
-              gh release download "$TAG" \
-                --dir "$existing_dir" \
-                --pattern "$(basename "$LLM_SERVE_MANIFEST")"
               existing_manifest="$existing_dir/$(basename "$MANIFEST")"
               existing_code_editor_manifest="$existing_dir/$(basename "$CODE_EDITOR_MANIFEST")"
-              existing_llm_serve_manifest="$existing_dir/$(basename "$LLM_SERVE_MANIFEST")"
               grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
                 echo "Release $TAG manifest source_sha does not match $GITHUB_SHA." >&2
                 exit 1
@@ -244,18 +219,6 @@ jobs:
               }
               grep -Fxq "version_code=${VERSION_CODE}" "$existing_code_editor_manifest" || {
                 echo "Release $TAG Code Editor manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_llm_serve_manifest" || {
-                echo "Release $TAG LLM Serve manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_llm_serve_manifest" || {
-                echo "Release $TAG LLM Serve manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_llm_serve_manifest" || {
-                echo "Release $TAG LLM Serve manifest version_code does not match $VERSION_CODE." >&2
                 exit 1
               }
 
@@ -281,10 +244,7 @@ jobs:
             "$CODE_EDITOR_APK" \
             "${CODE_EDITOR_APK}.sha256" \
             "$CODE_EDITOR_MANIFEST" \
-            "$LLM_SERVE_APK" \
-            "${LLM_SERVE_APK}.sha256" \
-            "$LLM_SERVE_MANIFEST" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
             --prerelease \
-            --notes "Android alpha preview of Zara, Zara Code Editor, and Zara LLM Serve. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file. Source commit: $GITHUB_SHA"
+            --notes "Android alpha preview of Zara and Zara Code Editor. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file. Source commit: $GITHUB_SHA"
