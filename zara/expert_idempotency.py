@@ -282,18 +282,27 @@ class ExpertIdempotencyJournal:
                 model_calls = durable_result.usage.get("model_calls")
                 if type(model_calls) is not int or model_calls < 0:
                     raise
-                safe_receipts = tuple(
-                    receipt
-                    for receipt in durable_result.effect_receipts
-                    if self._is_canonical_json(receipt)
-                )
+                safe_receipts: list[dict[str, Any]] = []
+                for receipt in durable_result.effect_receipts:
+                    canonical_receipt = {
+                        key: value
+                        for key, value in receipt.items()
+                        if type(key) is str
+                        and self._is_canonical_json({key: value})
+                    }
+                    if not canonical_receipt:
+                        continue
+                    try:
+                        safe_receipts.extend(_bounded_receipts((canonical_receipt,)))
+                    except ExpertInvalidInputError:
+                        continue
                 durable_result = replace(
                     durable_result,
                     verdict=ExpertVerdict.UNKNOWN,
                     data={},
                     evidence_refs=(),
                     usage={"model_calls": model_calls},
-                    effect_receipts=safe_receipts,
+                    effect_receipts=tuple(safe_receipts),
                     error_code=ExpertErrorCode.INVALID_INPUT,
                     error_message=(
                         "completed expert result was not canonical JSON; "
