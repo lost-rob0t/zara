@@ -224,3 +224,98 @@ def test_cancelled_terminal_replay_stays_cancelled_across_generation_change(
     assert replay.invocation_id == first.invocation_id
     assert replay.request_id == first.request_id
     assert replay.usage == first.usage == {"model_calls": 0}
+
+
+def test_cancelled_terminal_replay_stays_cancelled_across_expert_build_change(
+    tmp_path: Path,
+) -> None:
+    target_id = "zara:expert/restart-generation"
+    old_target = _descriptor(target_id, "sha256:restart-generation-v1")
+    new_target = _descriptor(target_id, "sha256:restart-generation-v2")
+    counter = CancelledDispatchCounter()
+    path = tmp_path / "restart-build-cancelled.db"
+
+    first_db = DatabaseManager(path)
+    first_registry = ExpertRegistry(database=first_db)
+    first_registry.reload([(old_target, counter.handler)])
+    first_handle, _ = first_registry.activate(
+        "user:restart-generation",
+        "workspace:restart-generation",
+        target_id,
+    )
+    first = CanonicalExpertInvocationPort(first_registry).invoke(
+        _request(first_registry, first_handle.activation_id, target_id)
+    )
+    assert first.verdict is ExpertVerdict.CANCELLED
+    assert first.usage == {"model_calls": 0}
+    assert counter.calls == 1
+    first_db.close()
+
+    restarted_db = DatabaseManager(path)
+    restarted_registry = ExpertRegistry(database=restarted_db)
+    restarted_registry.reload([(new_target, counter.handler)])
+    restarted_handle, _ = restarted_registry.activate(
+        "user:restart-generation",
+        "workspace:restart-generation",
+        target_id,
+    )
+
+    replay = CanonicalExpertInvocationPort(restarted_registry).invoke(
+        _request(restarted_registry, restarted_handle.activation_id, target_id)
+    )
+
+    assert counter.calls == 1, "cancelled terminal retry must not redispatch after build change"
+    assert replay.replayed is True
+    assert replay.verdict is ExpertVerdict.CANCELLED
+    assert replay.error_code is first.error_code
+    assert replay.activation_id == first.activation_id
+    assert replay.invocation_id == first.invocation_id
+    assert replay.request_id == first.request_id
+    assert replay.usage == first.usage == {"model_calls": 0}
+
+
+def test_success_terminal_replay_across_expert_build_change_is_explicit_unknown(
+    tmp_path: Path,
+) -> None:
+    target_id = "zara:expert/restart-generation"
+    old_target = _descriptor(target_id, "sha256:restart-generation-v1")
+    new_target = _descriptor(target_id, "sha256:restart-generation-v2")
+    counter = DispatchCounter()
+    path = tmp_path / "restart-build-success.db"
+
+    first_db = DatabaseManager(path)
+    first_registry = ExpertRegistry(database=first_db)
+    first_registry.reload([(old_target, counter.handler)])
+    first_handle, _ = first_registry.activate(
+        "user:restart-generation",
+        "workspace:restart-generation",
+        target_id,
+    )
+    first = CanonicalExpertInvocationPort(first_registry).invoke(
+        _request(first_registry, first_handle.activation_id, target_id)
+    )
+    assert first.verdict is ExpertVerdict.SUCCEEDED
+    assert counter.calls == 1
+    first_db.close()
+
+    restarted_db = DatabaseManager(path)
+    restarted_registry = ExpertRegistry(database=restarted_db)
+    restarted_registry.reload([(new_target, counter.handler)])
+    restarted_handle, _ = restarted_registry.activate(
+        "user:restart-generation",
+        "workspace:restart-generation",
+        target_id,
+    )
+
+    replay = CanonicalExpertInvocationPort(restarted_registry).invoke(
+        _request(restarted_registry, restarted_handle.activation_id, target_id)
+    )
+
+    assert counter.calls == 1, "changed-build retry must not redispatch"
+    assert replay.replayed is True
+    assert replay.verdict is ExpertVerdict.UNKNOWN
+    assert replay.error_code is ExpertErrorCode.INTERRUPTED
+    assert replay.activation_id == first.activation_id
+    assert replay.invocation_id == first.invocation_id
+    assert replay.request_id == first.request_id
+    assert replay.usage == {"model_calls": 0}
