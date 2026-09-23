@@ -115,7 +115,7 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
         raise EvidenceError("desktop manifest must contain at least one fixture")
 
     seen_states: set[str] = set()
-    seen_paths: set[str] = set()
+    seen_files: set[str] = set()
     for entry in fixtures:
         if not isinstance(entry, dict):
             raise EvidenceError("desktop fixture entry must be an object")
@@ -125,6 +125,7 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
         expected_hash = entry.get("sha256")
         width = entry.get("width")
         height = entry.get("height")
+        theme = entry.get("theme")
         if not isinstance(state, str) or not state:
             raise EvidenceError("desktop fixture state is missing")
         if state in seen_states:
@@ -132,15 +133,17 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
         seen_states.add(state)
         if not isinstance(path_value, str) or not path_value:
             raise EvidenceError(f"desktop fixture path is missing: {state}")
-        if path_value in seen_paths:
-            raise EvidenceError(f"desktop fixture path is duplicated: {path_value}")
-        seen_paths.add(path_value)
+        if path_value in seen_files:
+            raise EvidenceError(f"desktop fixture evidence filename is duplicated: {path_value}")
+        seen_files.add(path_value)
         if entry_sha != source_sha:
             raise EvidenceError(
                 f"desktop source commit mismatch for {state}: expected {source_sha}, got {entry_sha}"
             )
         if not isinstance(width, int) or width <= 0 or not isinstance(height, int) or height <= 0:
             raise EvidenceError(f"desktop fixture has invalid dimensions: {state}")
+        if not isinstance(theme, str) or not theme:
+            raise EvidenceError(f"desktop fixture theme is missing: {state}")
         expected_hash = _require_sha256(expected_hash, label=f"desktop screenshot {state}")
         data = _require_png(_safe_child(manifest_path.parent, path_value))
         actual_hash = hashlib.sha256(data).hexdigest()
@@ -148,6 +151,88 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
             raise EvidenceError(
                 f"desktop screenshot hash mismatch for {state}: expected {expected_hash}, got {actual_hash}"
             )
+
+        actions = entry.get("actions")
+        if not isinstance(actions, list) or not actions or not all(
+            isinstance(action, str) and action for action in actions
+        ):
+            raise EvidenceError(f"desktop fixture action evidence is missing: {state}")
+        assertions = entry.get("assertions")
+        if not isinstance(assertions, list) or not assertions:
+            raise EvidenceError(f"desktop fixture assertion evidence is missing: {state}")
+        required_assertions = {"screenshot-png": False, "same-state-semantics": False}
+        for assertion in assertions:
+            if not isinstance(assertion, dict):
+                raise EvidenceError(f"desktop fixture assertion is malformed: {state}")
+            if not isinstance(assertion.get("name"), str) or not assertion["name"]:
+                raise EvidenceError(f"desktop fixture assertion name is missing: {state}")
+            if not isinstance(assertion.get("passed"), bool):
+                raise EvidenceError(f"desktop fixture assertion result is invalid: {state}")
+            if not isinstance(assertion.get("detail"), str):
+                raise EvidenceError(f"desktop fixture assertion detail is invalid: {state}")
+            if assertion["passed"] is False:
+                raise EvidenceError(
+                    f"desktop fixture contains failed assertion: {state}: {assertion['name']}"
+                )
+            if assertion["name"] in required_assertions:
+                required_assertions[assertion["name"]] = True
+        missing_assertions = sorted(
+            name for name, passed in required_assertions.items() if not passed
+        )
+        if missing_assertions:
+            raise EvidenceError(
+                f"desktop fixture omitted required assertions: {state}: {missing_assertions}"
+            )
+
+        text_file, _ = _require_hashed_file(
+            manifest_path.parent,
+            entry.get("text_evidence"),
+            label=f"desktop fixture text {state}",
+        )
+        assertion_file, _ = _require_hashed_file(
+            manifest_path.parent,
+            entry.get("assertion_evidence"),
+            label=f"desktop fixture assertions {state}",
+        )
+        for evidence_file in (text_file, assertion_file):
+            if evidence_file in seen_files:
+                raise EvidenceError(
+                    f"desktop fixture evidence filename is duplicated: {evidence_file}"
+                )
+            seen_files.add(evidence_file)
+
+        text = _require_text(
+            _safe_child(manifest_path.parent, text_file),
+            label=f"desktop fixture text {state}",
+        )
+        expected_metadata = {
+            "state": state,
+            "source_commit": source_sha,
+            "theme": theme,
+            "width": width,
+            "height": height,
+        }
+        expected_meta_line = "meta=" + json.dumps(
+            expected_metadata,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        text_lines = text.splitlines()
+        if not text_lines or text_lines[0] != expected_meta_line:
+            raise EvidenceError(f"desktop fixture text metadata mismatch: {state}")
+        if not any(line.startswith("widget=") for line in text_lines[1:]):
+            raise EvidenceError(f"desktop fixture text contains no widget semantics: {state}")
+
+        trace = _assertion_trace(actions, assertions)
+        actual_assertion_trace = _require_text(
+            _safe_child(manifest_path.parent, assertion_file),
+            label=f"desktop fixture assertion trace {state}",
+        )
+        if actual_assertion_trace != trace:
+            raise EvidenceError(f"desktop fixture assertion trace mismatch: {state}")
+        if not text.endswith(trace):
+            raise EvidenceError(f"desktop fixture text omitted action/assertion trace: {state}")
     return len(fixtures)
 
 

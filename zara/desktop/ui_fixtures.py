@@ -11,11 +11,10 @@ import hashlib
 import json
 import tempfile
 from pathlib import Path
-from typing import Callable
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QPoint, QSettings
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
@@ -67,6 +66,109 @@ def _application() -> QApplication:
     app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
     return app
+
+
+def _widget_text(widget: QWidget, method_name: str) -> str:
+    method = getattr(widget, method_name, None)
+    if not callable(method):
+        return ""
+    try:
+        value = method()
+    except (RuntimeError, TypeError):
+        return ""
+    return value if isinstance(value, str) else ""
+
+
+def _normalized_widget_semantics(window: QWidget) -> list[dict[str, object]]:
+    widgets = [window, *window.findChildren(QWidget)]
+    records: list[dict[str, object]] = []
+    for widget in widgets:
+        if widget is not window and not widget.isVisibleTo(window):
+            continue
+        point = QPoint(0, 0) if widget is window else widget.mapTo(window, QPoint(0, 0))
+        rect = widget.rect()
+        strings: list[str] = []
+        for method_name in (
+            "text",
+            "toPlainText",
+            "placeholderText",
+            "accessibleName",
+            "accessibleDescription",
+            "windowTitle",
+        ):
+            value = _widget_text(widget, method_name)
+            if value and value not in strings:
+                strings.append(value)
+        checked_method = getattr(widget, "isChecked", None)
+        checked = checked_method() if callable(checked_method) else None
+        records.append(
+            {
+                "class": widget.metaObject().className(),
+                "object_name": widget.objectName(),
+                "text": strings,
+                "enabled": widget.isEnabled(),
+                "visible": widget.isVisible(),
+                "checked": checked,
+                "bounds": [
+                    point.x(),
+                    point.y(),
+                    point.x() + rect.width(),
+                    point.y() + rect.height(),
+                ],
+            }
+        )
+    records.sort(
+        key=lambda record: (
+            record["bounds"][1],  # type: ignore[index]
+            record["bounds"][0],  # type: ignore[index]
+            record["class"],
+            record["object_name"],
+            json.dumps(record["text"], ensure_ascii=False),
+        )
+    )
+    return records
+
+
+def _assertion_trace(actions: list[str], assertions: list[dict[str, object]]) -> str:
+    lines = [f"ACTION {index} {action}" for index, action in enumerate(actions, 1)]
+    lines.extend(
+        " ".join(
+            (
+                "ASSERT",
+                "PASS" if assertion["passed"] else "FAIL",
+                str(assertion["name"]),
+                str(assertion["detail"]),
+            )
+        ).rstrip()
+        for assertion in assertions
+    )
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _desktop_text_twin(
+    *,
+    state: str,
+    source_commit: str,
+    width: int,
+    height: int,
+    semantics: list[dict[str, object]],
+    trace: str,
+) -> str:
+    metadata = {
+        "state": state,
+        "source_commit": source_commit,
+        "theme": _THEME,
+        "width": width,
+        "height": height,
+    }
+    lines = [
+        "meta=" + json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    ]
+    lines.extend(
+        "widget=" + json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        for record in semantics
+    )
+    return "\n".join(lines) + "\n" + trace
 
 
 def _add_user_messages(service: ConversationService, conversation_id: str, *messages: str) -> None:
@@ -210,13 +312,45 @@ def _render_one(
         _configure_fixture(state, window, service)
         window.show()
         app.processEvents()
+        semantics_before = _normalized_widget_semantics(window)
         pixmap = window.grab()
+        semantics_after = _normalized_widget_semantics(window)
+        if semantics_before != semantics_after:
+            raise RuntimeError(f"desktop UI changed across screenshot capture: {state}")
         if pixmap.isNull():
             raise RuntimeError(f"failed to render Copilot fixture: {state}")
         target = output_dir / filename
         if not pixmap.save(str(target), "PNG"):
             raise RuntimeError(f"failed to save Copilot fixture: {target}")
         screenshot_sha256 = hashlib.sha256(target.read_bytes()).hexdigest()
+        actions = [f"render:{state}"]
+        assertions: list[dict[str, object]] = [
+            {
+                "name": "same-state-semantics",
+                "passed": True,
+                "detail": "widget semantics stable across screenshot capture",
+            },
+            {
+                "name": "screenshot-png",
+                "passed": True,
+                "detail": "Qt produced PNG screenshot evidence",
+            },
+        ]
+        trace = _assertion_trace(actions, assertions)
+        text_path = output_dir / f"{state}.ui.txt"
+        text_path.write_text(
+            _desktop_text_twin(
+                state=state,
+                source_commit=source_commit,
+                width=pixmap.width(),
+                height=pixmap.height(),
+                semantics=semantics_before,
+                trace=trace,
+            ),
+            encoding="utf-8",
+        )
+        assertions_path = output_dir / f"{state}.assertions.txt"
+        assertions_path.write_text(trace, encoding="utf-8")
         return {
             "state": state,
             "path": filename,
@@ -225,6 +359,16 @@ def _render_one(
             "theme": _THEME,
             "source_commit": source_commit,
             "sha256": screenshot_sha256,
+            "actions": actions,
+            "assertions": assertions,
+            "text_evidence": {
+                "file": text_path.name,
+                "sha256": hashlib.sha256(text_path.read_bytes()).hexdigest(),
+            },
+            "assertion_evidence": {
+                "file": assertions_path.name,
+                "sha256": hashlib.sha256(assertions_path.read_bytes()).hexdigest(),
+            },
         }
     finally:
         window.prepare_for_quit()
@@ -271,7 +415,7 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
         app.setProperty("zaraTheme", previous_theme)
 
     manifest: dict[str, object] = {
-        "schema": 1,
+        "schema": 2,
         "fixtures": fixtures,
     }
     manifest_path = target / "manifest.json"

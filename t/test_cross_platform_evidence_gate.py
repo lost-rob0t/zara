@@ -26,8 +26,44 @@ def _write_desktop_evidence(root: Path, source_sha: str) -> Path:
     payload = _png_bytes("desktop")
     screenshot = evidence / "copilot-empty-compact.png"
     screenshot.write_bytes(payload)
+    actions = ["render:empty-compact"]
+    assertions = [
+        {
+            "name": "same-state-semantics",
+            "passed": True,
+            "detail": "widget semantics stable across screenshot capture",
+        },
+        {
+            "name": "screenshot-png",
+            "passed": True,
+            "detail": "Qt produced PNG screenshot evidence",
+        },
+    ]
+    trace = (
+        "ACTION 1 render:empty-compact\n"
+        "ASSERT PASS same-state-semantics widget semantics stable across screenshot capture\n"
+        "ASSERT PASS screenshot-png Qt produced PNG screenshot evidence\n"
+    )
+    metadata = {
+        "state": "empty-compact",
+        "source_commit": source_sha,
+        "theme": "signal-cabin",
+        "width": 680,
+        "height": 460,
+    }
+    text_evidence = evidence / "empty-compact.ui.txt"
+    text_evidence.write_text(
+        "meta="
+        + json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+        + 'widget={"bounds":[0,0,680,460],"checked":null,"class":"CopilotWindow","enabled":true,"object_name":"","text":[],"visible":true}\n'
+        + trace,
+        encoding="utf-8",
+    )
+    assertion_evidence = evidence / "empty-compact.assertions.txt"
+    assertion_evidence.write_text(trace, encoding="utf-8")
     manifest = {
-        "schema": 1,
+        "schema": 2,
         "fixtures": [
             {
                 "state": "empty-compact",
@@ -37,6 +73,16 @@ def _write_desktop_evidence(root: Path, source_sha: str) -> Path:
                 "theme": "signal-cabin",
                 "source_commit": source_sha,
                 "sha256": hashlib.sha256(payload).hexdigest(),
+                "actions": actions,
+                "assertions": assertions,
+                "text_evidence": {
+                    "file": text_evidence.name,
+                    "sha256": hashlib.sha256(text_evidence.read_bytes()).hexdigest(),
+                },
+                "assertion_evidence": {
+                    "file": assertion_evidence.name,
+                    "sha256": hashlib.sha256(assertion_evidence.read_bytes()).hexdigest(),
+                },
             }
         ],
     }
