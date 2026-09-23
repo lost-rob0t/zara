@@ -225,3 +225,62 @@ def test_out_of_contract_durable_terminal_fails_closed_without_redispatch(
     assert recovered.usage == {"model_calls": 0}
     assert recovered.effect_receipts == ()
     restarted_db.close()
+
+
+@pytest.mark.parametrize(
+    ("column", "corrupt_value"),
+    [
+        ("registry_generation", -1),
+        ("runtime_generation", -1),
+        ("activation_id", "invalid activation id"),
+        ("expert_version", "v" * 65),
+        ("manifest_digest", "m" * 193),
+    ],
+    ids=[
+        "registry-generation",
+        "runtime-generation",
+        "activation-id",
+        "expert-version",
+        "manifest-digest",
+    ],
+)
+def test_corrupt_durable_row_metadata_projects_safe_current_identity_without_redispatch(
+    tmp_path: Path,
+    column: str,
+    corrupt_value: Any,
+) -> None:
+    counter = DispatchCounter()
+    path = tmp_path / f"restart-row-metadata-{column}.db"
+    first_db = DatabaseManager(path)
+    first_registry, first_port, first_handle = _runtime(counter, first_db)
+    first = first_port.invoke(_request(first_registry, first_handle))
+    assert first.verdict is ExpertVerdict.SUCCEEDED
+    assert counter.calls == 1
+
+    first_db.execute(
+        f"UPDATE expert_idempotency_v1 SET {column} = ? WHERE invocation_id = ?",
+        (corrupt_value, first.invocation_id),
+    )
+    first_db.close()
+
+    restarted_db = DatabaseManager(path)
+    restarted_registry, restarted_port, restarted_handle = _runtime(counter, restarted_db)
+    recovered = restarted_port.invoke(_request(restarted_registry, restarted_handle))
+
+    assert counter.calls == 1, "corrupt durable row metadata must never redispatch"
+    assert recovered.replayed is True
+    assert recovered.verdict is ExpertVerdict.UNKNOWN
+    assert recovered.error_code is ExpertErrorCode.INTERRUPTED
+    assert recovered.invocation_id == first.invocation_id
+    assert recovered.request_id == first.request_id
+    assert recovered.activation_id == restarted_handle.activation_id
+    assert recovered.expert_id == restarted_handle.expert_id
+    assert recovered.expert_version == restarted_handle.expert_version
+    assert recovered.manifest_digest == restarted_handle.manifest_digest
+    assert recovered.resolved_registry_generation == restarted_handle.registry_generation
+    assert recovered.resolved_runtime_generation == restarted_handle.runtime_generation
+    assert recovered.data == {}
+    assert recovered.evidence_refs == ()
+    assert recovered.usage == {"model_calls": 0}
+    assert recovered.effect_receipts == ()
+    restarted_db.close()
