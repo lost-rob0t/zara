@@ -2,6 +2,7 @@ package ai.zara.app.ui
 
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
+import ai.zara.app.runtime.RuntimeMode
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.ui.theme.ZaraTheme
@@ -13,6 +14,84 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ZaraAppProjectionTest {
+    @Test
+    fun chatFooterSeparatesModeAuthAndTransportTruth() {
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  CONNECTED  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  RECONNECTING (2)  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.Reconnecting(3, 2),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  OFFLINE — RECONNECT AVAILABLE  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.OfflineDegraded(6, "text request timed out"),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE  •  AUTHENTICATED  •  DISCONNECTED  •  SYMBOLIC",
+            chatFooter(
+                mode = RuntimeMode.Remote,
+                server = ServerConnection.Disconnected,
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "LOCAL  •  SYMBOLIC  •  PRIVATE",
+            chatFooter(
+                mode = RuntimeMode.Local,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "REMOTE AVAILABLE  •  LOCAL SYMBOLIC  •  PRIVATE",
+            chatFooter(
+                mode = RuntimeMode.Auto,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "LOCAL SYMBOLIC  •  REMOTE DISCONNECTED  •  PRIVATE",
+            chatFooter(
+                mode = RuntimeMode.Auto,
+                server = ServerConnection.Disconnected,
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+    }
+
+    @Test
+    fun chatFooterNeverClaimsRemoteWhileTransportIsDownInRemoteMode() {
+        val degraded = listOf(
+            ServerConnection.Connecting(1),
+            ServerConnection.Reconnecting(2, 1),
+            ServerConnection.OfflineDegraded(6, "offline"),
+            ServerConnection.Disconnected,
+        )
+        for (server in degraded) {
+            val footer = chatFooter(
+                mode = RuntimeMode.Remote,
+                server = server,
+                enrollment = EnrollmentReadiness.Ready,
+            )
+            assertFalse("footer must not claim a live remote: $footer", footer.startsWith("REMOTE  •  AUTHENTICATED  •  CONNECTED"))
+        }
+    }
+
     @Test
     fun connectionLabelsRemainHonestAcrossCanonicalReducerStates() {
         assertEquals("disconnected", connectionLabel(ServerConnection.Disconnected))
@@ -145,6 +224,25 @@ class ZaraAppProjectionTest {
 
         assertTrue(settings.contains("showAssistantHelp"))
         assertTrue(settings.contains("SelectionContainer"))
+    }
+
+    @Test
+    fun unpairedShellOffersInAppQrPairingWithoutCameraPermission() {
+        val pairingShell = File("src/main/java/ai/zara/app/ui/PairingZaraApp.kt").readText()
+        val host = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val build = File("build.gradle.kts").readText()
+        val catalog = File("../gradle/libs.versions.toml").readText()
+
+        assertTrue(pairingShell.contains("\"Scan pairing QR\""))
+        assertTrue(pairingShell.contains("runtimeState.enrollment != EnrollmentReadiness.Ready"))
+        assertTrue(host.contains("onScanPairingQr = ::scanPairingQr"))
+        assertTrue(host.contains("GmsBarcodeScanning"))
+        assertTrue(host.contains("Barcode.FORMAT_QR_CODE"))
+        assertTrue(build.contains("libs.play.services.code.scanner"))
+        assertTrue(catalog.contains("play-services-code-scanner"))
+        assertTrue(manifest.contains("com.google.mlkit.vision.DEPENDENCIES"))
+        assertFalse(manifest.contains("android.permission.CAMERA"))
     }
 
     @Test

@@ -1,0 +1,106 @@
+#+title: Remote protocol slice #1299-#1303 — research
+#+property: RAGE_START 36e6d48fa750f30b5493f0c2acc789f3e9300e97
+
+* Sources
+
+- Incident issues: #1299 (protocol disconnect), #1300 (DIAGNOSTICS/2), #1301
+  (typed telemetry), #1302 (CI E2E), #1303 (UI error truth).
+- Code at start commit, worktree =rage/1299-1303-remote-protocol-slice=.
+- Server protocol authority: =zara/protocol.py=, =zara/protocol_runtime.py=,
+  =zara/zmq_transport.py=.
+- Android client: =android/app/src/main/java/ai/zara/app/{runtime,voice,diagnostics,ui}/=.
+- Prior art: =rage/575-stock-interop-diagnostics.org=,
+  =rage/178-android-reconnect-storm-r3.org=,
+  =android/integration/{stock_zara_server_fixture,device_remote_acceptance}.py=.
+
+* Transport truth
+
+The Android remote client is **JeroMQ (ZeroMQ) DEALER over tcp:// with CURVE**,
+custom =ZARA/1= multipart framing. No WebSocket/HTTP/gRPC. Owner of connection
+lifecycle: =ZaraTextClientActor= (single-thread executor, one dealer).
+Connection state machine: =RuntimeState.ServerConnection= reduced by
+=AndroidTextSessionController=. Generation fencing exists (generation bumps on
+connect/reconnect/trust change; requests carry (generation, sessionId)).
+
+* Root cause of the incident (code-proven)
+
+1. *Legal server frames are rejected by the Android codecs.*
+   =zara/protocol_runtime.py:199,207= emits =voice.speech.started=
+   (=pre_speech_samples= body) and =voice.speech.ended= (=reason= body) for
+   every server voice turn; =zara/protocol.py:69-81= also declares
+   =runtime.error=, =runtime.stopped=, =turn.cancelled= as legal server types.
+   Android =ZaraVoiceStreamCodec.kt:148= throws =unsupported voice stream
+   event type= for the speech markers, and =ZaraTextCodec.kt:252= throws
+   =unsupported server text message type= for the runtime/turn-cancel frames.
+   → If a marker interleaves with a voice command reply, the voice command
+   fails (=protocol_error= card); if it arrives in the post-commit pump, the
+   pump dies.
+2. *Pump death leaves fake-connected state.*
+   =ZaraTextClientActor.pollVoiceEvents= (437-445) catches =Throwable=, sets
+   =voicePumpActive=false=, notifies =voiceStreamFailureObserver=, returns.
+   Controller state stays =Connected=; no =connectionLost=; no reconnect; no
+   diagnostics event. The only production =connectionLost= trigger is a text
+   request timeout (=AndroidTextSessionController.kt:120-127=).
+3. *Failure detail is discarded.*
+   =TextServerMessage.ProtocolError(code, message, retryable)= is decoded
+   (ZaraTextCodec.kt:241-251) but =ZaraTextClientActor.kt:188,268= keep only
+   the code inside a message string; =UiOperationFailure.kt:27= collapses every
+   =ZaraWireException= to =protocol_error= and everything unmatched (e.g.
+   Remote-mode fast-fail =IllegalStateException=, =AndroidAppSession.kt:464-467=)
+   to =operation_failed=.
+4. *UI duplicates the collapse.*
+   =MainActivity.kt:326-333= writes both =operationError= banner
+   (=ZaraApp.kt:911=) and =conversationStore.failTurn(...)= (error card) with
+   the same umbrella token.
+5. *Footer lies.*
+   =ZaraApp.kt:843-846,927-939=: =remoteReady= ignores =runtimeMode= and every
+   non-Connected transport state; failures are masked by the LOCAL fallback
+   line while =REMOTE • AUTHENTICATED • SYMBOLIC= stays up whenever
+   Connected+enrolled even if requests fail.
+6. *No restore after process recreation.*
+   =AndroidAppSession.init= restores the persisted profile but never
+   reconnects; after =session.init= the client is disconnected with no typed
+   event (=session.init → remote_connected=false= with nothing between).
+7. *Telemetry gap.*
+   =LocalRuntimeDiagnostics= records only startup/submission events; no
+   connect/disconnect/reconnect/handshake/voice-stage/protocol events exist.
+   =ZARA-LOCAL-DIAGNOSTICS/1= is a flat snapshot with no failure block.
+
+* Existing machinery to reuse (not duplicate)
+
+- Generation fencing: =RuntimeState.generation= + actor request staleness
+  checks + =ManualVoiceSessionCoordinator= binding checks.
+- Bounded reconnect: =Reconnecting(gen, attempt)= → backoff 250ms→4s →
+  =OfflineDegraded= after 5 attempts (=RuntimeState.kt:59-63,171-194=).
+- Deterministic fixture: =stock_zara_server_fixture.py= (CURVE server, 0600
+  fixture env file, FIFO STOP control, READY barrier) +
+  =scripts/test-android.sh= (JVM gate) and
+  =scripts/test-android-emulator-install.sh= + =device_remote_acceptance.py=
+  (real APK E2E on emulator, adb reverse, artifacts fail-closed).
+- Redaction: =LocalRuntimeDiagnostics.sanitize= regex + source-contract tests
+  (no android.util.Log in app/src/main).
+- Closed-vocabulary telemetry precedent: =zara/latency.py= (VOICE_EVENTS +
+  whitelisted scalar metadata).
+
+* Alternatives considered and rejected
+
+- *Proxy-based failure injection (client ↔ fault proxy ↔ real server).* More
+  moving parts, cannot inject application-level ZARA/1 semantic faults
+  (version mismatch, out-of-order) without reimplementing the codec anyway.
+  → a dedicated scriptable ZARA/1 CURVE fixture server wins.
+- *Treat every decode error as fatal connection loss.* Over-broad: a rejected
+  frame for an unrelated stale request should fail that request, not tear the
+  session. → typed classification: frame-class errors fatal to session
+  desync (malformed/unsupported/out-of-order/stale), request-class errors
+  fail the request; transport-class errors always collapse the connection.
+- *New instrumented androidTest stack (Espresso/Compose-test).* Repo has zero
+  androidTest and no deps; established real-app-path pattern is installed APK
+  + adb/uiautomator python. → extend the python device acceptance.
+
+* Voice turn on device feasibility
+
+Manual voice = press-and-hold mic (onStartVoice → pressToTalk) → release
+(onStopVoice → commit). =adb shell input swipe x y x y <ms= is a deterministic
+long-press. Emulator mic yields silence PCM; the fixture scripts transcript +
+audio output regardless of audio content, so a real capture→STT→submit→
+response→TTS→playback turn is exercisable through the real APK.

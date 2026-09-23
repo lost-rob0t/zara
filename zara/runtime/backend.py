@@ -66,6 +66,21 @@ class RuntimeBackend:
     ) -> RuntimeTurnResult:
         raise NotImplementedError
 
+    def commit_turn_result(
+        self,
+        result: RuntimeTurnResult,
+        *,
+        turn_id: str,
+        conversation_id: Optional[str] = None,
+    ) -> None:
+        """Commit backend-owned durable turn metadata after stale-turn fencing.
+
+        RuntimeHost calls this synchronously only while the canonical turn
+        capability lease is still active. Backends must keep this hook bounded
+        and local; provider/tool effects do not belong here.
+        """
+        del result, turn_id, conversation_id
+
     async def cancel_turn(self, turn_id: str) -> None:
         pass
 
