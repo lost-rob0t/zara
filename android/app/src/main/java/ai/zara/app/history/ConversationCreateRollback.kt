@@ -23,5 +23,8 @@ internal fun PortableConversationStore.rollbackEmptyConversationCreation(convers
         check(deleted == 1) {
             "Conversation creation rollback lost canonical ownership"
         }
+        check(getConversation(conversationId) == null) {
+            "Conversation creation rollback postcondition was not durably observed"
+        }
     }
 }
