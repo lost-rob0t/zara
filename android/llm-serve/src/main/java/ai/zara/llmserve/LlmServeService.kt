@@ -57,7 +57,7 @@ class LlmServeService : Service() {
         )
         worker.execute {
             try {
-                runCatching { engine.loadActiveModel() }
+                engine.loadActiveModel()
                 server.start()
                 val active = engine.activeModel()
                 val model = if (active == null) {
@@ -95,9 +95,7 @@ class LlmServeService : Service() {
         worker.execute {
             try {
                 val metadata = metadataFrom(intent, uri)
-                val input = contentResolver.openInputStream(uri)
-                    ?: throw IllegalArgumentException("Selected model cannot be opened")
-                input.use { engine.install(it, metadata) }
+                engine.install(uri, metadata)
                 if (!server.isRunning()) server.start()
                 val status =
                     "ready • imported " + metadata.id + ":" + metadata.version
