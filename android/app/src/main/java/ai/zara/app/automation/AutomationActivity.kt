@@ -210,34 +210,36 @@ class AutomationActivity : ComponentActivity() {
         busy = true
         visionBusy = true
         status = "Observing the authorized ADB target…"
-        visionControl.run(goal).whenComplete { result, error ->
-            runOnUiThread {
-                pendingVisionApproval?.future?.complete(false)
-                pendingVisionApproval = null
-                visionBusy = false
-                busy = false
-                status = when {
-                    error != null -> error.cause?.message ?: error.message ?: "ADB vision control failed"
-                    result is AndroidVisionLoopResult.Completed ->
-                        "Verified: ${result.summary} (${result.steps} action(s), ${result.observedBytes} observed bytes)"
-                    result is AndroidVisionLoopResult.CapabilityUnavailable ->
-                        "ADB capability is unavailable for the proposed typed action"
-                    result is AndroidVisionLoopResult.ApprovalRejected ->
-                        "ADB vision action was not approved"
-                    result is AndroidVisionLoopResult.PolicyRejected ->
-                        "Prolog policy rejected the proposed ADB action"
-                    result is AndroidVisionLoopResult.VerificationFailed ->
-                        "Fresh screenshot did not verify the approved ADB action"
-                    result is AndroidVisionLoopResult.ActionFailed ->
-                        "ADB action failed: ${result.message ?: "unknown failure"}"
-                    result is AndroidVisionLoopResult.Unavailable ->
-                        "ADB vision unavailable: ${result.reason}"
-                    result is AndroidVisionLoopResult.BoundsExceeded ->
-                        "ADB vision stopped at its safety bound: ${result.reason}"
-                    result is AndroidVisionLoopResult.Failed ->
-                        "ADB vision failed: ${result.reason}"
-                    result == AndroidVisionLoopResult.Cancelled -> "ADB vision cancelled"
-                    else -> "ADB vision failed"
+        io.execute {
+            visionControl.run(goal).whenComplete { result, error ->
+                runOnUiThread {
+                    pendingVisionApproval?.future?.complete(false)
+                    pendingVisionApproval = null
+                    visionBusy = false
+                    busy = false
+                    status = when {
+                        error != null -> error.cause?.message ?: error.message ?: "ADB vision control failed"
+                        result is AndroidVisionLoopResult.Completed ->
+                            "Verified: ${result.summary} (${result.steps} action(s), ${result.observedBytes} observed bytes)"
+                        result is AndroidVisionLoopResult.CapabilityUnavailable ->
+                            "ADB capability is unavailable for the proposed typed action"
+                        result is AndroidVisionLoopResult.ApprovalRejected ->
+                            "ADB vision action was not approved"
+                        result is AndroidVisionLoopResult.PolicyRejected ->
+                            "Prolog policy rejected the proposed ADB action"
+                        result is AndroidVisionLoopResult.VerificationFailed ->
+                            "Fresh screenshot did not verify the approved ADB action"
+                        result is AndroidVisionLoopResult.ActionFailed ->
+                            "ADB action failed: ${result.message ?: "unknown failure"}"
+                        result is AndroidVisionLoopResult.Unavailable ->
+                            "ADB vision unavailable: ${result.reason}"
+                        result is AndroidVisionLoopResult.BoundsExceeded ->
+                            "ADB vision stopped at its safety bound: ${result.reason}"
+                        result is AndroidVisionLoopResult.Failed ->
+                            "ADB vision failed: ${result.reason}"
+                        result == AndroidVisionLoopResult.Cancelled -> "ADB vision cancelled"
+                        else -> "ADB vision failed"
+                    }
                 }
             }
         }
@@ -279,12 +281,13 @@ class AutomationActivity : ComponentActivity() {
     private fun resolveVisionApproval(approved: Boolean) {
         val pending = pendingVisionApproval ?: return
         pendingVisionApproval = null
-        if (pending.future.complete(approved)) {
-            status = if (approved) {
-                "Executing approved ADB action; fresh verification will follow…"
-            } else {
-                "ADB action rejected"
-            }
+        status = if (approved) {
+            "Executing approved ADB action; fresh verification will follow…"
+        } else {
+            "ADB action rejected"
+        }
+        io.execute {
+            pending.future.complete(approved)
         }
     }
 
