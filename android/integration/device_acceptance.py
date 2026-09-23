@@ -531,7 +531,6 @@ class Device:
 
         path = self.capture(screenshot_name)
         screenshot_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
-        text_twin = self.capture_text_twin(screenshot_name)
         with Image.open(path) as opened:
             image = opened.convert("RGB")
         viewport_width, viewport_height = image.size
@@ -609,6 +608,42 @@ class Device:
                 f"trigger={trigger_bounds} union={union} distance={distance}"
             )
 
+        self._append_scenario_assertion(
+            screenshot_name,
+            assertion_name="transient-surface-visible",
+            detail=(
+                f"actions={','.join(action_labels)} viewport={viewport_width}x{viewport_height}"
+            ),
+        )
+        scenario_id = self._scenario_id(screenshot_name)
+        scenario = next(
+            (
+                item
+                for item in self.scenario_evidence
+                if item.get("scenario_id") == scenario_id
+            ),
+            None,
+        )
+        if scenario is None:
+            raise AssertionError(
+                f"Rendered-state scenario record is missing after capture: {scenario_id}"
+            )
+        text_twin = scenario.get("text_evidence")
+        if not isinstance(text_twin, dict):
+            raise AssertionError(
+                f"Rendered-state text evidence is missing after capture: {scenario_id}"
+            )
+        text_twin_file = text_twin.get("file")
+        text_twin_sha256 = text_twin.get("sha256")
+        if not isinstance(text_twin_file, str) or not text_twin_file:
+            raise AssertionError(
+                f"Rendered-state text evidence file is invalid after capture: {scenario_id}"
+            )
+        if not isinstance(text_twin_sha256, str) or SHA256_RE.fullmatch(text_twin_sha256) is None:
+            raise AssertionError(
+                f"Rendered-state text evidence hash is invalid after capture: {scenario_id}"
+            )
+
         self.visual_checks.append(
             {
                 "state": screenshot_name,
@@ -618,20 +653,13 @@ class Device:
                 "viewport": [viewport_width, viewport_height],
                 "screenshot_file": path.name,
                 "screenshot_sha256": screenshot_sha256,
-                "text_twin_file": text_twin["file"],
-                "text_twin_sha256": text_twin["sha256"],
+                "text_twin_file": text_twin_file,
+                "text_twin_sha256": text_twin_sha256,
                 "source_sha": getattr(self, "source_sha", None),
                 "device_api": getattr(self, "device_api", None),
                 "profile": getattr(self, "current_profile", "default"),
                 "actions": checks,
             }
-        )
-        self._append_scenario_assertion(
-            screenshot_name,
-            assertion_name="transient-surface-visible",
-            detail=(
-                f"actions={','.join(action_labels)} viewport={viewport_width}x{viewport_height}"
-            ),
         )
 
     def capture(self, name: str) -> Path:
