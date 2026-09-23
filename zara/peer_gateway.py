@@ -204,6 +204,15 @@ class PeerCallGatewayMixin:
             )
 
     def _dispatch_peer_call(self, socket, route: bytes, route_state, message: ProtocolMessage) -> None:
+        if message.session_id != route_state.session_id:
+            self._send_peer_error(
+                socket,
+                route,
+                message,
+                code="unauthorized",
+                detail="peer session is stale",
+            )
+            return
         try:
             request = PeerCallRequest.from_wire(message.type, message.id, message.body or {})
             authority = self._peer_authority_for_route(route_state, route)
@@ -355,6 +364,15 @@ class PeerCallGatewayMixin:
         future.add_done_callback(completed)
 
     def _dispatch_peer_cancel(self, socket, route: bytes, route_state, message: ProtocolMessage) -> None:
+        if message.session_id != route_state.session_id:
+            self._send_peer_error(
+                socket,
+                route,
+                message,
+                code="unauthorized",
+                detail="peer session is stale",
+            )
+            return
         try:
             request = PeerCancelRequest.from_wire(message.id, message.body or {})
             authority = self._peer_authority_for_route(route_state, route)
