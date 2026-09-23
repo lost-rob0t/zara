@@ -81,7 +81,12 @@ class AndroidAdbVisionControlLoopTest {
         val action = AndroidAutomationAction.AdbKey(AdbAutomationKey.Home)
         val adb = FakeAdbPort(ArrayDeque(listOf(before, after)))
         val interpreter = FakeVisionPort(
-            decisions = ArrayDeque(listOf(AndroidVisionDecision.Act(action))),
+            decisions = ArrayDeque(
+                listOf(
+                    AndroidVisionDecision.Act(action),
+                    AndroidVisionDecision.Done("verified"),
+                ),
+            ),
             verification = true,
         )
         val loop = loop(adb, interpreter)
@@ -93,6 +98,30 @@ class AndroidAdbVisionControlLoopTest {
         assertEquals(1, interpreter.verifications.size)
         assertArrayEquals(after, interpreter.verifications.single().png)
         assertFalse(before.contentEquals(interpreter.verifications.single().png))
+        assertArrayEquals(after, interpreter.observations.last().png)
+    }
+
+    @Test
+    fun `fresh verified observation can drive another typed step`() {
+        val first = AndroidAutomationAction.AdbTap(10, 20)
+        val second = AndroidAutomationAction.AdbKey(AdbAutomationKey.Enter)
+        val adb = FakeAdbPort(ArrayDeque(listOf(png(1), png(2), png(3))))
+        val interpreter = FakeVisionPort(
+            decisions = ArrayDeque(
+                listOf(
+                    AndroidVisionDecision.Act(first),
+                    AndroidVisionDecision.Act(second),
+                    AndroidVisionDecision.Done("goal complete"),
+                ),
+            ),
+        )
+
+        val result = loop(adb, interpreter).run("finish two steps").get(2, TimeUnit.SECONDS)
+
+        assertEquals(AndroidVisionLoopResult.Completed("goal complete", 2, 27), result)
+        assertEquals(listOf("tap:10:20", "key:enter"), adb.actions)
+        assertEquals(2, interpreter.verifications.size)
+        assertEquals(3, interpreter.observations.size)
     }
 
     @Test
