@@ -86,6 +86,26 @@ class NonFiniteReceiptHandler:
 
 
 @dataclass
+class NonFiniteIdentityReceiptHandler:
+    identity_field: str
+    calls: int = 0
+
+    def __call__(self, *, expert_operation: str, **payload: Any) -> dict[str, Any]:
+        assert expert_operation == "score.compute"
+        assert payload == {"subject": "fixture"}
+        self.calls += 1
+        receipt = {**RECEIPT, "note": "external effect was observed"}
+        receipt[self.identity_field] = float("nan")
+        return {
+            "verdict": "succeeded",
+            "data": {"score": 1.0},
+            "evidence_refs": ["evidence:nonfinite-receipt-identity:v1"],
+            "usage": {"model_calls": 1},
+            "effect_receipts": [receipt],
+        }
+
+
+@dataclass
 class CountingReplacementHandler:
     calls: int = 0
 
@@ -171,6 +191,7 @@ def _assert_restart_replay(
     path: Path,
     *,
     expected_receipts: tuple[dict[str, Any], ...],
+    expected_error_code: ExpertErrorCode = ExpertErrorCode.INVALID_INPUT,
 ) -> None:
     restarted_database = DatabaseManager(path)
     replacement = CountingReplacementHandler()
@@ -187,7 +208,7 @@ def _assert_restart_replay(
     replay = _invoke(restarted_registry, restarted_handle, max_model_calls=1)
     assert replay.replayed is True
     assert replay.verdict is ExpertVerdict.UNKNOWN
-    assert replay.error_code is ExpertErrorCode.INVALID_INPUT
+    assert replay.error_code is expected_error_code
     assert replay.request_id == REQUEST_ID
     assert replay.data == {}
     assert replay.evidence_refs == ()
@@ -200,6 +221,7 @@ def _assert_restart_replay(
     assert replay_again.request_id == replay.request_id
     assert replay_again.usage == replay.usage
     assert replay_again.effect_receipts == replay.effect_receipts
+    assert replay_again.error_code is expected_error_code
     assert replacement.calls == 0
     restarted_database.close()
 
@@ -250,3 +272,25 @@ def test_nonfinite_receipt_preserves_canonical_effect_accounting_without_redispa
     assert handler.calls == 1
     database.close()
     _assert_restart_replay(path, expected_receipts=(RECEIPT,))
+
+
+@pytest.mark.parametrize("identity_field", ["effect_id", "verified_outcome_ref"])
+def test_nonfinite_receipt_identity_never_replays_a_partial_receipt(
+    tmp_path: Path,
+    identity_field: str,
+) -> None:
+    path = tmp_path / f"nonfinite-receipt-{identity_field}.db"
+    database = DatabaseManager(path)
+    handler = NonFiniteIdentityReceiptHandler(identity_field=identity_field)
+    registry, handle = _activate(database, handler)
+
+    with pytest.raises(ExpertInvalidInputError, match="canonical JSON"):
+        _invoke(registry, handle, max_model_calls=1)
+
+    assert handler.calls == 1
+    database.close()
+    _assert_restart_replay(
+        path,
+        expected_receipts=(),
+        expected_error_code=ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME,
+    )
