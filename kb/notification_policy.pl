@@ -94,6 +94,14 @@ notification_action_wire(route_peer(PeerId), route_peer, PeerId).
 
 % Deterministic anti-spam expert. Explicit durable feedback is stronger than
 % runtime heuristics; observations alone never become permanent preferences.
+% Runtime feedback is passed in by the durable router store. When there is no
+% runtime preference, the same user-authored Prolog overlay can provide one.
+notification_spam_decision(App, Count, Duplicate, none, Decision, Reason) :-
+    notification_feedback(App, Feedback), !,
+    notification_spam_decision(App, Count, Duplicate, Feedback, Decision, Reason).
+notification_spam_decision(App, Count, Duplicate, none, Decision, Reason) :-
+    notification_feedback(default, Feedback), !,
+    notification_spam_decision(App, Count, Duplicate, Feedback, Decision, Reason).
 notification_spam_decision(_, _, _, always_allow, allow, explicit_always_allow) :- !.
 notification_spam_decision(_, _, _, mute, suppress, explicit_mute) :- !.
 notification_spam_decision(_, _, _, digest, digest, explicit_digest) :- !.
