@@ -22,6 +22,7 @@ from ._experts_v1 import (
     _bounded_mapping,
     _bounded_receipts,
     _bounded_refs,
+    _bounded_text,
 )
 from .database import DatabaseManager, get_database
 
@@ -434,6 +435,15 @@ class ExpertIdempotencyJournal:
         if type(model_calls) is not int or model_calls < 0:
             raise ValueError("durable expert result usage is invalid")
         error_code = wire["error_code"]
+        error_message = wire["error_message"]
+        if error_message:
+            error_message = _bounded_text(
+                error_message,
+                field_name="error_message",
+                limit=256,
+            )
+        elif type(error_message) is not str:
+            raise ValueError("error_message must be a string")
         return ExpertResult(
             protocol=wire["protocol"],
             request_id=wire["request_id"],
@@ -451,7 +461,7 @@ class ExpertIdempotencyJournal:
             usage=usage,
             effect_receipts=effect_receipts,
             error_code=ExpertErrorCode(error_code) if error_code is not None else None,
-            error_message=wire["error_message"],
+            error_message=error_message,
             replayed=False,
         )
 
