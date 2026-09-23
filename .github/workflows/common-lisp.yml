@@ -4,10 +4,18 @@ on:
   push:
     paths:
       - "lisp/**"
+      - "scripts/test-common-lisp.sh"
+      - "t/test_common_lisp_dependency_pin_contract.py"
+      - "flake.nix"
+      - "flake.lock"
       - ".github/workflows/common-lisp.yml"
   pull_request:
     paths:
       - "lisp/**"
+      - "scripts/test-common-lisp.sh"
+      - "t/test_common_lisp_dependency_pin_contract.py"
+      - "flake.nix"
+      - "flake.lock"
       - ".github/workflows/common-lisp.yml"
 
 permissions:
@@ -26,40 +34,20 @@ jobs:
       - name: Check out exact source
         uses: actions/checkout@v4
 
-      - name: Install SBCL and ZeroMQ
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends \
-            sbcl \
-            libzmq3-dev \
-            ca-certificates \
-            curl
-
-      - name: Install verified Quicklisp bootstrap
+      - name: Verify exact source checkout
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error \
-            --output /tmp/quicklisp.lisp \
-            https://beta.quicklisp.org/quicklisp.lisp
-          echo "4a7a5c2aebe0716417047854267397e24a44d0cce096127411e9ce9ccfeb2c17  /tmp/quicklisp.lisp" \
-            | sha256sum --check -
-          sbcl --non-interactive \
-            --load /tmp/quicklisp.lisp \
-            --eval '(quicklisp-quickstart:install)'
-
-      - name: Load dependencies and run FiveAM
-        shell: bash
-        run: |
-          set -euo pipefail
-          sbcl --non-interactive \
-            --load "$HOME/quicklisp/setup.lisp" \
-            --eval '(ql:quickload (list :pzmq :com.inuoe.jzon :babel :bordeaux-threads :fiveam))' \
-            --eval '(asdf:load-asd (truename "lisp/zara.asd"))' \
-            --eval '(asdf:test-system :zara)'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
+
+      - name: Run FiveAM with pinned Lisp closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/test-common-lisp.sh
 
       - name: Smoke packaged Zara server from Lisp
         shell: bash
@@ -69,8 +57,4 @@ jobs:
           test -x "$server_out/bin/zara-server"
           export PATH="$server_out/bin:$PATH"
           export ZARA_LISP_INTEGRATION=1
-          sbcl --non-interactive \
-            --load "$HOME/quicklisp/setup.lisp" \
-            --eval '(ql:quickload (list :pzmq :com.inuoe.jzon :babel :bordeaux-threads :fiveam))' \
-            --eval '(asdf:load-asd (truename "lisp/zara.asd"))' \
-            --eval '(asdf:test-system :zara)'
+          bash scripts/test-common-lisp.sh
