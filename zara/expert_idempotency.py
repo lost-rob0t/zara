@@ -155,7 +155,11 @@ class ExpertIdempotencyJournal:
                     )
                     return ClaimDecision(claim=claim, replay=replay, created=False)
                 replay = replace(result, replayed=True)
-                if replay.effect_receipts:
+                if (
+                    replay.verdict is ExpertVerdict.SUCCEEDED
+                    and replay.effect_receipts
+                    and row["activation_id"] != handle.activation_id
+                ):
                     replay = replace(
                         replay,
                         verdict=ExpertVerdict.UNKNOWN,
