@@ -45,24 +45,25 @@ open class OrgNextTodoComplicationService : SuspendingComplicationDataSourceServ
         if (request.complicationType != ComplicationType.SHORT_TEXT) return null
         val snapshot = OrgScheduleSnapshotStore.read(this)
         val title = snapshot.currentOrNextTitle ?: return NoDataComplicationData()
-        val target = snapshot.allocations.firstOrNull()
-        return shortTextData(title, target?.id)
+        val todoId = snapshot.currentOrNextId ?: return NoDataComplicationData()
+        return shortTextData(title, todoId)
     }
 
     override fun getPreviewData(type: ComplicationType): ComplicationData? {
         if (type != ComplicationType.SHORT_TEXT) return null
         val snapshot = previewSnapshot()
-        return shortTextData(requireNotNull(snapshot.currentOrNextTitle), snapshot.allocations.first().id)
+        return shortTextData(
+            requireNotNull(snapshot.currentOrNextTitle),
+            requireNotNull(snapshot.currentOrNextId),
+        )
     }
 
-    private fun shortTextData(title: String, todoId: String?): ComplicationData {
+    private fun shortTextData(title: String, todoId: String): ComplicationData {
         val text = PlainComplicationText.Builder(title.take(7)).build()
         val description = PlainComplicationText.Builder(title).build()
-        val builder = ShortTextComplicationData.Builder(text, description)
-        if (todoId != null) {
-            builder.setTapAction(ZaraWearLaunchTargets.orgTodoPendingIntent(this, todoId))
-        }
-        return builder.build()
+        return ShortTextComplicationData.Builder(text, description)
+            .setTapAction(ZaraWearLaunchTargets.orgTodoPendingIntent(this, todoId))
+            .build()
     }
 }
 
@@ -85,6 +86,7 @@ private fun previewSnapshot(): OrgScheduleSnapshot {
     return OrgScheduleSnapshot(
         generatedAtEpochMillis = 0L,
         allocations = allocations,
+        currentOrNextId = "preview-0",
         currentOrNextTitle = "Focus",
     )
 }
