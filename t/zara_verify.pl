@@ -59,6 +59,10 @@ test(stale_source) :-
 test(missing_artifact_digest) :-
     request(R), R.evidence=[First|Rest], Changed=First.put(artifact_sha256,''),
     blocked(R.put(evidence,[Changed|Rest])).
+test(junit_skip_cannot_hide_under_passed_gate) :-
+    request(R), R.evidence=[First|Rest],
+    Changed=First.put(junit, _{state:passed,tests:2,failures:0,skipped:1}),
+    blocked(R.put(evidence,[Changed|Rest])).
 test(failed_beats_blocked) :-
     request(R), R.evidence=[First|Rest], Changed=First.put(state,failed),
     zara_verify:evaluate(R.put(evidence,[Changed|Rest]),D), D.verdict == failed.
