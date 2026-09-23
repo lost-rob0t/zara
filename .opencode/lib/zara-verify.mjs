@@ -101,6 +101,7 @@ export function createVerifyGate({execute, snapshot, policyDigest, now=Date.now}
         const report = await execute(operation, session, signal);
         await checkPolicy();
         if (signal?.aborted) throw new Error('verifier_cancelled');
+        if (admittedEpoch !== epoch) throw new Error('stale_generation');
         if (operation === 'run') {
           if (sessions.size >= 64 && !sessions.has(session)) sessions.delete(sessions.keys().next().value);
           sessions.set(session, {epoch:admittedEpoch,report:structuredClone(report)});
