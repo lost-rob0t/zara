@@ -118,9 +118,11 @@ class _Supervisor:
             self.bus.publish(
                 events.TurnStarted(turn_id=turn_id, conversation_id=conversation_id)
             )
+            _trace("runtime.event", "published:TurnStarted")
             self.bus.publish(
                 events.AssistantStarted(turn_id=turn_id, conversation_id=conversation_id)
             )
+            _trace("runtime.event", "published:AssistantStarted")
             self.bus.publish(
                 events.AssistantComplete(
                     turn_id=turn_id,
@@ -129,6 +131,7 @@ class _Supervisor:
                     success=True,
                 )
             )
+            _trace("runtime.event", "published:AssistantComplete")
             self.bus.publish(
                 events.AgentCompleted(
                     turn_id=turn_id,
@@ -136,6 +139,7 @@ class _Supervisor:
                     success=True,
                 )
             )
+            _trace("runtime.event", "published:AgentCompleted")
 
         return _ReceiptFuture(receipt, publish, self._barrier)
 

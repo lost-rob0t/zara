@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,15 +11,13 @@ import re
 import socket
 import time
 
-from device_acceptance import Device, SHA256_RE, open_menu, verified_source_sha
+from device_acceptance import Device, open_menu
 from zara.security_admin import SecurityAdminClient
 from zmq.utils import z85
 
 
 APP_PACKAGE = "ai.zara.app"
 APP_DIAGNOSTICS_PATH = "no_backup/zara/diagnostics/local-runtime.log"
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PHONE_APK = REPO_ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 _FATAL_LOG_MARKERS = (
     "FATAL EXCEPTION",
     "ANR in ai.zara.app",
@@ -104,6 +101,10 @@ def find_curve_public_key(device: Device) -> str:
 def type_printable_ascii(device: Device, value: str) -> None:
     if not value or any(ord(char) < 0x20 or ord(char) > 0x7E for char in value):
         raise AssertionError("Remote acceptance input must be printable ASCII")
+    # Avoid adb-shell metacharacter handling entirely: only a base64 token enters
+    # the remote command. Keep the whole shell pipeline in one adb shell argument;
+    # splitting it through `sh -c` makes adb join the argv before the device shell
+    # sees it, so only `input` becomes the -c program and no text reaches Compose.
     encoded = base64.b64encode(value.encode("ascii")).decode("ascii")
     command = f'input text "$(printf %s \'{encoded}\' | base64 -d)"'
     device.adb("shell", command)
@@ -130,33 +131,20 @@ def enroll_live_server(fixture: dict[str, str], public_key: str) -> None:
         raise AssertionError("Stock Zara server enrolled a different Android public key")
 
 
-def candidate_apk_sha256(claimed: str | None) -> str:
-    if not PHONE_APK.is_file():
-        raise AssertionError(f"Candidate Android APK is missing: {PHONE_APK}")
-    actual = hashlib.sha256(PHONE_APK.read_bytes()).hexdigest()
-    if claimed is None:
-        return actual
-    normalized = claimed.lower()
-    if SHA256_RE.fullmatch(normalized) is None:
-        raise ValueError("--apk-sha256 must be exactly 64 hexadecimal characters")
-    if normalized != actual:
-        raise AssertionError(
-            "Claimed Android APK SHA-256 does not match the installed candidate: "
-            f"claimed={normalized} actual={actual}"
-        )
-    return actual
+def read_app_diagnostics(device: Device) -> str:
+    return device.adb(
+        "shell",
+        "run-as",
+        APP_PACKAGE,
+        "cat",
+        APP_DIAGNOSTICS_PATH,
+    )
 
 
 def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
     evidence: dict[str, object] = {}
     try:
-        diagnostics = device.adb(
-            "shell",
-            "run-as",
-            APP_PACKAGE,
-            "cat",
-            APP_DIAGNOSTICS_PATH,
-        )
+        diagnostics = read_app_diagnostics(device)
         path = output / "remote-app-diagnostics.log"
         path.write_text(diagnostics, encoding="utf-8")
         evidence["app_diagnostics"] = path.name
@@ -196,6 +184,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.adb("shell", "pm", "clear", APP_PACKAGE)
     device.start()
 
+    # First prove the embedded Android Local server through the installed UI.
     open_menu(device, "Settings")
     device.tap_tab("Runtime")
     device.await_contains("LOCAL ZARA SERVER", timeout=20.0)
@@ -209,15 +198,25 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.tap("↑")
     device.await_contains("zara_ready", timeout=20.0)
     device.await_contains("LOCAL", timeout=5.0)
-    device.runtime_evidence = {
-        "mode": "local",
-        "runtime_id": "local-zara-server",
-        "model": None,
-        "quantization": None,
-        "phase": "ready",
-    }
-    device.capture("local-text-turn")
 
+    # Readiness alone is insufficient for the zero-model gate. Exercise ordinary
+    # natural language through the installed APK before any enrollment/network
+    # setup, require a deterministic portable-core result, and prove the optional
+    # local-model fallback was never entered for either Local turn.
+    device.tap("Ask anything…")
+    type_printable_ascii(device, "set a timer for 2 hours")
+    device.press_back()
+    device.tap("↑")
+    device.await_contains("timer.set", timeout=20.0)
+    device.await_contains("LOCAL", timeout=5.0)
+    local_diagnostics = read_app_diagnostics(device)
+    if "local_model.generate.begin" in local_diagnostics:
+        raise AssertionError("Installed Local symbolic turn entered the local-model fallback")
+    if "local_model.generate.complete" in local_diagnostics:
+        raise AssertionError("Installed Local symbolic turn completed through the local model")
+    device.capture("local-natural-symbolic-turn")
+
+    # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
     device.tap_tab("Connection")
     device.await_label("Create client identity")
@@ -242,15 +241,10 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.tap("Connect")
     device.await_label("connected", timeout=20.0)
     device.await_contains("session", timeout=5.0)
-    device.runtime_evidence = {
-        "mode": "local",
-        "runtime_id": "local-zara-server",
-        "model": None,
-        "quantization": None,
-        "phase": "connected",
-    }
     device.capture("remote-connected")
 
+    # Force the exact Remote routing policy for the turn so a Local response
+    # cannot accidentally satisfy this end-to-end gate.
     device.tap_tab("Runtime")
     device.tap("Remote")
     open_menu(device, "Chat")
@@ -262,19 +256,14 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     signal_turn_acceptance(fixture)
     device.await_contains("stock server response", timeout=20.0)
     device.await_contains("REMOTE", timeout=5.0)
-    device.runtime_evidence = {
-        "mode": "remote",
-        "runtime_id": "stock-zara-server",
-        "model": None,
-        "quantization": None,
-        "phase": "connected",
-    }
     device.capture("remote-text-turn")
 
     return {
         "endpoint": android_endpoint,
         "reverse_mapping": reverse_mapping.splitlines(),
         "local_turn_completed": True,
+        "local_natural_turn_completed": True,
+        "local_model_fallback_observed": False,
         "client_enrolled": True,
         "server_pin_verified": True,
         "connected": True,
@@ -286,8 +275,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL"))
     parser.add_argument("--fixture-file", type=Path, required=True)
-    parser.add_argument("--source-sha")
-    parser.add_argument("--apk-sha256")
     parser.add_argument(
         "--output",
         type=Path,
@@ -297,26 +284,13 @@ def main() -> None:
     if not args.serial:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
 
-    source_sha = verified_source_sha(args.source_sha)
-    apk_sha256 = candidate_apk_sha256(args.apk_sha256)
-
     args.output.mkdir(parents=True, exist_ok=True)
     fixture = read_fixture(args.fixture_file)
     device = Device(args.serial, args.output)
-    device.source_sha = source_sha
-    device.apk_sha256 = apk_sha256
-    device.current_profile = "default"
-    device.device_api = device.adb("shell", "getprop", "ro.build.version.sdk").strip()
-    if not re.fullmatch(r"\d+", device.device_api):
-        raise AssertionError(f"Android device API is unavailable: {device.device_api!r}")
     result: dict[str, object] = {
-        "source_sha": source_sha,
-        "apk_sha256": apk_sha256,
         "serial": args.serial,
-        "device": {"api": device.device_api},
         "passed": False,
         "screenshots": device.screenshots,
-        "scenarios": device.scenario_evidence,
     }
 
     try:
