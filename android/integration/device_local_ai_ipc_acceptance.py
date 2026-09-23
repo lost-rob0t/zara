@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from enum import Enum
 import hashlib
 import json
 from pathlib import Path
@@ -26,6 +27,41 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+class PermissionState(str, Enum):
+    GRANTED = "granted"
+    DENIED = "denied"
+    QUERY_ERROR = "query_error"
+
+
+def parse_install_permission_state(
+    package: str,
+    dump: str,
+) -> tuple[PermissionState, str]:
+    if f"Package [{package}]" not in dump:
+        return PermissionState.QUERY_ERROR, "package stanza missing from dumpsys"
+
+    requested = re.search(
+        rf"(?m)^\s+{re.escape(PERMISSION)}\s*$",
+        dump,
+    )
+    if requested is None:
+        return PermissionState.QUERY_ERROR, "permission missing from requested permissions"
+
+    grant = re.search(
+        rf"(?m)^\s+{re.escape(PERMISSION)}:\s+granted=(true|false)\b",
+        dump,
+    )
+    if grant is None:
+        # Signature permissions are install-time permissions. Android's package
+        # dump lists granted install permissions explicitly; a requested
+        # install-time permission absent from the grant list is denied.
+        return PermissionState.DENIED, "requested install permission absent from grant list"
+
+    if grant.group(1) == "true":
+        return PermissionState.GRANTED, "install permission granted"
+    return PermissionState.DENIED, "install permission explicitly denied"
 
 
 class Device:
@@ -123,8 +159,26 @@ class Device:
             f"UI did not show refreshed status containing {fragment!r}; last={last_text!r}"
         )
 
-    def permission(self, package: str) -> str:
-        return self.adb("shell", "pm", "check-permission", PERMISSION, package)
+    def permission(self, package: str) -> tuple[PermissionState, str]:
+        result = subprocess.run(
+            ["adb", "-s", self.serial, "shell", "dumpsys", "package", package],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()[:256]
+            return (
+                PermissionState.QUERY_ERROR,
+                f"dumpsys exited {result.returncode}: {detail or 'no output'}",
+            )
+        if result.stderr.strip():
+            return (
+                PermissionState.QUERY_ERROR,
+                f"dumpsys stderr: {result.stderr.strip()[:256]}",
+            )
+        return parse_install_permission_state(package, result.stdout)
 
     def pid(self) -> str | None:
         result = subprocess.run(
@@ -240,10 +294,17 @@ def main() -> None:
     device.uninstall(ADVERSARY_PACKAGE)
     device.install(args.adversary_apk)
     try:
-        permission = device.permission(ADVERSARY_PACKAGE)
-        evidence["adversary_permission"] = permission
-        if permission != "denied":
-            raise AssertionError(f"Adversary unexpectedly has signature permission: {permission}")
+        permission, permission_detail = device.permission(ADVERSARY_PACKAGE)
+        evidence["adversary_permission"] = permission.value
+        evidence["adversary_permission_query"] = permission_detail
+        if permission is PermissionState.QUERY_ERROR:
+            raise AssertionError(
+                f"Adversary permission query failed: {permission_detail}"
+            )
+        if permission is not PermissionState.DENIED:
+            raise AssertionError(
+                f"Adversary unexpectedly has signature permission: {permission.value}"
+            )
         device.launch(ADVERSARY_PACKAGE)
         device.tap("Start server")
         status = device.refresh_until("permission denied")
@@ -260,10 +321,17 @@ def main() -> None:
     device.install(args.llm_serve_apk)
     device.force_stop(NORMAL_PACKAGE)
     device.launch(NORMAL_PACKAGE)
-    normal_permission = device.permission(NORMAL_PACKAGE)
-    evidence["signed_client_permission"] = normal_permission
-    if normal_permission != "granted":
-        raise AssertionError(f"Same-lineage llm-serve lacks signature permission: {normal_permission}")
+    normal_permission, normal_permission_detail = device.permission(NORMAL_PACKAGE)
+    evidence["signed_client_permission"] = normal_permission.value
+    evidence["signed_client_permission_query"] = normal_permission_detail
+    if normal_permission is PermissionState.QUERY_ERROR:
+        raise AssertionError(
+            f"Same-lineage permission query failed: {normal_permission_detail}"
+        )
+    if normal_permission is not PermissionState.GRANTED:
+        raise AssertionError(
+            f"Same-lineage llm-serve lacks signature permission: {normal_permission.value}"
+        )
     device.tap("Start server")
     status = device.refresh_until("no model")
     evidence["signed_client_status"] = status
