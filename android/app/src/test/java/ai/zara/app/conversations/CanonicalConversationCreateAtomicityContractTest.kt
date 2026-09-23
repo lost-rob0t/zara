@@ -28,7 +28,7 @@ class CanonicalConversationCreateAtomicityContractTest {
     }
 
     @Test
-    fun `rollback primitive refuses to delete observable conversation state`() {
+    fun `rollback primitive refuses observable state and verifies the delete postcondition`() {
         val rollback = File(
             "src/main/java/ai/zara/app/history/ConversationCreateRollback.kt"
         ).readText()
@@ -38,5 +38,10 @@ class CanonicalConversationCreateAtomicityContractTest {
         assertTrue(rollback.contains("ConversationHistoryContract.localPrincipalId"))
         assertTrue(rollback.contains("writableDatabase.delete("))
         assertTrue(rollback.contains("\"desktop_conversations\""))
+        assertTrue(rollback.contains("getConversation(conversationId) == null"))
+        assertTrue(
+            rollback.indexOf("writableDatabase.delete(") <
+                rollback.indexOf("getConversation(conversationId) == null")
+        )
     }
 }
