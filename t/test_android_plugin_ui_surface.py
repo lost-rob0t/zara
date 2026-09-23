@@ -72,6 +72,23 @@ def test_install_flow_is_explicit_and_does_not_gain_broad_package_visibility():
     assert "android.permission.MANAGE_EXTERNAL_STORAGE" not in permissions
 
 
+def test_plugin_picker_exposes_label_on_the_actionable_semantics_node():
+    surface = (KOTLIN / "ui/PluginSettingsSurface.kt").read_text()
+    assert 'semantics(mergeDescendants = true) { contentDescription = "Choose APK" }' in surface
+
+
+def test_standalone_apk_policy_rejects_unsafe_archive_metadata_before_review():
+    security = (KOTLIN / "plugins/PluginApkSecurity.kt").read_text()
+    installer = (KOTLIN / "plugins/PluginApkInstaller.kt").read_text()
+    assert 'packagePattern = Regex("[A-Za-z][A-Za-z0-9_]*(\\\\.[A-Za-z][A-Za-z0-9_]*)+")' in security
+    assert "versionCode >= 0" in security
+    assert "versionName.none(Char::isISOControl)" in security
+    assert "minSdk in 1..sdkInt" in security
+    assert "!hasSplits" in security
+    assert "info.applicationInfo?.minSdkVersion ?: 1" in installer
+    assert "!info.splitNames.isNullOrEmpty()" in installer
+
+
 def test_device_evidence_matrix_captures_hashed_plugin_text_twins():
     acceptance = (ROOT / "android/integration/device_acceptance.py").read_text()
     assert '"Plugins",' in acceptance
