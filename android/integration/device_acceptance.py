@@ -60,10 +60,7 @@ class Device:
             text=not binary,
         )
 
-    def nodes(self):
-        # Hosted API-35 emulators can occasionally report a successful dump before
-        # the hierarchy file becomes available. Retry only that exact missing-file
-        # condition; command failures and malformed XML still fail immediately.
+    def _hierarchy_text(self) -> str:
         last_error: subprocess.CalledProcessError | None = None
         diagnostic = "no uiautomator diagnostic"
         for attempt in range(1, UI_DUMP_ATTEMPTS + 1):
@@ -78,10 +75,17 @@ class Device:
                     time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
                     continue
                 break
-            return ET.fromstring(hierarchy).iter("node")
+            ET.fromstring(hierarchy)
+            return hierarchy
         raise AssertionError(
             f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
         ) from last_error
+
+    def nodes(self):
+        # Hosted API-35 emulators can occasionally report a successful dump before
+        # the hierarchy file becomes available. Retry only that exact missing-file
+        # condition; command failures and malformed XML still fail immediately.
+        return ET.fromstring(self._hierarchy_text()).iter("node")
 
     def find(self, label: str):
         return next(
@@ -186,7 +190,7 @@ class Device:
             str((top + bottom) // 2),
         )
 
-    def tap_contains(self, fragment: str) -> None:
+    def tap_contains(self, fragment: str) -> tuple[int, int, int, int]:
         node = self.find_contains(fragment)
         if node is None:
             raise AssertionError(f"Control is not reachable: {fragment}")
@@ -200,6 +204,7 @@ class Device:
             str((left + right) // 2),
             str((top + bottom) // 2),
         )
+        return left, top, right, bottom
 
     def type_text(self, text: str) -> None:
         if not re.fullmatch(r"[A-Za-z0-9_]+", text):
@@ -312,16 +317,31 @@ class Device:
                 }
             )
 
+    def capture_text_twin(self, name: str) -> dict:
+        hierarchy = self._hierarchy_text()
+        data = hierarchy.encode("utf-8")
+        path = self.output / f"{name}.xml"
+        path.write_bytes(data)
+        return {
+            "file": path.name,
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
+
     def assert_transient_surface_visible(
         self,
         *,
         trigger_fragment: str,
         action_labels: tuple[str, ...],
         screenshot_name: str,
+        trigger_bounds: tuple[int, int, int, int] | None = None,
     ) -> None:
-        trigger = self.find_contains(trigger_fragment)
-        if trigger is None:
-            raise AssertionError(f"Transient-surface trigger is missing: {trigger_fragment}")
+        if trigger_bounds is None:
+            trigger = self.find_contains(trigger_fragment)
+            if trigger is None:
+                raise AssertionError(f"Transient-surface trigger is missing: {trigger_fragment}")
+            trigger_bounds = self.bounds(trigger)
+        if trigger_bounds[2] <= trigger_bounds[0] or trigger_bounds[3] <= trigger_bounds[1]:
+            raise AssertionError(f"Transient-surface trigger has empty bounds: {trigger_bounds}")
 
         action_nodes = []
         for label in action_labels:
@@ -331,11 +351,12 @@ class Device:
             action_nodes.append((label, node))
 
         path = self.capture(screenshot_name)
+        screenshot_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        text_twin = self.capture_text_twin(screenshot_name)
         with Image.open(path) as opened:
             image = opened.convert("RGB")
         viewport_width, viewport_height = image.size
 
-        trigger_bounds = self.bounds(trigger)
         checks: list[dict] = []
         lefts: list[int] = []
         tops: list[int] = []
@@ -413,9 +434,16 @@ class Device:
             {
                 "state": screenshot_name,
                 "trigger": trigger_fragment,
-                "trigger_bounds": trigger.attrib.get("bounds"),
+                "trigger_bounds": list(trigger_bounds),
                 "action_union": union,
                 "viewport": [viewport_width, viewport_height],
+                "screenshot_file": path.name,
+                "screenshot_sha256": screenshot_sha256,
+                "text_twin_file": text_twin["file"],
+                "text_twin_sha256": text_twin["sha256"],
+                "source_sha": getattr(self, "source_sha", None),
+                "device_api": getattr(self, "device_api", None),
+                "profile": getattr(self, "current_profile", "default"),
                 "actions": checks,
             }
         )
@@ -520,6 +548,7 @@ class Device:
         self.adb(
             "shell", "settings", "put", "system", "font_scale", font_scale_text
         )
+        self.current_profile = name
         self.profiles.append(
             {
                 "name": name,
@@ -548,6 +577,7 @@ class Device:
             self.adb("shell", "settings", "put", "system", "font_scale", "1.0")
         self._size_before_profile = None
         self._font_scale_before_profile = None
+        self.current_profile = "default"
         time.sleep(1.0)
 
 
@@ -573,7 +603,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("drawer-open")
 
     device.await_contains("Actions for ")
-    device.tap_contains("Actions for ")
+    trigger_bounds = device.tap_contains("Actions for ")
     device.await_label("Rename")
     device.await_label("Move to project")
     pin_label = "Pin" if device.find("Pin") is not None else "Unpin"
@@ -583,6 +613,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.assert_accessible_targets(overflow_actions)
     device.assert_transient_surface_visible(
         trigger_fragment="Actions for ",
+        trigger_bounds=trigger_bounds,
         action_labels=overflow_actions,
         screenshot_name="drawer-conversation-overflow",
     )
@@ -680,6 +711,8 @@ def main() -> None:
     source_sha = verified_source_sha(args.source_sha)
     args.output.mkdir(parents=True, exist_ok=True)
     device = Device(args.serial, args.output)
+    device.source_sha = source_sha
+    device.current_profile = "default"
     result = {
         "source_sha": source_sha,
         "serial": args.serial,
@@ -701,6 +734,7 @@ def main() -> None:
                 "shell", "settings", "get", "system", "font_scale"
             ).strip(),
         }
+        device.device_api = result["device"]["api"]
         exercise_three_menu_ui(device)
         result["passed"] = True
     except BaseException as error:
