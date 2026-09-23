@@ -116,3 +116,70 @@ def test_remote_gates_follow_settings_overview_instead_of_removed_tabs():
     remote = REMOTE_ACCEPTANCE.read_text(encoding="utf-8")
     assert 'device.await_contains("LOCAL RUNTIME", timeout=20.0)' in remote
     assert 'LOCAL ZARA SERVER' not in remote
+
+
+def test_remote_diagnostics_uses_device_shell_logcat_for_hosted_emulator(tmp_path):
+    import importlib.util
+    import sys
+    import types
+
+    integration_dir = Path("android/integration").resolve()
+    security_admin = types.ModuleType("zara.security_admin")
+    security_admin.SecurityAdminClient = object
+    zmq_utils = types.ModuleType("zmq.utils")
+    zmq_utils.z85 = object()
+    previous_security_admin = sys.modules.get("zara.security_admin")
+    previous_zmq_utils = sys.modules.get("zmq.utils")
+    sys.modules["zara.security_admin"] = security_admin
+    sys.modules["zmq.utils"] = zmq_utils
+    sys.path.insert(0, str(integration_dir))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "w03_device_remote_acceptance",
+            integration_dir / "device_remote_acceptance.py",
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(integration_dir))
+        if previous_security_admin is None:
+            sys.modules.pop("zara.security_admin", None)
+        else:
+            sys.modules["zara.security_admin"] = previous_security_admin
+        if previous_zmq_utils is None:
+            sys.modules.pop("zmq.utils", None)
+        else:
+            sys.modules["zmq.utils"] = previous_zmq_utils
+
+    class HostedEmulatorDevice:
+        def adb(self, *arguments: str):
+            if arguments == (
+                "shell",
+                "run-as",
+                module.APP_PACKAGE,
+                "cat",
+                module.APP_DIAGNOSTICS_PATH,
+            ):
+                return "event=text.submit mode=remote\n"
+            if arguments == ("shell", "pidof", module.APP_PACKAGE):
+                return "4242\n"
+            if arguments == (
+                "shell",
+                "logcat",
+                "-d",
+                "--pid",
+                "4242",
+                "-v",
+                "threadtime",
+            ):
+                return "09-23 19:54:43.678 I Zara: remote turn complete\n"
+            raise AssertionError(f"unexpected adb invocation: {arguments!r}")
+
+    evidence = module.collect_app_diagnostics(HostedEmulatorDevice(), tmp_path)
+
+    assert evidence["app_diagnostics"] == "remote-app-diagnostics.log"
+    assert evidence["logcat"] == "remote-logcat.log"
+    assert evidence["logcat_pid_filtered"] is True
+    assert evidence["fatal_log_markers"] == []
+    assert "logcat_failure" not in evidence
