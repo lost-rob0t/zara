@@ -122,6 +122,47 @@ class Device:
         self.adb("shell", "input", "keyevent", "3")
         time.sleep(0.8)
 
+    def main_pid(self) -> int | None:
+        raw = self.adb("shell", "sh", "-c", f"pidof {PACKAGE} || true").strip()
+        if not raw:
+            return None
+        pids = [int(value) for value in raw.split() if value.isdigit()]
+        if len(pids) != 1:
+            raise AssertionError(f"Expected one Zara main process PID, got {raw!r}")
+        return pids[0]
+
+    def require_main_pid(self, timeout: float = WAIT_SECONDS) -> int:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            pid = self.main_pid()
+            if pid is not None:
+                return pid
+            time.sleep(0.2)
+        raise AssertionError("Zara main process did not appear")
+
+    def terminate_main_process(self, previous_pid: int) -> None:
+        current_pid = self.main_pid()
+        if current_pid != previous_pid:
+            raise AssertionError(
+                f"Zara main process changed before termination: expected={previous_pid} actual={current_pid}"
+            )
+        self.home()
+        self.adb("shell", "am", "kill", PACKAGE)
+
+    def wait_for_main_pid_absent(self, previous_pid: int, timeout: float = WAIT_SECONDS) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            current_pid = self.main_pid()
+            if current_pid is None:
+                return
+            if current_pid != previous_pid:
+                raise AssertionError(
+                    "Zara main process recreated before launcher widget delivery: "
+                    f"previous={previous_pid} current={current_pid}"
+                )
+            time.sleep(0.2)
+        raise AssertionError(f"Zara main process did not terminate: pid={previous_pid}")
+
     def launch_evidence(self, *, command: str, kind: str | None = None, state: str | None = None) -> None:
         args = [
             "shell", "am", "start", "-W", "-n", EVIDENCE_ACTIVITY,
@@ -260,7 +301,15 @@ class Device:
             }
         )
 
-    def tap_action_and_assert_route(self, action: str, route_label: str, scenario: str) -> None:
+    def tap_action_and_assert_route(
+        self,
+        action: str,
+        route_label: str,
+        scenario: str,
+        *,
+        previous_pid: int | None = None,
+        require_recreated: bool | None = None,
+    ) -> int | None:
         self.home()
         self.wait_for(action)
         root = self.hierarchy()
@@ -269,6 +318,24 @@ class Device:
         assert node is not None
         self.tap_node(node)
         self.wait_for(route_label)
+        process_receipt: dict = {}
+        current_pid: int | None = None
+        if previous_pid is not None:
+            if require_recreated is None:
+                raise AssertionError("Process expectation must accompany previous_pid")
+            current_pid = self.require_main_pid()
+            recreated = current_pid != previous_pid
+            if recreated != require_recreated:
+                expectation = "new" if require_recreated else "same"
+                raise AssertionError(
+                    f"Widget route process receipt expected {expectation} PID: "
+                    f"before={previous_pid} after={current_pid}"
+                )
+            process_receipt = {
+                "pid_before": previous_pid,
+                "pid_after": current_pid,
+                "process_recreated": recreated,
+            }
         self.route_assertions.append(
             {
                 "scenario": scenario,
@@ -276,8 +343,10 @@ class Device:
                 "expected_route": route_label,
                 "passed": True,
                 "owner": assertion,
+                **process_receipt,
             }
         )
+        return current_pid
 
     def set_display_profile(self, *, target_width_dp: int, font_scale: float) -> None:
         if self._size_before_profile is not None:
@@ -363,12 +432,36 @@ def exercise(device: Device, source_sha: str) -> dict:
         action_labels=("CHAT", "VOICE", "LOGIC"),
     )
 
-    device.tap_action_and_assert_route("CHAT", "Chat", "route-cold")
-    device.tap_action_and_assert_route("CHAT", "Chat", "route-warm")
-    device.home()
-    device.adb("shell", "am", "kill", "ai.zara.app")
-    time.sleep(0.8)
-    device.tap_action_and_assert_route("CHAT", "Chat", "route-process-death")
+    cold_pid = device.require_main_pid()
+    device.terminate_main_process(cold_pid)
+    device.wait_for_main_pid_absent(cold_pid)
+    cold_after_pid = device.tap_action_and_assert_route(
+        "CHAT",
+        "Chat",
+        "route-cold",
+        previous_pid=cold_pid,
+        require_recreated=True,
+    )
+    assert cold_after_pid is not None
+    warm_after_pid = device.tap_action_and_assert_route(
+        "CHAT",
+        "Chat",
+        "route-warm",
+        previous_pid=cold_after_pid,
+        require_recreated=False,
+    )
+    assert warm_after_pid == cold_after_pid
+
+    device.terminate_main_process(warm_after_pid)
+    device.wait_for_main_pid_absent(warm_after_pid)
+    process_death_pid = device.tap_action_and_assert_route(
+        "CHAT",
+        "Chat",
+        "route-process-death",
+        previous_pid=warm_after_pid,
+        require_recreated=True,
+    )
+    assert process_death_pid is not None
 
     device.select_theme("Light")
     device.capture_bundle(
