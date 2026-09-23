@@ -1869,7 +1869,14 @@ class ZmqZaraClient(ZaraClient):
                 )
             return
         if pending.kind is _PendingKind.PEER_CANCEL:
-            if message.type != "node.cancel.accepted" or not message.turn_id:
+            if message.type == "node.error":
+                try:
+                    pending.future.set_exception(
+                        PeerCallRemoteError(PeerRemoteError.from_wire(message.body or {}))
+                    )
+                except (TypeError, ValueError) as error:
+                    pending.future.set_exception(ProtocolValidationError(str(error)))
+            elif message.type != "node.cancel.accepted" or not message.turn_id:
                 pending.future.set_exception(
                     ProtocolValidationError("invalid peer cancel response")
                 )
