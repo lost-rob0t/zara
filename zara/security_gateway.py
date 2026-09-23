@@ -92,7 +92,8 @@ class SecureZaraZmqGateway(PeerCallGatewayMixin, ZaraZmqGateway):
         limits=None,
         voice_ingress=None,
         local_node_id: Optional[str] = None,
-        runtime_id: str = "zara-runtime",
+        runtime_id: str = "zara-python",
+        runtime_generation: int = 0,
     ) -> None:
         if not isinstance(security_registry, SecurityRegistry):
             raise TypeError("security_registry must be SecurityRegistry")
@@ -126,6 +127,7 @@ class SecureZaraZmqGateway(PeerCallGatewayMixin, ZaraZmqGateway):
             curve_public_key=curve_server.public_key,
             local_node_id=local_node_id,
             runtime_id=runtime_id,
+            runtime_generation=runtime_generation,
         )
 
     @staticmethod
