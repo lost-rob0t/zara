@@ -76,13 +76,17 @@ class WearSurfaceContractTest {
     }
 
     @Test
-    fun orgScheduleProviderUsesPushUpdatedCacheNotPolling() {
+    fun orgScheduleProviderUsesDurableSerializedPushCacheNotPolling() {
         val manifest = File("src/main/AndroidManifest.xml").readText()
         val store = File("src/main/java/ai/zara/wear/surface/OrgScheduleSnapshotStore.kt").readText()
         val provider = File("src/main/java/ai/zara/wear/surface/OrgScheduleComplicationServices.kt").readText()
 
         assertTrue(manifest.contains("UPDATE_PERIOD_SECONDS\" android:value=\"0\""))
         assertTrue(store.contains("snapshot_v1"))
+        assertTrue(store.contains("Context.MODE_PRIVATE"))
+        assertTrue(store.contains("@Synchronized"))
+        assertTrue(store.contains(".commit()"))
+        assertFalse(store.contains(".apply()"))
         assertTrue(provider.contains("NoDataComplicationData"))
         assertTrue(provider.contains("RangedValueComplicationData.Builder"))
         assertTrue(provider.contains("snapshot.currentOrNextId"))
