@@ -13,6 +13,7 @@ object OrgScheduleSnapshotStore {
             ?.let(OrgScheduleSnapshotCodec::decode)
             ?: OrgScheduleSnapshot.EMPTY
 
+    @Synchronized
     fun replace(context: Context, snapshot: OrgScheduleSnapshot): Boolean {
         val current = read(context)
         if (!shouldAcceptOrgScheduleSnapshot(current, snapshot)) return false
