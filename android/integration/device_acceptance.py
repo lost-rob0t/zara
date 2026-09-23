@@ -519,9 +519,18 @@ def exercise_three_menu_ui(device: Device) -> None:
         "plugins-narrow-large-font", target_width_dp=320, font_scale=2.00
     )
     device.await_label("PLUGIN HOST")
-    device.capture("settings-plugins-narrow-large-font")
-    device.reveal("Publisher SHA-256")
-    device.capture("settings-plugins-install-narrow-large-font")
+    device.reveal("Choose APK")
+    device.capture(
+        "settings-plugins-narrow-large-font",
+        required_actions=("Choose APK",),
+    )
+    device.tap("Choose APK")
+    device.await_contains("Enter the publisher's 64-character SHA-256.")
+    device.reveal("Choose APK")
+    device.capture(
+        "settings-plugins-install-narrow-large-font",
+        required_actions=("Choose APK",),
+    )
     device.restore_profile()
     device.await_label("Plugins")
 
