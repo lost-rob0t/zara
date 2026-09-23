@@ -231,7 +231,7 @@ def assert_checkpoint_continuity(
     checkpoints: list[dict[str, object]],
     projection: dict[str, object],
 ) -> None:
-    """Reject recreation that swaps durable conversation identity or canonical expert evidence."""
+    """Reject recreation that swaps durable conversation, turn, or expert evidence identity."""
     if not checkpoints:
         raise AssertionError("Pure-symbolic acceptance recorded no durable checkpoints")
 
@@ -240,6 +240,7 @@ def assert_checkpoint_continuity(
         raise AssertionError("First durable checkpoint has no canonical conversation_id")
 
     by_stage: dict[str, dict[str, object]] = {}
+    seen_turn_ids: set[str] = set()
     for checkpoint in checkpoints:
         stage = checkpoint.get("stage")
         if not isinstance(stage, str) or not stage:
@@ -251,6 +252,15 @@ def assert_checkpoint_continuity(
             raise AssertionError(
                 f"{stage}: process recreation replaced canonical conversation identity"
             )
+
+        turn_id = checkpoint.get("turn_id")
+        if not isinstance(turn_id, str) or not turn_id:
+            raise AssertionError(f"{stage}: durable checkpoint has no canonical turn_id")
+        if turn_id in seen_turn_ids:
+            raise AssertionError(
+                f"{stage}: later UI-visible turn reused stale canonical turn_id {turn_id!r}"
+            )
+        seen_turn_ids.add(turn_id)
 
     if projection.get("conversation_id") != expected_conversation_id:
         raise AssertionError("Final durable snapshot is not the original canonical conversation")
@@ -275,6 +285,12 @@ def assert_checkpoint_continuity(
     if follow_up_ref != original_ref or final_ref != original_ref:
         raise AssertionError(
             "Process recreation or follow-up replaced the admitted canonical expert evidence ref"
+        )
+
+    follow_up_turn_id = expert_follow_up.get("turn_id")
+    if projection.get("turn_id") != follow_up_turn_id:
+        raise AssertionError(
+            "Final durable snapshot is not the terminal restart-safe `why?` turn"
         )
 
 
