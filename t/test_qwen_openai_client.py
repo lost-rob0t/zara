@@ -100,7 +100,7 @@ class FakeSession:
 
 
 def client_with(session: FakeSession) -> Qwen3TTSClient:
-    client = Qwen3TTSClient("http://tts.test")
+    client = Qwen3TTSClient("http://localhost:7860")
     client.session = session
     return client
 
@@ -119,7 +119,7 @@ async def test_speech_posts_openai_json_body_and_returns_wav():
 
     assert audio == wav_bytes()
     request = session.requests[0]
-    assert request["url"] == "http://tts.test/v1/audio/speech"
+    assert request["url"] == "http://localhost:7860/v1/audio/speech"
     assert request["kwargs"]["json"] == {
         "input": "Hello world.",
         "voice": "zara",
@@ -176,7 +176,7 @@ async def test_list_voices_parses_the_registry():
     voices = await client.list_voices()
 
     assert voices == ["zara", "vivian"]
-    assert session.requests[0]["url"] == "http://tts.test/v1/audio/voices"
+    assert session.requests[0]["url"] == "http://localhost:7860/v1/audio/voices"
 
 
 @pytest.mark.asyncio
@@ -362,8 +362,8 @@ async def test_same_target_voice_registration_has_one_verified_winner(tmp_path: 
         async def close(self):
             self.closed = True
 
-    first = Qwen3TTSClient("http://tts-race.test")
-    second = Qwen3TTSClient("http://tts-race.test")
+    first = Qwen3TTSClient("http://localhost:7860")
+    second = Qwen3TTSClient("http://127.0.0.1:7860")
     first.session = DynamicSession()
     second.session = DynamicSession()
 
@@ -419,8 +419,8 @@ async def test_same_target_voice_delete_has_one_verified_winner():
         async def close(self):
             self.closed = True
 
-    first = Qwen3TTSClient("http://tts-race.test")
-    second = Qwen3TTSClient("http://tts-race.test")
+    first = Qwen3TTSClient("http://localhost:7860")
+    second = Qwen3TTSClient("http://127.0.0.1:7860")
     first.session = DynamicSession()
     second.session = DynamicSession()
 
