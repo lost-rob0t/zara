@@ -387,9 +387,10 @@ workflow_plan(Id, Actions) :-
     strip_sequences(Sorted, Actions).
 
 % Project only targets that are already concrete for this executor. Dynamic
-% `initiator` and `best` targets deliberately remain unresolved in workflow_plan/2
-% so the canonical runtime can bind them using authenticated surface/session
-% context instead of this inert KB guessing an execution peer.
+% `any`, `initiator`, and `best` targets deliberately remain unresolved in
+% workflow_plan/2 so the canonical runtime can bind one eligible executor using
+% authenticated surface/session context instead of this inert KB guessing or
+% accidentally broadcasting an action.
 workflow_actions_for_executor(Id, Executor, Actions) :-
     workflow_surface(Executor),
     workflow_plan(Id, Plan),
@@ -405,7 +406,6 @@ filter_actions_for_executor([Action|Rest], Executor, Actions) :-
 
 action_for_executor(Executor, action(Target, _, _, _)) :-
     ( Target == Executor
-    ; Target == any
     ; Target == all
     ).
 
