@@ -18,6 +18,8 @@ from zmq.utils import z85
 
 APP_PACKAGE = "ai.zara.app"
 APP_DIAGNOSTICS_PATH = "no_backup/zara/diagnostics/local-runtime.log"
+LOGCAT_ATTEMPTS = 3
+LOGCAT_RETRY_DELAY_SECONDS = 0.1
 _FATAL_LOG_MARKERS = (
     "FATAL EXCEPTION",
     "ANR in ai.zara.app",
@@ -101,10 +103,6 @@ def find_curve_public_key(device: Device) -> str:
 def type_printable_ascii(device: Device, value: str) -> None:
     if not value or any(ord(char) < 0x20 or ord(char) > 0x7E for char in value):
         raise AssertionError("Remote acceptance input must be printable ASCII")
-    # Avoid adb-shell metacharacter handling entirely: only a base64 token enters
-    # the remote command. Keep the whole shell pipeline in one adb shell argument;
-    # splitting it through `sh -c` makes adb join the argv before the device shell
-    # sees it, so only `input` becomes the -c program and no text reaches Compose.
     encoded = base64.b64encode(value.encode("ascii")).decode("ascii")
     command = f'input text "$(printf %s \'{encoded}\' | base64 -d)"'
     device.adb("shell", command)
@@ -131,6 +129,37 @@ def enroll_live_server(fixture: dict[str, str], public_key: str) -> None:
         raise AssertionError("Stock Zara server enrolled a different Android public key")
 
 
+def _read_logcat(device: Device) -> tuple[str, bool]:
+    last_error: Exception | None = None
+    for attempt in range(LOGCAT_ATTEMPTS):
+        try:
+            pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
+            if not re.fullmatch(r"\d+", pid):
+                raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
+            try:
+                return device.adb("logcat", "-d", "--pid", pid, "-v", "threadtime"), True
+            except Exception as error:
+                last_error = error
+        except Exception as error:
+            last_error = error
+
+        try:
+            return device.adb("logcat", "-d", "-v", "threadtime"), False
+        except Exception as error:
+            last_error = error
+
+        if attempt + 1 < LOGCAT_ATTEMPTS:
+            try:
+                device.adb("wait-for-device")
+            except Exception:
+                pass
+            time.sleep(LOGCAT_RETRY_DELAY_SECONDS)
+
+    if last_error is None:
+        raise RuntimeError("adb logcat did not produce evidence")
+    raise last_error
+
+
 def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
     evidence: dict[str, object] = {}
     try:
@@ -148,23 +177,12 @@ def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
         evidence["app_diagnostics_failure"] = str(error)
 
     try:
-        try:
-            pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
-            if not re.fullmatch(r"\d+", pid):
-                raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
-            logcat = device.adb("logcat", "-d", "--pid", pid, "-v", "threadtime")
-            evidence["logcat_pid_filtered"] = True
-        except Exception:
-            logcat = device.adb("logcat", "-d", "-v", "threadtime")
-            evidence["logcat_pid_filtered"] = False
+        logcat, pid_filtered = _read_logcat(device)
+        evidence["logcat_pid_filtered"] = pid_filtered
         path = output / "remote-logcat.log"
         path.write_text(logcat, encoding="utf-8")
         evidence["logcat"] = path.name
-        markers = (
-            _FATAL_LOG_MARKERS
-            if evidence.get("logcat_pid_filtered") is True
-            else _APP_SCOPED_FATAL_LOG_MARKERS
-        )
+        markers = _FATAL_LOG_MARKERS if pid_filtered else _APP_SCOPED_FATAL_LOG_MARKERS
         fatal_markers = [marker for marker in markers if marker in logcat]
         evidence["fatal_log_markers"] = fatal_markers
     except Exception as error:
@@ -180,7 +198,6 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.adb("shell", "pm", "clear", APP_PACKAGE)
     device.start()
 
-    # First prove the embedded Android Local server through the installed UI.
     open_menu(device, "Settings")
     device.tap_tab("Runtime")
     device.await_contains("LOCAL ZARA SERVER", timeout=20.0)
@@ -196,7 +213,6 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.await_contains("LOCAL", timeout=5.0)
     device.capture("local-text-turn")
 
-    # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
     device.tap_tab("Connection")
     device.await_label("Create client identity")
@@ -223,8 +239,6 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.await_contains("session", timeout=5.0)
     device.capture("remote-connected")
 
-    # Force the exact Remote routing policy for the turn so a Local response
-    # cannot accidentally satisfy this end-to-end gate.
     device.tap_tab("Runtime")
     device.tap("Remote")
     open_menu(device, "Chat")
