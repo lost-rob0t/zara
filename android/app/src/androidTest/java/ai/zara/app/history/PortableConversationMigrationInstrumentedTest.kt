@@ -1,5 +1,6 @@
 package ai.zara.app.history
 
+import ai.zara.app.automation.AndroidAdbVisionEmulatorAcceptance
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.test.platform.app.InstrumentationRegistry
@@ -89,6 +90,11 @@ class PortableConversationMigrationInstrumentedTest {
         } finally {
             reopened.close()
         }
+    }
+
+    @Test
+    fun adbVisionLoopUsesFreshVerifiedObservationOnEmulator() {
+        AndroidAdbVisionEmulatorAcceptance.assertVerifiedLoop()
     }
 
     private fun seedVersion2Database() {
