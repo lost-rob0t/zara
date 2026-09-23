@@ -112,6 +112,64 @@ class CanonicalConversationMetadataCommitAtomicityInstrumentedTest {
         }
     }
 
+    @Test
+    fun failedRemoteConversationMetadataCommitDoesNotTerminalizeTurn() {
+        PortableConversationStore(context).use { history ->
+            val ui = CanonicalConversationStore(
+                history = history,
+                metadataFile = metadataFile,
+                legacyFile = null,
+                idFactory = { CONVERSATION_A },
+            )
+            ui.create(projectId = "project-a")
+            ui.beginTurn(CONVERSATION_A, "continue the symbolic investigation")
+            val turnId = requireNotNull(ui.runningTurnId(CONVERSATION_A))
+
+            blockMetadataParent()
+            val failure = runCatching {
+                ui.completeTurn(
+                    conversationId = CONVERSATION_A,
+                    assistantText = "deterministic symbolic result",
+                    success = true,
+                    expectedTurnId = turnId,
+                    remoteConversationId = REMOTE_CONVERSATION_ID,
+                )
+            }.exceptionOrNull()
+
+            assertNotNull("remote-id metadata persistence must fail for a non-directory parent", failure)
+            val failed = requireNotNull(ui.state().conversation(CONVERSATION_A))
+            assertEquals(ConversationStatus.Running, failed.status)
+            assertEquals(null, failed.remoteConversationId)
+            assertEquals(null, failed.turns.single().assistantText)
+            assertEquals(turnId, ui.runningTurnId(CONVERSATION_A))
+
+            restoreMetadataParent()
+            val retried = ui.completeTurn(
+                conversationId = CONVERSATION_A,
+                assistantText = "deterministic symbolic result",
+                success = true,
+                expectedTurnId = turnId,
+                remoteConversationId = REMOTE_CONVERSATION_ID,
+            )
+            val completed = requireNotNull(retried.conversation(CONVERSATION_A))
+            assertEquals(ConversationStatus.Success, completed.status)
+            assertEquals(REMOTE_CONVERSATION_ID, completed.remoteConversationId)
+            assertEquals("deterministic symbolic result", completed.turns.single().assistantText)
+        }
+
+        PortableConversationStore(context).use { reopenedHistory ->
+            val reopenedUi = CanonicalConversationStore(
+                history = reopenedHistory,
+                metadataFile = metadataFile,
+                legacyFile = null,
+            )
+            val reopened = requireNotNull(reopenedUi.state().conversation(CONVERSATION_A))
+            assertEquals(ConversationStatus.Success, reopened.status)
+            assertEquals(REMOTE_CONVERSATION_ID, reopened.remoteConversationId)
+            assertEquals("deterministic symbolic result", reopened.turns.single().assistantText)
+        }
+    }
+
     private fun blockMetadataParent() {
         assertTrue(metadataFile.delete())
         assertTrue(metadataRoot.delete())
@@ -127,5 +185,6 @@ class CanonicalConversationMetadataCommitAtomicityInstrumentedTest {
     private companion object {
         const val CONVERSATION_A = "metadata-atomicity-a"
         const val CONVERSATION_B = "metadata-atomicity-b"
+        const val REMOTE_CONVERSATION_ID = "remote-metadata-atomicity"
     }
 }
