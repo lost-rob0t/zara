@@ -75,6 +75,47 @@ class AndroidAdbVisionControlLoopTest {
     }
 
     @Test
+    fun `new run generation fences a late decision from the prior run`() {
+        val adb = FakeAdbPort(ArrayDeque(listOf(png(1), png(2))))
+        val firstDecision = CompletableFuture<AndroidVisionDecision>()
+        var calls = 0
+        val interpreter = object : CanonicalMultimodalVisionPort {
+            override fun interpret(observation: AndroidVisionObservation): CompletableFuture<AndroidVisionDecision> {
+                calls += 1
+                return if (calls == 1) firstDecision
+                else CompletableFuture.completedFuture(AndroidVisionDecision.Done("new generation"))
+            }
+
+            override fun verify(verification: AndroidVisionVerification): CompletableFuture<Boolean> =
+                CompletableFuture.completedFuture(true)
+
+            override fun cancel() = Unit
+        }
+        val authority = FakeAuthority(capable = true, approved = true)
+        val loop = AndroidAdbVisionControlLoop(
+            adb = adb,
+            multimodal = interpreter,
+            queryProlog = { query ->
+                CompletableFuture.completedFuture(LocalQueryResult(query, listOf("require_approval"), 1))
+            },
+            authority = authority,
+            limits = AndroidVisionLoopLimits(maxSteps = 4, maxObservedBytes = 1024 * 1024, timeoutMillis = 5_000),
+        )
+
+        val oldRun = loop.run("old goal")
+        val newRun = loop.run("new goal")
+        assertEquals(
+            AndroidVisionLoopResult.Completed("new generation", 0, 9),
+            newRun.get(2, TimeUnit.SECONDS),
+        )
+        firstDecision.complete(AndroidVisionDecision.Act(AndroidAutomationAction.AdbTap(9, 9)))
+
+        assertEquals(AndroidVisionLoopResult.Cancelled, oldRun.get(2, TimeUnit.SECONDS))
+        assertTrue(adb.actions.isEmpty())
+        assertFalse(authority.approvalRequested)
+    }
+
+    @Test
     fun `mutation success is not accepted until a fresh screenshot verifies the postcondition`() {
         val before = png(1)
         val after = png(2)
