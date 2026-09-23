@@ -1,5 +1,6 @@
 package ai.zara.app.widget
 
+import ai.zara.app.ui.AppRoute
 import ai.zara.ui.theme.ZaraTheme
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -12,13 +13,29 @@ enum class WidgetKind(val atom: String) {
     ACTIONS("actions"),
 }
 
-enum class WidgetRoute(val atom: String) {
-    CHAT("chat"),
-    LOGIC("logic"),
-    VOICE("voice"),
-    REMOTE("remote"),
-    DIAGNOSTICS("diagnostics"),
-    THEMES("themes"),
+enum class WidgetRoute(val atom: String, val appRoute: AppRoute) {
+    CHAT("chat", AppRoute.Chat),
+    VOICE("voice", AppRoute.Voice),
+    LOGIC("logic", AppRoute.Logic),
+    PROJECTS("projects", AppRoute.Projects),
+    SCHEDULED("scheduled", AppRoute.Scheduled),
+    RUNTIME("runtime", AppRoute.Runtime),
+    CONNECTION("connection", AppRoute.Connection),
+    PERMISSIONS("permissions", AppRoute.Permissions),
+    APPEARANCE("appearance", AppRoute.Appearance),
+    PLUGINS("plugins", AppRoute.Plugins),
+    UPDATES("updates", AppRoute.Updates),
+    DIAGNOSTICS("diagnostics", AppRoute.Diagnostics),
+    ABOUT("about", AppRoute.About),
+    ;
+
+    companion object {
+        fun fromAtom(raw: String): WidgetRoute? = when (raw.trim().lowercase()) {
+            "remote" -> RUNTIME
+            "themes" -> APPEARANCE
+            else -> entries.firstOrNull { it.atom == raw.trim().lowercase() }
+        }
+    }
 }
 
 enum class WidgetAlignment { START, CENTER, END }
@@ -181,7 +198,7 @@ class WidgetStyleCompiler(
                 "ZARA RUNTIME",
                 "Runtime",
                 "Last known device state",
-                "REMOTE",
+                "RUNTIME",
                 "DIAGNOSTICS",
                 "LOGIC",
             )
@@ -195,7 +212,7 @@ class WidgetStyleCompiler(
             )
         }
         val actions = when (kind) {
-            WidgetKind.RUNTIME -> WidgetActions(WidgetRoute.REMOTE, WidgetRoute.DIAGNOSTICS, WidgetRoute.LOGIC)
+            WidgetKind.RUNTIME -> WidgetActions(WidgetRoute.RUNTIME, WidgetRoute.DIAGNOSTICS, WidgetRoute.LOGIC)
             else -> WidgetActions(WidgetRoute.CHAT, WidgetRoute.VOICE, WidgetRoute.LOGIC)
         }
         return WidgetResolvedStyle(
@@ -360,7 +377,7 @@ class WidgetStyleCompiler(
             ?: throw IllegalArgumentException("Unknown widget theme $raw")
     }
 
-    private fun route(raw: String): WidgetRoute = WidgetRoute.entries.firstOrNull { it.atom == raw }
+    private fun route(raw: String): WidgetRoute = WidgetRoute.fromAtom(raw)
         ?: throw IllegalArgumentException("Unknown widget route $raw")
 
     private inline fun <reified T : Enum<T>> enumValue(raw: String, label: String): T =
