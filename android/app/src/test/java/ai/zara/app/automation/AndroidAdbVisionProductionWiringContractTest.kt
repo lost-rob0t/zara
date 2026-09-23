@@ -21,4 +21,23 @@ class AndroidAdbVisionProductionWiringContractTest {
         assertFalse(activity.contains("LocalAiServiceClient"))
         assertFalse(activity.contains("AndroidCanonicalMultimodalVisionPort("))
     }
+
+    @Test
+    fun `blocking screenshot and admitted ADB effects never resume on the Compose UI thread`() {
+        val activity = File("src/main/java/ai/zara/app/automation/AutomationActivity.kt").readText()
+        val runVision = activity.substringAfter("private fun runVision(goal: String)")
+            .substringBefore("private fun cancelVision()")
+        val resolveApproval = activity.substringAfter("private fun resolveVisionApproval(approved: Boolean)")
+            .substringBefore("private fun requestAccess(")
+
+        // screenshotPng() is synchronous at loop entry, so production starts the loop on the
+        // existing AutomationActivity I/O executor rather than blocking Compose's main thread.
+        assertTrue(runVision.contains("io.execute {"))
+        assertTrue(runVision.contains("visionControl.run(goal)"))
+
+        // CompletableFuture continuations execute on the completing thread. Approval therefore
+        // completes on the same I/O executor so an admitted tap/swipe/text/key cannot run on UI.
+        assertTrue(resolveApproval.contains("io.execute {"))
+        assertTrue(resolveApproval.contains("pending.future.complete(approved)"))
+    }
 }
