@@ -89,4 +89,13 @@ test(wear_command_center_has_linux_target) :-
     workflow_action(watch_command_center, _, _, ui, command_center, Args),
     member(arg(target, linux), Args).
 
+test(dynamic_targets_are_not_projected_to_every_executor) :-
+    workflow_actions_for_executor(morning_briefing, android, Actions),
+    \+ member(action(best, device, status, _), Actions),
+    \+ member(action(initiator, conversation, present_brief, _), Actions).
+
+test(shared_targets_still_project_to_each_executor) :-
+    workflow_actions_for_executor(focus_start, android, Actions),
+    member(action(all, device, focus_mode, [arg(enabled, true)]), Actions).
+
 :- end_tests(default_workflows).
