@@ -13,6 +13,8 @@ import time
 import xml.etree.ElementTree as ET
 
 UI_DUMP = "/data/local/tmp/zara-local-ai-ipc.xml"
+UI_DUMP_ATTEMPTS = 3
+UI_DUMP_RETRY_DELAY_SECONDS = 0.2
 PERMISSION = "ai.zara.app.permission.LOCAL_AI"
 HOST_PACKAGE = "ai.zara.app"
 HOST_PROCESS = "ai.zara.app:voice"
@@ -101,10 +103,28 @@ class Device:
         self.adb("shell", "am", "force-stop", package)
 
     def nodes(self):
-        self.adb("shell", "rm", "-f", UI_DUMP)
-        self.adb("shell", "uiautomator", "dump", UI_DUMP)
-        raw = self.adb("shell", "cat", UI_DUMP)
-        return ET.fromstring(raw).iter("node")
+        # Hosted emulators can report a successful UIAutomator dump before the
+        # hierarchy file is visible to the following shell command. Retry only
+        # that missing-file read; dump failures and malformed XML still fail
+        # immediately so acceptance cannot turn an app failure into a green.
+        last_error: subprocess.CalledProcessError | None = None
+        diagnostic = "no uiautomator diagnostic"
+        for attempt in range(1, UI_DUMP_ATTEMPTS + 1):
+            self.adb("shell", "rm", "-f", UI_DUMP)
+            dump_output = self.adb("shell", "uiautomator", "dump", UI_DUMP)
+            try:
+                raw = self.adb("shell", "cat", UI_DUMP)
+            except subprocess.CalledProcessError as error:
+                last_error = error
+                diagnostic = dump_output.strip() or "no uiautomator diagnostic"
+                if attempt < UI_DUMP_ATTEMPTS:
+                    time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
+                    continue
+                break
+            return ET.fromstring(raw).iter("node")
+        raise AssertionError(
+            f"UIAutomator did not create {UI_DUMP}: {diagnostic}"
+        ) from last_error
 
     def find(self, label: str):
         return next(
