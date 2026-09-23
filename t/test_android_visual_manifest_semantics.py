@@ -11,6 +11,14 @@ import pytest
 EMULATOR_GATE = Path("scripts/test-android-emulator-install.sh")
 EVIDENCE_VALIDATOR = Path("scripts/validate-ui-evidence.py")
 SOURCE_SHA = "a" * 40
+APK_SHA256 = "b" * 64
+RUNTIME = {
+    "mode": None,
+    "runtime_id": None,
+    "model": None,
+    "quantization": None,
+    "phase": None,
+}
 
 
 def visual_manifest_verifier() -> str:
@@ -45,6 +53,8 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
 
     scenario_text = tmp_path / "drawer-conversation-overflow.ui.txt"
     scenario_text.write_text(
+        'route="chat"\n'
+        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n"
         'class="android.widget.TextView" text="Rename" enabled=true clickable=false '
         'bounds=[10,30][70,50]\n',
         encoding="utf-8",
@@ -82,8 +92,11 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
     scenario = {
         "scenario_id": "android.ui.drawer-conversation-overflow",
         "source_sha": SOURCE_SHA,
+        "apk_sha256": APK_SHA256,
         "device_api": "35",
         "profile": "default",
+        "route": "chat",
+        "runtime": dict(RUNTIME),
         "actions": ["capture:drawer-conversation-overflow"],
         "assertions": [
             {
@@ -111,6 +124,7 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
     manifest = {
         "passed": True,
         "source_sha": SOURCE_SHA,
+        "apk_sha256": APK_SHA256,
         "device": {"api": "35"},
         "screenshots": [
             {
