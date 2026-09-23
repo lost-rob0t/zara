@@ -6,12 +6,18 @@ import android.content.Intent
 import ai.zara.app.MainActivity
 import ai.zara.app.ui.AppRoute
 
+/**
+ * Parse a bounded widget route from the Activity intent without destroying it.
+ *
+ * MainActivity clears the extra only after canonical AppNavigation has accepted
+ * the request, so process death between delivery and composition can replay the
+ * same bounded request instead of silently losing it.
+ */
 internal fun consumeWidgetRoute(intent: Intent?): AppRoute? {
     val requested = intent?.getStringExtra(WidgetRouteReceiver.EXTRA_ROUTE)?.trim()?.lowercase() ?: return null
     val route = WidgetRoute.entries.firstOrNull { it.atom == requested }
         ?: WidgetRoute.fromAtom(requested)
         ?: return null
-    intent.removeExtra(WidgetRouteReceiver.EXTRA_ROUTE)
     return route.appRoute
 }
 
