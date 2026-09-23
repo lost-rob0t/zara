@@ -15,7 +15,12 @@ object WidgetNavigationRequest {
         pending.set(route)
     }
 
-    fun consume(): AppRoute? = pending.getAndSet(null)
+    fun peek(): AppRoute? = pending.get()
+
+    fun consume(expected: AppRoute? = null): AppRoute? {
+        if (expected == null) return pending.getAndSet(null)
+        return if (pending.compareAndSet(expected, null)) expected else null
+    }
 }
 
 private fun WidgetRoute.toAppRoute(): AppRoute = when (this) {
@@ -34,7 +39,7 @@ class WidgetRouteReceiver : BroadcastReceiver() {
         WidgetNavigationRequest.request(route.toAppRoute())
         context.startActivity(
             Intent(context, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             },
         )
     }
