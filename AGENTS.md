@@ -74,19 +74,16 @@ Do not game coverage. Never weaken assertions, add meaningless execution-only te
 - Run `python scripts/version-context.py --format json` before consequential version, release, tag, APK-channel, or updater decisions.
 - `zara.version` and `android.versionCode` describe the source being built. `release.target` and `release.targetAndroidVersionCode` describe the active release line. Do not conflate current source, active target, latest immutable release, or mutable `android-latest`.
 - Python packaging, Android phone, Wear, and versioned release CI must consume or validate that canonical context; hard-coded competing product versions are a regression.
-- Every immutable product version maps one-to-one to `v<version>` and one GitHub release; never reuse or move a version tag/release.
-- Versioned publication must wait for exact-source CI, including Android UI acceptance, and then verify the downloaded published APK/checksum/manifest/signer against the gated build.
-- The mutable `android-latest` channel is separate: every `master` push starts an exact-SHA signed Android/Wear build and advances the rolling channel only after that build's Android/Wear gate passes.
+- Immutable versioned publication requires an explicit matching `v*` tag. Master pushes validate context and may update the separate fully-green `android-latest` channel, but do not mint immutable versioned releases.
 
 ## Changelog Contract
 
 - `CHANGELOG.md` at the repository root is Zara's canonical user-facing changelog.
-- Every pull request targeting `master` must update `CHANGELOG.md` in the same PR so humans can follow master as it changes. This includes internal/refactor/test/CI-only merges; summarize those briefly and plainly rather than omitting them.
-- Add ordinary merged work to `Unreleased`. Once an immutable version tag exists, never append later master work to that released version section.
-- CI rejects a master-bound PR whose canonical changelog is unchanged. Release/promotion workers additionally reconcile `Unreleased` into the exact version section before publication, and version-changing CI validates that the promoted version has a non-empty canonical section.
+- Every worker that lands a user-visible feature, behavior change, bug fix, compatibility change, packaging change, updater change, or release-facing CI/provenance change on `master` must update `CHANGELOG.md` in the same PR/commit.
+- Add normal merged work to `Unreleased` unless the active release section already exists and the change is explicitly part of that release. Release/promotion workers reconcile `Unreleased` into the exact version section before publication.
 - Keep entries short, concrete, and user-facing. Do not dump commit messages, internal worker coordination, or speculative/unmerged work into the changelog.
 - Re-fetch current `master` before editing the changelog, preserve concurrent entries, and deduplicate semantically equivalent notes rather than overwriting another worker's entry.
-- GitHub release pages, Desktop, and Android all derive release notes from the matching canonical version section. Desktop and Android surface it on first launch after a version changes; breaking any of the three surfaces or omitting the current release section is a release regression.
+- Desktop and Android surface the matching version section on first launch after a version changes; breaking the changelog parser or omitting the current release section is a release regression.
 
 ## CI/CD Test Gate
 - Always run the focused red/green TDD cycle before the full test suite for behavior changes.

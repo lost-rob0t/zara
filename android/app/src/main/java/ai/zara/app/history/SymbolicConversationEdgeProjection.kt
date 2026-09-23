@@ -70,6 +70,8 @@ private fun extractStableRefs(
             "$label[$index] is missing a stable reference key: ${keys.joinToString()}"
         }
     }
+        .distinct()
+        .takeLast(SymbolicConversationEdgeSnapshot.MAX_REFS)
 }
 
 private fun JSONObject.firstNonBlankString(keys: Array<String>): String? {

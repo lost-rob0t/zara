@@ -1,5 +1,6 @@
 package ai.zara.app.history
 
+import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
 import android.content.Context
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -59,6 +60,50 @@ class SymbolicConversationEdgeProjectionInstrumentedTest {
     }
 
     @Test
+    fun canonicalKnowledgeBeyondEdgeWindowKeepsLatestScopedReferencesAfterRecreation() {
+        val discourseRefs = List(18) { index -> "entity:$index" }
+        val questionRefs = List(18) { index -> "question:$index" }
+        val evidenceRefs = List(18) { index -> "evidence:$index" }
+        val first = PortableConversationStore(context)
+        first.createConversation("Bounded edge continuity", conversationId = CONVERSATION_ID)
+        first.saveSymbolicProjection(
+            projection(
+                discourseEntitiesJson = discourseRefs.joinToString(
+                    prefix = "[",
+                    postfix = "]",
+                ) { ref -> "{\"entity_id\":\"$ref\"}" },
+                unresolvedQuestionsJson = questionRefs.joinToString(
+                    prefix = "[",
+                    postfix = "]",
+                ) { ref -> "{\"question_id\":\"$ref\"}" },
+                expertEvidenceJson = evidenceRefs.joinToString(
+                    prefix = "[",
+                    postfix = "]",
+                ) { ref -> "{\"evidence_id\":\"$ref\"}" },
+            ),
+            expectedGeneration = 0,
+        )
+        first.close()
+
+        val reopened = PortableConversationStore(context)
+        try {
+            val edge = checkNotNull(reopened.loadSymbolicEdgeSnapshot(CONVERSATION_ID))
+            edge.assertPureSymbolic()
+
+            val window = SymbolicConversationEdgeSnapshot.MAX_REFS
+            assertEquals(discourseRefs.takeLast(window), edge.discourseEntityRefs)
+            assertEquals(questionRefs.takeLast(window), edge.unresolvedQuestionRefs)
+            assertEquals(evidenceRefs.takeLast(window), edge.expertEvidenceRefs)
+            assertFalse(edge.providersEnabled)
+            assertEquals(0L, edge.maxModelCalls)
+            assertEquals(0L, edge.providerCalls)
+            assertEquals(0L, edge.modelCalls)
+        } finally {
+            reopened.close()
+        }
+    }
+
+    @Test
     fun projectionFailsClosedWhenExpertAnswerHasNoCanonicalEvidenceRef() {
         val projection = projection(expertEvidenceJson = "[]")
 
@@ -86,6 +131,7 @@ class SymbolicConversationEdgeProjectionInstrumentedTest {
 
     private fun projection(
         discourseEntitiesJson: String = "[{\"entity_id\":\"file:flake.nix\"}]",
+        unresolvedQuestionsJson: String = "[{\"slot\":\"target\"}]",
         expertEvidenceJson: String = "[{\"evidence_id\":\"ev-1\"}]",
     ) = SymbolicConversationProjection(
         conversationId = CONVERSATION_ID,
@@ -98,7 +144,7 @@ class SymbolicConversationEdgeProjectionInstrumentedTest {
         dialogueAct = "expert_answer",
         dialogueStateJson = "{\"act\":\"expert_answer\"}",
         discourseEntitiesJson = discourseEntitiesJson,
-        unresolvedQuestionsJson = "[{\"slot\":\"target\"}]",
+        unresolvedQuestionsJson = unresolvedQuestionsJson,
         expertEvidenceJson = expertEvidenceJson,
         verifiedFactsJson = "[{\"fact_id\":\"fact-1\"}]",
         verifiedOutcomeRefs = listOf(VERIFIED_OUTCOME_REF),

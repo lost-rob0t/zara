@@ -15,10 +15,8 @@ on:
       - android/code-editor/build.gradle.kts
       - android/wear-app/build.gradle.kts
       - .github/workflows/release.yml
-      - scripts/release-changelog.py
 
 permissions:
-  actions: read
   contents: write
 
 jobs:
@@ -69,65 +67,8 @@ jobs:
           fi
           echo "publish_needed=$publish_needed" >> "$GITHUB_OUTPUT"
 
-      - name: Validate canonical release notes
-        if: steps.release.outputs.release_ready == 'true'
-        shell: bash
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-          NOTES: ${{ runner.temp }}/canonical-release-notes.md
-        run: |
-          set -euo pipefail
-          python scripts/release-changelog.py --version "$VERSION" --output "$NOTES"
-
-  sync-existing-release-notes:
-    name: sync existing release page from tagged changelog
-    if: >-
-      github.ref == 'refs/heads/master' &&
-      needs.validate-version-context.outputs.release_ready == 'true' &&
-      needs.validate-version-context.outputs.publish_needed == 'false'
-    needs:
-      - validate-version-context
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out repository and tags
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Sync GitHub release notes from the exact tagged changelog
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate-version-context.outputs.tag }}
-          VERSION: ${{ needs.validate-version-context.outputs.version }}
-        run: |
-          set -euo pipefail
-
-          git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" --force
-          tag_sha="$(git rev-list -n 1 "$TAG")"
-          test -n "$tag_sha"
-
-          tagged_changelog="$RUNNER_TEMP/${TAG}-CHANGELOG.md"
-          notes="$RUNNER_TEMP/${TAG}-release-notes.md"
-          git show "${TAG}:CHANGELOG.md" > "$tagged_changelog"
-          python scripts/release-changelog.py \
-            --version "$VERSION" \
-            --changelog "$tagged_changelog" \
-            --output "$notes"
-
-          current="$RUNNER_TEMP/${TAG}-current-release-body.md"
-          gh release view "$TAG" --json body --jq '.body' > "$current"
-          if ! diff -u "$notes" "$current"; then
-            gh release edit "$TAG" --notes-file "$notes"
-            echo "Synced $TAG release page from tagged CHANGELOG.md at $tag_sha."
-          else
-            echo "$TAG release page already matches tagged CHANGELOG.md."
-          fi
-
-  android-versioned-release:
-    name: build and publish versioned Android release
+  android-alpha-release:
+    name: build and publish Android alpha
     if: >-
       github.ref_type == 'tag' ||
       (github.ref == 'refs/heads/master' &&
@@ -136,10 +77,7 @@ jobs:
     needs:
       - validate-version-context
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    concurrency:
-      group: versioned-release-${{ needs.validate-version-context.outputs.tag }}
-      cancel-in-progress: false
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -149,35 +87,6 @@ jobs:
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-
-      - name: Wait for exact-source CI
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          for attempt in $(seq 1 180); do
-            run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&event=push&per_page=10")"
-            status="$(printf '%s' "$run_json" | python -c 'import json,sys; runs=json.load(sys.stdin)["workflow_runs"]; print(runs[0]["status"] if runs else "")')"
-            conclusion="$(printf '%s' "$run_json" | python -c 'import json,sys; runs=json.load(sys.stdin)["workflow_runs"]; print((runs[0]["conclusion"] or "") if runs else "")')"
-            url="$(printf '%s' "$run_json" | python -c 'import json,sys; runs=json.load(sys.stdin)["workflow_runs"]; print(runs[0]["html_url"] if runs else "")')"
-
-            if [[ "$status" == "completed" ]]; then
-              if [[ "$conclusion" != "success" ]]; then
-                echo "Exact-source CI did not pass: conclusion=$conclusion url=$url" >&2
-                exit 1
-              fi
-              echo "Exact-source CI passed: $url"
-              break
-            fi
-
-            if [[ "$attempt" == "180" ]]; then
-              echo "Timed out waiting for exact-source CI for $GITHUB_SHA" >&2
-              exit 1
-            fi
-            sleep 20
-          done
 
       - name: Load update-compatible Android signing key
         shell: bash
@@ -196,18 +105,6 @@ jobs:
 
       - name: Run Android release gate
         run: nix develop ./android -c bash scripts/test-android-release.sh
-
-      - name: Materialize canonical release notes
-        id: notes
-        shell: bash
-        env:
-          VERSION: ${{ needs.validate-version-context.outputs.version }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          notes="dist/zara-${VERSION}-release-notes.md"
-          python scripts/release-changelog.py --version "$VERSION" --output "$notes"
-          echo "notes=$notes" >> "$GITHUB_OUTPUT"
 
       - name: Prepare APK and checksum
         id: artifact
@@ -253,81 +150,7 @@ jobs:
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
 
-      - name: Enable KVM access for released-APK acceptance
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Install Android emulator host runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libpulse0
-
-      - name: Prime Android emulator SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?ANDROID SDK root is unavailable}}"
-          emulator_bin="$sdk_root/emulator/emulator"
-          android_cache="${HOME:?HOME is unavailable}/.android/cache"
-          android_cli_tools_build="15859902"
-          android_cli_tools_sha256="4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583"
-          android_cli_tools_archive="commandlinetools-linux-${android_cli_tools_build}_latest.zip"
-          android_cli_tools_url="https://dl.google.com/android/repository/${android_cli_tools_archive}"
-          android_cli_tools_tmp="$(mktemp -d)"
-          trap 'rm -rf "$android_cli_tools_tmp"' EXIT
-
-          curl --fail --location --retry 3 --retry-delay 2             "$android_cli_tools_url"             --output "$android_cli_tools_tmp/$android_cli_tools_archive"
-          printf '%s  %s\n'             "$android_cli_tools_sha256"             "$android_cli_tools_tmp/$android_cli_tools_archive"             | sha256sum --check
-          unzip -q             "$android_cli_tools_tmp/$android_cli_tools_archive"             -d "$android_cli_tools_tmp/unpacked"
-
-          rm -rf "$sdk_root/cmdline-tools/latest"
-          mkdir -p "$sdk_root/cmdline-tools/latest"
-          cp -R             "$android_cli_tools_tmp/unpacked/cmdline-tools/."             "$sdk_root/cmdline-tools/latest/"
-
-          sdkmanager_bin="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$sdkmanager_bin"
-
-          if test -x "$emulator_bin" && "$emulator_bin" -version; then
-            exit 0
-          fi
-
-          for attempt in 1 2 3; do
-            rm -rf "$sdk_root/emulator" "$sdk_root/.temp" "$sdk_root/.downloadIntermediates" "$android_cache"
-            if "$sdkmanager_bin" --sdk_root="$sdk_root" --install platform-tools --channel=0               && "$sdkmanager_bin" --sdk_root="$sdk_root" --install emulator --channel=0               && test -x "$emulator_bin"               && "$emulator_bin" -version; then
-              exit 0
-            fi
-            sleep "$((attempt * 2))"
-          done
-          exit 1
-
-      - name: Exercise exact release APK before publication
-        uses: reactivecircus/android-emulator-runner@v2
-        env:
-          APK: ${{ steps.artifact.outputs.apk }}
-          SOURCE_SHA: ${{ github.sha }}
-        with:
-          api-level: 35
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          disable-animations: true
-          script: bash -euo pipefail -c 'serial="emulator-5554"; adb -s "$serial" wait-for-device; test "$(adb -s "$serial" get-state)" = "device"; adb -s "$serial" install -r "$APK"; nix develop ./android -c python3 android/integration/device_acceptance.py --serial "$serial" --source-sha "$SOURCE_SHA" --output artifacts/versioned-release-device'
-
-      - name: Upload exact release APK acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: versioned-release-device-${{ github.sha }}
-          path: artifacts/versioned-release-device/
-          if-no-files-found: error
-
-      - name: Publish GitHub versioned release
+      - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate-version-context.outputs.tag }}
@@ -337,7 +160,6 @@ jobs:
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
           CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
           CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
-          NOTES: ${{ steps.notes.outputs.notes }}
         shell: bash
         run: |
           set -euo pipefail
@@ -357,8 +179,7 @@ jobs:
                 "$(basename "$MANIFEST")" \
                 "$(basename "$CODE_EDITOR_APK")" \
                 "$(basename "${CODE_EDITOR_APK}.sha256")" \
-                "$(basename "$CODE_EDITOR_MANIFEST")" \
-                "$(basename "$NOTES")"
+                "$(basename "$CODE_EDITOR_MANIFEST")"
               do
                 if ! grep -Fxq "$required" <<< "$assets"; then
                   echo "Release $TAG is missing required asset $required." >&2
@@ -388,7 +209,6 @@ jobs:
                 echo "Release $TAG manifest version_code does not match $VERSION_CODE." >&2
                 exit 1
               }
-
               grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_code_editor_manifest" || {
                 echo "Release $TAG Code Editor manifest source_sha does not match $GITHUB_SHA." >&2
                 exit 1
@@ -401,13 +221,6 @@ jobs:
                 echo "Release $TAG Code Editor manifest version_code does not match $VERSION_CODE." >&2
                 exit 1
               }
-
-              existing_notes="$RUNNER_TEMP/existing-release-notes.md"
-              gh release view "$TAG" --json body --jq '.body' > "$existing_notes"
-              if ! diff -u "$NOTES" "$existing_notes"; then
-                echo "Refreshing $TAG release page from canonical CHANGELOG.md."
-                gh release edit "$TAG" --notes-file "$NOTES"
-              fi
 
               echo "Release $TAG already exists and matches canonical promotion $GITHUB_SHA."
               exit 0
@@ -424,11 +237,6 @@ jobs:
             fi
           fi
 
-          release_flags=()
-          if [[ "$VERSION" == *-* ]]; then
-            release_flags+=(--prerelease)
-          fi
-
           gh release create "$TAG" \
             "$APK" \
             "${APK}.sha256" \
@@ -436,75 +244,7 @@ jobs:
             "$CODE_EDITOR_APK" \
             "${CODE_EDITOR_APK}.sha256" \
             "$CODE_EDITOR_MANIFEST" \
-            "$NOTES" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
-            --notes-file "$NOTES" \
-            "${release_flags[@]}"
-
-      - name: Verify published release bytes, metadata, signer, and notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate-version-context.outputs.tag }}
-          VERSION: ${{ needs.validate-version-context.outputs.version }}
-          VERSION_CODE: ${{ needs.validate-version-context.outputs.version_code }}
-          APK: ${{ steps.artifact.outputs.apk }}
-          MANIFEST: ${{ steps.artifact.outputs.manifest }}
-          CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
-          CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
-          NOTES: ${{ steps.notes.outputs.notes }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          verify_dir="$RUNNER_TEMP/published-${TAG}"
-          rm -rf "$verify_dir"
-          mkdir -p "$verify_dir"
-          gh release download "$TAG" \
-            --dir "$verify_dir" \
-            --pattern "$(basename "$APK")" \
-            --pattern "$(basename "${APK}.sha256")" \
-            --pattern "$(basename "$MANIFEST")" \
-            --pattern "$(basename "$CODE_EDITOR_APK")" \
-            --pattern "$(basename "${CODE_EDITOR_APK}.sha256")" \
-            --pattern "$(basename "$CODE_EDITOR_MANIFEST")" \
-            --pattern "$(basename "$NOTES")"
-
-          published_apk="$verify_dir/$(basename "$APK")"
-          published_checksum="$verify_dir/$(basename "${APK}.sha256")"
-          published_manifest="$verify_dir/$(basename "$MANIFEST")"
-          published_code_editor_apk="$verify_dir/$(basename "$CODE_EDITOR_APK")"
-          published_code_editor_checksum="$verify_dir/$(basename "${CODE_EDITOR_APK}.sha256")"
-          published_code_editor_manifest="$verify_dir/$(basename "$CODE_EDITOR_MANIFEST")"
-          published_notes="$verify_dir/$(basename "$NOTES")"
-
-          cmp "$APK" "$published_apk"
-          cmp "$MANIFEST" "$published_manifest"
-          cmp "$CODE_EDITOR_APK" "$published_code_editor_apk"
-          cmp "$CODE_EDITOR_MANIFEST" "$published_code_editor_manifest"
-          cmp "$NOTES" "$published_notes"
-
-          expected_sha="$(awk '{print $1}' "$published_checksum")"
-          actual_sha="$(sha256sum "$published_apk" | awk '{print $1}')"
-          test "$actual_sha" = "$expected_sha"
-          expected_code_editor_sha="$(awk '{print $1}' "$published_code_editor_checksum")"
-          actual_code_editor_sha="$(sha256sum "$published_code_editor_apk" | awk '{print $1}')"
-          test "$actual_code_editor_sha" = "$expected_code_editor_sha"
-
-          grep -Fxq "source_sha=${GITHUB_SHA}" "$published_manifest"
-          grep -Fxq "version_name=${VERSION}" "$published_manifest"
-          grep -Fxq "version_code=${VERSION_CODE}" "$published_manifest"
-          grep -Fxq "apk=$(basename "$published_apk")" "$published_manifest"
-          grep -Fxq "apk_sha256=${actual_sha}" "$published_manifest"
-          grep -Fxq "source_sha=${GITHUB_SHA}" "$published_code_editor_manifest"
-          grep -Fxq "version_name=${VERSION}" "$published_code_editor_manifest"
-          grep -Fxq "version_code=${VERSION_CODE}" "$published_code_editor_manifest"
-          grep -Fxq "apk=$(basename "$published_code_editor_apk")" "$published_code_editor_manifest"
-          grep -Fxq "apk_sha256=${actual_code_editor_sha}" "$published_code_editor_manifest"
-
-          release_body="$RUNNER_TEMP/published-release-body.md"
-          gh release view "$TAG" --json body --jq '.body' > "$release_body"
-          diff -u "$NOTES" "$release_body"
-
-          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$published_apk"
-          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$published_code_editor_apk"
+            --prerelease \
+            --notes "Android alpha preview of Zara and Zara Code Editor. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file. Source commit: $GITHUB_SHA"

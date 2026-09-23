@@ -11,7 +11,7 @@ Use the GitHub connector for remote branches, pull requests, Actions state, arti
 
 Run `python scripts/version-context.py --format json` before any version, merge, tag, publication, or updater decision. `version.properties` is the only mutable Zara product-version source. `zara.version` / `android.versionCode` describe the source currently being built; `release.target` / `release.targetAndroidVersionCode` describe the active release line. Never infer the active target from `setup.py`, Gradle literals, a stale prompt, an old tag, or `android-latest`.
 
-Python packaging and both Android apps consume the current values from that file. Versioned release CI validates the same context and may publish a missing one-to-one `v<version>` release from the exact promoted `master` SHA or validate an explicit matching tag event. Ordinary master work never reuses an existing version release. The separate `android-latest` workflow remains the mutable rolling master channel.
+Python packaging and both Android apps consume the current values from that file. Versioned release CI validates the same context and publishes only from an explicit matching `v*` tag. A `master` push may validate version context but cannot create an immutable versioned release; the separate `android-latest` workflow remains the mutable fully-green master channel.
 
 ## 1. Establish the release candidate
 
@@ -26,7 +26,7 @@ Python packaging and both Android apps consume the current values from that file
 5. Promote `zara.version` and `android.versionCode` to the target only on the integrated candidate authorized for release.
 6. Never reuse a published version/tag or Android version code.
 
-Keep version promotion on the normal protected merge/review path. The release workflow may mint the missing immutable tag/release only after the promoted exact SHA is fully green; an explicit matching tag is also accepted, but never move or reuse an existing version tag.
+Do not create a standalone version-bump/release PR during the current PR-drain discipline. The already-integrated candidate carries the canonical version-context change through the normal protected merge/review path; tagging is a separate publication action after exact-head release approval.
 
 ## 2. Gate the exact head
 
@@ -45,15 +45,14 @@ Do not merge unless the PR is mergeable and the exact candidate SHA is green. Op
 
 ## 3. Publish immutable versions and rolling latest
 
-After the integrated candidate is approved on `master`, resolve the strict version context again and require `release_ready=true`. The canonical `CHANGELOG.md` must contain one non-empty `## <version>` section. Each version maps one-to-one to `v<version>` and one GitHub release. Never move or overwrite a release tag. Never reuse a version tag/release; refuse tag/version mismatches.
+After the integrated candidate is approved on `master`, resolve the strict version context again and require `release_ready=true`. Create `v<version>` at that exact approved SHA. Never move or overwrite a release tag whose name starts with `v`. Refuse a tag/version mismatch and refuse to replace an existing SemVer release.
 
-Before publication, versioned release CI waits for the exact source SHA's full CI to pass, including Android UI acceptance. It then installs and exercises the exact signed release APK it just built on an emulator before any GitHub release is created. The trusted tag or `master` release workflow must then produce:
+The trusted tag or `master` release workflow must produce:
 
 - `zara-android-<version>.apk`;
 - `zara-android-<version>.apk.sha256`;
 - `zara-android-<version>.manifest.txt` containing source SHA, version name, version code, filename, and SHA-256;
-- a verified update-compatible signing certificate;
-- a release-notes asset and GitHub release body generated from that exact version's canonical changelog section.
+- a verified update-compatible signing certificate.
 
 Pull-request CI must publish `zara-android-debug-<sha>` with a phone APK, checksum, and exact-SHA manifest. Do not relabel a PR artifact as a release asset.
 
@@ -63,12 +62,10 @@ A separate `master`-push workflow owns the intentionally mutable `android-latest
 
 Download the GitHub release asset or exact-SHA Actions artifact through the GitHub connector. Verification and hardware acceptance must use that downloaded GitHub artifact, not a local rebuild.
 
-1. Download the published GitHub release assets again; do not verify only the local pre-upload files.
-2. Verify the SHA-256 against the adjacent checksum and provenance manifest.
-3. Byte-compare the downloaded APK/manifest/release notes with the gated publication inputs.
-4. Verify source SHA, `versionName`, `versionCode`, expected filename, and the update-compatible APK signer.
-5. Verify the GitHub release body matches the canonical changelog notes exactly.
-6. Confirm the exact source SHA passed the full repository CI and Android/Wear release gate.
-7. Keep real-device install, microphone, Bluetooth route, Assistant-role, side-button, and revocation checks `PENDING` until performed on hardware.
+1. Verify the SHA-256 against the adjacent checksum and provenance manifest.
+2. Verify embedded source SHA, `versionName`, `versionCode`, and expected filename.
+3. Verify the APK signer certificate with `scripts/check-android-apk-signer.sh` for release assets.
+4. Confirm the artifact passed the Android/Wear gate and secret inspection at the recorded SHA.
+5. Keep real-device install, microphone, Bluetooth route, Assistant-role, side-button, and revocation checks `PENDING` until performed on hardware.
 
 Report the branch, PR, exact head SHA, workflow run, artifact or release URL, SHA-256, signer result, and remaining hardware gates.
