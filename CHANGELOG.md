@@ -4,6 +4,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+- Desktop Settings now uses the Android-aligned Runtime, Connection, Permissions, Appearance, Plugins, Updates, Diagnostics, and About hierarchy with category search, compact semantic setting cards, and explicit LIVE/RESTART behavior labels while retaining the existing pairing, config, Prolog, plugin-runtime, and update authorities.
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
 
 ### Fixed
