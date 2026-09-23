@@ -500,6 +500,13 @@ class VoiceExpert:
 
     def delete_voice(self, voice_name: str) -> str:
         self._validate_voice_name(voice_name)
+        inventory_before = [
+            str(voice) for voice in asyncio.run(self._qwen_list_voices())
+        ]
+        if voice_name not in inventory_before:
+            raise RuntimeError(
+                f"voice {voice_name!r} does not exist; refusing ambiguous deletion"
+            )
         result = asyncio.run(self._qwen_delete_voice(voice_name))
         inventory = [str(voice) for voice in asyncio.run(self._qwen_list_voices())]
         if voice_name in inventory:
