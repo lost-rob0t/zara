@@ -106,6 +106,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
+import xml.etree.ElementTree as ET
 
 manifest_path = Path(sys.argv[1])
 evidence_dir = Path(sys.argv[2])
@@ -159,6 +160,32 @@ for file_key, hash_key in (
         raise SystemExit(
             f"overflow visual evidence hash mismatch for {file_name}: "
             f"expected={expected_hash} actual={actual_hash}"
+        )
+
+text_twin_path = evidence_dir / receipt["text_twin_file"]
+try:
+    text_twin_root = ET.parse(text_twin_path).getroot()
+except ET.ParseError as error:
+    raise SystemExit(f"overflow visual text twin is malformed XML: {error}") from error
+text_twin_nodes = list(text_twin_root.iter("node"))
+for action in actions:
+    label = action.get("label")
+    bounds = action.get("bounds")
+    if not isinstance(label, str) or not label:
+        raise SystemExit("overflow visual receipt contains an action without a label")
+    if not isinstance(bounds, str) or not bounds:
+        raise SystemExit(f"overflow visual receipt action omitted bounds: {label}")
+    matching_label_nodes = [
+        node
+        for node in text_twin_nodes
+        if label in (node.get("text"), node.get("content-desc"))
+    ]
+    if not matching_label_nodes:
+        raise SystemExit(f"overflow visual text twin is missing action: {label}")
+    if not any(node.get("bounds") == bounds for node in matching_label_nodes):
+        raise SystemExit(
+            "overflow visual text twin action bounds differ from receipt: "
+            f"{label} expected={bounds}"
         )
 
 screenshots = data.get("screenshots")
