@@ -28,6 +28,29 @@ class CanonicalConversationCreateAtomicityContractTest {
     }
 
     @Test
+    fun `failed metadata mutations restore live state before surfacing error`() {
+        val source = File(
+            "src/main/java/ai/zara/app/conversations/CanonicalConversationStore.kt"
+        ).readText()
+        val select = source
+            .substringAfter("fun select(conversationId: String): ConversationState {")
+            .substringBefore("@Synchronized\n    fun rename(")
+        val update = source
+            .substringAfter("private fun updateMetadata(")
+            .substringBefore("private fun loadMetadata()")
+
+        assertTrue(select.contains("val previousMetadata = metadata"))
+        assertTrue(select.contains("metadata = previousMetadata"))
+        assertTrue(select.indexOf("persistMetadata()") < select.indexOf("metadata = previousMetadata"))
+        assertTrue(select.contains("throw error"))
+
+        assertTrue(update.contains("val previousMetadata = metadata"))
+        assertTrue(update.contains("metadata = previousMetadata"))
+        assertTrue(update.indexOf("persistMetadata()") < update.indexOf("metadata = previousMetadata"))
+        assertTrue(update.contains("throw error"))
+    }
+
+    @Test
     fun `rollback primitive refuses observable state and verifies the delete postcondition`() {
         val rollback = File(
             "src/main/java/ai/zara/app/history/ConversationCreateRollback.kt"
