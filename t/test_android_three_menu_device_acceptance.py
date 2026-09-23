@@ -136,14 +136,16 @@ def test_overflow_acceptance_creates_two_chats_before_visual_capture():
     assert text.index(new_chat) < text.index(count) < text.index(screenshot)
 
 
-def test_visual_gate_binds_preopen_trigger_and_same_state_text_twin():
+def test_visual_gate_binds_preopen_trigger_and_reuses_capture_fenced_text_twin():
     text = source()
 
     assert 'trigger_bounds = device.tap_contains("Actions for ")' in text
     assert 'trigger_bounds=trigger_bounds' in text
     assert 'def capture_text_twin(' in text
+    assert 'text_twin = self.capture_text_twin(screenshot_name)' not in text
+    assert 'text_twin = scenario.get("text_evidence")' in text
+    assert '"text_twin_sha256": text_twin_sha256' in text
     assert '"screenshot_sha256": screenshot_sha256' in text
-    assert '"text_twin_sha256": text_twin["sha256"]' in text
     assert '"source_sha": getattr(self, "source_sha", None)' in text
     assert '"device_api": getattr(self, "device_api", None)' in text
 
