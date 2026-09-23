@@ -42,6 +42,23 @@ def test_acceptance_exercises_width_font_ime_and_saved_state():
     assert 'target_width_dp=700' in text
     assert '"narrow-large-font"' in text
     assert 'target_width_dp=320' in text
+    assert 'device.reveal("Choose APK")' in text
+    assert 'device.tap("Choose APK")' in text
+    assert 'device.await_contains("Enter the publisher\'s 64-character SHA-256.")' in text
+    assert (
+        'device.capture(\n'
+        '        "settings-plugins-narrow-large-font",\n'
+        '        required_actions=("Choose APK",),\n'
+        '    )'
+        in text
+    )
+    assert (
+        'device.capture(\n'
+        '        "settings-plugins-install-narrow-large-font",\n'
+        '        required_actions=("Choose APK",),\n'
+        '    )'
+        in text
+    )
     assert '"ime-composer"' in text
     assert '"recreated-chat-draft"' in text
     assert '"recreated-connection-draft"' in text
