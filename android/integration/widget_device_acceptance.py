@@ -390,22 +390,22 @@ def exercise(device: Device, source_sha: str) -> dict:
         device.restore_display_profile()
 
     device.request_pin("runtime", "Runtime")
-    device.project_runtime("fresh", "LOCAL READY")
+    device.project_runtime("fresh", "CONNECTED · LOCAL READY")
     device.capture_bundle(
         "runtime-fresh",
-        required_labels=("Runtime", "CONNECTED", "LOCAL READY", "RUNTIME"),
+        required_labels=("Runtime", "CONNECTED · LOCAL READY", "MODE AUTO", "RUNTIME"),
         action_labels=("RUNTIME",),
     )
-    device.project_runtime("stale", "STALE")
+    device.project_runtime("stale", "STALE · LOCAL UNKNOWN")
     device.capture_bundle(
         "runtime-stale",
-        required_labels=("Runtime", "STALE", "LOCAL UNKNOWN"),
+        required_labels=("Runtime", "STALE · LOCAL UNKNOWN", "MODE UNKNOWN"),
         action_labels=("RUNTIME",),
     )
-    device.project_runtime("corrupt", "DISCONNECTED")
+    device.project_runtime("corrupt", "DISCONNECTED · LOCAL UNKNOWN")
     device.capture_bundle(
         "runtime-corrupt",
-        required_labels=("Runtime", "DISCONNECTED", "LOCAL UNKNOWN"),
+        required_labels=("Runtime", "DISCONNECTED · LOCAL UNKNOWN", "MODE AUTO"),
         action_labels=("RUNTIME",),
     )
     return device.write_route_assertions(source_sha)
