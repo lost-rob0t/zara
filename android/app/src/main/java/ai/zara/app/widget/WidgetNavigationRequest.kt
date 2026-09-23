@@ -1,0 +1,36 @@
+package ai.zara.app.widget
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import ai.zara.app.MainActivity
+import ai.zara.app.ui.AppRoute
+import java.util.concurrent.atomic.AtomicReference
+
+/** One-shot, bounded ingress from launcher widgets into the canonical AppNavigation owner. */
+object WidgetNavigationRequest {
+    private val pending = AtomicReference<AppRoute?>(null)
+
+    fun request(route: AppRoute) {
+        pending.set(route)
+    }
+
+    fun consume(): AppRoute? = pending.getAndSet(null)
+}
+
+class WidgetRouteReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val requested = intent.getStringExtra(EXTRA_ROUTE)?.trim()?.lowercase() ?: return
+        val route = WidgetRoute.entries.firstOrNull { it.atom == requested } ?: return
+        WidgetNavigationRequest.request(route.appRoute)
+        context.startActivity(
+            Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            },
+        )
+    }
+
+    companion object {
+        const val EXTRA_ROUTE = "ai.zara.app.widget.ROUTE"
+    }
+}
