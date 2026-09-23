@@ -124,17 +124,10 @@ class ExpertIdempotencyJournal:
                     f"{idempotency_key!r} was reused with changed input"
                 )
 
-            if (
+            build_changed = (
                 row["expert_version"] != handle.expert_version
                 or row["manifest_digest"] != handle.manifest_digest
-            ):
-                replay = self._unknown_result(
-                    row,
-                    handle=handle,
-                    message="prior idempotent expert execution belongs to a different expert build",
-                )
-                return ClaimDecision(claim=claim, replay=replay, created=False)
-
+            )
             generation_changed = (
                 row["registry_generation"] != handle.registry_generation
                 or row["runtime_generation"] != handle.runtime_generation
@@ -160,6 +153,16 @@ class ExpertIdempotencyJournal:
                     )
                     return ClaimDecision(claim=claim, replay=replay, created=False)
                 replay = replace(result, replayed=True)
+                if build_changed and replay.verdict is ExpertVerdict.SUCCEEDED:
+                    replay = self._unknown_result(
+                        row,
+                        handle=handle,
+                        message=(
+                            "prior idempotent expert success belongs to a different "
+                            "expert build"
+                        ),
+                    )
+                    return ClaimDecision(claim=claim, replay=replay, created=False)
                 if generation_changed and replay.verdict is ExpertVerdict.SUCCEEDED:
                     replay = self._unknown_result(
                         row,
@@ -194,10 +197,14 @@ class ExpertIdempotencyJournal:
                 row,
                 handle=handle,
                 message=(
-                    "prior idempotent expert execution belongs to a different "
-                    "registry/runtime generation"
-                    if generation_changed
-                    else "prior idempotent expert execution is not durably terminal"
+                    "prior idempotent expert execution belongs to a different expert build"
+                    if build_changed
+                    else (
+                        "prior idempotent expert execution belongs to a different "
+                        "registry/runtime generation"
+                        if generation_changed
+                        else "prior idempotent expert execution is not durably terminal"
+                    )
                 ),
             )
             return ClaimDecision(claim=claim, replay=replay, created=False)
