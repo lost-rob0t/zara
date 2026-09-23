@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -116,6 +117,57 @@ def test_recovered_client_for_one_scope_cannot_cross_into_another_scope():
         assert result_a.provenance.namespace == "zara.expert.person.a"
         assert result_b.provenance.namespace == "zara.expert.person.b"
         assert result_a.provenance.namespace != result_b.provenance.namespace
+    finally:
+        owner_a.stop()
+        owner_b.stop()
+
+
+def test_recovered_raw_transport_cannot_select_foreign_scope():
+    owner_a = _owner(
+        principal="alice",
+        workspace="project-a",
+        activation_id="act-a",
+        namespace="zara.expert.person.a",
+    )
+    owner_b = _owner(
+        principal="bob",
+        workspace="project-b",
+        activation_id="act-b",
+        namespace="zara.expert.person.b",
+    )
+    try:
+        inner_client = owner_a.client._client
+        transport = inner_client._transport
+        frame = {
+            "protocol": "ZARA-PREDICATE/1",
+            "request_id": "scope-smuggle",
+            "operation": "person.lookup",
+            "expected_generation": 11,
+            "arguments": {"value": "Alice"},
+            "timeout_ms": 2000,
+            "principal": "bob",
+            "workspace": "project-b",
+            "activation_id": "act-b",
+        }
+        transport.send_bytes(
+            json.dumps(frame, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        )
+        assert transport.poll(1.0)
+        rejected = json.loads(transport.recv_bytes().decode("utf-8"))
+        assert rejected["verdict"] == PredicateVerdict.ERROR.value
+        assert rejected["error_code"] == "malformed_request"
+        assert rejected["provenance"] is None
+
+        result_a = owner_a.client.invoke(_request(request_id="scope-after-smuggle-a"))
+        result_b = owner_b.client.invoke(_request(request_id="scope-after-smuggle-b"))
+        assert result_a.verdict is PredicateVerdict.SUCCEEDED
+        assert result_b.verdict is PredicateVerdict.SUCCEEDED
+        assert result_a.data["activation_seen"] == "act-a"
+        assert result_b.data["activation_seen"] == "act-b"
+        assert result_a.provenance is not None
+        assert result_b.provenance is not None
+        assert result_a.provenance.namespace == "zara.expert.person.a"
+        assert result_b.provenance.namespace == "zara.expert.person.b"
     finally:
         owner_a.stop()
         owner_b.stop()
