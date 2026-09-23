@@ -213,7 +213,7 @@ def test_authenticated_peer_ask_streams_and_returns_terminal_result(
         assert isinstance(result, PeerResult)
         assert result.request_id == "peer-ask-1"
         assert result.source_node_id == "desktop-node"
-        assert result.runtime_id == "zara-runtime"
+        assert result.runtime_id == "zara-python"\n        assert result.runtime_generation == 0
         assert result.text == "peer:what changed?"
         assert [type(command) for _, command in supervisor.commands] == [SubmitTurn]
 
