@@ -240,6 +240,7 @@ class _ReplayEntry:
 class _InflightEntry:
     command: RuntimeCommand
     routes: list["_RequestRoute"]
+    backpressured_turn_ids: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -373,8 +374,6 @@ class ZaraZmqGateway:
             if not self._started.done():
                 self._started.set_exception(error)
             else:
-                # A dead gateway loop must never be silent: every client of
-                # this principal would hang waiting for events (#669).
                 logger.exception("gateway loop terminated unexpectedly")
         finally:
             subscription = self._event_subscription
@@ -627,15 +626,22 @@ class ZaraZmqGateway:
         principal_id: str,
         turn_id: str,
         held: tuple[ProtocolMessage, tuple[bytes, ...]],
-    ) -> None:
+    ) -> bool:
         key = (principal_id, turn_id)
         with self._lock:
             buffer = self._early_turn_events.get(key)
             if buffer is None:
-                while len(self._early_turn_events) >= 64:
-                    self._early_turn_events.popitem(last=False)
+                if len(self._early_turn_events) >= 64:
+                    logger.warning(
+                        "Early turn-event capacity full; refusing new buffer "
+                        "principal=%s turn_id=%s",
+                        principal_id,
+                        turn_id,
+                    )
+                    return False
                 buffer = self._early_turn_events[key] = deque(maxlen=128)
             buffer.append(held)
+            return True
 
     def _take_early_turn_events(
         self,
@@ -1282,6 +1288,7 @@ class ZaraZmqGateway:
         generation = self._generation
 
         def completed(done: concurrent.futures.Future) -> None:
+            receipt = None
             try:
                 receipt = done.result()
                 if not isinstance(receipt, CommandReceipt):
@@ -1324,6 +1331,18 @@ class ZaraZmqGateway:
                         and current.session_id == candidate.session_id
                     )
                 ]
+                if (
+                    response.type == "turn.accepted"
+                    and receipt is not None
+                    and inflight is not None
+                    and receipt.turn_id in inflight.backpressured_turn_ids
+                ):
+                    response = _protocol_error(
+                        reply_to=message.id,
+                        code="server_backpressure",
+                        message="too many turn events are awaiting acceptance",
+                        retryable=True,
+                    )
                 if response.turn_id and live_routes:
                     latest = live_routes[-1]
                     self._turn_routes[(latest.principal_id, response.turn_id)] = latest.route
@@ -1372,10 +1391,6 @@ class ZaraZmqGateway:
                 except RuntimeCodecError:
                     continue
                 with self._lock:
-                    # The hold decision and append are one critical section.
-                    # The awaiting key remains live until turn.accepted is
-                    # actually written to the socket, so runtime events cannot
-                    # evict or overtake the acceptance barrier (#1396).
                     if (principal_id, event.turn_id) in self._turns_awaiting_accept:
                         self._buffer_early_turn_event(
                             principal_id,
@@ -1385,18 +1400,22 @@ class ZaraZmqGateway:
                         continue
                     route = self._turn_routes.get((principal_id, event.turn_id))
                     if route is None:
-                        acceptance_pending = any(
-                            inflight_principal == principal_id
+                        pending_accepts = [
+                            inflight
+                            for (inflight_principal, _request_id), inflight in self._inflight.items()
+                            if inflight_principal == principal_id
                             and isinstance(inflight.command, SubmitTurn)
                             and inflight.command.conversation_id == event.conversation_id
-                            for (inflight_principal, _request_id), inflight in self._inflight.items()
-                        )
-                        if acceptance_pending:
-                            self._buffer_early_turn_event(
+                        ]
+                        if pending_accepts:
+                            buffered = self._buffer_early_turn_event(
                                 principal_id,
                                 event.turn_id,
                                 (message, ()),
                             )
+                            if not buffered:
+                                for inflight in pending_accepts:
+                                    inflight.backpressured_turn_ids.add(event.turn_id)
                             continue
                         if event.conversation_id:
                             matches = [
@@ -1422,8 +1441,6 @@ class ZaraZmqGateway:
             if route is None:
                 if event.turn_id is None:
                     continue
-                # Unroutable turn event: hold it so a still-pending turn.accepted
-                # can flush it after its reply, instead of dropping it (#1396).
                 self._buffer_early_turn_event(
                     principal_id,
                     event.turn_id,
@@ -1472,8 +1489,6 @@ class ZaraZmqGateway:
             wire_message = self._response_for_route(message, route)
             try:
                 if event.turn_id is not None:
-                    # Turn-scoped events must ride the same per-route FIFO as the
-                    # turn.accepted reply, or a queued reply can be overtaken.
                     encode_message(wire_message, payloads=payloads, limits=self._limits)
                     self._enqueue_outbound(route, wire_message, payloads)
                 else:
@@ -1573,10 +1588,6 @@ class ZaraZmqGateway:
                 self._enqueue_outbound(route, message, payloads)
             return False
         except zmq.ZMQError as error:
-            # Fail closed on permanent send errors (e.g. EHOSTUNREACH): the
-            # peer is provably unroutable. The drop is loud now (#669):
-            # _drop_route warns when active turns are orphaned, and the
-            # message/stream/turn identity names what was dropped (#880).
             logger.warning(
                 "outbound send failed: %s errno=%s message=%s stream_id=%s turn_id=%s",
                 type(error).__name__,
