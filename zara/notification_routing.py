@@ -440,20 +440,40 @@ class NotificationRouterStore:
             (now_ms,),
         )
 
-    def observe(self, event: NotificationEvent, digest: str, now_ms: int) -> tuple[bool, int]:
+    def observe(self, event: NotificationEvent, digest: str, now_ms: int) -> tuple[bool, int, bool]:
+        event_json = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
         row = self._db.fetch_one(
             """
-            SELECT generation, content_digest, count
+            SELECT generation, content_digest, event_json, count
               FROM notification_router_seen
              WHERE principal_id = ? AND workspace_id = ? AND notification_id = ?
             """,
             (event.principal_id, event.workspace_id, event.notification_id),
         )
-        if row is not None and int(row["generation"]) > event.generation:
-            raise NotificationStale("notification generation is older than durable route state")
+        if row is not None:
+            stored_generation = int(row["generation"])
+            if stored_generation > event.generation:
+                raise NotificationStale("notification generation is older than durable route state")
+            if stored_generation == event.generation:
+                if str(row["content_digest"]) != digest or str(row["event_json"]) != event_json:
+                    raise NotificationStale("notification generation replay diverges from durable route state")
+                count = int(row["count"]) + 1
+                self._db.execute(
+                    """
+                    UPDATE notification_router_seen
+                       SET last_seen_ms=?, count=count+1
+                     WHERE principal_id=? AND workspace_id=? AND notification_id=?
+                    """,
+                    (
+                        now_ms,
+                        event.principal_id,
+                        event.workspace_id,
+                        event.notification_id,
+                    ),
+                )
+                return True, count, True
         duplicate = row is not None and row["content_digest"] == digest
         count = int(row["count"]) + 1 if row is not None else 1
-        event_json = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
         self._db.execute(
             """
             INSERT INTO notification_router_seen (
@@ -486,7 +506,7 @@ class NotificationRouterStore:
                 count,
             ),
         )
-        return duplicate, count
+        return duplicate, count, False
 
     def recent_app_count(self, event: NotificationEvent, now_ms: int, window_ms: int = 60_000) -> int:
         row = self._db.fetch_one(
@@ -750,7 +770,7 @@ class NotificationRouter:
 
         content_mode = self.policy.content_mode(event.app)
         digest = event.content_digest or self._content_digest(event, include_body=content_mode == "full_content")
-        duplicate, seen_count = self.store.observe(event, digest, now)
+        duplicate, seen_count, exact_replay = self.store.observe(event, digest, now)
         recent_count = self.store.recent_app_count(event, now)
         feedback = self.store.feedback(event)
 
@@ -781,6 +801,7 @@ class NotificationRouter:
                 hooks=hooks,
                 duplicate=duplicate,
                 coalesced_count=seen_count,
+                preserve_presentations=exact_replay,
             )
 
         route_policy = self.policy.route_policy(event.app)
@@ -795,6 +816,7 @@ class NotificationRouter:
                 now,
                 duplicate=duplicate,
                 coalesced_count=seen_count,
+                preserve_presentations=exact_replay,
             )
         presentation = self._presentation(
             event,
@@ -811,6 +833,7 @@ class NotificationRouter:
             hooks=hooks,
             duplicate=duplicate,
             coalesced_count=seen_count,
+            preserve_presentations=exact_replay,
         )
 
     def execute_hooks(
@@ -853,13 +876,12 @@ class NotificationRouter:
         request: NotificationActionRequest,
         effect_plane: EffectPlane,
         *,
-        effect_key: Optional[str] = None,
         now_ms: Optional[int] = None,
     ) -> NotificationActionResult:
         return self._perform_effect(
             request,
             effect_plane,
-            effect_key=effect_key,
+            effect_key=self._action_effect_key(request),
             now_ms=now_ms,
             enforce_route_authority=True,
         )
@@ -869,7 +891,7 @@ class NotificationRouter:
         request: NotificationActionRequest,
         effect_plane: EffectPlane,
         *,
-        effect_key: Optional[str],
+        effect_key: str,
         now_ms: Optional[int],
         enforce_route_authority: bool,
     ) -> NotificationActionResult:
@@ -890,11 +912,10 @@ class NotificationRouter:
             workspace_id=request.workspace_id,
         ):
             raise NotificationDenied(f"capability denied: {capability}")
-        key = effect_key or f"action:{request.request_id}"
         claim_state, stored_receipt = self.store.claim_effect(
             principal_id=request.principal_id,
             workspace_id=request.workspace_id,
-            effect_key=key,
+            effect_key=effect_key,
             now_ms=now,
         )
         if claim_state == "done":
@@ -906,7 +927,7 @@ class NotificationRouter:
             self.store.attach_effect_receipt(
                 principal_id=request.principal_id,
                 workspace_id=request.workspace_id,
-                effect_key=key,
+                effect_key=effect_key,
                 receipt=receipt,
             )
         elif claim_state == "verify" and stored_receipt is not None:
@@ -928,7 +949,7 @@ class NotificationRouter:
         self.store.record_effect(
             principal_id=request.principal_id,
             workspace_id=request.workspace_id,
-            effect_key=key,
+            effect_key=effect_key,
             receipt=receipt,
             verification=verification,
             now_ms=now,
@@ -942,6 +963,20 @@ class NotificationRouter:
             verification=verification,
         )
 
+    @staticmethod
+    def _action_effect_key(request: NotificationActionRequest) -> str:
+        payload = {
+            "principal_id": request.principal_id,
+            "workspace_id": request.workspace_id,
+            "notification_id": request.notification_id,
+            "generation": request.generation,
+            "sink_peer": request.sink_peer,
+            "action": request.action,
+            "argument": request.argument,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return "action:" + hashlib.sha256(encoded).hexdigest()
+
     def _terminal(
         self,
         event: NotificationEvent,
@@ -954,6 +989,7 @@ class NotificationRouter:
         hooks: Sequence[TypedHookAction] = (),
         duplicate: bool = False,
         coalesced_count: int = 1,
+        preserve_presentations: bool = False,
     ) -> NotificationDecision:
         result = NotificationDecision(
             notification_id=event.notification_id,
@@ -965,7 +1001,8 @@ class NotificationRouter:
             duplicate=duplicate,
             coalesced_count=coalesced_count,
         )
-        self.store.record_presentations(event, result.sinks)
+        if not preserve_presentations:
+            self.store.record_presentations(event, result.sinks)
         self.store.audit(event, decision, result.evidence, now_ms)
         return result
 
