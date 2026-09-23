@@ -1,16 +1,24 @@
 package ai.zara.app.automation
 
+import ai.zara.app.device.DeviceActionErrorCode
 import ai.zara.app.device.DeviceActionResult
 import ai.zara.app.prolog.AndroidAutomationAction
 import ai.zara.app.runtime.LocalQueryResult
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicLong
 
 private const val MAX_SINGLE_SCREENSHOT_BYTES = 16 * 1024 * 1024
 private val PNG_MAGIC = byteArrayOf(
     0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
 )
+private val VISION_TIMEOUT_EXECUTOR: ScheduledExecutorService =
+    Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "zara-android-vision-timeout").apply { isDaemon = true }
+    }
 
 data class AndroidVisionLoopLimits(
     val maxSteps: Int = 8,
@@ -77,9 +85,9 @@ sealed interface AndroidVisionLoopResult {
  * -> fresh screenshot verification loop.
  *
  * This coordinator intentionally knows no provider credentials and exposes no raw ADB shell surface.
- * The multimodal port is supplied by AndroidAppSession's existing provider runtime; effects are the
- * closed [AdbAutomationPort] vocabulary from #1393. Every mutation is fenced by generation,
- * capability, Prolog policy, user approval, and fresh postcondition evidence.
+ * The multimodal port is supplied by Android's existing provider runtime; effects are the closed
+ * [AdbAutomationPort] vocabulary from #1393. Every mutation is fenced by generation, capability,
+ * Prolog policy, user approval, and fresh postcondition evidence.
  */
 class AndroidAdbVisionControlLoop(
     private val adb: AdbAutomationPort,
@@ -98,7 +106,7 @@ class AndroidAdbVisionControlLoop(
         val runGeneration = generation.incrementAndGet()
         val deadlineNanos = nanoTime() + TimeUnit.MILLISECONDS.toNanos(limits.timeoutMillis)
         if (!adb.isAvailable()) {
-            return CompletableFuture.completedFuture(
+            return completed(
                 AndroidVisionLoopResult.Unavailable("authorized Android ADB target is unavailable"),
             )
         }
@@ -298,7 +306,7 @@ class AndroidAdbVisionControlLoop(
         is AndroidAutomationAction.AdbKey -> adb.key(action.key)
         is AndroidAutomationAction.AdbWait -> adb.wait(action.durationMs)
         else -> DeviceActionResult.Error(
-            ai.zara.app.device.DeviceActionErrorCode.InvalidArguments,
+            DeviceActionErrorCode.InvalidArguments,
             "vision proposed an action outside the closed ADB vocabulary",
         )
     }
@@ -346,11 +354,24 @@ class AndroidAdbVisionControlLoop(
     ): CompletableFuture<T> {
         val remainingNanos = deadlineNanos - nanoTime()
         if (remainingNanos <= 0) {
-            return CompletableFuture<T>().also {
-                it.completeExceptionally(IllegalStateException("vision loop timeout exceeded"))
-            }
+            return failed(TimeoutException("vision loop timeout exceeded"))
         }
-        return future.orTimeout(remainingNanos, TimeUnit.NANOSECONDS)
+        val bounded = CompletableFuture<T>()
+        val timeout = VISION_TIMEOUT_EXECUTOR.schedule(
+            {
+                if (bounded.completeExceptionally(TimeoutException("vision loop timeout exceeded"))) {
+                    multimodal.cancel()
+                }
+            },
+            remainingNanos,
+            TimeUnit.NANOSECONDS,
+        )
+        future.whenComplete { value, error ->
+            timeout.cancel(false)
+            if (error == null) bounded.complete(value)
+            else bounded.completeExceptionally(error)
+        }
+        return bounded
     }
 
     private fun rootMessage(error: Throwable): String {
@@ -360,6 +381,9 @@ class AndroidAdbVisionControlLoop(
     }
 
     private fun <T> completed(value: T): CompletableFuture<T> = CompletableFuture.completedFuture(value)
+
+    private fun <T> failed(error: Throwable): CompletableFuture<T> =
+        CompletableFuture<T>().also { it.completeExceptionally(error) }
 
     private sealed interface ObservationResult {
         data class Ok(
