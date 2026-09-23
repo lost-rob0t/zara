@@ -18,4 +18,11 @@ class AppNavigationPluginUiTest {
         check(navigation.settings == AppRoute.Plugins)
         check(AppNavigation.restore(navigation.save()) == navigation)
     }
+
+    @Test
+    fun pluginApkPickerNormalizesOnlyValidPublisherChecksums() {
+        check(normalizedPluginChecksumOrNull("") == null)
+        check(normalizedPluginChecksumOrNull("not-a-digest") == null)
+        check(normalizedPluginChecksumOrNull("A".repeat(64)) == "a".repeat(64))
+    }
 }
