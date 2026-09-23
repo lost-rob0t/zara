@@ -1,7 +1,6 @@
 package ai.zara.app.prolog
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFails
 import org.junit.Test
 
 class PrologReplaceTest {
@@ -46,9 +45,18 @@ class PrologReplaceTest {
 
     @Test
     fun invalidInputsFailClosedBeforeMutation() {
-        assertFails { PrologReplace.replaceNext("fact(one).", "", "signal", 0) }
-        assertFails { PrologReplace.replaceAll("fact(one).", "", "signal") }
-        assertFails { PrologReplace.replaceAll("fact(one).", "fact", "signal", limit = 0) }
-        assertFails { PrologReplace.replaceAll("fact(one).", "fact", "signal", limit = 501) }
+        expectFailure { PrologReplace.replaceNext("fact(one).", "", "signal", 0) }
+        expectFailure { PrologReplace.replaceAll("fact(one).", "", "signal") }
+        expectFailure { PrologReplace.replaceAll("fact(one).", "fact", "signal", limit = 0) }
+        expectFailure { PrologReplace.replaceAll("fact(one).", "fact", "signal", limit = 501) }
+    }
+
+    private fun expectFailure(block: () -> Unit) {
+        try {
+            block()
+        } catch (_: IllegalArgumentException) {
+            return
+        }
+        error("Expected IllegalArgumentException")
     }
 }
