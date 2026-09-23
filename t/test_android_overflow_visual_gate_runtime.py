@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -144,10 +145,19 @@ def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
     scenario = device.scenario_evidence[-1]
     receipt = device.visual_checks[-1]
     twin = tmp_path / scenario["text_evidence"]["file"]
+    persisted = json.loads((tmp_path / "bound-evidence.json").read_text(encoding="utf-8"))
+    twin_text = twin.read_text(encoding="utf-8")
+
     assert receipt["screenshot_sha256"] == hashlib.sha256(screenshot.read_bytes()).hexdigest()
     assert receipt["text_twin_file"] == scenario["text_evidence"]["file"]
     assert receipt["text_twin_sha256"] == scenario["text_evidence"]["sha256"]
     assert receipt["text_twin_sha256"] == hashlib.sha256(twin.read_bytes()).hexdigest()
+    assert persisted["text_evidence"] == scenario["text_evidence"]
+    assert 'text="Rename"' in twin_text
+    assert (
+        "ASSERT PASS transient-surface-visible "
+        "actions=Rename viewport=160x120"
+    ) in twin_text
 
 
 def test_overflow_visual_receipt_reuses_capture_bound_text_evidence(
