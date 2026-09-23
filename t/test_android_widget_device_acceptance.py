@@ -59,7 +59,6 @@ def test_widget_acceptance_exercises_responsive_theme_runtime_and_process_death_
         "font_scale",
         "2.0",
         "target_width_dp=320",
-        '"am", "kill", "ai.zara.app"',
     ):
         assert required in source
 
@@ -116,6 +115,24 @@ def test_route_action_waits_for_launcher_widget_after_home(tmp_path: Path) -> No
                 "enabled": True,
             },
         }
+    ]
+
+
+def test_terminate_main_process_targets_canonical_package(tmp_path: Path) -> None:
+    module = _load_widget_acceptance()
+    device = module.Device("emulator-5554", tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    device.main_pid = lambda: 4242
+    device.home = lambda: calls.append(("home",))
+    device.adb = lambda *arguments, **kwargs: calls.append(arguments) or ""
+
+    device.terminate_main_process(4242)
+
+    assert module.PACKAGE == "ai.zara.app"
+    assert calls == [
+        ("home",),
+        ("shell", "am", "kill", module.PACKAGE),
     ]
 
 
