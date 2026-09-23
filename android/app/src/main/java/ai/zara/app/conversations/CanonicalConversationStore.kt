@@ -232,14 +232,46 @@ class CanonicalConversationStore(
                     it.status.isRunning()
             }
         }
+        val expectedStatus = if (success) {
+            HistoryMessageStatus.Complete
+        } else {
+            HistoryMessageStatus.Error
+        }
         if (pending != null) {
-            history.saveMessage(
-                pending.copy(
-                    content = response,
-                    status = if (success) HistoryMessageStatus.Complete else HistoryMessageStatus.Error,
-                    error = if (success) "" else response,
+            val previousMetadata = metadata
+            val stagesRemoteId = cleanRemoteId != null && durableRemoteId == null
+            if (stagesRemoteId) {
+                updateMetadata(id) { it.copy(remoteConversationId = cleanRemoteId) }
+                check(loadMetadata().conversations[id]?.remoteConversationId == cleanRemoteId) {
+                    "Remote conversation id persistence postcondition failed"
+                }
+            }
+            try {
+                history.saveMessage(
+                    pending.copy(
+                        content = response,
+                        status = expectedStatus,
+                        error = if (success) "" else response,
+                    )
                 )
-            )
+            } catch (error: Throwable) {
+                if (stagesRemoteId) {
+                    try {
+                        metadata = previousMetadata
+                        persistMetadata()
+                        check(loadMetadata().conversations[id]?.remoteConversationId == durableRemoteId) {
+                            "Remote conversation id rollback postcondition failed"
+                        }
+                    } catch (rollbackError: Throwable) {
+                        error.addSuppressed(rollbackError)
+                    }
+                }
+                throw error
+            }
+            val committed = history.loadMessages(id).singleOrNull { it.id == pending.id }
+            check(committed?.status == expectedStatus && committed.content == response) {
+                "Turn terminal persistence postcondition failed"
+            }
         } else {
             val terminal = if (expectedTurn == null) {
                 messages.lastOrNull { it.role == HistoryMessageRole.Assistant }
@@ -248,17 +280,15 @@ class CanonicalConversationStore(
                     it.role == HistoryMessageRole.Assistant && it.turnId == expectedTurn
                 }
             } ?: error("Conversation has no assistant turn matching the expected turn id")
-            val expectedStatus = if (success) {
-                HistoryMessageStatus.Complete
-            } else {
-                HistoryMessageStatus.Error
-            }
             check(terminal.status == expectedStatus && terminal.content == response) {
                 "Conversation has no matching running or terminal turn"
             }
-        }
-        if (cleanRemoteId != null && durableRemoteId == null) {
-            updateMetadata(id) { it.copy(remoteConversationId = cleanRemoteId) }
+            if (cleanRemoteId != null && durableRemoteId == null) {
+                updateMetadata(id) { it.copy(remoteConversationId = cleanRemoteId) }
+                check(loadMetadata().conversations[id]?.remoteConversationId == cleanRemoteId) {
+                    "Remote conversation id persistence postcondition failed"
+                }
+            }
         }
         return snapshot()
     }
