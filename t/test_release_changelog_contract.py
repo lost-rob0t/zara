@@ -167,7 +167,8 @@ def test_release_staging_is_verified_before_the_publication_transition() -> None
     assert "--draft" in workflow
     assert "gh release edit" not in workflow
     assert '--method DELETE "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in workflow
-    assert '--method PATCH "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in workflow
+    assert "gh api --method PATCH" in workflow
+    assert '"repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in workflow
     assert "-F draft=false" in workflow
     assert workflow.index("Stage GitHub versioned release as draft") < workflow.index(
         "Verify staged release bytes, metadata, signer, and notes"
