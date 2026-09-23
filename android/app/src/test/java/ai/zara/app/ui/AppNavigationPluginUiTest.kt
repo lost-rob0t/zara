@@ -14,6 +14,7 @@ class AppNavigationPluginUiTest {
     fun pluginsRouteSurvivesSavedNavigationState() {
         val navigation = AppNavigation().selectRoute(AppRoute.Plugins)
         check(navigation.menu == AppMenu.Settings)
+        check(navigation.route == AppRoute.Plugins)
         check(navigation.settings == AppRoute.Plugins)
         check(AppNavigation.restore(navigation.save()) == navigation)
     }
