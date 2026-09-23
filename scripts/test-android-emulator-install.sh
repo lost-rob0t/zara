@@ -56,22 +56,30 @@ test -f "$trealla_library_root/arm64-v8a/libtrealla.a"
 test -f "$trealla_library_root/x86_64/libtrealla.a"
 
 # Exercise the real Android SQLiteOpenHelper migrations, persisted-type fences,
-# legacy symbolic-owner claim, and restart cancellation fencing on the same
-# emulator used for acceptance. The v2 fixture proves history plus a new
-# zero-call projection survives migration/reopen. The v3 fixture proves
-# fail-closed policy defaults can be replaced only by authoritative false/0
-# policy and that REAL/TEXT counter corruption stays rejected after recreation.
-# The legacy-owner fixture proves numeric-UID projection state follows canonical
-# local history to local:owner without losing clarification or zero-call ledgers.
-# The restart fixture proves a recovered streaming turn terminalizes both
-# canonical history and its matching symbolic projection before any late
-# completion/effect callback can land.
+# legacy symbolic-owner claim, restart cancellation fencing, and bounded v2
+# verified-outcome replay fence on the same emulator used for acceptance. The
+# v2 fixture proves history plus a new zero-call projection survives
+# migration/reopen. The v3 fixture proves fail-closed policy defaults can be
+# replaced only by authoritative false/0 policy and that REAL/TEXT counter
+# corruption stays rejected after recreation. The legacy-owner fixture proves
+# numeric-UID projection state follows canonical local history to local:owner
+# without losing clarification or zero-call ledgers. The restart fixture proves
+# a recovered streaming turn terminalizes both canonical history and its
+# matching symbolic projection before any late completion/effect callback can
+# land. The verified-outcome v2 fixture proves 80+ verified turns remain bounded
+# at 64 live receipts, survive process recreation, accept fresh evidence, and
+# reject retired/stale replay with exact zero provider/model accounting. The
+# edge duplicate-reference fixture proves repeated canonical references remain
+# readable by the edge/Wear projection after process recreation with the same
+# hard-zero provider/model accounting. The expert-evidence fixture proves typed
+# symbolic evidence remains trusted across canonical store recreation while
+# provider-shaped nested metadata fails closed with the same exact-zero ledger.
 set +e
 ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
   ZARA_TREALLA_LIBRARY_ROOT="$trealla_library_root" \
   nix develop ./android -c bash -lc \
   'cd android && gradle :app:connectedDebugAndroidTest --no-daemon \
-    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest' \
+    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest,ai.zara.app.history.SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest' \
   2>&1 | tee "$instrumentation_log"
 instrumentation_status=${PIPESTATUS[0]}
 set -e
@@ -200,3 +208,105 @@ wait "$interop_pid"
 interop_pid=""
 adb -s "$serial" reverse --remove "tcp:$reverse_port"
 reverse_port=""
+
+# Third gate: reproduce the remote voice -> protocol failure -> recovery class
+# (#1299/#1302) against the deterministic recovery fixture on the real APK.
+recovery_dir="$(mktemp -d)"
+recovery_fixture="$recovery_dir/fixture.env"
+recovery_log="$recovery_dir/server.log"
+recovery_pid=""
+recovery_reverse_port=""
+
+cleanup_recovery_acceptance() {
+  status=$?
+  mkdir -p android/app/build/reports/device
+  if [[ -f "$recovery_log" ]]; then
+    cp "$recovery_log" android/app/build/reports/device/remote-recovery-fixture.log || true
+  fi
+  if [[ -n "$recovery_reverse_port" ]]; then
+    adb -s "$serial" reverse --remove "tcp:$recovery_reverse_port" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$recovery_pid" ]] && kill -0 "$recovery_pid" 2>/dev/null; then
+    kill "$recovery_pid" 2>/dev/null || true
+    wait "$recovery_pid" 2>/dev/null || true
+  fi
+  rm -rf "$recovery_dir"
+  exit "$status"
+}
+
+nix develop "$repo_root" -c env \
+  PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$repo_root/android/integration/remote_recovery_fixture.py" \
+  --fixture-file "$recovery_fixture" </dev/null >"$recovery_log" 2>&1 &
+recovery_pid=$!
+
+for _ in $(seq 1 1200); do
+  if [[ -f "$recovery_fixture" ]] && grep -qx 'READY' "$recovery_log"; then
+    break
+  fi
+  if ! kill -0 "$recovery_pid" 2>/dev/null; then
+    cat "$recovery_log" >&2
+    echo "recovery fixture exited before installed-APK recovery acceptance" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -f "$recovery_fixture" ]] || ! grep -qx 'READY' "$recovery_log"; then
+  cat "$recovery_log" >&2
+  echo "recovery fixture did not become ready" >&2
+  exit 1
+fi
+
+recovery_endpoint="$(sed -n 's/^endpoint=//p' "$recovery_fixture")"
+recovery_reverse_port="${recovery_endpoint##*:}"
+if [[ ! "$recovery_reverse_port" =~ ^[0-9]+$ ]]; then
+  cat "$recovery_fixture" >&2
+  echo "recovery fixture did not publish a numeric TCP port" >&2
+  exit 1
+fi
+adb -s "$serial" reverse "tcp:$recovery_reverse_port" "tcp:$recovery_reverse_port"
+
+trap cleanup_recovery_acceptance EXIT
+nix develop "$repo_root" -c env \
+  PYTHONPATH="$repo_root/android/integration:$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$repo_root/android/integration/device_remote_recovery_acceptance.py" \
+  --serial "$serial" \
+  --fixture-file "$recovery_fixture" \
+  --output "$repo_root/android/app/build/reports/device"
+
+recovery_manifest="$repo_root/android/app/build/reports/device/recovery-manifest.json"
+python3 - "$recovery_manifest" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+data = json.loads(path.read_text(encoding="utf-8"))
+required = (
+    "first_text_turn",
+    "voice_turn_completed",
+    "malformed_typed_error",
+    "diagnostics_v2_primary_failure",
+    "reconnected_second_turn",
+    "close_typed_error",
+    "second_recovery_turn",
+    "recreation_fenced",
+)
+missing = [key for key in required if data.get(key) is not True]
+if data.get("passed") is not True or missing:
+    raise SystemExit(f"recovery acceptance manifest incomplete: {missing}")
+if data.get("app_diagnostics_failure") or data.get("logcat_failure"):
+    raise SystemExit("recovery acceptance could not inspect required app diagnostics/logcat")
+fatal_markers = data.get("fatal_log_markers")
+if not isinstance(fatal_markers, list):
+    raise SystemExit("recovery acceptance omitted fatal_log_markers inspection result")
+if fatal_markers:
+    raise SystemExit(f"recovery acceptance found crash/ANR markers: {fatal_markers}")
+PY
+
+kill "$recovery_pid" 2>/dev/null || true
+wait "$recovery_pid" 2>/dev/null || true
+recovery_pid=""
+adb -s "$serial" reverse --remove "tcp:$recovery_reverse_port"
+recovery_reverse_port=""
+cp "$recovery_log" android/app/build/reports/device/remote-recovery-fixture.log || true
