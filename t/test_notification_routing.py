@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -62,10 +64,12 @@ class Policy:
 class EffectPlane:
     def __init__(self) -> None:
         self.authorized = True
+        self.authorizations: list[tuple[str, str, str, str]] = []
         self.executed: list[tuple[str, str]] = []
         self.verified: list[str] = []
 
     def authorize(self, *, owner_peer: str, capability: str, principal_id: str, workspace_id: str) -> bool:
+        self.authorizations.append((owner_peer, capability, principal_id, workspace_id))
         return self.authorized and owner_peer == "phone" and capability.startswith("notification.action.")
 
     def execute(self, request: NotificationActionRequest, *, owner_peer: str) -> Mapping[str, Any]:
@@ -93,12 +97,43 @@ class StaleVerificationPlane(EffectPlane):
         }
 
 
+class RecoveringVerificationPlane(EffectPlane):
+    def __init__(self) -> None:
+        super().__init__()
+        self._stale_once = True
+
+    def verify(self, request: NotificationActionRequest, receipt: Mapping[str, Any], *, owner_peer: str) -> Mapping[str, Any]:
+        self.verified.append(request.request_id)
+        generation = request.generation
+        if self._stale_once:
+            self._stale_once = False
+            generation -= 1
+        return {
+            "ok": True,
+            "observed_owner_peer": owner_peer,
+            "receipt_id": receipt["receipt_id"],
+            "generation": generation,
+        }
+
+
+class SlowEffectPlane(EffectPlane):
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+
+    def execute(self, request: NotificationActionRequest, *, owner_peer: str) -> Mapping[str, Any]:
+        with self._lock:
+            self.executed.append((request.request_id, owner_peer))
+        time.sleep(0.05)
+        return {"receipt_id": f"receipt:{request.request_id}", "owner_peer": owner_peer}
+
+
 def _store(tmp_path: Path) -> tuple[DatabaseManager, NotificationRouterStore]:
     db = DatabaseManager(tmp_path / "zara.db")
     return db, NotificationRouterStore(db)
 
 
-def _event(*, notification_id: str = "n:1", generation: int = 1, body: str | None = "secret body", origin_chain: tuple[str, ...] = ()) -> NotificationEvent:
+def _event(*, notification_id: str = "n:1", generation: int = 1, body: str | None = "secret body", origin_chain: tuple[str, ...] = (), expires_at_ms: int = NOW + 60_000, action_handles: tuple[str, ...] = ("reply", "dismiss")) -> NotificationEvent:
     return NotificationEvent(
         notification_id=notification_id,
         principal_id="user:alice",
@@ -110,13 +145,13 @@ def _event(*, notification_id: str = "n:1", generation: int = 1, body: str | Non
         generation=generation,
         app="com.example.chat",
         created_at_ms=NOW - 1000,
-        expires_at_ms=NOW + 60_000,
+        expires_at_ms=expires_at_ms,
         title="hello",
         body=body,
         category="message",
         importance="normal",
         origin_chain=origin_chain,
-        action_handles=("reply", "dismiss"),
+        action_handles=action_handles,
         provenance={"collector": "android-notification-listener"},
     )
 
@@ -280,12 +315,12 @@ def test_action_from_remote_sink_routes_to_source_owner_and_stale_generation_is_
     router.route(event, _peers(), now_ms=NOW)
     plane = EffectPlane()
     request = NotificationActionRequest(
-        request_id="req:wear:reply",
+        request_id="req:desktop:reply",
         notification_id="n:action",
         generation=2,
         principal_id="user:alice",
         workspace_id="ws:main",
-        sink_peer="watch",
+        sink_peer="desktop",
         action="inline_reply",
         argument="reply",
     )
@@ -295,12 +330,12 @@ def test_action_from_remote_sink_routes_to_source_owner_and_stale_generation_is_
     assert plane.executed[-1][1] == "phone"
 
     stale = NotificationActionRequest(
-        request_id="req:wear:stale",
+        request_id="req:desktop:stale",
         notification_id="n:action",
         generation=1,
         principal_id="user:alice",
         workspace_id="ws:main",
-        sink_peer="watch",
+        sink_peer="desktop",
         action="dismiss",
     )
     with pytest.raises(NotificationStale):
@@ -350,3 +385,147 @@ def test_denied_capability_never_executes_effect(tmp_path: Path) -> None:
     with pytest.raises(NotificationDenied, match="capability denied"):
         router.perform_action(request, plane, now_ms=NOW + 1)
     assert plane.executed == []
+
+
+def test_expired_action_after_restart_is_denied_before_authorize_or_execute(tmp_path: Path) -> None:
+    db1, store1 = _store(tmp_path)
+    router1 = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store1)
+    event = _event(notification_id="n:expired-action", expires_at_ms=NOW + 10)
+    decision = router1.route(event, _peers(), now_ms=NOW)
+    assert decision.sinks == ("desktop",)
+    db1.close()
+
+    db2 = DatabaseManager(tmp_path / "zara.db")
+    router2 = NotificationRouter(
+        local_peer_id="phone",
+        policy=Policy(),
+        store=NotificationRouterStore(db2),
+    )
+    plane = EffectPlane()
+    request = NotificationActionRequest(
+        request_id="req:expired",
+        notification_id=event.notification_id,
+        generation=event.generation,
+        principal_id=event.principal_id,
+        workspace_id=event.workspace_id,
+        sink_peer="desktop",
+        action="dismiss",
+    )
+
+    with pytest.raises(NotificationDenied, match="expired"):
+        router2.perform_action(request, plane, now_ms=NOW + 11)
+
+    assert plane.authorizations == []
+    assert plane.executed == []
+    assert plane.verified == []
+
+
+def test_action_requires_routed_sink_and_exposed_source_handle(tmp_path: Path) -> None:
+    _, store = _store(tmp_path)
+    router = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store)
+    event = _event(notification_id="n:grant")
+    decision = router.route(event, _peers(), now_ms=NOW)
+    assert decision.sinks == ("desktop",)
+
+    wrong_sink_plane = EffectPlane()
+    wrong_sink = NotificationActionRequest(
+        request_id="req:wrong-sink",
+        notification_id=event.notification_id,
+        generation=event.generation,
+        principal_id=event.principal_id,
+        workspace_id=event.workspace_id,
+        sink_peer="watch",
+        action="dismiss",
+    )
+    with pytest.raises(NotificationDenied, match="routed sink"):
+        router.perform_action(wrong_sink, wrong_sink_plane, now_ms=NOW + 1)
+    assert wrong_sink_plane.authorizations == []
+    assert wrong_sink_plane.executed == []
+
+    missing_handle_plane = EffectPlane()
+    missing_handle = NotificationActionRequest(
+        request_id="req:missing-handle",
+        notification_id=event.notification_id,
+        generation=event.generation,
+        principal_id=event.principal_id,
+        workspace_id=event.workspace_id,
+        sink_peer="desktop",
+        action="open",
+    )
+    with pytest.raises(NotificationDenied, match="action handle"):
+        router.perform_action(missing_handle, missing_handle_plane, now_ms=NOW + 1)
+    assert missing_handle_plane.authorizations == []
+    assert missing_handle_plane.executed == []
+
+
+def test_concurrent_duplicate_effect_requests_execute_exactly_once(tmp_path: Path) -> None:
+    _, store = _store(tmp_path)
+    router = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store)
+    event = _event(notification_id="n:race")
+    router.route(event, _peers(), now_ms=NOW)
+    plane = SlowEffectPlane()
+    request = NotificationActionRequest(
+        request_id="req:race",
+        notification_id=event.notification_id,
+        generation=event.generation,
+        principal_id=event.principal_id,
+        workspace_id=event.workspace_id,
+        sink_peer="desktop",
+        action="dismiss",
+    )
+    start = threading.Barrier(3)
+    successes: list[object] = []
+    failures: list[BaseException] = []
+
+    def run() -> None:
+        start.wait()
+        try:
+            successes.append(
+                router.perform_action(
+                    request,
+                    plane,
+                    effect_key="action:shared-race",
+                    now_ms=NOW + 1,
+                )
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    threads = [threading.Thread(target=run), threading.Thread(target=run)]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+    assert plane.executed == [("req:race", "phone")]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert isinstance(failures[0], NotificationDenied)
+
+
+def test_failed_verification_retry_reuses_durable_receipt_without_reexecuting(tmp_path: Path) -> None:
+    _, store = _store(tmp_path)
+    router = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store)
+    event = _event(notification_id="n:recover")
+    router.route(event, _peers(), now_ms=NOW)
+    plane = RecoveringVerificationPlane()
+    request = NotificationActionRequest(
+        request_id="req:recover",
+        notification_id=event.notification_id,
+        generation=event.generation,
+        principal_id=event.principal_id,
+        workspace_id=event.workspace_id,
+        sink_peer="desktop",
+        action="dismiss",
+    )
+
+    with pytest.raises(NotificationDenied, match="fresh verified postcondition"):
+        router.perform_action(request, plane, now_ms=NOW + 1)
+    result = router.perform_action(request, plane, now_ms=NOW + 2)
+
+    assert result.success is True
+    assert plane.executed == [("req:recover", "phone")]
+    assert plane.verified == ["req:recover", "req:recover"]
+    assert store.effect_done("user:alice", "ws:main", "action:req:recover") is True
