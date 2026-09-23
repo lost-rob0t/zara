@@ -409,6 +409,27 @@ def validate_android(
                 f"android scenario text omitted action/assertion trace: {scenario_id}"
             )
 
+        trace_line_count = len(trace.splitlines())
+        semantic_lines = text_lines[2:-trace_line_count] if trace_line_count else text_lines[2:]
+        required_semantic_fields = (
+            "class=",
+            " text=",
+            " content_desc=",
+            " enabled=",
+            " clickable=",
+            " selected=",
+            " focused=",
+            " bounds=",
+        )
+        if not semantic_lines or any(
+            not line.startswith(required_semantic_fields[0])
+            or any(field not in line for field in required_semantic_fields[1:])
+            for line in semantic_lines
+        ):
+            raise EvidenceError(
+                f"android scenario text contains no normalized UI semantics: {scenario_id}"
+            )
+
         screenshot_entry = screenshots_by_state.get(state)
         if screenshot_entry is None:
             raise EvidenceError(f"android scenario has no screenshot manifest entry: {scenario_id}")
