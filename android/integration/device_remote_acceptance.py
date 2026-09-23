@@ -156,10 +156,10 @@ def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
             pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
             if not re.fullmatch(r"\d+", pid):
                 raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
-            logcat = device.adb("logcat", "-d", "--pid", pid, "-v", "threadtime")
+            logcat = device.adb("shell", "logcat", "-d", "--pid", pid, "-v", "threadtime")
             evidence["logcat_pid_filtered"] = True
         except Exception:
-            logcat = device.adb("logcat", "-d", "-v", "threadtime")
+            logcat = device.adb("shell", "logcat", "-d", "-v", "threadtime")
             evidence["logcat_pid_filtered"] = False
         path = output / "remote-logcat.log"
         path.write_text(logcat, encoding="utf-8")
