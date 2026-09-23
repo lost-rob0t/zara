@@ -34,7 +34,11 @@ def test_capture_retains_same_state_text_twin_and_asserted_action_hash(tmp_path)
     device = Device("emulator-test", tmp_path)
     device.adb = _fake_adb  # type: ignore[method-assign]
 
-    device.capture("settings-plugins", required_actions=("Choose APK",))
+    device.capture(
+        "settings-plugins",
+        required_labels=("Plugins",),
+        required_actions=("Choose APK",),
+    )
 
     assert len(device.screenshots) == 1
     evidence = device.screenshots[0]
@@ -42,12 +46,14 @@ def test_capture_retains_same_state_text_twin_and_asserted_action_hash(tmp_path)
     assert evidence["file"] == "settings-plugins.png"
     assert evidence["sha256"] == hashlib.sha256(PNG).hexdigest()
     assert evidence["text_twin_file"] == "settings-plugins.ui.json"
+    assert evidence["asserted_labels"] == ["Plugins"]
     assert evidence["asserted_actions"] == ["Choose APK"]
 
     twin_bytes = (tmp_path / evidence["text_twin_file"]).read_bytes()
     assert evidence["text_twin_sha256"] == hashlib.sha256(twin_bytes).hexdigest()
     twin = json.loads(twin_bytes)
     assert twin["state"] == "settings-plugins"
+    assert twin["asserted_labels"] == ["Plugins"]
     assert twin["asserted_actions"] == ["Choose APK"]
     assert any(node["text"] == "Plugins" for node in twin["nodes"])
     action = next(node for node in twin["nodes"] if node["text"] == "Choose APK")
@@ -93,5 +99,15 @@ def test_capture_fails_closed_when_required_action_is_not_usable(tmp_path, label
 
     with pytest.raises(AssertionError, match="rendered action"):
         device.capture("settings-plugins", required_actions=(label,))
+
+    assert device.screenshots == []
+
+
+def test_capture_fails_closed_when_required_text_twin_label_is_missing(tmp_path):
+    device = Device("emulator-test", tmp_path)
+    device.adb = _fake_adb  # type: ignore[method-assign]
+
+    with pytest.raises(AssertionError, match="rendered label"):
+        device.capture("settings-plugins", required_labels=("PLUGIN HOST",))
 
     assert device.screenshots == []
