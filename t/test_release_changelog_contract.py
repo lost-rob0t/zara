@@ -158,6 +158,23 @@ def test_existing_immutable_release_is_verified_not_rewritten() -> None:
     assert 'gh release download "$TAG"' in workflow
 
 
+def test_release_staging_is_verified_before_the_publication_transition() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+    assert "Stage GitHub versioned release as draft" in workflow
+    assert "Verify staged release bytes, metadata, signer, and notes" in workflow
+    assert "Publish verified GitHub versioned release" in workflow
+    assert "--draft" in workflow
+    assert 'gh release delete "$TAG" --yes' in workflow
+    assert 'gh release edit "$TAG" --draft=false' in workflow
+    assert workflow.index("Stage GitHub versioned release as draft") < workflow.index(
+        "Verify staged release bytes, metadata, signer, and notes"
+    )
+    assert workflow.index("Verify staged release bytes, metadata, signer, and notes") < workflow.index(
+        "Publish verified GitHub versioned release"
+    )
+
+
 def test_versioned_release_uses_canonical_notes_and_exact_downloaded_bytes() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 
