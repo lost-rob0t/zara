@@ -14,6 +14,7 @@ from typing import Any
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 ANDROID_SCENARIO_ID = re.compile(r"android\.ui\.([a-z0-9][a-z0-9-]*)")
+RUNTIME_EVIDENCE_FIELDS = ("mode", "runtime_id", "model", "quantization", "phase")
 
 
 class EvidenceError(ValueError):
@@ -193,11 +194,31 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
 
         if scenario.get("source_sha") != source_sha:
             raise EvidenceError(f"android scenario source SHA mismatch: {scenario_id}")
+        _require_sha256(
+            scenario.get("apk_sha256"),
+            label=f"android scenario apk_sha256 {scenario_id}",
+        )
         if scenario.get("device_api") != manifest_device_api:
             raise EvidenceError(f"android scenario device API mismatch: {scenario_id}")
         profile = scenario.get("profile")
         if not isinstance(profile, str) or not profile:
             raise EvidenceError(f"android scenario profile is missing: {scenario_id}")
+        route = scenario.get("route")
+        if not isinstance(route, str) or not route.strip():
+            raise EvidenceError(f"android scenario route is missing: {scenario_id}")
+        runtime = scenario.get("runtime")
+        if not isinstance(runtime, dict):
+            raise EvidenceError(f"android scenario runtime is missing: {scenario_id}")
+        for field in RUNTIME_EVIDENCE_FIELDS:
+            if field not in runtime:
+                raise EvidenceError(
+                    f"android scenario runtime {field} is missing: {scenario_id}"
+                )
+            value = runtime[field]
+            if value is not None and (not isinstance(value, str) or not value):
+                raise EvidenceError(
+                    f"android scenario runtime {field} is invalid: {scenario_id}"
+                )
 
         actions = scenario.get("actions")
         if not isinstance(actions, list) or not actions or not all(
@@ -237,7 +258,6 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
             scenario.get("assertion_evidence"),
             label=f"android scenario assertions {scenario_id}",
         )
-
         screenshot_entry = screenshots_by_state.get(state)
         if screenshot_entry is None:
             raise EvidenceError(f"android scenario has no screenshot manifest entry: {scenario_id}")
