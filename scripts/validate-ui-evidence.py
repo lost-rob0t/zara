@@ -151,7 +151,12 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
     return len(fixtures)
 
 
-def validate_android(manifest_path: Path, source_sha: str) -> int:
+def validate_android(
+    manifest_path: Path,
+    source_sha: str,
+    *,
+    include_supplemental: bool = True,
+) -> int:
     manifest = _load_manifest(manifest_path)
     if manifest.get("source_sha") != source_sha:
         raise EvidenceError(
@@ -330,7 +335,17 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
         raise EvidenceError(
             f"android scenario/screenshot state mismatch: missing={missing} extra={extra}"
         )
-    return len(screenshots)
+
+    count = len(screenshots)
+    if include_supplemental:
+        supplemental_path = manifest_path.with_name("remote-manifest.json")
+        if supplemental_path != manifest_path and supplemental_path.is_file():
+            count += validate_android(
+                supplemental_path,
+                source_sha,
+                include_supplemental=False,
+            )
+    return count
 
 
 def main() -> int:
