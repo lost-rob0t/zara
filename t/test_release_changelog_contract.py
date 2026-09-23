@@ -188,6 +188,21 @@ def test_release_staging_is_verified_before_the_publication_transition() -> None
     )
 
 
+def test_existing_tag_ref_is_release_source_authority_not_target_commitish() -> None:
+    workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    recovery = _workflow_step(workflow, "Recover stale owned draft from prior interrupted run")
+    stage = _workflow_step(workflow, "Stage GitHub versioned release as draft")
+    staged_verify = _workflow_step(workflow, "Verify staged release bytes, metadata, signer, and notes")
+    cleanup = _workflow_step(workflow, "Cleanup unpublished owned staged release")
+
+    for step in (recovery, stage, staged_verify, cleanup):
+        assert 'git rev-list -n 1 "$TAG"' in step
+        assert 'release.get("target_commitish")' not in step
+
+    assert 'test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"' in workflow
+    assert '--verify-tag' in stage
+
+
 def test_staged_release_cleanup_is_owned_retry_safe_and_never_deletes_published() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
     recovery = _workflow_step(workflow, "Recover stale owned draft from prior interrupted run")
@@ -204,8 +219,6 @@ def test_staged_release_cleanup_is_owned_retry_safe_and_never_deletes_published(
     assert current_run_receipt in cleanup
     assert "if: always() && steps.stage.outputs.release_id != ''" in cleanup
     assert "STAGED_RELEASE_ID: ${{ steps.stage.outputs.release_id }}" in cleanup
-    assert 'release.get("target_commitish") != os.environ["STAGED_SOURCE"]' in recovery
-    assert 'release.get("target_commitish") != os.environ["STAGED_SOURCE"]' in cleanup
     assert 'release.get("name") != os.environ["STAGED_TITLE"]' in cleanup
     assert 'release.get("draft") is not True' in cleanup
     assert 'print("keep")' in cleanup
