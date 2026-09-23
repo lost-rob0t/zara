@@ -268,6 +268,29 @@ def test_corrupt_durable_terminal_returns_explicit_unknown_without_redispatch(
     assert recovered.effect_receipts == ()
 
 
+def test_journal_schema_coexists_with_existing_shared_migrations(tmp_path: Path) -> None:
+    counter = DispatchCounter()
+    path = tmp_path / "migration-coexistence.db"
+    database = _fresh_database(path)
+    database.register_migration(
+        97,
+        ["CREATE TABLE preexisting_owner (id INTEGER PRIMARY KEY)"],
+    )
+    database.connect()
+    before = [row["version"] for row in database.fetch_all("SELECT version FROM schema_migrations")]
+
+    registry, port, handle = _runtime(counter, database)
+    result = port.invoke(_request(registry, handle))
+    after = [row["version"] for row in database.fetch_all("SELECT version FROM schema_migrations")]
+
+    assert result.verdict is ExpertVerdict.SUCCEEDED
+    assert before == after == [97]
+    assert database.fetch_one(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'expert_idempotency_v1'"
+    ) is not None
+    database.close()
+
+
 def test_concurrent_recreated_registry_returns_unknown_instead_of_double_dispatch(
     tmp_path: Path,
 ) -> None:
@@ -309,6 +332,51 @@ def test_concurrent_recreated_registry_returns_unknown_instead_of_double_dispatc
     assert replay.verdict is ExpertVerdict.SUCCEEDED
     assert replay.invocation_id == first.invocation_id
     assert replay.evidence_refs == first.evidence_refs
+    assert replay.usage == {"model_calls": 0}
+    assert counter.calls == 1
+
+
+def test_cancelled_dispatch_is_terminal_across_restart(tmp_path: Path) -> None:
+    counter = BlockingDispatchCounter()
+    path = tmp_path / "cancelled.db"
+    database = _fresh_database(path)
+    registry, port, handle = _runtime(counter, database)
+    outcome: dict[str, Any] = {}
+
+    def invoke() -> None:
+        try:
+            outcome["result"] = port.invoke(_request(registry, handle))
+        except BaseException as error:  # pragma: no cover - asserted below
+            outcome["error"] = error
+
+    thread = threading.Thread(target=invoke)
+    thread.start()
+    assert counter.entered.wait(timeout=10)
+    invocation_ids = registry.snapshot().invocation_ids
+    assert len(invocation_ids) == 1
+    cancellation = registry.cancel(invocation_ids[0])
+    assert cancellation["cancelled"] is True
+
+    counter.release.set()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert "error" not in outcome
+    cancelled = outcome["result"]
+    assert cancelled.verdict is ExpertVerdict.CANCELLED
+    assert cancelled.usage == {"model_calls": 0}
+    assert counter.calls == 1
+    database.close()
+
+    restarted_registry, restarted_port, restarted_handle = _runtime(
+        counter,
+        _fresh_database(path),
+    )
+    replay = restarted_port.invoke(_request(restarted_registry, restarted_handle))
+    assert replay.replayed is True
+    assert replay.verdict is ExpertVerdict.CANCELLED
+    assert replay.activation_id == cancelled.activation_id
+    assert replay.invocation_id == cancelled.invocation_id
+    assert replay.request_id == cancelled.request_id
     assert replay.usage == {"model_calls": 0}
     assert counter.calls == 1
 
