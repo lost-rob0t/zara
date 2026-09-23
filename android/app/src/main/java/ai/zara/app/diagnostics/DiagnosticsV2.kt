@@ -1,5 +1,6 @@
 package ai.zara.app.diagnostics
 
+import ai.zara.app.runtime.ProtocolFrameSummary
 import ai.zara.app.telemetry.ClientEvent
 import ai.zara.app.telemetry.ClientEventJournal
 import ai.zara.app.telemetry.FailureIncident
@@ -87,6 +88,7 @@ object DiagnosticsV2 {
 
     fun render(snapshot: DiagnosticsSnapshot): DiagnosticsBundle {
         val facts = textFacts(snapshot)
+        val failureFrames = snapshot.incident?.failure?.protocolContext?.recentFrames.orEmpty()
         val text = buildString {
             append(MARKER)
             append('\n')
@@ -96,10 +98,20 @@ object DiagnosticsV2 {
                 append(value)
                 append('\n')
             }
+            if (failureFrames.isNotEmpty()) {
+                append("--- failure protocol trace (at_failure) ---\n")
+                for ((index, frame) in failureFrames.withIndex()) {
+                    append("index=").append(index)
+                    for ((key, value) in frameFacts(frame)) {
+                        append(' ').append(key).append('=').append(value ?: "none")
+                    }
+                    append('\n')
+                }
+            }
             append("--- timeline ---\n")
             append(timeline(snapshot.events))
         }
-        return DiagnosticsBundle(text = text, json = json(facts, snapshot.events))
+        return DiagnosticsBundle(text = text, json = json(facts, snapshot.events, failureFrames))
     }
 
     private fun textFacts(snapshot: DiagnosticsSnapshot): Map<String, String> {
@@ -137,6 +149,23 @@ object DiagnosticsV2 {
             if (failure.serverCode != null) facts["primary_failure.server_code"] = sanitize(failure.serverCode)
             if (failure.connectionGeneration != null) {
                 facts["primary_failure.connection_generation"] = failure.connectionGeneration.toString()
+            }
+            failure.protocolContext?.let { context ->
+                facts["primary_failure.context_scope"] = "at_failure"
+                facts["primary_failure.session_id"] = context.sessionId ?: "none"
+                facts["primary_failure.expected_message"] = context.expectedMessage
+                facts["primary_failure.pending_requests"] = context.pendingRequestCount.toString()
+                facts["primary_failure.phase_elapsed_ms"] = context.phaseElapsedMillis.toString()
+                facts["primary_failure.protocol_trace_count"] = context.recentFrames.size.toString()
+                facts["primary_failure.protocol_trace_dropped"] = context.droppedFrameCount.toString()
+                for ((direction, frame) in listOf("rx" to context.lastRx, "tx" to context.lastTx)) {
+                    facts["primary_failure.last_${direction}_present"] = (frame != null).toString()
+                    if (frame != null) {
+                        for ((key, value) in frameFacts(frame)) {
+                            facts["primary_failure.last_${direction}_$key"] = value?.toString() ?: "none"
+                        }
+                    }
+                }
             }
         }
 
@@ -231,7 +260,25 @@ object DiagnosticsV2 {
         }
     }
 
-    private fun json(facts: Map<String, String>, events: List<ClientEvent>): String {
+    private fun frameFacts(frame: ProtocolFrameSummary): Map<String, Any?> = sortedMapOf(
+        "direction" to frame.direction,
+        "message_type" to sanitize(frame.messageType),
+        "message_id" to frame.messageId?.let(::sanitize),
+        "reply_to" to frame.replyTo?.let(::sanitize),
+        "session_id" to frame.sessionId?.let(::sanitize),
+        "turn_id" to frame.turnId?.let(::sanitize),
+        "message_seq" to frame.messageSequence,
+        "frame_count" to frame.frameCount,
+        "envelope_bytes" to frame.envelopeBytes,
+        "total_bytes" to frame.totalBytes,
+        "decode_status" to frame.decodeStatus,
+    )
+
+    private fun json(
+        facts: Map<String, String>,
+        events: List<ClientEvent>,
+        failureFrames: List<ProtocolFrameSummary>,
+    ): String {
         val root = TreeMap<String, Any?>()
         for ((key, value) in facts) {
             if (key == "diagnostics_version") {
@@ -250,6 +297,7 @@ object DiagnosticsV2 {
                 root[key] = value
             }
         }
+        if (failureFrames.isNotEmpty()) root["failure_protocol_trace"] = failureFrames.map(::frameFacts)
         root["timeline"] = events.takeLast(TIMELINE_WINDOW).map { event ->
             val entry = TreeMap<String, Any?>()
             entry["event"] = event.name
