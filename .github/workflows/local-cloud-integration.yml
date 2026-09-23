@@ -35,11 +35,15 @@ jobs:
           test "$(git rev-parse HEAD)" = "$ZARA_SOURCE_SHA"
           mkdir -p artifacts/local-cloud
           git rev-parse HEAD > artifacts/local-cloud/source-sha.txt
-          git ls-tree -r HEAD -- android scripts t/test_android_local_session_api_contract.py \
-            > artifacts/local-cloud/source-blobs.txt
-          git archive --format=zip --output=artifacts/local-cloud/source.zip HEAD \
-            android scripts t/test_android_local_session_api_contract.py
-          sha256sum artifacts/local-cloud/source.zip > artifacts/local-cloud/source.zip.sha256
+          git ls-tree -r HEAD > artifacts/local-cloud/source-blobs.txt
+          git archive --format=zip --output=artifacts/local-cloud/source.zip HEAD
+          base="$(git rev-parse origin/release/0.3.x)"
+          ancestor="$(git merge-base HEAD "$base")"
+          printf '%s\n' "$base" > artifacts/local-cloud/base-sha.txt
+          printf '%s\n' "$ancestor" > artifacts/local-cloud/ancestor-sha.txt
+          git archive --format=zip --output=artifacts/local-cloud/base.zip "$base"
+          git archive --format=zip --output=artifacts/local-cloud/ancestor.zip "$ancestor"
+          sha256sum artifacts/local-cloud/*.zip > artifacts/local-cloud/SHA256SUMS
 
       - name: Check local UI session API contract
         shell: bash
