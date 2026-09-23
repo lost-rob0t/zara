@@ -17,6 +17,8 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+RUNTIME_EVIDENCE_FIELDS = ("mode", "runtime_id", "model", "quantization", "phase")
 UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
 UI_DUMP_ATTEMPTS = 3
 UI_DUMP_RETRY_DELAY_SECONDS = 0.2
@@ -99,6 +101,11 @@ class Device:
         self._captured_scenarios: set[str] = set()
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
+        self.apk_sha256: str | None = None
+        self.current_route = "unknown"
+        self.runtime_evidence: dict[str, str | None] = {
+            field: None for field in RUNTIME_EVIDENCE_FIELDS
+        }
 
     def adb(self, *arguments: str, binary: bool = False):
         return subprocess.check_output(
@@ -621,11 +628,30 @@ class Device:
         if scenario_id in self._captured_scenarios:
             raise AssertionError(f"Duplicate rendered-state scenario: {scenario_id}")
 
+        apk_sha256 = getattr(self, "apk_sha256", None)
+        if not isinstance(apk_sha256, str) or SHA256_RE.fullmatch(apk_sha256) is None:
+            raise AssertionError("Rendered-state scenario is missing an exact APK SHA-256")
+        route = getattr(self, "current_route", None)
+        if not isinstance(route, str) or not route.strip():
+            raise AssertionError("Rendered-state scenario is missing a route")
+        runtime = getattr(self, "runtime_evidence", None)
+        if not isinstance(runtime, dict) or set(runtime) != set(RUNTIME_EVIDENCE_FIELDS):
+            raise AssertionError("Rendered-state scenario has incomplete runtime evidence")
+        for field in RUNTIME_EVIDENCE_FIELDS:
+            value = runtime[field]
+            if value is not None and (not isinstance(value, str) or not value):
+                raise AssertionError(f"Rendered-state runtime field is invalid: {field}")
+        runtime_snapshot = {field: runtime[field] for field in RUNTIME_EVIDENCE_FIELDS}
+
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
         hierarchy = self._hierarchy_text()
-        text_evidence = normalized_ui_text(hierarchy)
+        evidence_header = (
+            f"route={json.dumps(route, ensure_ascii=False)}\n"
+            f"runtime={json.dumps(runtime_snapshot, sort_keys=True, separators=(',', ':'))}\n"
+        )
+        text_evidence = evidence_header + normalized_ui_text(hierarchy)
 
         path = self.output / f"{name}.png"
         text_path = self.output / f"{name}.ui.txt"
@@ -653,8 +679,11 @@ class Device:
         record = {
             "scenario_id": scenario_id,
             "source_sha": getattr(self, "source_sha", None),
+            "apk_sha256": apk_sha256,
             "device_api": getattr(self, "device_api", None),
             "profile": getattr(self, "current_profile", "default"),
+            "route": route,
+            "runtime": runtime_snapshot,
             "actions": actions,
             "assertions": assertions,
             "screenshot": {
@@ -688,6 +717,11 @@ class Device:
             "-n",
             component,
         )
+        self.current_route = {
+            "ai.zara.app/.MainActivity": "chat",
+            "ai.zara.app/.automation.AutomationActivity": "automation",
+            "ai.zara.app/.watch.WatchSetupActivity": "watch-setup",
+        }.get(component, f"component:{component}")
         self.record_action(f"launch:{component}")
         self.dismiss_pixel_launcher_anr()
         self.dismiss_release_notes()
@@ -805,6 +839,7 @@ def open_menu(device: Device, menu: str) -> None:
         device.await_label(expected)
     device.tap(menu)
     device.await_label(menu)
+    device.current_route = menu.lower()
     time.sleep(0.4)
 
 
@@ -854,9 +889,11 @@ def exercise_three_menu_ui(device: Device) -> None:
 
     device.tap("Workspace")
     device.await_label("Logic")
+    device.current_route = "workspace/logic"
     device.capture("workspace-logic")
     for tab in ("Projects", "Scheduled"):
         device.tap_tab(tab)
+        device.current_route = f"workspace/{tab.lower()}"
         time.sleep(0.4)
         device.capture(f"workspace-{tab.lower()}")
 
@@ -872,11 +909,13 @@ def exercise_three_menu_ui(device: Device) -> None:
         "About",
     ):
         device.tap_tab(tab)
+        device.current_route = f"settings/{tab.lower()}"
         device.assert_accessible_targets((tab,))
         time.sleep(0.4)
         device.capture(f"settings-{tab.lower()}")
 
     device.tap_tab("Appearance")
+    device.current_route = "settings/appearance"
     device.tap("Outrun")
     time.sleep(0.4)
     device.capture("theme-outrun")
@@ -916,6 +955,7 @@ def exercise_three_menu_ui(device: Device) -> None:
 
     open_menu(device, "Settings")
     device.tap_tab("Connection")
+    device.current_route = "settings/connection"
     device.await_label("tcp://host:port")
     device.tap("tcp://host:port")
     device.type_text("ui_connection_draft")
@@ -928,6 +968,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.await_label("Runtime")
     device.press_back()
     device.await_label("Chat")
+    device.current_route = "chat"
     device.capture("back-to-chat")
 
 
@@ -938,16 +979,22 @@ def main() -> None:
         "--output", type=Path, default=Path("android/app/build/reports/device")
     )
     parser.add_argument("--source-sha")
+    parser.add_argument("--apk-sha256", required=True)
     args = parser.parse_args()
     if not args.serial:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
     source_sha = verified_source_sha(args.source_sha)
+    apk_sha256 = args.apk_sha256.lower()
+    if SHA256_RE.fullmatch(apk_sha256) is None:
+        parser.error("--apk-sha256 must be exactly 64 hexadecimal characters")
     args.output.mkdir(parents=True, exist_ok=True)
     device = Device(args.serial, args.output)
     device.source_sha = source_sha
+    device.apk_sha256 = apk_sha256
     device.current_profile = "default"
     result = {
         "source_sha": source_sha,
+        "apk_sha256": apk_sha256,
         "serial": args.serial,
         "passed": False,
         "screenshots": device.screenshots,
