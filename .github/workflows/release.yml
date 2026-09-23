@@ -620,6 +620,7 @@ PY
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git rev-list -n 1 "$TAG")" = "$GITHUB_SHA"
           published_json="$RUNNER_TEMP/published-${TAG}.json"
           gh api --method PATCH \
             "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}" \
