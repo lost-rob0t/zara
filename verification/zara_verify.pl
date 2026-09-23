@@ -91,12 +91,23 @@ valid_evidence(Evidence) :-
 evidence_row(Row) :- is_dict(Row), get_dict(gate, Row, Gate), bounded_atom(Gate, 64).
 row_gate(Row, Gate) :- get_dict(gate, Row, Gate).
 
+junit_passes(Row) :-
+    ( get_dict(junit, Row, Junit) ->
+        is_dict(Junit),
+        get_dict(state, Junit, passed),
+        get_dict(tests, Junit, Tests), integer(Tests), Tests > 0,
+        get_dict(failures, Junit, Failures), integer(Failures), Failures =:= 0,
+        get_dict(skipped, Junit, Skipped), integer(Skipped), Skipped =:= 0
+    ; true
+    ).
+
 row_passes(Row, Run, SourceDigest) :-
     get_dict(state, Row, passed),
     get_dict(exit_code, Row, Exit), integer(Exit), Exit =:= 0,
     get_dict(run_id, Row, Run), get_dict(source_digest, Row, SourceDigest),
     get_dict(artifact_sha256, Row, Digest), hex_atom(Digest, 64),
-    get_dict(bytes, Row, Bytes), integer(Bytes), Bytes >= 0, Bytes =< 2097152.
+    get_dict(bytes, Row, Bytes), integer(Bytes), Bytes >= 0, Bytes =< 2097152,
+    junit_passes(Row).
 
 reason(Evidence, Gates, _, _, unexpected_gate) :-
     member(Row, Evidence), row_gate(Row, Gate), \+ memberchk(Gate, Gates).
