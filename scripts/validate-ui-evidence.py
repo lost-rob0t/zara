@@ -7,11 +7,13 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any
 
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+ANDROID_SCENARIO_ID = re.compile(r"android\.ui\.([a-z0-9][a-z0-9-]*)")
 
 
 class EvidenceError(ValueError):
@@ -57,6 +59,29 @@ def _require_sha256(value: object, *, label: str) -> str:
     except ValueError as error:
         raise EvidenceError(f"{label} hash is invalid") from error
     return value.lower()
+
+
+def _require_hashed_file(
+    root: Path,
+    evidence: object,
+    *,
+    label: str,
+) -> tuple[str, str]:
+    if not isinstance(evidence, dict):
+        raise EvidenceError(f"{label} evidence is missing")
+    file_value = evidence.get("file")
+    if not isinstance(file_value, str) or not file_value:
+        raise EvidenceError(f"{label} evidence filename is missing")
+    expected_hash = _require_sha256(evidence.get("sha256"), label=label)
+    path = _safe_child(root, file_value)
+    if not path.is_file():
+        raise EvidenceError(f"scenario evidence file is missing: {path}")
+    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        raise EvidenceError(
+            f"{label} hash mismatch: expected {expected_hash}, got {actual_hash}"
+        )
+    return file_value, expected_hash
 
 
 def validate_desktop(manifest_path: Path, source_sha: str) -> int:
@@ -116,6 +141,7 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
 
     seen_states: set[str] = set()
     seen_files: set[str] = set()
+    screenshots_by_state: dict[str, dict[str, Any]] = {}
     for entry in screenshots:
         if not isinstance(entry, dict):
             raise EvidenceError("android screenshot entry must be an object")
@@ -139,6 +165,101 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
             raise EvidenceError(
                 f"android screenshot hash mismatch for {state}: expected {expected_hash}, got {actual_hash}"
             )
+        screenshots_by_state[state] = entry
+
+    scenarios = manifest.get("scenarios")
+    if not isinstance(scenarios, list) or not scenarios:
+        raise EvidenceError("android manifest omitted per-scenario evidence")
+
+    manifest_device_api = manifest.get("device", {}).get("api")
+    seen_scenario_ids: set[str] = set()
+    seen_scenario_states: set[str] = set()
+    for scenario in scenarios:
+        if not isinstance(scenario, dict):
+            raise EvidenceError("android scenario entry must be an object")
+        scenario_id = scenario.get("scenario_id")
+        if not isinstance(scenario_id, str):
+            raise EvidenceError("android scenario id is missing")
+        match = ANDROID_SCENARIO_ID.fullmatch(scenario_id)
+        if match is None:
+            raise EvidenceError(f"android scenario id is invalid: {scenario_id}")
+        if scenario_id in seen_scenario_ids:
+            raise EvidenceError(f"duplicate scenario id: {scenario_id}")
+        seen_scenario_ids.add(scenario_id)
+        state = match.group(1)
+        if state in seen_scenario_states:
+            raise EvidenceError(f"duplicate scenario state: {state}")
+        seen_scenario_states.add(state)
+
+        if scenario.get("source_sha") != source_sha:
+            raise EvidenceError(f"android scenario source SHA mismatch: {scenario_id}")
+        if scenario.get("device_api") != manifest_device_api:
+            raise EvidenceError(f"android scenario device API mismatch: {scenario_id}")
+        profile = scenario.get("profile")
+        if not isinstance(profile, str) or not profile:
+            raise EvidenceError(f"android scenario profile is missing: {scenario_id}")
+
+        actions = scenario.get("actions")
+        if not isinstance(actions, list) or not actions or not all(
+            isinstance(action, str) and action for action in actions
+        ):
+            raise EvidenceError(f"android scenario action evidence is missing: {scenario_id}")
+        assertions = scenario.get("assertions")
+        if not isinstance(assertions, list) or not assertions:
+            raise EvidenceError(f"android scenario assertion evidence is missing: {scenario_id}")
+        screenshot_assertion = False
+        for assertion in assertions:
+            if not isinstance(assertion, dict):
+                raise EvidenceError(f"android scenario assertion is malformed: {scenario_id}")
+            if not isinstance(assertion.get("name"), str) or not assertion["name"]:
+                raise EvidenceError(f"android scenario assertion name is missing: {scenario_id}")
+            if not isinstance(assertion.get("passed"), bool):
+                raise EvidenceError(f"android scenario assertion result is invalid: {scenario_id}")
+            if not isinstance(assertion.get("detail"), str):
+                raise EvidenceError(f"android scenario assertion detail is invalid: {scenario_id}")
+            if assertion["name"] == "screenshot-png" and assertion["passed"] is True:
+                screenshot_assertion = True
+        if not screenshot_assertion:
+            raise EvidenceError(f"android scenario omitted successful screenshot assertion: {scenario_id}")
+
+        screenshot_file, screenshot_hash = _require_hashed_file(
+            manifest_path.parent,
+            scenario.get("screenshot"),
+            label=f"android scenario screenshot {scenario_id}",
+        )
+        _require_hashed_file(
+            manifest_path.parent,
+            scenario.get("text_evidence"),
+            label=f"android scenario text {scenario_id}",
+        )
+        _require_hashed_file(
+            manifest_path.parent,
+            scenario.get("assertion_evidence"),
+            label=f"android scenario assertions {scenario_id}",
+        )
+
+        screenshot_entry = screenshots_by_state.get(state)
+        if screenshot_entry is None:
+            raise EvidenceError(f"android scenario has no screenshot manifest entry: {scenario_id}")
+        if (
+            screenshot_entry.get("file") != screenshot_file
+            or screenshot_entry.get("sha256") != screenshot_hash
+        ):
+            raise EvidenceError(
+                f"scenario screenshot differs from screenshot manifest: {scenario_id}"
+            )
+
+        scenario_path = _safe_child(manifest_path.parent, f"{state}.json")
+        persisted_scenario = _load_manifest(scenario_path)
+        if persisted_scenario != scenario:
+            raise EvidenceError(f"persisted scenario record differs from manifest: {scenario_id}")
+
+    if seen_scenario_states != seen_states:
+        missing = sorted(seen_states - seen_scenario_states)
+        extra = sorted(seen_scenario_states - seen_states)
+        raise EvidenceError(
+            f"android scenario/screenshot state mismatch: missing={missing} extra={extra}"
+        )
     return len(screenshots)
 
 
