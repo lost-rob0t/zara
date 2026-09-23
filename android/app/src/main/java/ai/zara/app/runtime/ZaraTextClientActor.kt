@@ -2,6 +2,7 @@ package ai.zara.app.runtime
 
 import ai.zara.app.device.DeviceActionErrorCode
 import ai.zara.app.device.DeviceActionResult
+import ai.zara.app.telemetry.TextTurnProtocolTrace
 import ai.zara.app.voice.VoiceCaptureContext
 import ai.zara.app.voice.VoiceCommandClient
 import ai.zara.app.voice.VoiceInboundMessage
@@ -64,6 +65,7 @@ class ZaraTextClientActor(
     private var voiceStreamFailureObserver: ((Throwable) -> Unit)? = null
     private var connectionFailureObserver: ((ai.zara.app.telemetry.ZaraFailure) -> Unit)? = null
     private var staleFrameObserver: ((messageType: String, currentGeneration: Long) -> Unit)? = null
+    private var textTurnTrace: TextTurnProtocolTrace? = null
     private var voicePumpActive = false
     private var selectedAudioOutputFormat: AudioOutputFormat? = null
     private var closed = false
@@ -191,6 +193,8 @@ class ZaraTextClientActor(
         } catch (error: Throwable) {
             reportConnectionFailureIfCurrent(error, current, ai.zara.app.telemetry.ZaraOperation.SUBMIT)
             throw error
+        } finally {
+            textTurnTrace = null
         }
     }
 
@@ -204,6 +208,8 @@ class ZaraTextClientActor(
         val current = connected
         val active = dealer ?: throw StaleTextSessionException("text dealer is unavailable")
         val requestId = nextRequestId()
+        val trace = TextTurnProtocolTrace(generation, sessionId, requestId, requestTimeoutMillis)
+        textTurnTrace = trace
         correlations.register(requestId, generation, sessionId)
         try {
             active.send(
@@ -213,7 +219,7 @@ class ZaraTextClientActor(
                     conversationId = conversationId,
                     text = text,
                     timestampNs = nextTimestamp(),
-                )
+                ).also { frames -> trace.transmitAttempt(frames.sumOf { it.size.toLong() }, frames.size) }
             )
             val first = receiveMessage(active)
             if (first is TextServerMessage.ProtocolError) {
@@ -242,6 +248,7 @@ class ZaraTextClientActor(
             if (conversationId != null && accepted.conversationId != conversationId) {
                 throw ZaraWireException("turn conversation correlation mismatch")
             }
+            trace.accepted(accepted.turnId)
 
             var assistantCompletion: TextTurnResult? = null
             while (true) {
@@ -644,11 +651,21 @@ class ZaraTextClientActor(
         if (closed) return
         val liveSession = session ?: return
         if (liveSession.generation != current.generation || liveSession.sessionId != current.sessionId) return
+        val evidence = if (operation == ai.zara.app.telemetry.ZaraOperation.SUBMIT) {
+            textTurnTrace?.snapshot()?.takeIf {
+                it.connectionGeneration == current.generation && it.sessionId == current.sessionId
+            }
+        } else {
+            null
+        }
         val failure = ai.zara.app.telemetry.ZaraFailures.classify(
             error,
             operation,
+            phase = evidence?.phase,
             connectionGeneration = current.generation,
-        )
+            requestId = evidence?.requestId,
+            turnId = evidence?.turnId,
+        ).copy(protocolEvidence = evidence)
         if (!ai.zara.app.telemetry.ZaraFailures.isSessionDesyncing(failure.code, failure.retryable)) return
         connectionFailureObserver?.invoke(failure)
     }
@@ -657,15 +674,42 @@ class ZaraTextClientActor(
         while (true) {
             val frames = active.receive(requestTimeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 response timed out")
+            textTurnTrace?.receive(frames.sumOf { it.size.toLong() }, frames.size)
             try {
                 val voiceEvent = ai.zara.app.voice.ZaraVoiceStreamCodec.decode(frames)
                 dispatchVoiceStream(voiceEvent)
                 continue
             } catch (_: ZaraWireException) {
                 if (handleDeviceServerMessage(active, frames)) continue
-                return ZaraTextCodec.decode(frames)
+                return ZaraTextCodec.decode(frames).also(::recordTextMessage)
             }
         }
+    }
+
+    private fun recordTextMessage(message: TextServerMessage) {
+        val trace = textTurnTrace ?: return
+        val metadata: Triple<String, String?, Long?> = when (message) {
+            is TextServerMessage.HelloOk -> Triple("hello.ok", null, null)
+            is TextServerMessage.TurnAccepted -> Triple("turn.accepted", message.turnId, null)
+            is TextServerMessage.Progress -> Triple(message.type, message.turnId, message.sequence)
+            is TextServerMessage.AssistantDelta -> Triple("assistant.delta", message.turnId, message.sequence)
+            is TextServerMessage.AssistantCompleted -> Triple("assistant.completed", message.turnId, message.sequence)
+            is TextServerMessage.TurnCompleted -> Triple("turn.completed", message.turnId, message.sequence)
+            is TextServerMessage.AssistantResponse -> Triple("assistant.response", message.turnId, message.sequence)
+            is TextServerMessage.ProtocolError -> Triple("protocol.error", null, null)
+            is TextServerMessage.TurnCancelled -> Triple("turn.cancelled", message.turnId, message.sequence)
+            is TextServerMessage.RuntimeError -> Triple("runtime.error", message.turnId, message.sequence)
+            is TextServerMessage.RuntimeStopped -> Triple("runtime.stopped", message.turnId, message.sequence)
+        }
+        val replyTo = when (message) {
+            is TextServerMessage.HelloOk -> message.replyTo
+            is TextServerMessage.TurnAccepted -> message.replyTo
+            is TextServerMessage.ProtocolError -> message.replyTo
+            else -> null
+        }
+        trace.decoded(
+            metadata.first, message.id, replyTo, message.sessionId, metadata.second, metadata.third,
+        )
     }
 
     private fun handleDeviceServerMessage(
