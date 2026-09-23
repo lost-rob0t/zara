@@ -32,7 +32,13 @@ def test_wire_schema_is_valid_but_not_an_authentication_mechanism():
     assert not list(validator().iter_errors(valid_report()))
 
 
-@pytest.mark.parametrize('mutation', ['expert', 'plan', 'boolean', 'merge', 'unknown', 'reason'])
+def test_coverage_gate_uses_release_relative_ratchet():
+    spec = json.loads((ROOT / 'contracts/zara-verify-v1/spec.json').read_text())
+    assert spec['gates']['coverage']['argv'] == [
+        'bash', 'scripts/test-coverage.sh', '--base-ref', 'origin/release/0.3.x']
+
+
+@pytest.mark.parametrize('mutation', ['expert', 'plan', 'boolean', 'merge', 'unknown', 'reason', 'provider'])
 def test_invalid_verification_claims_are_rejected(mutation):
     report = copy.deepcopy(valid_report())
     if mutation == 'expert': del report['expert']
@@ -41,4 +47,5 @@ def test_invalid_verification_claims_are_rejected(mutation):
     if mutation == 'merge': report['merge_authorized'] = True
     if mutation == 'unknown': report['self_approved'] = True
     if mutation == 'reason': report['reasons'] = ['failed']
+    if mutation == 'provider': report['expert']['usage']['provider_calls'] = 1
     assert list(validator().iter_errors(report))
