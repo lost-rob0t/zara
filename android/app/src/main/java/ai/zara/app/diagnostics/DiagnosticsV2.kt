@@ -3,6 +3,8 @@ package ai.zara.app.diagnostics
 import ai.zara.app.telemetry.ClientEvent
 import ai.zara.app.telemetry.ClientEventJournal
 import ai.zara.app.telemetry.FailureIncident
+import ai.zara.app.telemetry.ProtocolFailureEvidence
+import ai.zara.app.telemetry.ProtocolMessageEvidence
 import java.time.Instant
 import java.util.TreeMap
 
@@ -84,9 +86,11 @@ object DiagnosticsV2 {
     private const val MARKER = "ZARA-LOCAL-DIAGNOSTICS/2"
     private const val TIMELINE_WINDOW = 64
     private const val MAX_REASON_CHARS = 256
+    private const val PROTOCOL_TRACE_WINDOW = 32
 
     fun render(snapshot: DiagnosticsSnapshot): DiagnosticsBundle {
         val facts = textFacts(snapshot)
+        val evidence = snapshot.incident?.failure?.protocolEvidence
         val text = buildString {
             append(MARKER)
             append('\n')
@@ -98,8 +102,17 @@ object DiagnosticsV2 {
             }
             append("--- timeline ---\n")
             append(timeline(snapshot.events))
+            if (evidence != null) {
+                append("--- protocol failure trace ---\n")
+                for (message in evidence.messages.takeLast(PROTOCOL_TRACE_WINDOW)) {
+                    append(protocolMessageFacts(message).entries.joinToString(" ") { (key, value) ->
+                        "$key=${value ?: "unknown"}"
+                    })
+                    append('\n')
+                }
+            }
         }
-        return DiagnosticsBundle(text = text, json = json(facts, snapshot.events))
+        return DiagnosticsBundle(text = text, json = json(facts, snapshot.events, evidence))
     }
 
     private fun textFacts(snapshot: DiagnosticsSnapshot): Map<String, String> {
@@ -138,6 +151,7 @@ object DiagnosticsV2 {
             if (failure.connectionGeneration != null) {
                 facts["primary_failure.connection_generation"] = failure.connectionGeneration.toString()
             }
+            failure.protocolEvidence?.let { protocolFailureFacts(facts, it) }
         }
 
         snapshot.remoteContext?.let { remote ->
@@ -180,6 +194,45 @@ object DiagnosticsV2 {
 
         return facts
     }
+
+    private fun protocolFailureFacts(facts: MutableMap<String, String>, evidence: ProtocolFailureEvidence) {
+        val values = linkedMapOf<String, Any?>(
+            "evidence_scope" to "failed_text_turn",
+            "failure_session_id" to evidence.sessionId,
+            "expected_message_type" to evidence.expectedMessageType,
+            "actual_message_type" to evidence.lastRx?.messageType,
+            "actual_message_id" to evidence.lastRx?.messageId,
+            "actual_reply_to" to evidence.lastRx?.replyTo,
+            "actual_session_id" to evidence.lastRx?.sessionId,
+            "actual_turn_id" to evidence.lastRx?.turnId,
+            "actual_message_seq" to evidence.lastRx?.sequence,
+            "last_rx_bytes" to evidence.lastRx?.bytes,
+            "last_rx_frame_count" to evidence.lastRx?.frameCount,
+            "last_rx_state" to evidence.lastRx?.state,
+            "last_tx_message_type" to evidence.lastTx?.messageType,
+            "last_tx_bytes" to evidence.lastTx?.bytes,
+            "last_tx_frame_count" to evidence.lastTx?.frameCount,
+            "last_tx_state" to evidence.lastTx?.state,
+            "pending_requests" to evidence.pendingRequests,
+            "receive_timeout_ms" to evidence.requestTimeoutMillis,
+            "turn_elapsed_ms" to evidence.elapsedMillis,
+            "trace_dropped_messages" to evidence.droppedMessages,
+        )
+        for ((key, value) in values) facts["primary_failure.$key"] = value?.toString()?.let(::sanitize) ?: "unknown"
+    }
+
+    private fun protocolMessageFacts(message: ProtocolMessageEvidence): Map<String, Any?> = linkedMapOf(
+        "direction" to sanitize(message.direction),
+        "type" to message.messageType?.let(::sanitize),
+        "id" to message.messageId?.let(::sanitize),
+        "reply_to" to message.replyTo?.let(::sanitize),
+        "session_id" to message.sessionId?.let(::sanitize),
+        "turn_id" to message.turnId?.let(::sanitize),
+        "seq" to message.sequence,
+        "bytes" to message.bytes,
+        "frames" to message.frameCount,
+        "state" to sanitize(message.state),
+    )
 
     private fun timeline(events: List<ClientEvent>): String {
         if (events.isEmpty()) return "(no recorded events)\n"
@@ -231,7 +284,11 @@ object DiagnosticsV2 {
         }
     }
 
-    private fun json(facts: Map<String, String>, events: List<ClientEvent>): String {
+    private fun json(
+        facts: Map<String, String>,
+        events: List<ClientEvent>,
+        evidence: ProtocolFailureEvidence?,
+    ): String {
         val root = TreeMap<String, Any?>()
         for ((key, value) in facts) {
             if (key == "diagnostics_version") {
@@ -249,6 +306,9 @@ object DiagnosticsV2 {
             } else {
                 root[key] = value
             }
+        }
+        if (evidence != null) {
+            root["protocol_failure_trace"] = evidence.messages.takeLast(PROTOCOL_TRACE_WINDOW).map(::protocolMessageFacts)
         }
         root["timeline"] = events.takeLast(TIMELINE_WINDOW).map { event ->
             val entry = TreeMap<String, Any?>()
