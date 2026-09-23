@@ -94,6 +94,13 @@ test(dynamic_targets_are_not_projected_to_every_executor) :-
     \+ member(action(best, device, status, _), Actions),
     \+ member(action(initiator, conversation, present_brief, _), Actions).
 
+test(any_target_stays_unresolved_during_executor_projection) :-
+    Action = action(any, notification, deliver, [arg(payload, fixture)]),
+    forall(
+        workflow_surface(Executor),
+        kb_workflows:filter_actions_for_executor([Action], Executor, [])
+    ).
+
 test(shared_targets_still_project_to_each_executor) :-
     workflow_actions_for_executor(focus_start, android, Actions),
     member(action(all, device, focus_mode, [arg(enabled, true)]), Actions).
