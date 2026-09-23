@@ -643,15 +643,20 @@ class Device:
                 raise AssertionError(f"Rendered-state runtime field is invalid: {field}")
         runtime_snapshot = {field: runtime[field] for field in RUNTIME_EVIDENCE_FIELDS}
 
+        hierarchy_before = self._hierarchy_text()
+        normalized_before = normalized_ui_text(hierarchy_before)
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
-        hierarchy = self._hierarchy_text()
+        hierarchy_after = self._hierarchy_text()
+        normalized_after = normalized_ui_text(hierarchy_after)
+        if normalized_before != normalized_after:
+            raise AssertionError("UI changed while screenshot evidence was captured")
         evidence_header = (
             f"route={json.dumps(route, ensure_ascii=False)}\n"
             f"runtime={json.dumps(runtime_snapshot, sort_keys=True, separators=(',', ':'))}\n"
         )
-        text_evidence = evidence_header + normalized_ui_text(hierarchy)
+        text_evidence = evidence_header + normalized_after
 
         path = self.output / f"{name}.png"
         text_path = self.output / f"{name}.ui.txt"
