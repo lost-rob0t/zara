@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 EMULATOR_GATE = Path("scripts/test-android-emulator-install.sh")
 EVIDENCE_VALIDATOR = Path("scripts/validate-ui-evidence.py")
