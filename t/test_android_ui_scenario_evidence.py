@@ -226,3 +226,31 @@ def test_failed_assertion_can_be_retained_in_failure_scenario_bundle(
     assert (tmp_path / "failure.ui.txt").is_file()
     assert (tmp_path / "failure.assertions.txt").is_file()
     assert (tmp_path / "failure.json").is_file()
+
+
+def test_capture_rejects_ui_change_across_screenshot_boundary_without_persisting_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _module, device = _device(monkeypatch, tmp_path)
+    before = (
+        '<hierarchy><node text="Chat" content-desc="" class="android.widget.TextView" '
+        'enabled="true" clickable="false" selected="true" focused="false" '
+        'bounds="[20,40][180,96]" /></hierarchy>'
+    )
+    after = (
+        '<hierarchy><node text="Settings" content-desc="" class="android.widget.TextView" '
+        'enabled="true" clickable="false" selected="true" focused="false" '
+        'bounds="[20,40][180,96]" /></hierarchy>'
+    )
+    hierarchies = iter((before, after))
+    monkeypatch.setattr(device, "_hierarchy_text", lambda: next(hierarchies))
+
+    with pytest.raises(AssertionError, match="UI changed while screenshot evidence was captured"):
+        device.capture("unstable-state")
+
+    assert device.scenario_evidence == []
+    assert device.screenshots == []
+    assert device._captured_scenarios == set()
+    for suffix in (".png", ".ui.txt", ".assertions.txt", ".json"):
+        assert not (tmp_path / f"unstable-state{suffix}").exists()
