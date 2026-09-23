@@ -423,6 +423,24 @@ class ExpertIdempotencyJournal:
             raise ValueError("durable expert result has an unexpected shape")
         if wire["protocol"] != ZARA_EXPERT_PROTOCOL:
             raise ValueError("durable expert result protocol mismatch")
+        for key in ("request_id", "invocation_id", "expert_id", "expert_operation"):
+            _bounded_pattern(
+                wire[key],
+                field_name=key,
+                pattern=_PORTABLE,
+                limit=128,
+            )
+        historical_handle = ActivationHandle(
+            activation_id=wire["activation_id"],
+            principal=row["principal"],
+            workspace=row["workspace"],
+            expert_id=wire["expert_id"],
+            expert_version=wire["expert_version"],
+            manifest_digest=wire["manifest_digest"],
+            registry_generation=wire["resolved_registry_generation"],
+            runtime_generation=wire["resolved_runtime_generation"],
+        )
+        del historical_handle
         for key in ("resolved_registry_generation", "resolved_runtime_generation"):
             value = wire[key]
             if type(value) is not int or value < 0:
