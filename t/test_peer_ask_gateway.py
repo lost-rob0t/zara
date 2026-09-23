@@ -318,3 +318,20 @@ def test_peer_cancel_propagates_to_existing_runtime_cancel(
     finally:
         client.close(timeout=1.0)
         gateway.close(timeout=1.0)
+
+
+def test_peer_call_rejects_stale_session_before_runtime_dispatch(
+    zmq_context,
+    transport_config,
+):
+    gateway, client, supervisor, _registry, enrolled = _start_pair(
+        zmq_context, transport_config
+    )
+    try:
+        client._session_id = "stale-peer-session"
+        with pytest.raises(PeerCallRemoteError, match="session"):
+            client.peer_call(_request(enrolled.generation)).result(timeout=1.5)
+        assert supervisor.commands == []
+    finally:
+        client.close(timeout=1.0)
+        gateway.close(timeout=1.0)
