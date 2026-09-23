@@ -19,8 +19,10 @@ from ._experts_v1 import (
     ExpertInvalidInputError,
     ExpertResult,
     ExpertVerdict,
+    _PORTABLE,
     _bounded_error_message,
     _bounded_mapping,
+    _bounded_pattern,
     _bounded_receipts,
     _bounded_refs,
 )
@@ -473,8 +475,10 @@ class ExpertIdempotencyJournal:
 
     @staticmethod
     def _unknown_result(row: Any, *, handle: ActivationHandle, message: str) -> ExpertResult:
-        invocation_id = row["invocation_id"] or _synthetic_id("inv", row)
-        request_id = row["request_id"] or _synthetic_id("req", row)
+        invocation_id = _safe_replay_id(
+            "inv", "invocation_id", row["invocation_id"], row
+        )
+        request_id = _safe_replay_id("req", "request_id", row["request_id"], row)
         return ExpertResult(
             protocol=ZARA_EXPERT_PROTOCOL,
             request_id=request_id,
@@ -495,6 +499,18 @@ class ExpertIdempotencyJournal:
             error_message=message,
             replayed=True,
         )
+
+
+def _safe_replay_id(prefix: str, field_name: str, value: Any, row: Any) -> str:
+    try:
+        return _bounded_pattern(
+            value,
+            field_name=field_name,
+            pattern=_PORTABLE,
+            limit=128,
+        )
+    except (TypeError, ValueError):
+        return _synthetic_id(prefix, row)
 
 
 def _synthetic_id(prefix: str, row: Any) -> str:
