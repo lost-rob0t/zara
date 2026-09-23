@@ -58,7 +58,10 @@ def test_notification_config_rejects_untyped_executable_hook(tmp_path: Path) -> 
         encoding="utf-8",
     )
 
-    result = _run_swipl(tmp_path, "consult('main.pl')")
+    # SWI reports exceptions from load-time initialization but keeps consult/1
+    # successful. Invoke the loader directly as the contract under test so an
+    # invalid executable-shaped hook is an unhandled, fail-closed error.
+    result = _run_swipl(tmp_path, "consult('main.pl'),config_loader:load_user_config")
 
     assert result.returncode != 0
     assert "zarathushtra_user_config_fact" in result.stderr
