@@ -13,7 +13,8 @@ class AndroidScheduledContractTest {
         val surface = File(root, "src/main/java/ai/zara/app/ui/ScheduledSurface.kt").readText()
 
         assertTrue(app.contains("AppSurface.Scheduled -> ScheduledSurface("))
-        assertTrue(surface.contains("Cron"))
+        assertTrue(surface.contains("Cron / interval"))
+        assertTrue(surface.contains("@every 6h"))
         assertTrue(surface.contains("Create schedule"))
         assertTrue(surface.contains("List schedules"))
         assertTrue(surface.contains("onSendText"))

@@ -47,7 +47,7 @@ class ScheduledPanel(QWidget):
         header.addWidget(new_button)
         header.addWidget(list_button)
 
-        hint = QLabel("cron → Prolog → LLM")
+        hint = QLabel("cron / interval → Prolog → LLM")
         hint.setObjectName("zaraMutedLabel")
         self.status_label = QLabel()
         self.status_label.setObjectName("zaraMutedLabel")
@@ -76,7 +76,7 @@ class ScheduledPanel(QWidget):
         new_button.clicked.connect(self.create_schedule)
         list_button.clicked.connect(
             lambda: self.prompt_requested.emit(
-                "Use schedule_list. List schedules concisely with id, label, cron, state, next run, and last outcome."
+                "Use schedule_list. List schedules concisely with id, label, recurrence, state, next run, and last outcome."
             )
         )
         pause_button.clicked.connect(lambda: self._control("pause"))
@@ -100,8 +100,8 @@ class ScheduledPanel(QWidget):
         cron, accepted = QInputDialog.getText(
             self,
             "New scheduled task",
-            "Cron",
-            text="0 9 * * 1-5",
+            "Cron / interval",
+            text="@every 6h",
         )
         if not accepted or not cron.strip():
             return

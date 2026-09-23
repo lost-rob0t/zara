@@ -66,7 +66,7 @@ fun ScheduledSurface(
     ) {
         Text("Scheduled", color = tokens.text)
         Text(
-            "Cron → Prolog → LLM escalation. Runs are owned by the canonical Zara runtime.",
+            "Cron / interval → Prolog → LLM escalation. Runs are owned by the canonical Zara runtime.",
             color = tokens.textMuted,
         )
         Text(
@@ -85,8 +85,8 @@ fun ScheduledSurface(
             value = cron,
             onValueChange = { cron = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Cron") },
-            placeholder = { Text("0 9 * * 1-5") },
+            label = { Text("Cron / interval") },
+            placeholder = { Text("0 9 * * 1-5  or  @every 6h") },
             singleLine = true,
             colors = fieldColors,
             textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace),
@@ -115,7 +115,7 @@ fun ScheduledSurface(
             }
             TextButton(
                 enabled = schedulerAvailable && !operationBusy,
-                onClick = { onSendText("Use schedule_list. List schedules concisely with id, cron, state, next run, and last outcome.") },
+                onClick = { onSendText("Use schedule_list. List schedules concisely with id, recurrence, state, next run, and last outcome.") },
             ) {
                 Text("List schedules", color = tokens.secondary)
             }

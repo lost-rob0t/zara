@@ -18,8 +18,8 @@ SCHEDULE_TOOL_NAMES = (
 
 
 class ScheduleCreateArgs(BaseModel):
-    cron: str = Field(..., description="Five-field cron expression, for example '0 9 * * 1-5'.")
-    goal: str = Field(..., description="Task Zara should run when the cron expression is due.")
+    cron: str = Field(..., description="Five-field cron or fixed interval such as '@every 6h'.")
+    goal: str = Field(..., description="Task Zara should run when the recurring schedule is due.")
     mode: Literal["auto", "prolog", "llm"] = Field(
         default="auto",
         description="auto asks Prolog whether to execute directly or escalate to the LLM.",
@@ -65,7 +65,7 @@ def build_schedule_tools(schedule_service):
             coroutine=create,
             name="schedule_create",
             description=(
-                "Create a persistent cron scheduled task. Use five-field cron syntax. "
+                "Create a persistent recurring task. Use five-field cron or '@every 6h' style fixed intervals. "
                 "auto mode runs Prolog first and escalates long or unresolved work to the LLM."
             ),
             args_schema=ScheduleCreateArgs,
@@ -88,7 +88,7 @@ def build_schedule_tools(schedule_service):
         StructuredTool.from_function(
             coroutine=resume,
             name="schedule_resume",
-            description="Resume a paused scheduled task and compute its next cron run.",
+            description="Resume a paused scheduled task and compute its next recurring run.",
             args_schema=ScheduleIdArgs,
         ),
         StructuredTool.from_function(
