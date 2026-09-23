@@ -128,10 +128,13 @@ class AndroidAdbVisionControlLoop(
     }
 
     fun cancel() {
+        // Publish cancellation before signalling the provider so a late interpretation cannot race
+        // through approval into a new effect while provider cancellation is still unwinding.
+        generation.incrementAndGet()
         multimodal.cancel()
-        synchronized(effectFence) {
-            generation.incrementAndGet()
-        }
+        // Barrier for an effect admitted before the cancellation generation was published. Once
+        // cancel() returns, no old typed effect can still complete later.
+        synchronized(effectFence) { Unit }
     }
 
     private fun step(
