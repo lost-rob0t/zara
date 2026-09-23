@@ -81,7 +81,17 @@ class WearSurfaceContractTest {
         val store = File("src/main/java/ai/zara/wear/surface/OrgScheduleSnapshotStore.kt").readText()
         val provider = File("src/main/java/ai/zara/wear/surface/OrgScheduleComplicationServices.kt").readText()
 
-        assertTrue(manifest.contains("UPDATE_PERIOD_SECONDS\" android:value=\"0\""))
+        val orgProviderBlocks = Regex(
+            """(?s)<service\s+android:name="ai\.zara\.wear\.complications\.Org[^"]+".*?</service>""",
+        ).findAll(manifest).toList()
+        assertEquals(7, orgProviderBlocks.size)
+        val pushOnlyPeriod = Regex(
+            """android:name="android\.support\.wearable\.complications\.UPDATE_PERIOD_SECONDS"\s+android:value="0""",
+        )
+        orgProviderBlocks.forEach { block ->
+            assertTrue(pushOnlyPeriod.containsMatchIn(block.value))
+        }
+
         assertTrue(store.contains("snapshot_v1"))
         assertTrue(store.contains("Context.MODE_PRIVATE"))
         assertTrue(store.contains("@Synchronized"))
