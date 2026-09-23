@@ -16,6 +16,7 @@ class FailureIncidentTracker(
 
     fun record(failure: ZaraFailure): FailureIncident? = synchronized(lock) {
         val current = incident
+        if (current != null && isSparseDuplicate(failure, current.failure)) return null
         if (
             current != null &&
             failure.connectionGeneration != null &&
@@ -58,4 +59,19 @@ class FailureIncidentTracker(
         incident = null
         lastSuccess = null
     }
+
+    private fun isSparseDuplicate(incoming: ZaraFailure, current: ZaraFailure): Boolean =
+        current.protocolEvidence != null &&
+            incoming.protocolEvidence == null &&
+            incoming.connectionGeneration == null &&
+            incoming.requestId == null &&
+            incoming.turnId == null &&
+            incoming.phase == null &&
+            incoming.subsystem == current.subsystem &&
+            incoming.operation == current.operation &&
+            incoming.code == current.code &&
+            incoming.message == current.message &&
+            incoming.causeClass == current.causeClass &&
+            incoming.serverCode == current.serverCode &&
+            incoming.retryable == current.retryable
 }
