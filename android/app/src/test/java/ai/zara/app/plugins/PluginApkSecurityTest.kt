@@ -35,21 +35,36 @@ class PluginApkSecurityTest {
     }
 
     @Test
-    fun rejectsChecksumMismatchAndOversize() {
+    fun rejectsEmptyApk() {
+        val emptyHash = MessageDigest.getInstance("SHA-256")
+            .digest(byteArrayOf()).joinToString("") { "%02x".format(it) }
         expectFailure<IllegalArgumentException> {
-            PluginApkSecurity.copyVerified(
-                ByteArrayInputStream(payload),
-                ByteArrayOutputStream(),
-                "0".repeat(64),
-            )
+            PluginApkSecurity.copyVerified(ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), emptyHash)
         }
+    }
+
+    @Test
+    fun rejectsChecksumMismatch() {
         expectFailure<IllegalArgumentException> {
-            PluginApkSecurity.copyVerified(
-                ByteArrayInputStream(payload),
-                ByteArrayOutputStream(),
-                digest,
-                payload.size.toLong() - 1,
-            )
+            PluginApkSecurity.copyVerified(ByteArrayInputStream(payload), ByteArrayOutputStream(), "0".repeat(64))
+        }
+    }
+
+    @Test
+    fun rejectsOversizedApkWithoutWritingBeyondLimit() {
+        val output = ByteArrayOutputStream()
+        expectFailure<IllegalArgumentException> {
+            PluginApkSecurity.copyVerified(ByteArrayInputStream(payload), output, digest, payload.size.toLong() - 1)
+        }
+        check(output.size() < payload.size)
+    }
+
+    @Test
+    fun rejectsInvalidSizeLimit() {
+        listOf(0L, -1L, PluginApkSecurity.MAX_APK_BYTES + 1).forEach { limit ->
+            expectFailure<IllegalArgumentException> {
+                PluginApkSecurity.copyVerified(ByteArrayInputStream(payload), ByteArrayOutputStream(), digest, limit)
+            }
         }
     }
 
@@ -57,18 +72,34 @@ class PluginApkSecurityTest {
     fun cancellationStopsBeforeReadingOrWriting() {
         val output = ByteArrayOutputStream()
         expectFailure<IOException> {
-            PluginApkSecurity.copyVerified(
-                ByteArrayInputStream(payload),
-                output,
-                digest,
-                cancelled = { true },
-            )
+            PluginApkSecurity.copyVerified(ByteArrayInputStream(payload), output, digest, cancelled = { true })
         }
         check(output.size() == 0)
     }
 
     @Test
-    fun validatesIdentityWithoutGrantingTrust() {
+    fun doesNotSpinOnAStalledStream() {
+        val input = object : InputStream() {
+            override fun read(): Int = 0
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int = 0
+        }
+        expectFailure<IOException> {
+            PluginApkSecurity.copyVerified(input, ByteArrayOutputStream(), digest)
+        }
+    }
+
+    @Test
+    fun propagatesReadFailure() {
+        val input = object : InputStream() {
+            override fun read(): Int = throw IOException("provider disconnected")
+        }
+        expectFailure<IOException> {
+            PluginApkSecurity.copyVerified(input, ByteArrayOutputStream(), digest)
+        }
+    }
+
+    @Test
+    fun validatesPackageIdentityWithoutGrantingTrust() {
         PluginApkSecurity.validateIdentity("example.plugin", "ai.zara.app", listOf(digest))
         expectFailure<IllegalArgumentException> {
             PluginApkSecurity.validateIdentity("ai.zara.app", "ai.zara.app", listOf(digest))
@@ -76,14 +107,22 @@ class PluginApkSecurityTest {
         expectFailure<IllegalArgumentException> {
             PluginApkSecurity.validateIdentity("example.plugin", "ai.zara.app", emptyList())
         }
+        expectFailure<IllegalArgumentException> {
+            PluginApkSecurity.validateIdentity("example.plugin", "ai.zara.app", listOf("invalid"))
+        }
+        expectFailure<IllegalArgumentException> {
+            PluginApkSecurity.validateIdentity("", "ai.zara.app", listOf(digest))
+        }
     }
 
     @Test
-    fun onlyAcceptsCurrentInstallationCallback() {
+    fun onlyAcceptsTheCurrentInstallationCallback() {
         check(PluginApkSecurity.matchesCallback(42, "nonce", 42, "nonce"))
         check(!PluginApkSecurity.matchesCallback(42, "nonce", 41, "nonce"))
         check(!PluginApkSecurity.matchesCallback(42, "nonce", 42, "old"))
+        check(!PluginApkSecurity.matchesCallback(42, "nonce", 42, null))
         check(!PluginApkSecurity.matchesCallback(-1, "nonce", -1, "nonce"))
+        check(!PluginApkSecurity.matchesCallback(42, "", 42, ""))
     }
 
     private inline fun <reified T : Throwable> expectFailure(block: () -> Unit) {
