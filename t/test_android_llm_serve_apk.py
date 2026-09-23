@@ -64,7 +64,8 @@ def test_llm_serve_reuses_actor_runtime_instead_of_creating_second_inference_cor
         ROOT / "android/llm-serve/src/main/java/ai/zara/llmserve/LlmServeEngine.kt"
     ).read_text()
 
-    assert "LocalAiRuntime(LiteRtLocalLlmBackend(context))" in engine
-    assert "LocalModelStore" in engine
-    assert "Cannot replace the active model during generation" in engine
-    assert "modelStore.activate(previous)" in engine
+    assert "LocalAiRuntime(" not in engine
+    assert "LocalModelStore(" not in engine
+    assert "LiteRtLocalLlmBackend(" not in engine
+    assert "LocalAiRemoteClient" in engine
+    assert "Cannot replace the active model during generation" not in engine
