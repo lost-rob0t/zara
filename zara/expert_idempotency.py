@@ -135,19 +135,10 @@ class ExpertIdempotencyJournal:
                 )
                 return ClaimDecision(claim=claim, replay=replay, created=False)
 
-            if (
+            generation_changed = (
                 row["registry_generation"] != handle.registry_generation
                 or row["runtime_generation"] != handle.runtime_generation
-            ):
-                replay = self._unknown_result(
-                    row,
-                    handle=handle,
-                    message=(
-                        "prior idempotent expert execution belongs to a different "
-                        "registry/runtime generation"
-                    ),
-                )
-                return ClaimDecision(claim=claim, replay=replay, created=False)
+            )
 
             if row["state"] == "completed" and row["result_json"]:
                 try:
@@ -169,6 +160,16 @@ class ExpertIdempotencyJournal:
                     )
                     return ClaimDecision(claim=claim, replay=replay, created=False)
                 replay = replace(result, replayed=True)
+                if generation_changed and replay.verdict is ExpertVerdict.SUCCEEDED:
+                    replay = self._unknown_result(
+                        row,
+                        handle=handle,
+                        message=(
+                            "prior idempotent expert success belongs to a different "
+                            "registry/runtime generation"
+                        ),
+                    )
+                    return ClaimDecision(claim=claim, replay=replay, created=False)
                 if (
                     replay.verdict is ExpertVerdict.SUCCEEDED
                     and replay.effect_receipts
@@ -192,7 +193,12 @@ class ExpertIdempotencyJournal:
             replay = self._unknown_result(
                 row,
                 handle=handle,
-                message="prior idempotent expert execution is not durably terminal",
+                message=(
+                    "prior idempotent expert execution belongs to a different "
+                    "registry/runtime generation"
+                    if generation_changed
+                    else "prior idempotent expert execution is not durably terminal"
+                ),
             )
             return ClaimDecision(claim=claim, replay=replay, created=False)
 
