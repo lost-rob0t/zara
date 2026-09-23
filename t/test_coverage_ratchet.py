@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 
 import pytest
 
@@ -171,7 +173,7 @@ def test_full_repository_gate_reuses_canonical_coverage_authority():
 
     assert "--cov=zara" in source
     assert "--cov-branch" in source
-    assert 'coverage.json' in source
+    assert "coverage.json" in source
     assert source.count("scripts/check-coverage-ratchet.py") == 1
     assert "coverage-baseline.json" in source
 
@@ -214,3 +216,168 @@ def test_coverage_entrypoint_rejects_unknown_arguments_before_pytest(tmp_path):
 
     assert result.returncode == 2
     assert not marker.exists()
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _write_coverage(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "totals": {
+                    "covered_lines": 100,
+                    "num_statements": 100,
+                    "covered_branches": 100,
+                    "num_branches": 100,
+                    "percent_covered": 100.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _init_push_policy_repo(
+    tmp_path: Path,
+    *,
+    base_policy: dict,
+    head_policy: dict,
+    product_change: bool,
+) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.name", "coverage-test")
+    _git(repo, "config", "user.email", "coverage-test@example.invalid")
+
+    (repo / "coverage-baseline.json").write_text(
+        json.dumps(base_policy), encoding="utf-8"
+    )
+    _git(repo, "add", "coverage-baseline.json")
+    _git(repo, "commit", "-qm", "base policy")
+    base_sha = _git(repo, "rev-parse", "HEAD")
+
+    (repo / "coverage-baseline.json").write_text(
+        json.dumps(head_policy), encoding="utf-8"
+    )
+    if product_change:
+        production = repo / "zara" / "runtime" / "push_probe.py"
+        production.parent.mkdir(parents=True)
+        production.write_text("VALUE = 1\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "head policy")
+    _write_coverage(repo / "coverage.json")
+    return repo, base_sha
+
+
+def _run_checker_for_push(repo: Path, base_sha: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["CI"] = "true"
+    env["ZARA_COVERAGE_BASE_REF"] = base_sha
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--coverage",
+            "coverage.json",
+            "--policy",
+            "coverage-baseline.json",
+        ],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+
+def test_push_trusted_base_rejects_floor_regression(tmp_path):
+    repo, base_sha = _init_push_policy_repo(
+        tmp_path,
+        base_policy=policy(80.0, 66.8, 76.8),
+        head_policy=policy(79.9, 66.8, 76.8),
+        product_change=False,
+    )
+
+    result = _run_checker_for_push(repo, base_sha)
+
+    assert result.returncode == 1
+    assert "line floor regressed" in result.stderr
+
+
+def test_push_trusted_base_cannot_bypass_reachable_python_ratchet(tmp_path):
+    repo, base_sha = _init_push_policy_repo(
+        tmp_path,
+        base_policy=policy(80.0, 66.8, 76.8),
+        head_policy=policy(80.0, 66.8, 76.8),
+        product_change=True,
+    )
+
+    result = _run_checker_for_push(repo, base_sha)
+
+    assert result.returncode == 1
+    assert "must increase by at least 2.00 points" in result.stderr
+
+
+def test_ci_without_trusted_coverage_base_fails_closed(tmp_path):
+    coverage = tmp_path / "coverage.json"
+    policy_path = tmp_path / "coverage-baseline.json"
+    _write_coverage(coverage)
+    policy_path.write_text(json.dumps(policy(80.0, 66.8, 76.8)), encoding="utf-8")
+    env = os.environ.copy()
+    env["CI"] = "true"
+    env.pop("ZARA_COVERAGE_BASE_REF", None)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--coverage",
+            str(coverage),
+            "--policy",
+            str(policy_path),
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "trusted coverage base ref" in result.stderr
+
+
+def test_coverage_workflow_resolves_push_before_and_rejects_branch_create():
+    source = (ROOT / ".github" / "workflows" / "coverage.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "${{ github.event.before }}" in source
+    assert "0000000000000000000000000000000000000000" in source
+    assert "git cat-file -e" in source
+    assert "ZARA_COVERAGE_BASE_REF" in source
+    assert 'origin/${{ github.base_ref }}' in source
+
+
+def test_full_ci_propagates_the_same_trusted_coverage_base():
+    source = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "${{ github.event.before }}" in source
+    assert "0000000000000000000000000000000000000000" in source
+    assert "git cat-file -e" in source
+    assert "ZARA_COVERAGE_BASE_REF" in source
+    assert 'origin/${{ github.base_ref }}' in source
