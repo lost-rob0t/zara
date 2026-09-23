@@ -111,50 +111,50 @@ jobs:
 
             set +e
             SOURCE_SHA="$GITHUB_SHA" python - "$runs_file" "$evidence_file" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-source_sha = os.environ["SOURCE_SHA"]
-runs = json.loads(pathlib.Path(sys.argv[1]).read_text())["workflow_runs"]
-matches = [
-    run
-    for run in runs
-    if run.get("event") == "push"
-    and run.get("head_branch") == "master"
-    and run.get("head_sha") == source_sha
-]
-success = next(
-    (
-        run
-        for run in matches
-        if run.get("status") == "completed"
-        and run.get("conclusion") == "success"
-    ),
-    None,
-)
-if success is not None:
-    pathlib.Path(sys.argv[2]).write_text(success.get("html_url", "") + "\n")
-    raise SystemExit(0)
-failed = next(
-    (
-        run
-        for run in matches
-        if run.get("status") == "completed"
-        and run.get("conclusion") not in (None, "success")
-    ),
-    None,
-)
-if failed is not None:
-    print(
-        "Exact approved master CI failed: "
-        f"conclusion={failed.get('conclusion')} url={failed.get('html_url')}",
-        file=sys.stderr,
-    )
-    raise SystemExit(2)
-raise SystemExit(1)
-PY
+          source_sha = os.environ["SOURCE_SHA"]
+          runs = json.loads(pathlib.Path(sys.argv[1]).read_text())["workflow_runs"]
+          matches = [
+              run
+              for run in runs
+              if run.get("event") == "push"
+              and run.get("head_branch") == "master"
+              and run.get("head_sha") == source_sha
+          ]
+          success = next(
+              (
+                  run
+                  for run in matches
+                  if run.get("status") == "completed"
+                  and run.get("conclusion") == "success"
+              ),
+              None,
+          )
+          if success is not None:
+              pathlib.Path(sys.argv[2]).write_text(success.get("html_url", "") + "\n")
+              raise SystemExit(0)
+          failed = next(
+              (
+                  run
+                  for run in matches
+                  if run.get("status") == "completed"
+                  and run.get("conclusion") not in (None, "success")
+              ),
+              None,
+          )
+          if failed is not None:
+              print(
+                  "Exact approved master CI failed: "
+                  f"conclusion={failed.get('conclusion')} url={failed.get('html_url')}",
+                  file=sys.stderr,
+              )
+              raise SystemExit(2)
+          raise SystemExit(1)
+          PY
             status=$?
             set -e
 
@@ -357,30 +357,30 @@ PY
             > "$draft_pages"
           RELEASE_TAG="$TAG" OWNED_TITLE_PREFIX="$OWNED_TITLE_PREFIX" \
             python - "$draft_pages" "$stale_id_file" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
-releases = [release for page in pages for release in page]
-stale = [
-    release
-    for release in releases
-    if release.get("draft") is True and release.get("tag_name") == os.environ["RELEASE_TAG"]
-]
-if not stale:
-    raise SystemExit(0)
-if len(stale) != 1:
-    raise SystemExit(
-        f"Found {len(stale)} drafts for {os.environ['RELEASE_TAG']}; refusing ambiguous recovery"
-    )
-release = stale[0]
-name = release.get("name") or ""
-if not name.startswith(os.environ["OWNED_TITLE_PREFIX"]):
-    raise SystemExit("Existing draft lacks Zara workflow ownership marker; refusing foreign recovery")
-pathlib.Path(sys.argv[2]).write_text(str(release["id"]) + "\n")
-PY
+          pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          releases = [release for page in pages for release in page]
+          stale = [
+              release
+              for release in releases
+              if release.get("draft") is True and release.get("tag_name") == os.environ["RELEASE_TAG"]
+          ]
+          if not stale:
+              raise SystemExit(0)
+          if len(stale) != 1:
+              raise SystemExit(
+                  f"Found {len(stale)} drafts for {os.environ['RELEASE_TAG']}; refusing ambiguous recovery"
+              )
+          release = stale[0]
+          name = release.get("name") or ""
+          if not name.startswith(os.environ["OWNED_TITLE_PREFIX"]):
+              raise SystemExit("Existing draft lacks Zara workflow ownership marker; refusing foreign recovery")
+          pathlib.Path(sys.argv[2]).write_text(str(release["id"]) + "\n")
+          PY
           stale_release_id="$(cat "$stale_id_file")"
           if [[ -n "$stale_release_id" ]]; then
             gh api --method DELETE \
@@ -423,23 +423,23 @@ PY
             "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
             > "$draft_pages"
           RELEASE_TAG="$TAG" python - "$draft_pages" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
-releases = [release for page in pages for release in page]
-stale = [
-    release
-    for release in releases
-    if release.get("draft") is True and release.get("tag_name") == os.environ["RELEASE_TAG"]
-]
-if stale:
-    raise SystemExit(
-        f"Draft release already exists for {os.environ['RELEASE_TAG']}; refusing ambiguous staging"
-    )
-PY
+          pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          releases = [release for page in pages for release in page]
+          stale = [
+              release
+              for release in releases
+              if release.get("draft") is True and release.get("tag_name") == os.environ["RELEASE_TAG"]
+          ]
+          if stale:
+              raise SystemExit(
+                  f"Draft release already exists for {os.environ['RELEASE_TAG']}; refusing ambiguous staging"
+              )
+          PY
 
           release_flags=(--draft --verify-tag)
           if [[ "$VERSION" == *-* ]]; then
@@ -466,26 +466,26 @@ PY
             > "$staged_pages"
           RELEASE_TAG="$TAG" STAGED_TITLE="$STAGED_TITLE" \
             python - "$staged_pages" "$staged_id_file" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
-releases = [release for page in pages for release in page]
-matches = [
-    release
-    for release in releases
-    if release.get("draft") is True
-    and release.get("tag_name") == os.environ["RELEASE_TAG"]
-    and release.get("name") == os.environ["STAGED_TITLE"]
-]
-if len(matches) != 1:
-    raise SystemExit(
-        f"Expected one owned staged draft for {os.environ['RELEASE_TAG']}, found {len(matches)}"
-    )
-pathlib.Path(sys.argv[2]).write_text(str(matches[0]["id"]) + "\n")
-PY
+          pages = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          releases = [release for page in pages for release in page]
+          matches = [
+              release
+              for release in releases
+              if release.get("draft") is True
+              and release.get("tag_name") == os.environ["RELEASE_TAG"]
+              and release.get("name") == os.environ["STAGED_TITLE"]
+          ]
+          if len(matches) != 1:
+              raise SystemExit(
+                  f"Expected one owned staged draft for {os.environ['RELEASE_TAG']}, found {len(matches)}"
+              )
+          pathlib.Path(sys.argv[2]).write_text(str(matches[0]["id"]) + "\n")
+          PY
           staged_release_id="$(cat "$staged_id_file")"
           test -n "$staged_release_id"
           echo "release_id=$staged_release_id" >> "$GITHUB_OUTPUT"
@@ -531,30 +531,30 @@ PY
             "${CODE_EDITOR_APK}.sha256" \
             "$CODE_EDITOR_MANIFEST" \
             "$NOTES" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-release = json.loads(pathlib.Path(sys.argv[1]).read_text())
-if release.get("draft") is not True:
-    raise SystemExit("Staged release became public before verification")
-if release.get("tag_name") != os.environ["STAGED_TAG"]:
-    raise SystemExit("Staged release tag drifted")
-if release.get("name") != os.environ["STAGED_TITLE"]:
-    raise SystemExit("Staged release ownership marker drifted")
-expected = [pathlib.Path(value).name for value in sys.argv[3:]]
-assets = release.get("assets") or []
-by_name = {asset.get("name"): asset for asset in assets}
-if len(by_name) != len(assets):
-    raise SystemExit("Staged release contains duplicate asset names")
-if set(by_name) != set(expected):
-    raise SystemExit(
-        f"Staged release assets differ: expected={sorted(expected)!r} actual={sorted(by_name)!r}"
-    )
-lines = [f"{by_name[name]['id']}\t{name}" for name in expected]
-pathlib.Path(sys.argv[2]).write_text("\n".join(lines) + "\n")
-PY
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if release.get("draft") is not True:
+              raise SystemExit("Staged release became public before verification")
+          if release.get("tag_name") != os.environ["STAGED_TAG"]:
+              raise SystemExit("Staged release tag drifted")
+          if release.get("name") != os.environ["STAGED_TITLE"]:
+              raise SystemExit("Staged release ownership marker drifted")
+          expected = [pathlib.Path(value).name for value in sys.argv[3:]]
+          assets = release.get("assets") or []
+          by_name = {asset.get("name"): asset for asset in assets}
+          if len(by_name) != len(assets):
+              raise SystemExit("Staged release contains duplicate asset names")
+          if set(by_name) != set(expected):
+              raise SystemExit(
+                  f"Staged release assets differ: expected={sorted(expected)!r} actual={sorted(by_name)!r}"
+              )
+          lines = [f"{by_name[name]['id']}\t{name}" for name in expected]
+          pathlib.Path(sys.argv[2]).write_text("\n".join(lines) + "\n")
+          PY
 
           while IFS=$'\t' read -r asset_id asset_name; do
             gh api --method GET \
@@ -596,17 +596,17 @@ PY
           grep -Fxq "apk_sha256=${actual_code_editor_sha}" "$staged_code_editor_manifest"
 
           STAGED_NOTES="$NOTES" python - "$staged_release_json" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-release = json.loads(pathlib.Path(sys.argv[1]).read_text())
-expected = pathlib.Path(os.environ["STAGED_NOTES"]).read_text().rstrip("\n")
-actual = (release.get("body") or "").rstrip("\n")
-if actual != expected:
-    raise SystemExit("Staged release notes differ from canonical changelog notes")
-PY
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          expected = pathlib.Path(os.environ["STAGED_NOTES"]).read_text().rstrip("\n")
+          actual = (release.get("body") or "").rstrip("\n")
+          if actual != expected:
+              raise SystemExit("Staged release notes differ from canonical changelog notes")
+          PY
 
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$staged_apk"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$staged_code_editor_apk"
@@ -628,19 +628,19 @@ PY
             -F draft=false \
             > "$published_json"
           PUBLISHED_TAG="$TAG" python - "$published_json" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-release = json.loads(pathlib.Path(sys.argv[1]).read_text())
-if release.get("draft") is not False:
-    raise SystemExit("Verified release did not publish")
-if release.get("tag_name") != os.environ["PUBLISHED_TAG"]:
-    raise SystemExit("Published release tag drifted")
-if not release.get("published_at"):
-    raise SystemExit("Published release has no publication timestamp")
-PY
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if release.get("draft") is not False:
+              raise SystemExit("Verified release did not publish")
+          if release.get("tag_name") != os.environ["PUBLISHED_TAG"]:
+              raise SystemExit("Published release tag drifted")
+          if not release.get("published_at"):
+              raise SystemExit("Published release has no publication timestamp")
+          PY
 
       - name: Verify published release bytes, metadata, signer, and notes
         env:
@@ -731,21 +731,21 @@ PY
             > "$staged_release_json"
           decision="$(STAGED_TAG="$TAG" STAGED_TITLE="$STAGED_TITLE" \
             python - "$staged_release_json" <<'PY'
-import json
-import os
-import pathlib
-import sys
+          import json
+          import os
+          import pathlib
+          import sys
 
-release = json.loads(pathlib.Path(sys.argv[1]).read_text())
-if release.get("draft") is not True:
-    print("keep")
-    raise SystemExit(0)
-if release.get("tag_name") != os.environ["STAGED_TAG"]:
-    raise SystemExit("Owned draft cleanup refused tag drift")
-if release.get("name") != os.environ["STAGED_TITLE"]:
-    raise SystemExit("Owned draft cleanup refused ownership-marker drift")
-print("delete")
-PY
+          release = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          if release.get("draft") is not True:
+              print("keep")
+              raise SystemExit(0)
+          if release.get("tag_name") != os.environ["STAGED_TAG"]:
+              raise SystemExit("Owned draft cleanup refused tag drift")
+          if release.get("name") != os.environ["STAGED_TITLE"]:
+              raise SystemExit("Owned draft cleanup refused ownership-marker drift")
+          print("delete")
+          PY
           )"
           if [[ "$decision" == "delete" ]]; then
             gh api --method DELETE \
