@@ -157,6 +157,10 @@ def _boolean_runtime_generation(wire: dict[str, Any]) -> None:
     wire["resolved_runtime_generation"] = bool(value)
 
 
+def _non_finite_data_value(wire: dict[str, Any]) -> None:
+    wire["data"] = {"score": float("nan")}
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -170,6 +174,7 @@ def _boolean_runtime_generation(wire: dict[str, Any]) -> None:
         _non_string_error_message,
         _boolean_registry_generation,
         _boolean_runtime_generation,
+        _non_finite_data_value,
     ],
     ids=[
         "receipt-count",
@@ -182,6 +187,7 @@ def _boolean_runtime_generation(wire: dict[str, Any]) -> None:
         "error-message-type",
         "registry-generation-type",
         "runtime-generation-type",
+        "non-finite-data",
     ],
 )
 def test_out_of_contract_durable_terminal_fails_closed_without_redispatch(
