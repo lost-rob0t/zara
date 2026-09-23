@@ -55,18 +55,20 @@ class OrgScheduleSnapshotTest {
     }
 
     @Test
-    fun staleSnapshotCannotRollBackAcceptedCacheState() {
+    fun staleOrConflictingSnapshotCannotRollBackAcceptedCacheState() {
         val current = OrgScheduleSnapshot(
             generatedAtEpochMillis = 200L,
             allocations = emptyList(),
             currentOrNextTitle = null,
         )
         val newer = current.copy(generatedAtEpochMillis = 201L)
-        val sameGeneration = current.copy(currentOrNextTitle = "same generation refresh")
+        val identical = current.copy()
+        val conflictingSameGeneration = current.copy(currentOrNextTitle = "conflict")
         val stale = current.copy(generatedAtEpochMillis = 199L)
 
         assertTrue(shouldAcceptOrgScheduleSnapshot(current, newer))
-        assertTrue(shouldAcceptOrgScheduleSnapshot(current, sameGeneration))
+        assertTrue(shouldAcceptOrgScheduleSnapshot(current, identical))
+        assertFalse(shouldAcceptOrgScheduleSnapshot(current, conflictingSameGeneration))
         assertFalse(shouldAcceptOrgScheduleSnapshot(current, stale))
     }
 
