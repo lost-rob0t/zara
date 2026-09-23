@@ -75,15 +75,19 @@ class AndroidWidgetContractTest {
 
     @Test
     fun `appearance owns widget style import export reset and live refresh`() {
-        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
         val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val appearance = File("src/main/java/ai/zara/app/ui/WidgetAppearanceControls.kt").readText()
 
-        assertTrue(activity.contains("ActivityResultContracts.OpenDocument"))
-        assertTrue(activity.contains("ActivityResultContracts.CreateDocument"))
-        assertTrue(activity.contains("WidgetStyleStore"))
-        assertTrue(activity.contains("ZaraWidgetUpdater.refreshAll"))
-        assertTrue(shell.contains("Import .pl"))
-        assertTrue(shell.contains("Export .pl"))
-        assertTrue(shell.contains("Reset widget style"))
+        assertTrue(shell.contains("WidgetAppearanceControls(selected)"))
+        assertTrue(appearance.contains("ActivityResultContracts.OpenDocument"))
+        assertTrue(appearance.contains("ActivityResultContracts.CreateDocument"))
+        assertTrue(appearance.contains("WidgetStyleEnvironment.import"))
+        assertTrue(appearance.contains("WidgetStyleEnvironment.export"))
+        assertTrue(appearance.contains("WidgetStyleEnvironment.reset"))
+        assertTrue(appearance.contains("ZaraWidgetUpdater.refreshAll"))
+        assertTrue(appearance.contains("Import .pl"))
+        assertTrue(appearance.contains("Export .pl"))
+        assertTrue(appearance.contains("Reset widget style"))
+        assertTrue(appearance.indexOf("WidgetStyleEnvironment.import") < appearance.indexOf("ZaraWidgetUpdater.refreshAll"))
     }
 }
