@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -288,6 +289,48 @@ def test_restart_reuses_shared_database_for_dedupe_and_feedback(tmp_path: Path) 
     assert "spam:explicit_always_allow" in after_restart.evidence
 
 
+def test_equal_generation_divergent_replay_is_rejected_and_exact_replay_preserves_grant_after_restart(tmp_path: Path) -> None:
+    db1, store1 = _store(tmp_path)
+    router1 = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store1)
+    event = _event(notification_id="n:replay")
+    first = router1.route(event, _peers(), now_ms=NOW)
+    assert first.sinks == ("desktop",)
+    db1.close()
+
+    db2 = DatabaseManager(tmp_path / "zara.db")
+    router2 = NotificationRouter(
+        local_peer_id="phone",
+        policy=Policy(),
+        store=NotificationRouterStore(db2),
+    )
+    for divergent in (
+        replace(event, owner_peer="watch"),
+        replace(event, action_handles=("open",)),
+        replace(event, body="rewritten body"),
+    ):
+        with pytest.raises(NotificationStale, match="diverges"):
+            router2.route(divergent, _peers(), now_ms=NOW + 1)
+
+    replay = router2.route(event, _peers(watch_time=NOW + 20), now_ms=NOW + 2)
+    assert replay.duplicate is True
+    assert replay.decision == "group"
+    assert replay.sinks == ()
+
+    plane = EffectPlane()
+    request = NotificationActionRequest(
+        request_id="req:replay:grant",
+        notification_id=event.notification_id,
+        generation=event.generation,
+        principal_id=event.principal_id,
+        workspace_id=event.workspace_id,
+        sink_peer="desktop",
+        action="dismiss",
+    )
+    result = router2.perform_action(request, plane, now_ms=NOW + 3)
+    assert result.success is True
+    assert plane.executed == [("req:replay:grant", "phone")]
+
+
 def test_hook_crosses_canonical_effect_plane_once_and_requires_fresh_verification(tmp_path: Path) -> None:
     _, store = _store(tmp_path)
     policy = Policy()
@@ -363,7 +406,6 @@ def test_stale_postcondition_generation_is_rejected_after_effect_execution(tmp_p
 
     assert plane.executed == [("req:verify", "phone")]
     assert plane.verified == ["req:verify"]
-    assert store.effect_done("user:alice", "ws:main", "action:req:verify") is False
 
 
 def test_denied_capability_never_executes_effect(tmp_path: Path) -> None:
@@ -458,40 +500,36 @@ def test_action_requires_routed_sink_and_exposed_source_handle(tmp_path: Path) -
     assert missing_handle_plane.executed == []
 
 
-def test_concurrent_duplicate_effect_requests_execute_exactly_once(tmp_path: Path) -> None:
+def test_concurrent_duplicate_effect_requests_with_distinct_request_ids_execute_exactly_once(tmp_path: Path) -> None:
     _, store = _store(tmp_path)
     router = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store)
     event = _event(notification_id="n:race")
     router.route(event, _peers(), now_ms=NOW)
     plane = SlowEffectPlane()
-    request = NotificationActionRequest(
-        request_id="req:race",
-        notification_id=event.notification_id,
-        generation=event.generation,
-        principal_id=event.principal_id,
-        workspace_id=event.workspace_id,
-        sink_peer="desktop",
-        action="dismiss",
-    )
+    requests = [
+        NotificationActionRequest(
+            request_id=f"req:race:{index}",
+            notification_id=event.notification_id,
+            generation=event.generation,
+            principal_id=event.principal_id,
+            workspace_id=event.workspace_id,
+            sink_peer="desktop",
+            action="dismiss",
+        )
+        for index in range(2)
+    ]
     start = threading.Barrier(3)
     successes: list[object] = []
     failures: list[BaseException] = []
 
-    def run() -> None:
+    def run(request: NotificationActionRequest) -> None:
         start.wait()
         try:
-            successes.append(
-                router.perform_action(
-                    request,
-                    plane,
-                    effect_key="action:shared-race",
-                    now_ms=NOW + 1,
-                )
-            )
+            successes.append(router.perform_action(request, plane, now_ms=NOW + 1))
         except BaseException as exc:
             failures.append(exc)
 
-    threads = [threading.Thread(target=run), threading.Thread(target=run)]
+    threads = [threading.Thread(target=run, args=(request,)) for request in requests]
     for thread in threads:
         thread.start()
     start.wait()
@@ -499,10 +537,44 @@ def test_concurrent_duplicate_effect_requests_execute_exactly_once(tmp_path: Pat
         thread.join(timeout=5)
         assert not thread.is_alive()
 
-    assert plane.executed == [("req:race", "phone")]
+    assert len(plane.executed) == 1
+    assert plane.executed[0][0] in {"req:race:0", "req:race:1"}
+    assert plane.executed[0][1] == "phone"
     assert len(successes) == 1
     assert len(failures) == 1
     assert isinstance(failures[0], NotificationDenied)
+
+
+def test_semantic_effect_identity_survives_restart_and_ignores_transport_request_id(tmp_path: Path) -> None:
+    db1, store1 = _store(tmp_path)
+    router1 = NotificationRouter(local_peer_id="phone", policy=Policy(), store=store1)
+    event = _event(notification_id="n:semantic-id")
+    router1.route(event, _peers(), now_ms=NOW)
+    plane = EffectPlane()
+    first = NotificationActionRequest(
+        request_id="transport:req:first",
+        notification_id=event.notification_id,
+        generation=event.generation,
+        principal_id=event.principal_id,
+        workspace_id=event.workspace_id,
+        sink_peer="desktop",
+        action="dismiss",
+    )
+    assert router1.perform_action(first, plane, now_ms=NOW + 1).success is True
+    db1.close()
+
+    db2 = DatabaseManager(tmp_path / "zara.db")
+    router2 = NotificationRouter(
+        local_peer_id="phone",
+        policy=Policy(),
+        store=NotificationRouterStore(db2),
+    )
+    replay = replace(first, request_id="transport:req:after-restart")
+    with pytest.raises(NotificationDenied, match="already completed"):
+        router2.perform_action(replay, plane, now_ms=NOW + 2)
+
+    assert plane.executed == [("transport:req:first", "phone")]
+    assert plane.verified == ["transport:req:first"]
 
 
 def test_failed_verification_retry_reuses_durable_receipt_without_reexecuting(tmp_path: Path) -> None:
@@ -524,8 +596,9 @@ def test_failed_verification_retry_reuses_durable_receipt_without_reexecuting(tm
     with pytest.raises(NotificationDenied, match="fresh verified postcondition"):
         router.perform_action(request, plane, now_ms=NOW + 1)
     result = router.perform_action(request, plane, now_ms=NOW + 2)
+    with pytest.raises(NotificationDenied, match="already completed"):
+        router.perform_action(replace(request, request_id="req:recover:transport-replay"), plane, now_ms=NOW + 3)
 
     assert result.success is True
     assert plane.executed == [("req:recover", "phone")]
     assert plane.verified == ["req:recover", "req:recover"]
-    assert store.effect_done("user:alice", "ws:main", "action:req:recover") is True
