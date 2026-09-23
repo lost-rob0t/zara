@@ -71,10 +71,13 @@ def test_install_flow_is_explicit_and_does_not_gain_broad_package_visibility():
     assert "android.permission.MANAGE_EXTERNAL_STORAGE" not in permissions
 
 
-def test_device_evidence_matrix_already_captures_plugins_settings_tab():
+def test_device_evidence_matrix_captures_hashed_plugin_text_twins():
     acceptance = (ROOT / "android/integration/device_acceptance.py").read_text()
     assert '"Plugins",' in acceptance
-    assert 'device.capture(f"settings-{tab.lower()}")' in acceptance
+    assert 'required_actions=("Choose APK",) if tab == "Plugins" else ()' in acceptance
+    assert '"text_twin_file": twin_path.name' in acceptance
+    assert '"text_twin_sha256": hashlib.sha256(twin_data).hexdigest()' in acceptance
+    assert 'json.dumps(twin, sort_keys=True' in acceptance
     assert 'device.capture("settings-plugins-narrow-large-font")' in acceptance
     assert '"plugins-narrow-large-font", target_width_dp=320, font_scale=2.00' in acceptance
     assert 'device.capture("settings-plugins-install-narrow-large-font")' in acceptance
