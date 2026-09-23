@@ -125,6 +125,19 @@ class PluginApkSecurityTest {
         check(!PluginApkSecurity.matchesCallback(42, "", 42, ""))
     }
 
+    @Test
+    fun pendingIntentIdentityIsBoundToSessionAndNonce() {
+        val current = PluginApkSecurity.callbackIdentity(42, "nonce")
+        check(current != PluginApkSecurity.callbackIdentity(42, "old"))
+        check(current != PluginApkSecurity.callbackIdentity(41, "nonce"))
+        expectFailure<IllegalArgumentException> {
+            PluginApkSecurity.callbackIdentity(-1, "nonce")
+        }
+        expectFailure<IllegalArgumentException> {
+            PluginApkSecurity.callbackIdentity(42, "")
+        }
+    }
+
     private inline fun <reified T : Throwable> expectFailure(block: () -> Unit) {
         try {
             block()
