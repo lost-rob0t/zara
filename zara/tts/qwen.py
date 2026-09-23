@@ -11,6 +11,7 @@ import hashlib
 import ipaddress
 import os
 import stat
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -137,7 +138,24 @@ class Qwen3TTSClient:
 
     @asynccontextmanager
     async def _voice_mutation_guard(self, name: str):
-        handle = await asyncio.to_thread(self._acquire_voice_mutation_lock, name)
+        cancelled = threading.Event()
+        acquisition = asyncio.create_task(
+            asyncio.to_thread(self._acquire_voice_mutation_lock, name, cancelled)
+        )
+        try:
+            handle = await asyncio.shield(acquisition)
+        except asyncio.CancelledError:
+            cancelled.set()
+            try:
+                late_handle = await asyncio.shield(acquisition)
+            except Exception:
+                pass
+            else:
+                await asyncio.to_thread(
+                    self._release_voice_mutation_lock, late_handle
+                )
+            raise
+
         try:
             yield
         finally:
@@ -180,7 +198,11 @@ class Qwen3TTSClient:
         path = parsed.path.rstrip("/")
         return f"{scheme}://loopback:{port}{path}"
 
-    def _acquire_voice_mutation_lock(self, name: str):
+    def _acquire_voice_mutation_lock(
+        self,
+        name: str,
+        cancelled: threading.Event | None = None,
+    ):
         if fcntl is None:
             raise RuntimeError(
                 "cross-process Qwen voice mutation locking is unavailable on this platform"
@@ -189,8 +211,18 @@ class Qwen3TTSClient:
         handle = lock_path.open("a+b")
         deadline = time.monotonic() + self.voice_mutation_timeout
         while True:
+            if cancelled is not None and cancelled.is_set():
+                handle.close()
+                raise RuntimeError(
+                    f"cancelled while waiting for Qwen voice mutation lock for {name!r}"
+                )
             try:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                if cancelled is not None and cancelled.is_set():
+                    self._release_voice_mutation_lock(handle)
+                    raise RuntimeError(
+                        f"cancelled while waiting for Qwen voice mutation lock for {name!r}"
+                    )
                 return handle
             except BlockingIOError:
                 if time.monotonic() >= deadline:
@@ -198,7 +230,13 @@ class Qwen3TTSClient:
                     raise RuntimeError(
                         f"timed out waiting for Qwen voice mutation lock for {name!r}"
                     )
-                time.sleep(0.01)
+                if cancelled is None:
+                    time.sleep(0.01)
+                elif cancelled.wait(0.01):
+                    handle.close()
+                    raise RuntimeError(
+                        f"cancelled while waiting for Qwen voice mutation lock for {name!r}"
+                    )
 
     @staticmethod
     def _release_voice_mutation_lock(handle) -> None:
