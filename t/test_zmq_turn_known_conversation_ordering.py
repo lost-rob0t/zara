@@ -60,10 +60,11 @@ class EarlyBufferProbe:
         original = gateway._buffer_early_turn_event
 
         def wrapped(_gateway, principal_id, turn_id, held):
-            original(principal_id, turn_id, held)
+            buffered = original(principal_id, turn_id, held)
             with self.condition:
                 self.count += 1
                 self.condition.notify_all()
+            return buffered
 
         gateway._buffer_early_turn_event = MethodType(wrapped, gateway)
 
