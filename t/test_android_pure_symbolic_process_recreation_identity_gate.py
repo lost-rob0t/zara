@@ -24,15 +24,26 @@ def test_installed_transcript_requires_conversation_and_evidence_identity_across
     helper_source = ast.get_source_segment(source, helpers["assert_checkpoint_continuity"]) or ""
     required_fragments = (
         '"conversation_id"',
+        '"turn_id"',
         '"expert_evidence"',
         '"expert-answer"',
         '"expert-follow-up-after-restart"',
     )
     for fragment in required_fragments:
         assert fragment in helper_source, (
-            "Checkpoint continuity must bind one durable conversation identity and the same canonical "
-            f"expert evidence across recreation; missing {fragment}."
+            "Checkpoint continuity must bind one durable conversation identity, distinct committed "
+            "turn identities, and the same canonical expert evidence across recreation; missing "
+            f"{fragment}."
         )
+
+    assert "seen_turn_ids" in helper_source, (
+        "Installed multi-turn acceptance must reject a stale projection that reuses an earlier "
+        "canonical turn_id for a later UI-visible turn."
+    )
+    assert 'projection.get("turn_id")' in helper_source, (
+        "The final durable SQLite snapshot must be tied to the terminal restart-safe `why?` turn, "
+        "not merely to the same conversation/evidence identity."
+    )
 
     exercise = helpers.get("exercise_pure_symbolic_dialogue")
     assert exercise is not None
