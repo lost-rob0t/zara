@@ -137,6 +137,14 @@ def _oversized_usage_mapping(wire: dict[str, Any]) -> None:
     wire["usage"] = {"model_calls": 0, **{f"metric_{index}": index for index in range(16)}}
 
 
+def _oversized_error_message(wire: dict[str, Any]) -> None:
+    wire["error_message"] = "x" * 257
+
+
+def _non_string_error_message(wire: dict[str, Any]) -> None:
+    wire["error_message"] = {"message": "corrupt"}
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -146,6 +154,8 @@ def _oversized_usage_mapping(wire: dict[str, Any]) -> None:
         _oversized_evidence_entry,
         _oversized_data_mapping,
         _oversized_usage_mapping,
+        _oversized_error_message,
+        _non_string_error_message,
     ],
     ids=[
         "receipt-count",
@@ -154,6 +164,8 @@ def _oversized_usage_mapping(wire: dict[str, Any]) -> None:
         "evidence-length",
         "data-mapping",
         "usage-mapping",
+        "error-message-length",
+        "error-message-type",
     ],
 )
 def test_out_of_contract_durable_terminal_fails_closed_without_redispatch(
