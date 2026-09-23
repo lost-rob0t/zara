@@ -271,6 +271,11 @@ def validate_android(
                 raise EvidenceError(f"android scenario assertion result is invalid: {scenario_id}")
             if not isinstance(assertion.get("detail"), str):
                 raise EvidenceError(f"android scenario assertion detail is invalid: {scenario_id}")
+            if assertion["passed"] is False:
+                raise EvidenceError(
+                    f"android scenario contains failed assertion: {scenario_id}: "
+                    f"{assertion['name']}"
+                )
             if assertion["name"] == "screenshot-png" and assertion["passed"] is True:
                 screenshot_assertion = True
         if not screenshot_assertion:
