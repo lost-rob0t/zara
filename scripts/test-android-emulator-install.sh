@@ -100,6 +100,82 @@ nix develop "$repo_root/android" -c \
   --source-sha "$source_sha" \
   --output android/app/build/reports/device
 
+visual_manifest="$repo_root/android/app/build/reports/device/manifest.json"
+python3 - "$visual_manifest" "$repo_root/android/app/build/reports/device" "$source_sha" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+manifest_path = Path(sys.argv[1])
+evidence_dir = Path(sys.argv[2])
+expected_source_sha = sys.argv[3]
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+if data.get("passed") is not True:
+    raise SystemExit("visual Android acceptance manifest did not report passed=true")
+if data.get("source_sha") != expected_source_sha:
+    raise SystemExit("visual Android acceptance source SHA does not match exact candidate")
+checks = data.get("visual_checks")
+if not isinstance(checks, list):
+    raise SystemExit("visual Android acceptance omitted visual_checks")
+receipt = next(
+    (item for item in checks if item.get("state") == "drawer-conversation-overflow"),
+    None,
+)
+if receipt is None:
+    raise SystemExit("visual Android acceptance omitted drawer-conversation-overflow receipt")
+if receipt.get("source_sha") != expected_source_sha:
+    raise SystemExit("overflow visual receipt is not bound to the exact source SHA")
+if receipt.get("device_api") != data.get("device", {}).get("api"):
+    raise SystemExit("overflow visual receipt device API differs from manifest device state")
+if receipt.get("profile") != "default":
+    raise SystemExit("overflow visual receipt was not captured in the default display profile")
+
+expected_actions = {"Pin", "Unpin", "Rename", "Move to project"}
+actions = receipt.get("actions")
+if not isinstance(actions, list):
+    raise SystemExit("overflow visual receipt omitted action evidence")
+labels = {item.get("label") for item in actions}
+if not {"Rename", "Move to project"}.issubset(labels) or not ({"Pin", "Unpin"} & labels):
+    raise SystemExit(f"overflow visual receipt action set is incomplete: {sorted(labels)}")
+if not labels.issubset(expected_actions):
+    raise SystemExit(f"overflow visual receipt contains unexpected actions: {sorted(labels)}")
+
+for file_key, hash_key in (
+    ("screenshot_file", "screenshot_sha256"),
+    ("text_twin_file", "text_twin_sha256"),
+):
+    file_name = receipt.get(file_key)
+    expected_hash = receipt.get(hash_key)
+    if not isinstance(file_name, str) or not file_name:
+        raise SystemExit(f"overflow visual receipt omitted {file_key}")
+    if not isinstance(expected_hash, str) or len(expected_hash) != 64:
+        raise SystemExit(f"overflow visual receipt omitted valid {hash_key}")
+    path = evidence_dir / file_name
+    if not path.is_file():
+        raise SystemExit(f"overflow visual evidence file is missing: {path}")
+    actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        raise SystemExit(
+            f"overflow visual evidence hash mismatch for {file_name}: "
+            f"expected={expected_hash} actual={actual_hash}"
+        )
+
+screenshots = data.get("screenshots")
+if not isinstance(screenshots, list):
+    raise SystemExit("visual Android acceptance omitted screenshots")
+screenshot_entry = next(
+    (item for item in screenshots if item.get("state") == "drawer-conversation-overflow"),
+    None,
+)
+if screenshot_entry is None:
+    raise SystemExit("visual Android acceptance omitted drawer-conversation-overflow screenshot")
+if screenshot_entry.get("file") != receipt.get("screenshot_file"):
+    raise SystemExit("overflow screenshot manifest entry differs from visual receipt")
+if screenshot_entry.get("sha256") != receipt.get("screenshot_sha256"):
+    raise SystemExit("overflow screenshot hash differs between manifest entry and visual receipt")
+PY
+
 # The visual acceptance above is intentionally broad. This second gate proves
 # the installed APK's real Android Keystore -> CURVE -> JeroMQ -> ZARA/1 path
 # against the stock Python Zara server and completes an actual remote text turn.
