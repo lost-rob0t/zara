@@ -21,6 +21,7 @@ class LocalAiRemoteClient(
     private data class Pending(
         val future: CompletableFuture<Bundle>,
         val onChunk: (String) -> Unit,
+        val generation: LocalAiRemoteGenerationTicket?,
     )
 
     private val appContext = context.applicationContext
@@ -131,16 +132,19 @@ class LocalAiRemoteClient(
                 putInt(LocalAiRemoteProtocol.KEY_MAX_OUTPUT_TOKENS, request.maxOutputTokens)
             },
             onChunk,
+            generation = true,
         ).thenApply { payload ->
             LocalAiRemoteProtocol.generationResultFromBundle(
                 requireBundle(payload, LocalAiRemoteProtocol.KEY_RESULT)
             )
         }
 
-    fun cancelGeneration(): CompletableFuture<LocalAiState> =
-        request(LocalAiRemoteProtocol.MSG_CANCEL).thenApply { payload ->
+    fun cancelGeneration(): CompletableFuture<LocalAiState> {
+        cancelPendingGenerations()
+        return request(LocalAiRemoteProtocol.MSG_CANCEL).thenApply { payload ->
             LocalAiRemoteProtocol.stateFromBundle(requireBundle(payload, LocalAiRemoteProtocol.KEY_STATE))
         }
+    }
 
     fun unloadModel(): CompletableFuture<LocalAiState> =
         request(LocalAiRemoteProtocol.MSG_UNLOAD).thenApply { payload ->
@@ -151,15 +155,17 @@ class LocalAiRemoteClient(
         what: Int,
         payload: Bundle = Bundle(),
         onChunk: (String) -> Unit = {},
+        generation: Boolean = false,
     ): CompletableFuture<Bundle> =
         service().thenCompose { messenger ->
             val requestId = requestIds.getAndIncrement()
             val future = CompletableFuture<Bundle>()
+            val generationTicket = if (generation) LocalAiRemoteGenerationTicket() else null
             synchronized(lock) {
                 if (closed) {
                     return@thenCompose failed(LocalAiRemoteUnavailableException("Local AI remote client is closed"))
                 }
-                pending[requestId] = Pending(future, onChunk)
+                pending[requestId] = Pending(future, onChunk, generationTicket)
             }
             payload.putLong(LocalAiRemoteProtocol.KEY_REQUEST_ID, requestId)
             val message = Message.obtain(null, what).apply {
@@ -169,7 +175,8 @@ class LocalAiRemoteClient(
             try {
                 messenger.send(message)
             } catch (error: RemoteException) {
-                synchronized(lock) { pending.remove(requestId) }
+                val failedPending = synchronized(lock) { pending.remove(requestId) }
+                failedPending?.generation?.terminate()
                 future.completeExceptionally(
                     LocalAiRemoteUnavailableException("Canonical local AI service send failed", error)
                 )
@@ -181,20 +188,34 @@ class LocalAiRemoteClient(
         val payload = message.data ?: Bundle()
         val requestId = payload.getLong(LocalAiRemoteProtocol.KEY_REQUEST_ID, -1L)
         if (requestId < 0L) return
-        val current = synchronized(lock) { pending[requestId] } ?: return
         when (message.what) {
             LocalAiRemoteProtocol.EVENT_CHUNK -> {
+                val current = synchronized(lock) { pending[requestId] } ?: return
                 val chunk = payload.getString(LocalAiRemoteProtocol.KEY_CHUNK).orEmpty()
-                if (chunk.isNotEmpty()) current.onChunk(chunk)
+                if (chunk.isEmpty()) return
+                val generation = current.generation
+                if (generation == null) {
+                    current.onChunk(chunk)
+                } else {
+                    generation.deliver { current.onChunk(chunk) }
+                }
             }
 
             LocalAiRemoteProtocol.RESULT_OK -> {
-                synchronized(lock) { pending.remove(requestId) }
+                val current = synchronized(lock) { pending.remove(requestId) } ?: return
+                if (current.generation?.terminate() == false) {
+                    current.future.cancel(false)
+                    return
+                }
                 current.future.complete(payload)
             }
 
             LocalAiRemoteProtocol.RESULT_ERROR -> {
-                synchronized(lock) { pending.remove(requestId) }
+                val current = synchronized(lock) { pending.remove(requestId) } ?: return
+                if (current.generation?.terminate() == false) {
+                    current.future.cancel(false)
+                    return
+                }
                 val type = payload.getString(LocalAiRemoteProtocol.KEY_ERROR_TYPE).orEmpty()
                 val detail = payload.getString(LocalAiRemoteProtocol.KEY_ERROR_MESSAGE)
                     ?.takeIf(String::isNotBlank)
@@ -203,6 +224,21 @@ class LocalAiRemoteClient(
                     LocalAiRemoteOperationException(type.take(96), detail.take(512))
                 )
             }
+        }
+    }
+
+    private fun cancelPendingGenerations() {
+        val cancelled = synchronized(lock) {
+            val generationIds = pending.entries
+                .asSequence()
+                .filter { it.value.generation != null }
+                .map { it.key }
+                .toList()
+            generationIds.mapNotNull(pending::remove)
+        }
+        cancelled.forEach { current ->
+            current.generation?.terminate()
+            current.future.cancel(false)
         }
     }
 
@@ -252,7 +288,10 @@ class LocalAiRemoteClient(
             waiting = pending.values.toList()
             pending.clear()
         }
-        waiting.forEach { it.future.completeExceptionally(failure) }
+        waiting.forEach { current ->
+            current.generation?.terminate()
+            current.future.completeExceptionally(failure)
+        }
     }
 
     override fun close() {
@@ -271,8 +310,11 @@ class LocalAiRemoteClient(
             shouldUnbind = bound
             bound = false
         }
-        waiting.forEach {
-            it.future.completeExceptionally(LocalAiRemoteUnavailableException("Local AI remote client closed"))
+        waiting.forEach { current ->
+            current.generation?.terminate()
+            current.future.completeExceptionally(
+                LocalAiRemoteUnavailableException("Local AI remote client closed")
+            )
         }
         if (shouldUnbind) runCatching { appContext.unbindService(connection) }
     }
@@ -285,6 +327,24 @@ class LocalAiRemoteClient(
 
     private fun <T> failed(error: Throwable): CompletableFuture<T> =
         CompletableFuture<T>().also { it.completeExceptionally(error) }
+}
+
+internal class LocalAiRemoteGenerationTicket {
+    private var active = true
+
+    @Synchronized
+    fun deliver(block: () -> Unit): Boolean {
+        if (!active) return false
+        block()
+        return true
+    }
+
+    @Synchronized
+    fun terminate(): Boolean {
+        if (!active) return false
+        active = false
+        return true
+    }
 }
 
 class LocalAiRemoteUnavailableException(
