@@ -8,12 +8,14 @@ GET/POST /v1/audio/voices, DELETE /v1/audio/voices/{name}, GET /health.
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import os
 import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Optional
+from urllib.parse import urlsplit
 
 import aiohttp
 
@@ -81,6 +83,7 @@ class Qwen3TTSClient:
         wav_file_path: str,
         reference_text: str = "",
     ) -> dict:
+        self._require_local_voice_mutation_endpoint()
         path = Path(wav_file_path)
         if not path.is_file():
             raise FileNotFoundError(f"File not found: {wav_file_path}")
@@ -103,6 +106,7 @@ class Qwen3TTSClient:
             return result
 
     async def delete_voice(self, name: str) -> dict:
+        self._require_local_voice_mutation_endpoint()
         async with self._voice_mutation_guard(name):
             if name not in await self.list_voices():
                 raise RuntimeError(
@@ -138,6 +142,43 @@ class Qwen3TTSClient:
             yield
         finally:
             await asyncio.to_thread(self._release_voice_mutation_lock, handle)
+
+    def _require_local_voice_mutation_endpoint(self) -> None:
+        self._voice_mutation_authority()
+
+    def _voice_mutation_authority(self) -> str:
+        parsed = urlsplit(self.base_url)
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if (
+            scheme not in {"http", "https"}
+            or not host
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise RuntimeError(
+                "Qwen voice registry mutations require a loopback http(s) endpoint"
+            )
+        if host != "localhost":
+            try:
+                address = ipaddress.ip_address(host)
+            except ValueError:
+                address = None
+            if address is None or not address.is_loopback:
+                raise RuntimeError(
+                    "Qwen voice registry mutations require a loopback endpoint; "
+                    "remote/shared endpoints need provider-side atomic mutation semantics"
+                )
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("Qwen voice registry mutation endpoint has an invalid port") from exc
+        if port is None:
+            port = 443 if scheme == "https" else 80
+        path = parsed.path.rstrip("/")
+        return f"{scheme}://loopback:{port}{path}"
 
     def _acquire_voice_mutation_lock(self, name: str):
         if fcntl is None:
@@ -175,8 +216,9 @@ class Qwen3TTSClient:
             uid = str(os.getuid()) if hasattr(os, "getuid") else "user"
             root = Path(tempfile.gettempdir()) / f"zarathushtra-qwen3-{uid}"
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        authority = self._voice_mutation_authority()
         digest = hashlib.sha256(
-            f"{self.base_url}\0{name}".encode("utf-8")
+            f"{authority}\0{name}".encode("utf-8")
         ).hexdigest()
         return root / f"{digest}.lock"
 
