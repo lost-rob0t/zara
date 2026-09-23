@@ -23,6 +23,8 @@ val zaraAndroidVersionCode =
         ?: error("version.properties android.versionCode must be an integer")
 
 val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
+val adversarySigningKeystore =
+    providers.environmentVariable("ZARA_ANDROID_ADVERSARY_KEYSTORE").orNull
 
 android {
     namespace = "ai.zara.llmserve"
@@ -53,9 +55,26 @@ android {
                 keyPassword = "android"
             }
         }
+        create("adversary") {
+            if (adversarySigningKeystore != null) {
+                val keyFile = file(adversarySigningKeystore)
+                require(keyFile.isFile) { "Zara Android adversary test keystore is missing" }
+                storeFile = keyFile
+                storePassword = "android"
+                keyAlias = "adversary"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
+        create("adversary") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".adversary"
+            versionNameSuffix = "-adversary"
+            isDebuggable = true
+            signingConfig = signingConfigs.getByName("adversary")
+        }
         release {
             isMinifyEnabled = false
         }
