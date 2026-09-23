@@ -368,7 +368,7 @@ def test_coverage_workflow_resolves_push_before_and_rejects_branch_create():
     assert "0000000000000000000000000000000000000000" in source
     assert "git cat-file -e" in source
     assert "ZARA_COVERAGE_BASE_REF" in source
-    assert 'origin/${{ github.base_ref }}' in source
+    assert 'base_ref="origin/$PR_BASE_REF"' in source
 
 
 def test_full_ci_propagates_the_same_trusted_coverage_base():
@@ -380,4 +380,4 @@ def test_full_ci_propagates_the_same_trusted_coverage_base():
     assert "0000000000000000000000000000000000000000" in source
     assert "git cat-file -e" in source
     assert "ZARA_COVERAGE_BASE_REF" in source
-    assert 'origin/${{ github.base_ref }}' in source
+    assert 'base_ref="origin/$PR_BASE_REF"' in source
