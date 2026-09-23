@@ -13,12 +13,24 @@ class FakeConfig:
         return dict(self.sections.get(name, {}))
 
 
+class FakeTerm:
+    def __init__(self, name, *args):
+        self.name = name
+        self.args = list(args)
+
+
 class FakeProlog:
-    def __init__(self):
+    def __init__(self, *, mutation_result=None, readback_segments=None):
         self.goals = []
+        self.mutation_result = {} if mutation_result is None else mutation_result
+        self.readback_segments = [] if readback_segments is None else readback_segments
 
     def query_once(self, goal):
         self.goals.append(goal)
+        if "replace_speaker_segments" in goal:
+            return self.mutation_result
+        if "speaker_segments" in goal:
+            return {"Segments": self.readback_segments}
         return {}
 
 
@@ -50,7 +62,12 @@ def test_vad_and_diarization_intersection_keeps_only_speech():
 
 
 def test_speaker_fact_projection_is_bounded_typed_prolog():
-    prolog = FakeProlog()
+    prolog = FakeProlog(
+        readback_segments=[
+            FakeTerm("segment", 0, "speaker_00", 125, 1500),
+            FakeTerm("segment", 1, "speaker_01", 2000, 4250),
+        ]
+    )
     value = analyzer(prolog=prolog)
 
     value._store_segments(
@@ -61,11 +78,43 @@ def test_speaker_fact_projection_is_bounded_typed_prolog():
         ],
     )
 
+    assert len(prolog.goals) == 2
+    mutation_goal, readback_goal = prolog.goals
+    assert "kb_voice_expert:replace_speaker_segments(" in mutation_goal
+    assert 'segment(0,"speaker_00",125,1500)' in mutation_goal
+    assert 'segment(1,"speaker_01",2000,4250)' in mutation_goal
+    assert readback_goal == (
+        'kb_voice_expert:speaker_segments('
+        '"https://www.youtube.com/watch?v=abc123",Segments)'
+    )
+
+
+def test_speaker_fact_projection_rejects_failed_mutation():
+    prolog = FakeProlog(mutation_result=False)
+    value = analyzer(prolog=prolog)
+
+    with pytest.raises(VoiceAnalysisError, match="failed to persist speaker segments"):
+        value._store_segments(
+            "source-1",
+            [SpeakerSegment(0, "speaker_00", 0.0, 1.0)],
+        )
+
     assert len(prolog.goals) == 1
-    goal = prolog.goals[0]
-    assert "kb_voice_expert:replace_speaker_segments(" in goal
-    assert 'segment(0,"speaker_00",125,1500)' in goal
-    assert 'segment(1,"speaker_01",2000,4250)' in goal
+
+
+def test_speaker_fact_projection_rejects_readback_mismatch():
+    prolog = FakeProlog(
+        readback_segments=[FakeTerm("segment", 0, "speaker_99", 0, 1000)]
+    )
+    value = analyzer(prolog=prolog)
+
+    with pytest.raises(VoiceAnalysisError, match="postcondition mismatch"):
+        value._store_segments(
+            "source-1",
+            [SpeakerSegment(0, "speaker_00", 0.0, 1.0)],
+        )
+
+    assert len(prolog.goals) == 2
 
 
 def test_missing_diarization_models_fail_actionably(tmp_path):
