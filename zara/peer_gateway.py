@@ -62,13 +62,17 @@ class PeerCallGatewayMixin:
         *,
         curve_public_key: str | bytes,
         local_node_id: Optional[str] = None,
-        runtime_id: str = "zara-runtime",
+        runtime_id: str = "zara-python",
+        runtime_generation: int = 0,
     ) -> None:
         identity = local_node_id
         if identity is None:
             identity = curve_public_key.decode("ascii") if isinstance(curve_public_key, bytes) else curve_public_key
         self._peer_local_node_id = self._peer_token("local_node_id", identity)
         self._peer_runtime_id = self._peer_token("runtime_id", runtime_id)
+        if type(runtime_generation) is not int or not 0 <= runtime_generation <= 2**63 - 1:
+            raise ValueError("runtime_generation must be a non-negative integer")
+        self._peer_runtime_generation = runtime_generation
         self._peer_calls_by_turn: dict[tuple[str, str], _PeerCallState] = {}
         self._peer_calls_by_request: dict[tuple[str, str], _PeerCallState] = {}
 
@@ -134,7 +138,7 @@ class PeerCallGatewayMixin:
             retryable=retryable,
             source_node_id=self._peer_local_node_id,
             runtime_id=self._peer_runtime_id,
-            runtime_generation=self._generation if generation is None else generation,
+            runtime_generation=self._peer_runtime_generation,
             trace_id=trace_id,
         )
 
@@ -313,7 +317,7 @@ class PeerCallGatewayMixin:
                     request_id=request.request_id,
                     source_node_id=self._peer_local_node_id,
                     runtime_id=self._peer_runtime_id,
-                    runtime_generation=generation,
+                    runtime_generation=self._peer_runtime_generation,
                     trace_id=request.trace_id,
                 )
                 response = ProtocolMessage(
@@ -459,7 +463,7 @@ class PeerCallGatewayMixin:
                     request_id=message.id,
                     source_node_id=self._peer_local_node_id,
                     runtime_id=self._peer_runtime_id,
-                    runtime_generation=generation,
+                    runtime_generation=self._peer_runtime_generation,
                     trace_id=message.id,
                 )
                 response = ProtocolMessage(
@@ -608,7 +612,7 @@ class PeerCallGatewayMixin:
                     request_id=state.request.request_id,
                     source_node_id=self._peer_local_node_id,
                     runtime_id=self._peer_runtime_id,
-                    runtime_generation=state.gateway_generation,
+                    runtime_generation=self._peer_runtime_generation,
                     text=state.final_text,
                     trace_id=state.request.trace_id,
                 ),
