@@ -98,12 +98,13 @@ class AndroidAdbVisionControlLoop(
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private val generation = AtomicLong(0)
+    private val effectFence = Any()
 
     fun run(goal: String): CompletableFuture<AndroidVisionLoopResult> {
         val normalizedGoal = goal.trim()
         require(normalizedGoal.isNotEmpty()) { "vision goal is required" }
         require(normalizedGoal.length <= 2_048) { "vision goal is too long" }
-        val runGeneration = generation.incrementAndGet()
+        val runGeneration = synchronized(effectFence) { generation.incrementAndGet() }
         val deadlineNanos = nanoTime() + TimeUnit.MILLISECONDS.toNanos(limits.timeoutMillis)
         if (!adb.isAvailable()) {
             return completed(
@@ -127,8 +128,10 @@ class AndroidAdbVisionControlLoop(
     }
 
     fun cancel() {
-        generation.incrementAndGet()
         multimodal.cancel()
+        synchronized(effectFence) {
+            generation.incrementAndGet()
+        }
     }
 
     private fun step(
@@ -199,20 +202,22 @@ class AndroidAdbVisionControlLoop(
                 if (!approved) {
                     return@approval completed(AndroidVisionLoopResult.ApprovalRejected(action))
                 }
-                currentFailure(runGeneration, deadlineNanos)?.let { return@approval completed(it) }
-                when (val effect = execute(action)) {
-                    is DeviceActionResult.Error -> completed(
-                        AndroidVisionLoopResult.ActionFailed(action, effect.message ?: effect.code.wireId),
-                    )
-                    DeviceActionResult.Completed -> verifyFresh(
-                        goal = goal,
-                        runGeneration = runGeneration,
-                        deadlineNanos = deadlineNanos,
-                        action = action,
-                        nextSequence = steps.toLong() + 1,
-                        nextSteps = steps + 1,
-                        observedBytes = observedBytes,
-                    )
+                when (val attempt = executeFenced(action, runGeneration, deadlineNanos)) {
+                    is EffectAttempt.Rejected -> completed(attempt.result)
+                    is EffectAttempt.Executed -> when (val effect = attempt.result) {
+                        is DeviceActionResult.Error -> completed(
+                            AndroidVisionLoopResult.ActionFailed(action, effect.message ?: effect.code.wireId),
+                        )
+                        DeviceActionResult.Completed -> verifyFresh(
+                            goal = goal,
+                            runGeneration = runGeneration,
+                            deadlineNanos = deadlineNanos,
+                            action = action,
+                            nextSequence = steps.toLong() + 1,
+                            nextSteps = steps + 1,
+                            observedBytes = observedBytes,
+                        )
+                    }
                 }
             }
         }.exceptionally { error ->
@@ -295,6 +300,17 @@ class AndroidAdbVisionControlLoop(
                 observedBytes = total,
             )
         )
+    }
+
+    private fun executeFenced(
+        action: AndroidAutomationAction,
+        runGeneration: Long,
+        deadlineNanos: Long,
+    ): EffectAttempt = synchronized(effectFence) {
+        currentFailure(runGeneration, deadlineNanos)?.let {
+            return@synchronized EffectAttempt.Rejected(it)
+        }
+        EffectAttempt.Executed(execute(action))
     }
 
     private fun execute(action: AndroidAutomationAction): DeviceActionResult = when (action) {
@@ -391,5 +407,10 @@ class AndroidAdbVisionControlLoop(
             val observedBytes: Long,
         ) : ObservationResult
         data class Error(val result: AndroidVisionLoopResult) : ObservationResult
+    }
+
+    private sealed interface EffectAttempt {
+        data class Executed(val result: DeviceActionResult) : EffectAttempt
+        data class Rejected(val result: AndroidVisionLoopResult) : EffectAttempt
     }
 }
