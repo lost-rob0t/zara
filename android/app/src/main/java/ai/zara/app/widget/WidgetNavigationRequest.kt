@@ -5,22 +5,14 @@ import android.content.Context
 import android.content.Intent
 import ai.zara.app.MainActivity
 import ai.zara.app.ui.AppRoute
-import java.util.concurrent.atomic.AtomicReference
 
-/** One-shot, bounded ingress from launcher widgets into the canonical AppNavigation owner. */
-object WidgetNavigationRequest {
-    private val pending = AtomicReference<AppRoute?>(null)
-
-    fun request(route: AppRoute) {
-        pending.set(route)
-    }
-
-    fun peek(): AppRoute? = pending.get()
-
-    fun consume(expected: AppRoute? = null): AppRoute? {
-        if (expected == null) return pending.getAndSet(null)
-        return if (pending.compareAndSet(expected, null)) expected else null
-    }
+internal fun consumeWidgetRoute(intent: Intent?): AppRoute? {
+    val requested = intent?.getStringExtra(WidgetRouteReceiver.EXTRA_ROUTE)?.trim()?.lowercase() ?: return null
+    val route = WidgetRoute.entries.firstOrNull { it.atom == requested }
+        ?: WidgetRoute.fromAtom(requested)
+        ?: return null
+    intent.removeExtra(WidgetRouteReceiver.EXTRA_ROUTE)
+    return route.appRoute
 }
 
 class WidgetRouteReceiver : BroadcastReceiver() {
@@ -29,10 +21,10 @@ class WidgetRouteReceiver : BroadcastReceiver() {
         val route = WidgetRoute.entries.firstOrNull { it.atom == requested }
             ?: WidgetRoute.fromAtom(requested)
             ?: return
-        WidgetNavigationRequest.request(route.appRoute)
         context.startActivity(
             Intent(context, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra(EXTRA_ROUTE, route.atom)
             },
         )
     }
