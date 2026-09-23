@@ -37,6 +37,9 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "device.action.accepted",
         "device.action.result",
         "device.action.error",
+        "node.ask",
+        "node.delegate",
+        "node.cancel",
     }
 )
 
@@ -80,6 +83,9 @@ SERVER_MESSAGE_TYPES = frozenset(
         "runtime.error",
         "runtime.stopped",
         "protocol.error",
+        "node.result",
+        "node.error",
+        "node.cancel.accepted",
     }
 )
 
@@ -720,6 +726,61 @@ def _validate_device_envelope(message: ProtocolMessage) -> None:
             _bounded_safe_text("message", body["message"], max_bytes=256)
 
 
+def _validate_peer_envelope(message: ProtocolMessage) -> None:
+    if message.type not in {
+        "node.ask",
+        "node.delegate",
+        "node.cancel",
+        "node.result",
+        "node.error",
+        "node.cancel.accepted",
+    }:
+        return
+    if message.payload_count != 0 or message.stream_id is not None or message.seq is not None:
+        raise ProtocolValidationError(f"{message.type} does not accept payload streaming")
+    if message.content_type is not None or message.flags:
+        raise ProtocolValidationError(f"{message.type} has invalid transport fields")
+    if message.session_id is None:
+        raise ProtocolValidationError(f"{message.type} requires session_id")
+    body = dict(message.body or {})
+    try:
+        from zara.peer_protocol import (
+            PeerCallRequest,
+            PeerCancelRequest,
+            PeerRemoteError,
+            PeerResult,
+        )
+        if message.type in {"node.ask", "node.delegate"}:
+            if message.reply_to is not None or message.turn_id is not None:
+                raise ProtocolValidationError(f"{message.type} has invalid correlation")
+            PeerCallRequest.from_wire(message.type, message.id, body)
+        elif message.type == "node.cancel":
+            if message.reply_to is not None or message.turn_id is not None:
+                raise ProtocolValidationError("node.cancel has invalid correlation")
+            PeerCancelRequest.from_wire(message.id, body)
+        elif message.type == "node.result":
+            if message.reply_to is None or message.turn_id is not None:
+                raise ProtocolValidationError("node.result requires reply_to only")
+            result = PeerResult.from_wire(body)
+            if result.request_id != message.reply_to:
+                raise ProtocolValidationError("node.result request id mismatch")
+        elif message.type == "node.error":
+            if message.reply_to is None or message.turn_id is not None:
+                raise ProtocolValidationError("node.error requires reply_to only")
+            error = PeerRemoteError.from_wire(body)
+            if error.request_id != message.reply_to:
+                raise ProtocolValidationError("node.error request id mismatch")
+        else:
+            if message.reply_to is None or message.turn_id is None:
+                raise ProtocolValidationError("node.cancel.accepted requires reply_to and turn_id")
+            if body:
+                raise ProtocolValidationError("node.cancel.accepted body must be empty")
+    except ProtocolValidationError:
+        raise
+    except (TypeError, ValueError) as error:
+        raise ProtocolValidationError(str(error)) from error
+
+
 def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:
     unknown = set(data) - _ALLOWED_ENVELOPE_KEYS
     if unknown:
@@ -769,6 +830,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     _validate_visible_stt_envelope(message)
     _validate_tool_envelope(message)
     _validate_device_envelope(message)
+    _validate_peer_envelope(message)
     return message
 
 
