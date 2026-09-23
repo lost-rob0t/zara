@@ -173,9 +173,10 @@ def test_terminal_restart_replay_with_changed_generation_is_explicit_unknown(
     assert replay.activation_id == first.activation_id
     assert replay.invocation_id == first.invocation_id
     assert replay.request_id == first.request_id
-    assert replay.usage == {"model_calls": 0}
-    assert replay.evidence_refs == ()
-    assert replay.effect_receipts == ()
+    assert replay.data == first.data
+    assert replay.evidence_refs == first.evidence_refs
+    assert replay.usage == first.usage == {"model_calls": 0}
+    assert replay.effect_receipts == first.effect_receipts
 
 
 def test_cancelled_terminal_replay_stays_cancelled_across_generation_change(
@@ -318,4 +319,7 @@ def test_success_terminal_replay_across_expert_build_change_is_explicit_unknown(
     assert replay.activation_id == first.activation_id
     assert replay.invocation_id == first.invocation_id
     assert replay.request_id == first.request_id
-    assert replay.usage == {"model_calls": 0}
+    assert replay.data == first.data
+    assert replay.evidence_refs == first.evidence_refs
+    assert replay.usage == first.usage == {"model_calls": 0}
+    assert replay.effect_receipts == first.effect_receipts
