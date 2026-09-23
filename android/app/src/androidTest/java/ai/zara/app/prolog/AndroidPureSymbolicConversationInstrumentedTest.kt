@@ -151,6 +151,72 @@ class AndroidPureSymbolicConversationInstrumentedTest {
     }
 
     @Test
+    fun greetingHelpCancelAndRestartFenceStayNaturalAndZeroModel() {
+        var history = reopenHistory(createConversation = true)
+
+        val greeting = runNaturalTurn(history, "hello")
+        assertEquals("Hey — what can I help with?", greeting.turn.text)
+        assertZeroModel(greeting)
+
+        history = reopenHistory(createConversation = false)
+        val help = runNaturalTurn(history, "help")
+        assertEquals(
+            "I can help with conversation, device and media actions, search, navigation, and registered experts. What do you want to do?",
+            help.turn.text,
+        )
+        assertZeroModel(help)
+
+        history = reopenHistory(createConversation = false)
+        val clarification = runNaturalTurn(history, "timer")
+        assertEquals("How long should I set the timer for?", clarification.turn.text)
+        assertZeroModel(clarification)
+        val beforeCancel = checkNotNull(
+            checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID),
+        )
+        beforeCancel.assertPureSymbolic()
+        assertTrue(
+            "timer must create durable clarification context before cancellation",
+            SymbolicDialogueContextCodec.decode(beforeCancel.dialogueStateJson)
+                .startsWith("partial_frame("),
+        )
+
+        history = reopenHistory(createConversation = false)
+        val cancelled = runNaturalTurn(history, "cancel")
+        assertEquals("Cancelled.", cancelled.turn.text)
+        assertZeroModel(cancelled)
+        val cancelledProjection = checkNotNull(
+            checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID),
+        )
+        cancelledProjection.assertPureSymbolic()
+        assertEquals(
+            "cancel must clear the canonical pending dialogue context",
+            SymbolicDialogueContextCodec.emptyContextTerm,
+            SymbolicDialogueContextCodec.decode(cancelledProjection.dialogueStateJson),
+        )
+
+        history = reopenHistory(createConversation = false)
+        val staleAnswer = runNaturalTurn(history, "5 minutes")
+        assertEquals(
+            "I don’t know how to handle that symbolically yet.",
+            staleAnswer.turn.text,
+        )
+        assertZeroModel(staleAnswer)
+        val afterRestart = checkNotNull(
+            checkNotNull(store).loadSymbolicProjection(CONVERSATION_ID),
+        )
+        afterRestart.assertPureSymbolic()
+        assertEquals(
+            "a pre-cancel clarification must not resurrect after process recreation",
+            SymbolicDialogueContextCodec.emptyContextTerm,
+            SymbolicDialogueContextCodec.decode(afterRestart.dialogueStateJson),
+        )
+        assertEquals(0L, afterRestart.maxModelCalls)
+        assertEquals(0L, afterRestart.providerCalls)
+        assertEquals(0L, afterRestart.modelCalls)
+        assertFalse(afterRestart.providersEnabled)
+    }
+
+    @Test
     fun controllerCompletionCannotLeaveSuccessProjectionBesideRunningHistory() {
         var history = reopenHistory(createConversation = true)
         history.beginTurn(CONVERSATION_ID, "timer")
