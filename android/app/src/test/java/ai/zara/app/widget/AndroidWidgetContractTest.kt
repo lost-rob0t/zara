@@ -25,9 +25,11 @@ class AndroidWidgetContractTest {
     }
 
     @Test
-    fun `widget clicks use one receiver ingress and reconstruct canonical AppNavigation`() {
+    fun `widget clicks use durable activity ingress and canonical AppNavigation`() {
         val provider = File("src/main/java/ai/zara/app/widget/ZaraWidgetProvider.kt").readText()
         val bridge = File("src/main/java/ai/zara/app/widget/WidgetNavigationRequest.kt").readText()
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
         val navigation = File("src/main/java/ai/zara/app/ui/AppNavigation.kt").readText()
 
         assertTrue(provider.contains("WidgetRoute"))
@@ -37,16 +39,35 @@ class AndroidWidgetContractTest {
         assertFalse("widget provider must not bypass the bounded ingress", provider.contains("PendingIntent.getActivity"))
 
         assertTrue(bridge.contains("WidgetRoute.entries"))
-        assertTrue(bridge.contains("WidgetNavigationRequest.request"))
         assertTrue(bridge.contains("MainActivity::class.java"))
-        assertTrue(bridge.contains("Intent.FLAG_ACTIVITY_CLEAR_TASK"))
-        assertTrue(bridge.indexOf("WidgetNavigationRequest.request") < bridge.indexOf("context.startActivity"))
+        assertTrue(bridge.contains("Intent.FLAG_ACTIVITY_SINGLE_TOP"))
+        assertFalse("widget launch must not destroy the current task", bridge.contains("Intent.FLAG_ACTIVITY_CLEAR_TASK"))
+        assertFalse("route ingress must survive process death instead of using process-local memory", bridge.contains("AtomicReference"))
+        assertFalse("route ingress must not use a process-local request singleton", bridge.contains("WidgetNavigationRequest.request"))
 
-        assertTrue(navigation.contains("WidgetNavigationRequest.peek()"))
-        assertTrue(navigation.contains("WidgetNavigationRequest.consume"))
+        assertTrue(activity.contains("consumeWidgetRoute(intent)"))
+        assertTrue(activity.contains("override fun onNewIntent(intent: Intent)"))
+        assertTrue(shell.contains("LaunchedEffect(widgetRouteIngress)"))
+        assertTrue(shell.contains("navigation = navigation.selectRoute(requested)"))
         assertTrue(navigation.contains("selectRoute"))
         assertFalse("widgets must not create a second navigation owner", provider.contains("requestedSurface"))
         assertFalse("widgets must not create a second AppNavigation", bridge.contains("AppNavigation("))
+    }
+
+    @Test
+    fun `canonical runtime observers persist and refresh widget truth`() {
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val runtime = File("src/main/java/ai/zara/app/widget/WidgetRuntimeSnapshot.kt").readText()
+
+        assertTrue(activity.contains("WidgetRuntimeSnapshotStore"))
+        assertTrue(activity.contains("persistWidgetRuntimeSnapshot"))
+        assertTrue(activity.contains("appSession.setStateObserver"))
+        assertTrue(activity.contains("appSession.setLocalServerObserver"))
+        assertTrue(activity.contains("ZaraWidgetUpdater.refreshAll"))
+        assertTrue(runtime.contains("freshnessMillis"))
+        assertTrue(runtime.contains("STALE"))
+        assertTrue(runtime.contains("LOCAL UNKNOWN"))
+        assertTrue(runtime.contains("UNKNOWN"))
     }
 
     @Test
