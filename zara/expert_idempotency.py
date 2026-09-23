@@ -178,10 +178,7 @@ class ExpertIdempotencyJournal:
                         ),
                     )
                     return ClaimDecision(claim=claim, replay=replay, created=False)
-                if (
-                    replay.verdict is ExpertVerdict.SUCCEEDED
-                    and replay.effect_receipts
-                ):
+                if replay.verdict is ExpertVerdict.SUCCEEDED and replay.effect_receipts:
                     replay = replace(
                         replay,
                         verdict=ExpertVerdict.UNKNOWN,
@@ -191,11 +188,7 @@ class ExpertIdempotencyJournal:
                             "verification before replay success"
                         ),
                     )
-                return ClaimDecision(
-                    claim=claim,
-                    replay=replay,
-                    created=False,
-                )
+                return ClaimDecision(claim=claim, replay=replay, created=False)
 
             replay = self._unknown_result(
                 row,
@@ -263,10 +256,6 @@ class ExpertIdempotencyJournal:
                     "durable idempotency terminal commit lost canonical dispatch identity"
                 )
 
-            # The durable row owns the generation identity admitted before dispatch.
-            # A late completion may observe a newer live registry generation, but
-            # replay must remain bound to the original reservation rather than
-            # becoming corrupt (and thereby losing truthful usage/effect evidence).
             durable_result = replace(
                 result,
                 resolved_registry_generation=row["registry_generation"],
@@ -275,26 +264,31 @@ class ExpertIdempotencyJournal:
             try:
                 payload = self._encode_result(durable_result)
             except ExpertInvalidInputError as error:
-                # Handler work is already known to have completed.  Do not turn a
-                # serialization rejection into an "interrupted" row that erases
-                # known budget/effect accounting.  Persist only canonical fields
-                # that are still trustworthy and fail closed to the live caller.
                 model_calls = durable_result.usage.get("model_calls")
                 if type(model_calls) is not int or model_calls < 0:
                     raise
                 safe_receipts: list[dict[str, Any]] = []
+                effect_identity_uncertain = False
+                identity_fields = ("effect_id", "verified_outcome_ref")
                 for receipt in durable_result.effect_receipts:
                     canonical_receipt = {
                         key: value
                         for key, value in receipt.items()
-                        if type(key) is str
-                        and self._is_canonical_json({key: value})
+                        if type(key) is str and self._is_canonical_json({key: value})
                     }
-                    if not canonical_receipt:
+                    identity_is_preserved = all(
+                        type(receipt.get(field)) is str
+                        and bool(receipt.get(field))
+                        and field in canonical_receipt
+                        for field in identity_fields
+                    )
+                    if not identity_is_preserved:
+                        effect_identity_uncertain = True
                         continue
                     try:
                         safe_receipts.extend(_bounded_receipts((canonical_receipt,)))
                     except ExpertInvalidInputError:
+                        effect_identity_uncertain = True
                         continue
                 durable_result = replace(
                     durable_result,
@@ -303,10 +297,19 @@ class ExpertIdempotencyJournal:
                     evidence_refs=(),
                     usage={"model_calls": model_calls},
                     effect_receipts=tuple(safe_receipts),
-                    error_code=ExpertErrorCode.INVALID_INPUT,
+                    error_code=(
+                        ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
+                        if effect_identity_uncertain
+                        else ExpertErrorCode.INVALID_INPUT
+                    ),
                     error_message=(
-                        "completed expert result was not canonical JSON; "
-                        "known accounting was preserved fail-closed"
+                        "completed expert result has effect accounting without a "
+                        "durably canonical identity tuple; prior external outcome is unknown"
+                        if effect_identity_uncertain
+                        else (
+                            "completed expert result was not canonical JSON; "
+                            "known accounting was preserved fail-closed"
+                        )
                     ),
                 )
                 payload = self._encode_result(durable_result)
@@ -404,12 +407,7 @@ class ExpertIdempotencyJournal:
     @staticmethod
     def _is_canonical_json(value: Any) -> bool:
         try:
-            json.dumps(
-                value,
-                sort_keys=True,
-                separators=(",", ":"),
-                allow_nan=False,
-            )
+            json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
         except (TypeError, ValueError):
             return False
         return True
@@ -449,8 +447,6 @@ class ExpertIdempotencyJournal:
 
     @staticmethod
     def _decode_result(payload: str, row: Any) -> ExpertResult:
-        # Durable replay uses the same recursive strict-JSON policy as ZARA/1:
-        # duplicate object members and non-finite constants are ambiguous and fail closed.
         wire = json.loads(
             payload,
             object_pairs_hook=_strict_object,
@@ -482,12 +478,7 @@ class ExpertIdempotencyJournal:
         if wire["protocol"] != ZARA_EXPERT_PROTOCOL:
             raise ValueError("durable expert result protocol mismatch")
         for key in ("request_id", "invocation_id", "expert_id", "expert_operation"):
-            _bounded_pattern(
-                wire[key],
-                field_name=key,
-                pattern=_PORTABLE,
-                limit=128,
-            )
+            _bounded_pattern(wire[key], field_name=key, pattern=_PORTABLE, limit=128)
         historical_handle = ActivationHandle(
             activation_id=wire["activation_id"],
             principal=row["principal"],
