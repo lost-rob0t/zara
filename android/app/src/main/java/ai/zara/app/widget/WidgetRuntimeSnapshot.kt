@@ -17,6 +17,9 @@ data class WidgetRuntimeSnapshot(
     companion object {
         fun unknown() = WidgetRuntimeSnapshot("DISCONNECTED", "LOCAL UNKNOWN", "AUTO", 0)
 
+        fun stale(capturedAtEpochMillis: Long) =
+            WidgetRuntimeSnapshot("STALE", "LOCAL UNKNOWN", "UNKNOWN", capturedAtEpochMillis.coerceAtLeast(0))
+
         fun from(
             server: ServerConnection,
             local: LocalServerPhase,
@@ -38,14 +41,28 @@ data class WidgetRuntimeSnapshot(
 }
 
 class WidgetRuntimeSnapshotStore(private val file: File) {
-    fun load(): WidgetRuntimeSnapshot {
+    fun load(
+        nowEpochMillis: Long = System.currentTimeMillis(),
+        freshnessMillis: Long = DEFAULT_FRESHNESS_MILLIS,
+    ): WidgetRuntimeSnapshot {
+        require(nowEpochMillis >= 0) { "Widget runtime clock must be non-negative" }
+        require(freshnessMillis >= 0) { "Widget runtime freshness must be non-negative" }
         if (!file.isFile || file.length() !in 1..MAX_BYTES.toLong()) return WidgetRuntimeSnapshot.unknown()
         return runCatching {
             val values = file.readLines()
             require(values.size == 5 && values[0] == VERSION)
             val snapshot = WidgetRuntimeSnapshot(values[1], values[2], values[3], values[4].toLong())
             require(snapshot.remote.matches(LABEL) && snapshot.local.matches(LABEL) && snapshot.mode.matches(LABEL))
-            snapshot
+            if (snapshot.capturedAtEpochMillis <= 0L) {
+                WidgetRuntimeSnapshot.unknown()
+            } else if (
+                nowEpochMillis < snapshot.capturedAtEpochMillis ||
+                nowEpochMillis - snapshot.capturedAtEpochMillis > freshnessMillis
+            ) {
+                WidgetRuntimeSnapshot.stale(snapshot.capturedAtEpochMillis)
+            } else {
+                snapshot
+            }
         }.getOrElse { WidgetRuntimeSnapshot.unknown() }
     }
 
@@ -83,6 +100,7 @@ class WidgetRuntimeSnapshotStore(private val file: File) {
     }
 
     companion object {
+        const val DEFAULT_FRESHNESS_MILLIS = 120_000L
         private const val VERSION = "ZARA-WIDGET-RUNTIME/1"
         private const val MAX_BYTES = 8 * 1024
         private val LABEL = Regex("[A-Z0-9 _-]{1,32}")
