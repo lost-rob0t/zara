@@ -150,6 +150,26 @@ class RuntimeDescriptor:
             field="implementation_version",
             limit=64,
         )
+        for field in (
+            "installed",
+            "available",
+            "supports_streaming",
+            "supports_cancel",
+            "supports_context_handles",
+            "supports_host_tools",
+        ):
+            if type(getattr(self, field)) is not bool:
+                raise TypeError(f"{field} must be a boolean")
+        if not isinstance(self.health, RuntimeHealth):
+            raise TypeError("health must be RuntimeHealth")
+        if not isinstance(self.locality, RuntimeLocality):
+            raise TypeError("locality must be RuntimeLocality")
+        if not isinstance(self.transport, RuntimeTransport):
+            raise TypeError("transport must be RuntimeTransport")
+        if not isinstance(self.provider_control, ControlOwner):
+            raise TypeError("provider_control must be ControlOwner")
+        if not isinstance(self.model_control, ControlOwner):
+            raise TypeError("model_control must be ControlOwner")
         provenance = _bounded_text(
             self.provenance,
             field="provenance",
@@ -271,11 +291,11 @@ class RuntimeRegistry:
     def refresh(self, observed: Iterable[RuntimeDescriptor]) -> RuntimeRegistrySnapshot:
         """Atomically replace the observed runtime set.
 
-        Every successful refresh advances the generation. A previously selected
-        runtime survives only if the freshly observed descriptor is still
-        selectable; otherwise active selection is cleared. This conservative
-        generation fence prevents stale runtime/session publishers from surviving
-        a discovery change.
+        A semantic discovery change advances the generation. Re-publishing the
+        same descriptor set is a no-op even if observation order differs, so
+        harmless polling cannot stale an in-flight binding. A previously selected
+        runtime survives a changed observation only if the fresh descriptor is
+        still selectable; changed observations always fence the prior generation.
         """
 
         replacement: dict[str, RuntimeDescriptor] = {}
@@ -287,6 +307,9 @@ class RuntimeRegistry:
             replacement[descriptor.id] = descriptor
 
         with self._lock:
+            if replacement == self._descriptors:
+                return self._snapshot_unlocked()
+
             next_generation = self._generation + 1
             current_id = self._selection.runtime_id if self._selection is not None else None
             current = replacement.get(current_id) if current_id is not None else None
