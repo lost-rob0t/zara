@@ -33,7 +33,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -329,8 +328,8 @@ private fun PluginPickerAction(enabled: Boolean, onActivate: () -> Unit) {
     val tokens = LocalZaraTokens.current
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = if (enabled) tokens.accent else tokens.surfaceElevated,
-        contentColor = if (enabled) Color.Black else tokens.textMuted,
+        color = if (enabled) tokens.primary else tokens.surfaceElevated,
+        contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary else tokens.textMuted,
         shape = MaterialTheme.shapes.small,
     ) {
         Text(
