@@ -1348,15 +1348,33 @@ class ZaraZmqGateway:
         principal_id: str,
     ) -> None:
         for envelope in subscription.drain(limit=32):
-            route = None
             event = envelope.event
-            awaiting_accept = (
-                event.turn_id is not None
-                and (principal_id, event.turn_id) in self._turns_awaiting_accept
-            )
-            if event.turn_id and not awaiting_accept:
-                route = self._turn_routes.get((principal_id, event.turn_id))
-            if route is None and event.conversation_id and not awaiting_accept:
+            message = None
+            route = None
+            if event.turn_id:
+                try:
+                    message = runtime_event_to_message(
+                        envelope,
+                        message_id=_message_id(),
+                        timestamp_ns=_now_ns(),
+                    )
+                except RuntimeCodecError:
+                    continue
+                with self._lock:
+                    # The hold decision and the append must be one critical
+                    # section: completed()'s flush pops the early buffer and
+                    # discards the awaiting key under this same lock, so an
+                    # event observed after that point routes directly instead
+                    # of being stranded in the early buffer forever (#1396).
+                    if (principal_id, event.turn_id) in self._turns_awaiting_accept:
+                        self._buffer_early_turn_event(
+                            principal_id,
+                            event.turn_id,
+                            (message, ()),
+                        )
+                        continue
+                    route = self._turn_routes.get((principal_id, event.turn_id))
+            if route is None and event.conversation_id:
                 matches = [
                     candidate
                     for candidate, state in self._routes.items()
@@ -1371,28 +1389,21 @@ class ZaraZmqGateway:
                     continue
                 # Unroutable turn event: hold it so a still-pending turn.accepted
                 # can flush it after its reply, instead of dropping it (#1396).
+                self._buffer_early_turn_event(
+                    principal_id,
+                    event.turn_id,
+                    (message, ()),
+                )
+                continue
+            if message is None:
                 try:
-                    held_message = runtime_event_to_message(
+                    message = runtime_event_to_message(
                         envelope,
                         message_id=_message_id(),
                         timestamp_ns=_now_ns(),
                     )
                 except RuntimeCodecError:
                     continue
-                self._buffer_early_turn_event(
-                    principal_id,
-                    event.turn_id,
-                    (held_message, ()),
-                )
-                continue
-            try:
-                message = runtime_event_to_message(
-                    envelope,
-                    message_id=_message_id(),
-                    timestamp_ns=_now_ns(),
-                )
-            except RuntimeCodecError:
-                continue
             state = self._routes.get(route)
             if state is None or not state.ready:
                 continue

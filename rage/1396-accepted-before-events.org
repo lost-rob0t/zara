@@ -41,3 +41,53 @@ background task - and the defect is purely wire serialization:
   built + activated on flake; zara-server + zara-pair green.
 - PR :: https://github.com/lost-rob0t/zara/pull/1397 (exact head =629344a8=)
 - Exact-head CI pending; merge on green.
+
+* Iteration 2 (CI red at 0dd917dc: test, deep regression seeds 1/31337, android+wear)
+
+** Research
+- Every failing job shared one signature: turn events never arriving
+  (_queue.Empty, "terminal event did not arrive", Android stock-server
+  interop TimeoutException); base af7185ee passed the same tests.
+- Local reproduction of
+  t/test_zara1_tool_approvals.py::test_authenticated_clients_receive_and_answer_only_their_principal_events
+  failed deterministically; a debug harness showed the secure gateway
+  poller thread was dead with _principal_subscriptions cleared and the
+  swallowed exception (except BaseException only feeds an already-done
+  _started future).
+- Root cause 1 (crash): SecureZaraZmqGateway._enqueue_outbound overrode the
+  base with a (route, message) signature while the base contract is
+  (route, message, payloads=()); iteration 1's drain/flush calls pass
+  payloads positionally, so the FIRST turn-scoped event drained on a
+  secure gateway raised TypeError inside the poller thread and killed the
+  gateway silently. Latent signature mismatch predates this branch; the
+  iteration-1 calls made it reachable. Explains all four red jobs
+  (approval tests, daemon connection guards, both hash seeds, Android
+  stock-server interop which drives the real Python secure gateway).
+- Root cause 2 (race): the drain read _turns_awaiting_accept membership
+  outside the lock and appended to _early_turn_events in a separate
+  critical section; completed()'s flush could pop-empty + discard the key
+  between them, stranding the event in the early buffer forever.
+
+** RED/GREEN
+- RED 1 (recorded): the failing approval integration test at PR head;
+  focused unit test test_secure_gateway_enqueue_outbound_forwards_payloads
+  red with the exact TypeError when the override is reverted.
+- GREEN 1: override forwards payloads; 17 passed across approvals,
+  connection guards, ordering, security gateway suites.
+- RED 2 (deterministic interleaving):
+  test_turn_event_racing_accepted_flush_is_never_stranded hooks the codec
+  call that sits between the awaiting check and the buffer append and lets
+  completed()'s flush finish inside the hook; unfixed code delivered only
+  turn.accepted with the event left in _early_turn_events (verified:
+  early buffer size 1, FIFO 1).
+- GREEN 2: hold decision + append (or turn-route read) now one critical
+  section under the gateway lock after the encode; racing event routes
+  directly through the FIFO after turn.accepted.
+- Poller-thread death is no longer silent: logger.exception in the secure
+  gateway _run except handler.
+
+** Gate
+- scripts/test-all.sh exit 0 at candidate head (prolog-verify recorded).
+
+** Outcome
+- Pending: push iteration-2 commits, exact-head CI green, merge.

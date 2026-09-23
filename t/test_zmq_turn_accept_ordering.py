@@ -1,17 +1,30 @@
 from __future__ import annotations
 
 import concurrent.futures
+import threading
 import time
+from collections import OrderedDict
 
 import pytest
 import zmq
 
+import zara.zmq_transport
 from zara.runtime import bridge, events
-from zara.protocol import ProtocolMessage, decode_message, encode_message
+from zara.protocol import (
+    ProtocolLimits,
+    ProtocolMessage,
+    decode_message,
+    encode_message,
+)
 from zara.server import ServerState
 from zara.runtime.commands import CommandReceipt, SubmitTurn
 from zara.server import PrincipalContext
-from zara.zmq_transport import TransportConfig, ZaraZmqGateway, apply_socket_options
+from zara.zmq_transport import (
+    TransportConfig,
+    ZaraZmqGateway,
+    _RouteState,
+    apply_socket_options,
+)
 
 
 class PublishBeforeAcceptSupervisor:
@@ -142,3 +155,93 @@ def test_turn_events_arrive_after_turn_accepted_and_are_never_dropped(
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
+
+
+class _RecorderSocket:
+    def __init__(self) -> None:
+        self.sent = []
+
+    def send_multipart(self, frames, *, flags=0):
+        assert flags == zmq.NOBLOCK
+        self.sent.append(tuple(frames))
+
+
+class _SingleEventSubscription:
+    def __init__(self, event) -> None:
+        self._envelopes = [bridge.EventEnvelope(sequence=1, occurred_at=0.0, event=event)]
+
+    def drain(self, limit=32):
+        return [self._envelopes.pop(0)] if self._envelopes else []
+
+
+def _bare_gateway(route: bytes) -> ZaraZmqGateway:
+    gateway = object.__new__(ZaraZmqGateway)
+    gateway._limits = ProtocolLimits()
+    gateway._config = TransportConfig(event_queue_size=8, pending_request_limit=8)
+    gateway._lock = threading.RLock()
+    gateway._route_outbound = OrderedDict()
+    gateway._routes = {
+        route: _RouteState(
+            session_id="session-1",
+            principal_id="owner",
+            ready=True,
+        )
+    }
+    gateway._turn_routes = {}
+    gateway._turns_awaiting_accept = set()
+    gateway._early_turn_events = OrderedDict()
+    gateway._approval_owners = {}
+    return gateway
+
+
+def test_turn_event_racing_accepted_flush_is_never_stranded(monkeypatch):
+    """A drain that reads awaiting-accept just before completed()'s flush pops
+    the early buffer empty and discards the key must not strand its event in
+    the early buffer: the event still rides the FIFO after turn.accepted."""
+    real_codec = zara.zmq_transport.runtime_event_to_message
+
+    route = b"race-route"
+    gateway = _bare_gateway(route)
+    gateway._turn_routes[("owner", "turn-race")] = route
+    gateway._turns_awaiting_accept.add(("owner", "turn-race"))
+
+    accepted = ProtocolMessage(
+        type="turn.accepted",
+        id="accepted-race",
+        reply_to="submit-race",
+        session_id="session-1",
+        turn_id="turn-race",
+        timestamp_ns=2,
+        payload_count=0,
+    )
+
+    def racing_codec(envelope, *, message_id, timestamp_ns):
+        # Interleaving: while the drain sits between its awaiting-accept check
+        # and its buffer append, completed()'s flush finishes - it pops the
+        # early buffer empty, discards the awaiting key, and queues the reply.
+        with gateway._lock:
+            gateway._early_turn_events.pop(("owner", "turn-race"), None)
+            gateway._turns_awaiting_accept.discard(("owner", "turn-race"))
+        gateway._enqueue_outbound(route, accepted)
+        return real_codec(envelope, message_id=message_id, timestamp_ns=timestamp_ns)
+
+    monkeypatch.setattr(
+        zara.zmq_transport,
+        "runtime_event_to_message",
+        racing_codec,
+    )
+
+    subscription = _SingleEventSubscription(
+        events.TurnStarted(
+            turn_id="turn-race",
+            conversation_id="conversation-1",
+            label="race",
+        )
+    )
+    socket = _RecorderSocket()
+
+    gateway._drain_runtime_subscription(socket, subscription, principal_id="owner")
+    gateway._drain_outbound(socket)
+
+    delivered = [decode_message(frames[1:]).message for frames in socket.sent]
+    assert [message.type for message in delivered] == ["turn.accepted", "turn.started"]
