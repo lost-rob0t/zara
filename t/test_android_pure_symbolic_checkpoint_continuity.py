@@ -77,5 +77,5 @@ def test_checkpoint_continuity_rejects_final_snapshot_from_pre_restart_turn() ->
         expert_checkpoint("expert-follow-up-after-restart", "turn-2"),
     ]
 
-    with pytest.raises(AssertionError, match="terminal restart-safe `why?` turn"):
+    with pytest.raises(AssertionError, match=r"terminal restart-safe `why\?` turn"):
         module.assert_checkpoint_continuity(checkpoints, final_projection("turn-1"))
