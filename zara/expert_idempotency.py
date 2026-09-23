@@ -27,6 +27,7 @@ from ._experts_v1 import (
     _bounded_refs,
 )
 from .database import DatabaseManager, get_database
+from .protocol import _reject_constant, _strict_object
 
 _TABLE = "expert_idempotency_v1"
 _STATES = frozenset({"reserved", "dispatching", "completed", "interrupted", "corrupt"})
@@ -390,7 +391,13 @@ class ExpertIdempotencyJournal:
 
     @staticmethod
     def _decode_result(payload: str, row: Any) -> ExpertResult:
-        wire = json.loads(payload, parse_constant=_reject_non_finite_json_constant)
+        # Durable replay uses the same recursive strict-JSON policy as ZARA/1:
+        # duplicate object members and non-finite constants are ambiguous and fail closed.
+        wire = json.loads(
+            payload,
+            object_pairs_hook=_strict_object,
+            parse_constant=_reject_constant,
+        )
         if not isinstance(wire, dict):
             raise ValueError("durable expert result must be an object")
         required = {
@@ -526,7 +533,3 @@ def _synthetic_id(prefix: str, row: Any) -> str:
         )
     )
     return f"{prefix}:{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:32]}"
-
-
-def _reject_non_finite_json_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON constant is not allowed: {value}")
