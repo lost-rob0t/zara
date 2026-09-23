@@ -13,6 +13,7 @@ from zara.database import DatabaseManager
 from zara.expert_port import CanonicalExpertInvocationPort
 from zara.experts import (
     ZARA_EXPERT_PROTOCOL,
+    ExpertBudgetExceededError,
     ExpertDescriptor,
     ExpertErrorCode,
     ExpertInvalidInputError,
@@ -35,6 +36,19 @@ class DispatchCounter:
             "data": {"summary": "symbolic restart fixture"},
             "evidence_refs": ["evidence:restart-fixture:v1"],
             "usage": {"model_calls": 0},
+            "effect_receipts": [],
+        }
+
+
+@dataclass
+class OneModelCallDispatchCounter(DispatchCounter):
+    def handler(self, **_payload: Any) -> dict[str, Any]:
+        self.calls += 1
+        return {
+            "verdict": "succeeded",
+            "data": {"summary": "model-backed restart fixture"},
+            "evidence_refs": ["evidence:restart-fixture:model-v1"],
+            "usage": {"model_calls": 1},
             "effect_receipts": [],
         }
 
@@ -125,6 +139,7 @@ def _request(
     handle: Any,
     *,
     symptom_id: str = "timer",
+    max_model_calls: int = 0,
 ) -> ExpertRequest:
     return ExpertRequest(
         request_id="request:restart-contract",
@@ -135,7 +150,7 @@ def _request(
         expected_registry_generation=registry.generation,
         expected_runtime_generation=registry.runtime_generation,
         input={"symptom_id": symptom_id},
-        limits=ExpertLimits(max_model_calls=0),
+        limits=ExpertLimits(max_model_calls=max_model_calls),
         idempotency_key="idempotency:restart-contract",
     )
 
@@ -175,6 +190,36 @@ def test_terminal_idempotent_retry_after_process_recreation_replays_exact_result
     assert replay.evidence_refs == first.evidence_refs
     assert replay.usage == first.usage == {"model_calls": 0}
     assert replay.effect_receipts == first.effect_receipts
+
+
+def test_restart_replay_cannot_bypass_stricter_zero_model_budget(tmp_path: Path) -> None:
+    counter = OneModelCallDispatchCounter()
+    path = tmp_path / "replay-budget.db"
+
+    first_db = _fresh_database(path)
+    first_registry, first_port, first_handle = _runtime(counter, first_db)
+    first = first_port.invoke(
+        _request(first_registry, first_handle, max_model_calls=1)
+    )
+    assert first.verdict is ExpertVerdict.SUCCEEDED
+    assert first.usage == {"model_calls": 1}
+    assert counter.calls == 1
+    first_db.close()
+
+    restarted_db = _fresh_database(path)
+    restarted_registry, restarted_port, restarted_handle = _runtime(
+        counter,
+        restarted_db,
+    )
+    with pytest.raises(
+        ExpertBudgetExceededError,
+        match="durable replay usage.model_calls exceeds admitted max_model_calls",
+    ):
+        restarted_port.invoke(
+            _request(restarted_registry, restarted_handle, max_model_calls=0)
+        )
+
+    assert counter.calls == 1, "budget rejection must not redispatch the durable invocation"
 
 
 def test_restart_same_key_changed_input_is_conflict_not_dispatch(tmp_path: Path) -> None:
