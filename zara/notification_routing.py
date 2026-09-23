@@ -378,6 +378,33 @@ class NotificationRouterStore:
         )
         self._db.execute(
             """
+            CREATE TABLE IF NOT EXISTS notification_router_presentations (
+                principal_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                notification_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                sink_peer TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (
+                    principal_id, workspace_id, notification_id, generation, sink_peer
+                )
+            )
+            """
+        )
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notification_router_effect_claims (
+                principal_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                effect_key TEXT NOT NULL,
+                receipt_json TEXT,
+                claimed_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (principal_id, workspace_id, effect_key)
+            )
+            """
+        )
+        self._db.execute(
+            """
             CREATE TABLE IF NOT EXISTS notification_router_effects (
                 principal_id TEXT NOT NULL,
                 workspace_id TEXT NOT NULL,
@@ -406,6 +433,10 @@ class NotificationRouterStore:
     def cleanup(self, now_ms: int) -> None:
         self._db.execute(
             "DELETE FROM notification_router_seen WHERE expires_at_ms < ?",
+            (now_ms,),
+        )
+        self._db.execute(
+            "DELETE FROM notification_router_presentations WHERE expires_at_ms < ?",
             (now_ms,),
         )
 
@@ -517,28 +548,156 @@ class NotificationRouterStore:
         raw["action_handles"] = tuple(raw.get("action_handles", ()))
         return NotificationEvent(**raw)
 
+    def record_presentations(self, event: NotificationEvent, sinks: Sequence[str]) -> None:
+        with self._db.transaction(immediate=True) as conn:
+            conn.execute(
+                """
+                DELETE FROM notification_router_presentations
+                 WHERE principal_id=? AND workspace_id=? AND notification_id=?
+                """,
+                (event.principal_id, event.workspace_id, event.notification_id),
+            )
+            for sink in sinks:
+                conn.execute(
+                    """
+                    INSERT INTO notification_router_presentations(
+                        principal_id,workspace_id,notification_id,generation,sink_peer,expires_at_ms
+                    ) VALUES(?,?,?,?,?,?)
+                    """,
+                    (
+                        event.principal_id,
+                        event.workspace_id,
+                        event.notification_id,
+                        event.generation,
+                        sink,
+                        event.expires_at_ms,
+                    ),
+                )
+
+    def require_presented_sink(self, request: NotificationActionRequest, now_ms: int) -> None:
+        row = self._db.fetch_one(
+            """
+            SELECT 1 FROM notification_router_presentations
+             WHERE principal_id=? AND workspace_id=? AND notification_id=?
+               AND generation=? AND sink_peer=? AND expires_at_ms>=?
+            """,
+            (
+                request.principal_id,
+                request.workspace_id,
+                request.notification_id,
+                request.generation,
+                request.sink_peer,
+                now_ms,
+            ),
+        )
+        if row is None:
+            raise NotificationDenied("notification action sink was not a routed sink")
+
     def effect_done(self, principal_id: str, workspace_id: str, effect_key: str) -> bool:
         return self._db.fetch_one(
             "SELECT 1 FROM notification_router_effects WHERE principal_id=? AND workspace_id=? AND effect_key=?",
             (principal_id, workspace_id, effect_key),
         ) is not None
 
+    def claim_effect(
+        self,
+        *,
+        principal_id: str,
+        workspace_id: str,
+        effect_key: str,
+        now_ms: int,
+    ) -> tuple[str, Optional[Mapping[str, Any]]]:
+        with self._db.transaction(immediate=True) as conn:
+            completed = conn.execute(
+                """
+                SELECT 1 FROM notification_router_effects
+                 WHERE principal_id=? AND workspace_id=? AND effect_key=?
+                """,
+                (principal_id, workspace_id, effect_key),
+            ).fetchone()
+            if completed is not None:
+                return "done", None
+            row = conn.execute(
+                """
+                SELECT receipt_json FROM notification_router_effect_claims
+                 WHERE principal_id=? AND workspace_id=? AND effect_key=?
+                """,
+                (principal_id, workspace_id, effect_key),
+            ).fetchone()
+            if row is not None:
+                raw_receipt = row["receipt_json"]
+                if raw_receipt is None:
+                    return "in_progress", None
+                return "verify", dict(json.loads(str(raw_receipt)))
+            conn.execute(
+                """
+                INSERT INTO notification_router_effect_claims(
+                    principal_id,workspace_id,effect_key,receipt_json,claimed_at_ms
+                ) VALUES(?,?,?,NULL,?)
+                """,
+                (principal_id, workspace_id, effect_key, now_ms),
+            )
+            return "execute", None
+
+    def attach_effect_receipt(
+        self,
+        *,
+        principal_id: str,
+        workspace_id: str,
+        effect_key: str,
+        receipt: Mapping[str, Any],
+    ) -> None:
+        encoded = json.dumps(dict(receipt), sort_keys=True, separators=(",", ":"))
+        with self._db.transaction(immediate=True) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE notification_router_effect_claims
+                   SET receipt_json=?
+                 WHERE principal_id=? AND workspace_id=? AND effect_key=?
+                   AND receipt_json IS NULL
+                """,
+                (encoded, principal_id, workspace_id, effect_key),
+            )
+            if cursor.rowcount == 1:
+                return
+            row = conn.execute(
+                """
+                SELECT receipt_json FROM notification_router_effect_claims
+                 WHERE principal_id=? AND workspace_id=? AND effect_key=?
+                """,
+                (principal_id, workspace_id, effect_key),
+            ).fetchone()
+            if row is None:
+                raise NotificationRoutingError("notification effect claim disappeared before receipt admission")
+            if str(row["receipt_json"]) != encoded:
+                raise NotificationDenied("notification effect claim already carries a different receipt")
+
     def record_effect(self, *, principal_id: str, workspace_id: str, effect_key: str, receipt: Mapping[str, Any], verification: Mapping[str, Any], now_ms: int) -> None:
-        self._db.execute(
-            """
-            INSERT INTO notification_router_effects(
-                principal_id,workspace_id,effect_key,receipt_json,verification_json,completed_at_ms
-            ) VALUES(?,?,?,?,?,?)
-            """,
-            (
-                principal_id,
-                workspace_id,
-                effect_key,
-                json.dumps(dict(receipt), sort_keys=True, separators=(",", ":")),
-                json.dumps(dict(verification), sort_keys=True, separators=(",", ":")),
-                now_ms,
-            ),
-        )
+        receipt_json = json.dumps(dict(receipt), sort_keys=True, separators=(",", ":"))
+        verification_json = json.dumps(dict(verification), sort_keys=True, separators=(",", ":"))
+        with self._db.transaction(immediate=True) as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO notification_router_effects(
+                    principal_id,workspace_id,effect_key,receipt_json,verification_json,completed_at_ms
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                (
+                    principal_id,
+                    workspace_id,
+                    effect_key,
+                    receipt_json,
+                    verification_json,
+                    now_ms,
+                ),
+            )
+            conn.execute(
+                """
+                DELETE FROM notification_router_effect_claims
+                 WHERE principal_id=? AND workspace_id=? AND effect_key=?
+                """,
+                (principal_id, workspace_id, effect_key),
+            )
 
     def audit(self, event: NotificationEvent, decision: str, evidence: Sequence[str], now_ms: int) -> None:
         self._db.execute(
@@ -678,7 +837,15 @@ class NotificationRouter:
                 action=hook.kind,
                 argument=hook.argument,
             )
-            results.append(self.perform_action(request, effect_plane, effect_key=effect_key, now_ms=now))
+            results.append(
+                self._perform_effect(
+                    request,
+                    effect_plane,
+                    effect_key=effect_key,
+                    now_ms=now,
+                    enforce_route_authority=False,
+                )
+            )
         return tuple(results)
 
     def perform_action(
@@ -689,8 +856,32 @@ class NotificationRouter:
         effect_key: Optional[str] = None,
         now_ms: Optional[int] = None,
     ) -> NotificationActionResult:
+        return self._perform_effect(
+            request,
+            effect_plane,
+            effect_key=effect_key,
+            now_ms=now_ms,
+            enforce_route_authority=True,
+        )
+
+    def _perform_effect(
+        self,
+        request: NotificationActionRequest,
+        effect_plane: EffectPlane,
+        *,
+        effect_key: Optional[str],
+        now_ms: Optional[int],
+        enforce_route_authority: bool,
+    ) -> NotificationActionResult:
         now = int(time.time() * 1000) if now_ms is None else _exact_int(now_ms, "now_ms")
         event = self.store.event(request)
+        if event.expires_at_ms <= now:
+            raise NotificationDenied("notification action source expired")
+        if enforce_route_authority:
+            self.store.require_presented_sink(request, now)
+            requested_handle = request.argument if request.argument is not None else request.action
+            if requested_handle not in event.action_handles:
+                raise NotificationDenied("notification action handle was not exposed by source")
         capability = f"notification.action.{request.action}"
         if not effect_plane.authorize(
             owner_peer=event.owner_peer,
@@ -700,9 +891,28 @@ class NotificationRouter:
         ):
             raise NotificationDenied(f"capability denied: {capability}")
         key = effect_key or f"action:{request.request_id}"
-        if self.store.effect_done(request.principal_id, request.workspace_id, key):
+        claim_state, stored_receipt = self.store.claim_effect(
+            principal_id=request.principal_id,
+            workspace_id=request.workspace_id,
+            effect_key=key,
+            now_ms=now,
+        )
+        if claim_state == "done":
             raise NotificationDenied("notification effect already completed")
-        receipt = dict(effect_plane.execute(request, owner_peer=event.owner_peer))
+        if claim_state == "in_progress":
+            raise NotificationDenied("notification effect is already in progress")
+        if claim_state == "execute":
+            receipt = dict(effect_plane.execute(request, owner_peer=event.owner_peer))
+            self.store.attach_effect_receipt(
+                principal_id=request.principal_id,
+                workspace_id=request.workspace_id,
+                effect_key=key,
+                receipt=receipt,
+            )
+        elif claim_state == "verify" and stored_receipt is not None:
+            receipt = dict(stored_receipt)
+        else:
+            raise NotificationRoutingError(f"invalid notification effect claim state: {claim_state!r}")
         verification = dict(effect_plane.verify(request, receipt, owner_peer=event.owner_peer))
         receipt_id = receipt.get("receipt_id")
         fresh_postcondition = (
@@ -755,6 +965,7 @@ class NotificationRouter:
             duplicate=duplicate,
             coalesced_count=coalesced_count,
         )
+        self.store.record_presentations(event, result.sinks)
         self.store.audit(event, decision, result.evidence, now_ms)
         return result
 
