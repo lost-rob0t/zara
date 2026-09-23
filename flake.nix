@@ -260,6 +260,7 @@
             p.pyzmq
             # Testing
             p.pytest
+            p.pytest-cov
             p.pytest-asyncio
             # Packaging metadata sanity checks
             p.setuptools
