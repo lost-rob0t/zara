@@ -25,29 +25,28 @@ class AndroidWidgetContractTest {
     }
 
     @Test
-    fun `widget clicks enter the canonical AppNavigation through a bounded bridge`() {
+    fun `widget clicks use one receiver ingress and reconstruct canonical AppNavigation`() {
         val provider = File("src/main/java/ai/zara/app/widget/ZaraWidgetProvider.kt").readText()
         val bridge = File("src/main/java/ai/zara/app/widget/WidgetNavigationRequest.kt").readText()
         val navigation = File("src/main/java/ai/zara/app/ui/AppNavigation.kt").readText()
-        val style = File("src/main/assets/prolog/widget_styles.pl").readText()
 
         assertTrue(provider.contains("WidgetRoute"))
         assertTrue(provider.contains("FLAG_IMMUTABLE"))
-        assertTrue(provider.contains("WidgetRouteReceiver"))
-        assertTrue(bridge.contains("AppRoute"))
+        assertTrue(provider.contains("PendingIntent.getBroadcast"))
+        assertTrue(provider.contains("WidgetRouteReceiver::class.java"))
+        assertFalse("widget provider must not bypass the bounded ingress", provider.contains("PendingIntent.getActivity"))
+
         assertTrue(bridge.contains("WidgetRoute.entries"))
+        assertTrue(bridge.contains("WidgetNavigationRequest.request"))
         assertTrue(bridge.contains("MainActivity::class.java"))
-        assertTrue(navigation.contains("WidgetNavigationRequest"))
+        assertTrue(bridge.contains("Intent.FLAG_ACTIVITY_CLEAR_TASK"))
+        assertTrue(bridge.indexOf("WidgetNavigationRequest.request") < bridge.indexOf("context.startActivity"))
+
+        assertTrue(navigation.contains("WidgetNavigationRequest.peek()"))
+        assertTrue(navigation.contains("WidgetNavigationRequest.consume"))
         assertTrue(navigation.contains("selectRoute"))
         assertFalse("widgets must not create a second navigation owner", provider.contains("requestedSurface"))
         assertFalse("widgets must not create a second AppNavigation", bridge.contains("AppNavigation("))
-
-        assertTrue(style.contains("zara_widget_stylesheet(1)."))
-        assertTrue(style.contains("widget_color("))
-        assertTrue(style.contains("widget_metric("))
-        assertTrue(style.contains("widget_text("))
-        assertTrue(style.contains("widget_flag("))
-        assertTrue(style.contains("widget_action("))
     }
 
     @Test
@@ -70,6 +69,8 @@ class AndroidWidgetContractTest {
         ).forEach { contract -> assertTrue("missing route $contract", style.contains(contract)) }
         assertFalse("legacy parallel themes route must not survive", style.contains("THEMES(\"themes\""))
         assertFalse("legacy parallel remote route must not survive", style.contains("REMOTE(\"remote\""))
+        assertTrue("legacy themes atom may only be normalized to Appearance", style.contains("\"themes\" -> APPEARANCE"))
+        assertTrue("legacy remote atom may only be normalized to Runtime", style.contains("\"remote\" -> RUNTIME"))
     }
 
     @Test
