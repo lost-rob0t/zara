@@ -1,0 +1,42 @@
+#+title: Zara Expert Protocol
+#+subtitle: ZARA-EXPERT/1 descriptor, activation and invocation contract
+
+* Scope
+
+=ZARA-EXPERT/1= is the versioned contract that lets a caller use any
+declared Zara expert — portable Prolog, plugin host, hybrid, or explicit
+remote service — without a hard-coded path per expert. Authority lives in
+=[[file:../contracts/zara-expert-v1/README.org][contracts/zara-expert-v1/README.md]]=; this page documents the surfaces and
+where each piece lives.
+
+| Piece | Owner |
+|-------+-------|
+| Contract text + schema + fixture | =contracts/zara-expert-v1/= |
+| Python authority | =zara/experts.py= (descriptors, registry, envelopes, errors) |
+| Portable Prolog projection | =modules/expert_contract.pl= |
+| Android mirror | =ai.zara.app.expert.ExpertContract= |
+| Shared fixture | =contracts/zara-expert-v1/descriptors.tsv= (Python + Prolog + Kotlin conformance) |
+
+* Zero-model rule
+
+A =symbolic= expert performs no model inference. Every operation in the
+vocabulary is executable with zero LLM: list, describe, match, activate,
+status, invoke, explain, cancel, deactivate. LLM assistance is optional and,
+where used, is metered through =max_model_calls= limits and never treated as
+evidence.
+
+* Deterministic gates
+
+- Python: =t/test_expert_registry_v1.py=, =t/test_expert_descriptor_schema_v1.py=
+- Prolog: =t/expert_contract.pl= via =scripts/test-expert-contract.sh=
+  (plunit + golden corpus + TSV parity), part of the ZARA-021 gate
+- Android: =ExpertContractV1Test= under the android unit-test gate
+
+* Adding an expert
+
+1. Add a row to the shared fixture (and real registration through the
+   trusted path for runtime).
+2. Mirror the closed vocabularies only when the contract itself changes —
+   never per expert.
+3. Keep =reasoning_kind= truthful; =symbolic= is auditable to zero model
+   calls.

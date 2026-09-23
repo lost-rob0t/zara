@@ -132,6 +132,10 @@ class RuntimeRegistry {
             }
         }
         return synchronized(lock) {
+            if (replacement == descriptors) {
+                return@synchronized snapshotLocked()
+            }
+
             val nextGeneration = generation + 1
             val currentId = selection?.runtimeId
             val current = currentId?.let(replacement::get)
@@ -227,7 +231,8 @@ private fun requireBoundedText(
     limit: Int,
     allowEmpty: Boolean = false,
 ) {
-    require(value.length <= limit) { "$field exceeds $limit characters" }
+    val scalarCount = value.codePointCount(0, value.length)
+    require(scalarCount <= limit) { "$field exceeds $limit characters" }
     require(allowEmpty || value.isNotEmpty()) { "$field must not be empty" }
     require(value == value.trim()) { "$field must not contain surrounding whitespace" }
     require(value.none { it.code < 0x20 || it.code == 0x7f }) { "$field contains control characters" }
