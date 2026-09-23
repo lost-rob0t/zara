@@ -827,3 +827,63 @@ def test_security_audit_records_closed_metadata_without_request_secrets(
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
+
+
+def test_secure_gateway_enqueue_outbound_forwards_payloads(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    client_public, client_secret = keypair()
+    principal = PrincipalContext("user:alice", kind="authenticated")
+    registry = SecurityRegistry()
+    registry.enroll(
+        client_public,
+        principal=principal,
+        device_id="alice-phone",
+        capabilities={Capability.SESSION_BASIC, Capability.TURN_SUBMIT},
+    )
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=FakeSupervisor(),
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+    )
+    gateway.start().result(timeout=1.0)
+    dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=client_public,
+        client_secret=client_secret,
+        server_public=server_public,
+    )
+    try:
+        hello = send_hello(dealer, "payloads-hello")
+        assert hello.type == "hello.ok"
+        with gateway._lock:
+            route = next(iter(gateway._routes))
+        event = ProtocolMessage(
+            type="turn.started",
+            id="event-payloads",
+            session_id=hello.session_id,
+            turn_id="turn-secure",
+            timestamp_ns=3,
+            payload_count=1,
+        )
+        assert gateway._enqueue_outbound(route, event, (b"payload-frame",))
+        with gateway._lock:
+            assert gateway._route_outbound[route][-1].payloads == (b"payload-frame",)
+        poller = zmq.Poller()
+        poller.register(dealer, zmq.POLLIN)
+        assert dict(poller.poll(1500)).get(dealer) == zmq.POLLIN
+        frames = dealer.recv_multipart()
+        assert decode_message(frames).message.type == "turn.started"
+        assert b"payload-frame" in frames
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
