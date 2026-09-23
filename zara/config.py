@@ -12,6 +12,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .client_profiles import (
+    ClientProfileError,
+    section_for_client,
+    validate_client_profiles,
+)
+
 
 DEFAULT_FILE_TOOL_MAX_BYTES = 20000
 DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
@@ -128,6 +134,20 @@ history_limit = 20
 # anthropic_api_key = ""
 # openai_api_key = ""
 # openrouter_api_key = ""
+
+# Optional host-owned client -> profile bindings. Profile tables never contain
+# credentials; provider secrets stay in environment/platform secret storage.
+# [client_pins]
+# "android:phone" = "mobile"
+#
+# [client_profiles.mobile.llm]
+# provider = "openrouter"
+# model = "openai/gpt-5-mini"
+#
+# [client_profiles.desktop-local.llm]
+# provider = "ollama"
+# endpoint = "http://127.0.0.1:11434/api/chat"
+# model = "zara-local"
 
 [agent]
 # Conversational agent settings
@@ -534,6 +554,11 @@ class ZaraConfig:
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ConfigError(f"pets.{key} must be an integer")
 
+        try:
+            validate_client_profiles(config)
+        except ClientProfileError as error:
+            raise ConfigError(str(error)) from error
+
         latency_config = config.get("latency", {})
         if not isinstance(latency_config, dict):
             raise ConfigError("Invalid [latency] configuration: expected a TOML table")
@@ -591,7 +616,12 @@ class ZaraConfig:
         """
         return self._config.get(section, {})
 
-    def get_llm_config(self) -> Dict[str, Any]:
+    def get_llm_config(
+        self,
+        *,
+        client_id: Optional[str] = None,
+        profile_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Get LLM configuration with environment variable override.
 
@@ -600,7 +630,15 @@ class ZaraConfig:
         Returns:
             LLM configuration dict
         """
-        llm_config = self.get_section("llm")
+        try:
+            llm_config = section_for_client(
+                self._config,
+                "llm",
+                client_id=client_id,
+                profile_name=profile_name,
+            )
+        except ClientProfileError as error:
+            raise ConfigError(str(error)) from error
 
         # Override with environment variables if set
         provider = os.getenv("ZARA_LLM_PROVIDER", llm_config.get("provider", "ollama"))
