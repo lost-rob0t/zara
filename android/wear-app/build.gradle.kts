@@ -54,7 +54,7 @@ android {
         getByName("debug") {
             if (debugSigningKeystore != null) {
                 val keyFile = file(debugSigningKeystore)
-                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
+                require(keyFile.isFile) { "ZARA_ANDROID_DEBUG_KEYSTORE is missing" }
                 storeFile = keyFile
                 storePassword = "android"
                 keyAlias = "androiddebugkey"
@@ -84,5 +84,15 @@ dependencies {
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.material3)
     implementation(libs.play.services.wearable)
+    implementation(libs.guava.android)
+    implementation(libs.wear.tiles)
+    implementation(libs.wear.tiles.tooling.preview)
+    implementation(libs.wear.tooling.preview)
+    debugImplementation(libs.wear.tiles.renderer)
+    implementation(libs.wear.protolayout)
+    implementation(libs.wear.protolayout.material)
+    implementation(libs.wear.protolayout.material3)
+    implementation(libs.wear.watchface.complications.data.source.ktx)
+    testImplementation(libs.wear.tiles.testing)
     testImplementation(libs.junit)
 }
