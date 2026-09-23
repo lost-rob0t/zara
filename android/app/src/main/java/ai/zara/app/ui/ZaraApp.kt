@@ -1559,6 +1559,7 @@ private fun ThemesSurface(
                 )
             }
         }
+        WidgetAppearanceControls(selected)
     }
 }
 
