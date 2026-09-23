@@ -22,6 +22,13 @@ def _module():
     return module
 
 
+def _workflow_step(workflow: str, name: str) -> str:
+    marker = f"      - name: {name}\n"
+    start = workflow.index(marker)
+    next_step = workflow.find("\n      - name: ", start + len(marker))
+    return workflow[start:] if next_step == -1 else workflow[start:next_step]
+
+
 def test_release_notes_preserve_canonical_markdown_section() -> None:
     module = _module()
     markdown = """# Zara Changelog
@@ -160,16 +167,19 @@ def test_existing_immutable_release_is_verified_not_rewritten() -> None:
 
 def test_release_staging_is_verified_before_the_publication_transition() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    cleanup = _workflow_step(workflow, "Cleanup unpublished owned staged release")
+    publish = _workflow_step(workflow, "Publish verified GitHub versioned release")
 
     assert "Stage GitHub versioned release as draft" in workflow
     assert "Verify staged release bytes, metadata, signer, and notes" in workflow
     assert "Publish verified GitHub versioned release" in workflow
     assert "--draft" in workflow
     assert "gh release edit" not in workflow
-    assert '--method DELETE "repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in workflow
-    assert "gh api --method PATCH" in workflow
-    assert '"repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in workflow
-    assert "-F draft=false" in workflow
+    assert "gh api --method DELETE" in cleanup
+    assert '"repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in cleanup
+    assert "gh api --method PATCH" in publish
+    assert '"repos/${GITHUB_REPOSITORY}/releases/${STAGED_RELEASE_ID}"' in publish
+    assert "-F draft=false" in publish
     assert workflow.index("Stage GitHub versioned release as draft") < workflow.index(
         "Verify staged release bytes, metadata, signer, and notes"
     )
@@ -180,17 +190,26 @@ def test_release_staging_is_verified_before_the_publication_transition() -> None
 
 def test_staged_release_cleanup_is_owned_retry_safe_and_never_deletes_published() -> None:
     workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    recovery = _workflow_step(workflow, "Recover stale owned draft from prior interrupted run")
+    stage = _workflow_step(workflow, "Stage GitHub versioned release as draft")
+    cleanup = _workflow_step(workflow, "Cleanup unpublished owned staged release")
+    ownership_prefix = "zara-staging:${{ github.repository }}:${{ github.sha }}:run="
+    current_run_receipt = "run=${{ github.run_id }}:attempt=${{ github.run_attempt }}"
 
-    assert "Recover stale owned draft from prior interrupted run" in workflow
     assert "Cleanup unpublished owned staged release" in workflow
-    assert "zara-staging:${GITHUB_REPOSITORY}:${GITHUB_SHA}:run=" in workflow
-    assert "if: always() && steps.stage.outputs.release_id != ''" in workflow
-    assert "STAGED_RELEASE_ID: ${{ steps.stage.outputs.release_id }}" in workflow
-    assert 'release.get("target_commitish") != os.environ["STAGED_SOURCE"]' in workflow
-    assert 'release.get("name") != os.environ["STAGED_TITLE"]' in workflow
-    assert 'release.get("draft") is not True' in workflow
-    assert 'print("keep")' in workflow
-    assert 'print("delete")' in workflow
+    assert ownership_prefix in recovery
+    assert ownership_prefix in stage
+    assert ownership_prefix in cleanup
+    assert current_run_receipt in stage
+    assert current_run_receipt in cleanup
+    assert "if: always() && steps.stage.outputs.release_id != ''" in cleanup
+    assert "STAGED_RELEASE_ID: ${{ steps.stage.outputs.release_id }}" in cleanup
+    assert 'release.get("target_commitish") != os.environ["STAGED_SOURCE"]' in recovery
+    assert 'release.get("target_commitish") != os.environ["STAGED_SOURCE"]' in cleanup
+    assert 'release.get("name") != os.environ["STAGED_TITLE"]' in cleanup
+    assert 'release.get("draft") is not True' in cleanup
+    assert 'print("keep")' in cleanup
+    assert 'print("delete")' in cleanup
     assert '-f name="Zara $TAG"' in workflow
     assert "trap cleanup_failed_draft ERR" not in workflow
     assert workflow.index("Recover stale owned draft from prior interrupted run") < workflow.index(
