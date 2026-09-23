@@ -965,13 +965,21 @@ class NotificationRouter:
             or decision.hooks != durable_decision.hooks
         ):
             raise NotificationDenied("notification hook decision does not match durable route decision")
+        hook_id_counts: dict[str, int] = {}
+        for hook in durable_decision.hooks:
+            hook_id_counts[hook.hook_id] = hook_id_counts.get(hook.hook_id, 0) + 1
         results: list[NotificationActionResult] = []
         for hook in durable_decision.hooks:
-            effect_key = f"hook:{event.notification_id}:{event.generation}:{hook.hook_id}"
+            if hook_id_counts[hook.hook_id] > 1:
+                effect_key = self._hook_effect_key(event, hook)
+                request_id = effect_key
+            else:
+                effect_key = f"hook:{event.notification_id}:{event.generation}:{hook.hook_id}"
+                request_id = f"hook:{hook.hook_id}:{event.generation}"
             if self.store.effect_done(event.principal_id, event.workspace_id, effect_key):
                 continue
             request = NotificationActionRequest(
-                request_id=f"hook:{hook.hook_id}:{event.generation}",
+                request_id=request_id,
                 notification_id=event.notification_id,
                 generation=event.generation,
                 principal_id=event.principal_id,
@@ -1082,6 +1090,20 @@ class NotificationRouter:
             receipt=receipt,
             verification=verification,
         )
+
+    @staticmethod
+    def _hook_effect_key(event: NotificationEvent, hook: TypedHookAction) -> str:
+        payload = {
+            "principal_id": event.principal_id,
+            "workspace_id": event.workspace_id,
+            "notification_id": event.notification_id,
+            "generation": event.generation,
+            "hook_id": hook.hook_id,
+            "kind": hook.kind,
+            "argument": hook.argument,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return "hook:" + hashlib.sha256(encoded).hexdigest()
 
     @staticmethod
     def _action_effect_key(request: NotificationActionRequest) -> str:
