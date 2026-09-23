@@ -1,5 +1,7 @@
 package ai.zara.app.ui
 
+import ai.zara.app.widget.WidgetNavigationRequest
+
 enum class AppMenu(val label: String, val glyph: String) {
     Chat("Chat", "⌂"),
     Workspace("Workspace", "λ"),
@@ -53,6 +55,10 @@ data class AppNavigation(
         AppMenu.Workspace -> copy(menu = AppMenu.Workspace, workspace = destination)
         AppMenu.Settings -> copy(menu = AppMenu.Settings, settings = destination)
     }
+
+    /** Consume one launcher-widget request into this canonical navigation owner. */
+    fun consumeWidgetRequest(): AppNavigation =
+        WidgetNavigationRequest.consume()?.let(::selectRoute) ?: this
 
     fun back(): AppNavigation? {
         val root = routesFor(menu).first()
