@@ -39,7 +39,7 @@ data class SymbolicConversationEdgeSnapshot(
         require(runtimeGeneration >= 0) { "runtimeGeneration must be >= 0" }
         require(projectGeneration >= 0) { "projectGeneration must be >= 0" }
         projectId?.let {
-            requireBoundedText(it, MAX_ID_CHARS, "projectId", allowBlank = false)
+            requireBoundedText(it, MAX_PROJECT_ID_CHARS, "projectId", allowBlank = false)
         }
         requireBoundedText(dialogueAct, MAX_ACT_CHARS, "dialogueAct", allowBlank = true)
         validateRefs(discourseEntityRefs, "discourseEntityRefs")
@@ -51,6 +51,7 @@ data class SymbolicConversationEdgeSnapshot(
             maxRefs = MAX_VERIFIED_OUTCOME_REFS,
             maxChars = MAX_VERIFIED_OUTCOME_REF_CHARS,
         )
+        validateVerifiedOutcomeRefs()
         requireBoundedText(
             rendererProvenance,
             MAX_RENDERER_CHARS,
@@ -79,11 +80,37 @@ data class SymbolicConversationEdgeSnapshot(
         check(rendererProvenance == ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER) {
             "pure-symbolic edge projection rendererProvenance must be $ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER: $rendererProvenance"
         }
-        check(dialogueAct != "verified" || verifiedOutcomeRefs.isNotEmpty()) {
-            "pure-symbolic verified edge projection requires verified outcome evidence"
+        check(
+            dialogueAct != "verified" ||
+                verifiedOutcomeRefs.any { reference ->
+                    VERIFIED_OUTCOME_V2_REF.matchEntire(reference)
+                        ?.groupValues
+                        ?.get(1)
+                        ?.toLongOrNull() == runtimeGeneration
+                }
+        ) {
+            "pure-symbolic verified edge projection requires fresh current-generation v2 outcome evidence"
         }
         check(dialogueAct != "expert_answer" || expertEvidenceRefs.isNotEmpty()) {
             "pure-symbolic expert_answer edge projection requires expert evidence"
+        }
+    }
+
+    private fun validateVerifiedOutcomeRefs() {
+        verifiedOutcomeRefs.forEach { reference ->
+            if (VERIFIED_OUTCOME_V1_REF.matches(reference)) return@forEach
+            val match = VERIFIED_OUTCOME_V2_REF.matchEntire(reference)
+                ?: throw IllegalArgumentException(
+                    "verifiedOutcomeRefs contains invalid canonical receipt: $reference",
+                )
+            val evidenceGeneration = match.groupValues[1].toLongOrNull()
+                ?: throw IllegalArgumentException(
+                    "verifiedOutcomeRefs contains invalid canonical receipt: $reference",
+                )
+            require(evidenceGeneration <= runtimeGeneration) {
+                "verifiedOutcomeRefs generation exceeds runtimeGeneration: " +
+                    "$evidenceGeneration > $runtimeGeneration"
+            }
         }
     }
 
@@ -110,11 +137,20 @@ data class SymbolicConversationEdgeSnapshot(
         const val MAX_REFS = 16
         const val MAX_VERIFIED_OUTCOME_REFS = 64
         internal const val MAX_ID_CHARS = 128
+        internal const val MAX_PROJECT_ID_CHARS = 512
         internal const val MAX_ACT_CHARS = 96
         internal const val MAX_REF_CHARS = 128
         internal const val MAX_VERIFIED_OUTCOME_REF_CHARS = 448
         internal const val MAX_RENDERER_CHARS = 256
         internal const val ZARA_SYMBOLIC_DIALOGUE_V1_RENDERER = "symbolic-dcg/v1"
+        private val VERIFIED_OUTCOME_V1_REF = Regex(
+            "^zara\\.verified-outcome/v1:(?:effect|outcome):" +
+                "[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$",
+        )
+        private val VERIFIED_OUTCOME_V2_REF = Regex(
+            "^zara\\.verified-outcome/v2:([1-9][0-9]*):(?:effect|outcome):" +
+                "[A-Za-z0-9][A-Za-z0-9._:/#-]{0,383}$",
+        )
         internal val ZARA_SYMBOLIC_DIALOGUE_V1_ACTS = setOf(
             "greeting",
             "help",
@@ -156,7 +192,7 @@ object SymbolicConversationEdgeCodec {
             output.writeLong(snapshot.runtimeGeneration)
             output.writeNullableString(
                 snapshot.projectId,
-                SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
+                SymbolicConversationEdgeSnapshot.MAX_PROJECT_ID_CHARS,
             )
             output.writeLong(snapshot.projectGeneration)
             output.writeString(
@@ -200,7 +236,7 @@ object SymbolicConversationEdgeCodec {
                     conversationId = input.readString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
                     projectionGeneration = input.readLong(),
                     runtimeGeneration = input.readLong(),
-                    projectId = input.readNullableString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
+                    projectId = input.readNullableString(SymbolicConversationEdgeSnapshot.MAX_PROJECT_ID_CHARS),
                     projectGeneration = input.readLong(),
                     dialogueAct = input.readString(SymbolicConversationEdgeSnapshot.MAX_ACT_CHARS),
                     discourseEntityRefs = input.readRefs(
