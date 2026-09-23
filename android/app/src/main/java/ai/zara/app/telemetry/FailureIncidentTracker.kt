@@ -12,11 +12,15 @@ class FailureIncidentTracker(
 ) {
     private var incident: FailureIncident? = null
     private var lastSuccess: String? = null
+    private var pendingSparseDuplicate = false
     private val lock = Any()
 
     fun record(failure: ZaraFailure): FailureIncident? = synchronized(lock) {
         val current = incident
-        if (current != null && isSparseDuplicate(failure, current.failure)) return null
+        if (pendingSparseDuplicate && current != null && isSparseDuplicate(failure, current.failure)) {
+            pendingSparseDuplicate = false
+            return null
+        }
         if (
             current != null &&
             failure.connectionGeneration != null &&
@@ -44,6 +48,7 @@ class FailureIncidentTracker(
             )
         }
         incident = updated
+        pendingSparseDuplicate = failure.protocolEvidence != null
         updated
     }
 
@@ -58,6 +63,7 @@ class FailureIncidentTracker(
     fun clear() = synchronized(lock) {
         incident = null
         lastSuccess = null
+        pendingSparseDuplicate = false
     }
 
     private fun isSparseDuplicate(incoming: ZaraFailure, current: ZaraFailure): Boolean =
