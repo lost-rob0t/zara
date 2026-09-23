@@ -23,8 +23,22 @@ def visual_manifest_verifier() -> str:
 def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
     screenshot = tmp_path / "drawer-conversation-overflow.png"
     screenshot.write_bytes(b"synthetic screenshot bytes")
+    screenshot_sha = hashlib.sha256(screenshot.read_bytes()).hexdigest()
     text_twin = tmp_path / "drawer-conversation-overflow.xml"
     text_twin.write_text(twin_xml, encoding="utf-8")
+
+    scenario_text = tmp_path / "drawer-conversation-overflow.ui.txt"
+    scenario_text.write_text(
+        'class="android.widget.TextView" text="Rename" enabled=true clickable=false '
+        'bounds=[10,30][70,50]\n',
+        encoding="utf-8",
+    )
+    scenario_assertions = tmp_path / "drawer-conversation-overflow.assertions.txt"
+    scenario_assertions.write_text(
+        "ACTION 1 capture:drawer-conversation-overflow\n"
+        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n",
+        encoding="utf-8",
+    )
 
     actions = [
         {
@@ -49,6 +63,35 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
             "occupied_luma_bins": 20,
         },
     ]
+    scenario = {
+        "scenario_id": "android.ui.drawer-conversation-overflow",
+        "source_sha": SOURCE_SHA,
+        "device_api": "35",
+        "profile": "default",
+        "actions": ["capture:drawer-conversation-overflow"],
+        "assertions": [
+            {
+                "name": "screenshot-png",
+                "passed": True,
+                "detail": "device returned PNG screenshot evidence",
+            }
+        ],
+        "screenshot": {
+            "file": screenshot.name,
+            "sha256": screenshot_sha,
+        },
+        "text_evidence": {
+            "file": scenario_text.name,
+            "sha256": hashlib.sha256(scenario_text.read_bytes()).hexdigest(),
+        },
+        "assertion_evidence": {
+            "file": scenario_assertions.name,
+            "sha256": hashlib.sha256(scenario_assertions.read_bytes()).hexdigest(),
+        },
+    }
+    scenario_path = tmp_path / "drawer-conversation-overflow.json"
+    scenario_path.write_text(json.dumps(scenario, sort_keys=True), encoding="utf-8")
+
     manifest = {
         "passed": True,
         "source_sha": SOURCE_SHA,
@@ -57,9 +100,10 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
             {
                 "state": "drawer-conversation-overflow",
                 "file": screenshot.name,
-                "sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest(),
+                "sha256": screenshot_sha,
             }
         ],
+        "scenarios": [scenario],
         "visual_checks": [
             {
                 "state": "drawer-conversation-overflow",
@@ -70,7 +114,7 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
                 "action_union": [10, 10, 110, 70],
                 "viewport": [120, 100],
                 "screenshot_file": screenshot.name,
-                "screenshot_sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest(),
+                "screenshot_sha256": screenshot_sha,
                 "text_twin_file": text_twin.name,
                 "text_twin_sha256": hashlib.sha256(text_twin.read_bytes()).hexdigest(),
                 "actions": actions,
@@ -172,3 +216,53 @@ def test_visual_manifest_verifier_rejects_union_that_disagrees_with_actions(tmp_
 
     assert result.returncode != 0
     assert "overflow visual receipt action_union differs from action bounds" in result.stderr
+
+
+def test_visual_manifest_verifier_rejects_missing_scenario_evidence(tmp_path: Path) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del data["scenarios"]
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = run_existing_visual_verifier(tmp_path, manifest_path)
+
+    assert result.returncode != 0
+    assert "omitted per-scenario evidence" in result.stderr
+
+
+def test_visual_manifest_verifier_rejects_missing_scenario_assertion_file(
+    tmp_path: Path,
+) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    (tmp_path / "drawer-conversation-overflow.assertions.txt").unlink()
+
+    result = run_existing_visual_verifier(tmp_path, manifest_path)
+
+    assert result.returncode != 0
+    assert "scenario evidence file is missing" in result.stderr
+
+
+def test_visual_manifest_verifier_rejects_duplicate_scenario_id(tmp_path: Path) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["scenarios"].append(dict(data["scenarios"][0]))
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = run_existing_visual_verifier(tmp_path, manifest_path)
+
+    assert result.returncode != 0
+    assert "duplicate scenario id" in result.stderr
+
+
+def test_visual_manifest_verifier_rejects_scenario_screenshot_hash_drift(
+    tmp_path: Path,
+) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["scenarios"][0]["screenshot"]["sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = run_existing_visual_verifier(tmp_path, manifest_path)
+
+    assert result.returncode != 0
+    assert "scenario screenshot differs from screenshot manifest" in result.stderr
