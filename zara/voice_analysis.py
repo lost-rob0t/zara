@@ -15,7 +15,7 @@ from typing import Any, Optional
 import numpy as np
 import soundfile as sf
 
-from zara.prolog_engine import _prolog_string
+from zara.prolog_engine import _compound_parts, _prolog_string
 from zara.streaming_stt import (
     SpeechEnded,
     SpeechStarted,
@@ -318,7 +318,51 @@ class VoiceAnalyzer:
             "kb_voice_expert:replace_speaker_segments("
             f"{_prolog_string(source_id)},[{terms}])"
         )
-        self.prolog_engine.query_once(goal)
+        mutation = self.prolog_engine.query_once(goal)
+        if not isinstance(mutation, dict):
+            raise VoiceAnalysisError("failed to persist speaker segments")
+
+        readback_goal = (
+            "kb_voice_expert:speaker_segments("
+            f"{_prolog_string(source_id)},Segments)"
+        )
+        readback = self.prolog_engine.query_once(readback_goal)
+        if not isinstance(readback, dict) or "Segments" not in readback:
+            raise VoiceAnalysisError("speaker segment postcondition missing")
+
+        expected = [
+            (
+                segment.index,
+                segment.speaker,
+                int(round(segment.start * 1000)),
+                int(round(segment.end * 1000)),
+            )
+            for segment in segments
+        ]
+        raw_segments = readback["Segments"]
+        if not isinstance(raw_segments, (list, tuple)):
+            raise VoiceAnalysisError("speaker segment postcondition malformed")
+        actual = [self._decode_segment_term(value) for value in raw_segments]
+        if actual != expected:
+            raise VoiceAnalysisError("speaker segment postcondition mismatch")
+
+    @staticmethod
+    def _decode_segment_term(value: Any) -> tuple[int, str, int, int]:
+        parts = _compound_parts(value)
+        if parts is None:
+            raise VoiceAnalysisError("speaker segment postcondition malformed")
+        name, args = parts
+        if name != "segment" or len(args) != 4:
+            raise VoiceAnalysisError("speaker segment postcondition malformed")
+        index, speaker, start_ms, end_ms = args
+        if isinstance(speaker, bytes):
+            speaker = speaker.decode("utf-8")
+        try:
+            return int(index), str(speaker), int(start_ms), int(end_ms)
+        except (TypeError, ValueError) as error:
+            raise VoiceAnalysisError(
+                "speaker segment postcondition malformed"
+            ) from error
 
     def _section(self, name: str) -> dict[str, Any]:
         if hasattr(self.config, "get_section"):
