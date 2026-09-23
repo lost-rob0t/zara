@@ -393,6 +393,21 @@ class NotificationRouterStore:
         )
         self._db.execute(
             """
+            CREATE TABLE IF NOT EXISTS notification_router_decisions (
+                principal_id TEXT NOT NULL,
+                workspace_id TEXT NOT NULL,
+                notification_id TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                decision_json TEXT NOT NULL,
+                expires_at_ms INTEGER NOT NULL,
+                PRIMARY KEY (
+                    principal_id, workspace_id, notification_id, generation
+                )
+            )
+            """
+        )
+        self._db.execute(
+            """
             CREATE TABLE IF NOT EXISTS notification_router_effect_claims (
                 principal_id TEXT NOT NULL,
                 workspace_id TEXT NOT NULL,
@@ -437,6 +452,10 @@ class NotificationRouterStore:
         )
         self._db.execute(
             "DELETE FROM notification_router_presentations WHERE expires_at_ms < ?",
+            (now_ms,),
+        )
+        self._db.execute(
+            "DELETE FROM notification_router_decisions WHERE expires_at_ms < ?",
             (now_ms,),
         )
 
@@ -567,6 +586,95 @@ class NotificationRouterStore:
         raw["origin_chain"] = tuple(raw.get("origin_chain", ()))
         raw["action_handles"] = tuple(raw.get("action_handles", ()))
         return NotificationEvent(**raw)
+
+    def record_route_state(self, event: NotificationEvent, decision: NotificationDecision) -> None:
+        decision_json = json.dumps(asdict(decision), sort_keys=True, separators=(",", ":"))
+        with self._db.transaction(immediate=True) as conn:
+            existing = conn.execute(
+                """
+                SELECT decision_json FROM notification_router_decisions
+                 WHERE principal_id=? AND workspace_id=? AND notification_id=? AND generation=?
+                """,
+                (
+                    event.principal_id,
+                    event.workspace_id,
+                    event.notification_id,
+                    event.generation,
+                ),
+            ).fetchone()
+            if existing is not None and str(existing["decision_json"]) != decision_json:
+                raise NotificationStale("notification generation already has a different durable decision")
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO notification_router_decisions(
+                        principal_id,workspace_id,notification_id,generation,decision_json,expires_at_ms
+                    ) VALUES(?,?,?,?,?,?)
+                    """,
+                    (
+                        event.principal_id,
+                        event.workspace_id,
+                        event.notification_id,
+                        event.generation,
+                        decision_json,
+                        event.expires_at_ms,
+                    ),
+                )
+            conn.execute(
+                """
+                DELETE FROM notification_router_presentations
+                 WHERE principal_id=? AND workspace_id=? AND notification_id=?
+                """,
+                (event.principal_id, event.workspace_id, event.notification_id),
+            )
+            for sink in decision.sinks:
+                conn.execute(
+                    """
+                    INSERT INTO notification_router_presentations(
+                        principal_id,workspace_id,notification_id,generation,sink_peer,expires_at_ms
+                    ) VALUES(?,?,?,?,?,?)
+                    """,
+                    (
+                        event.principal_id,
+                        event.workspace_id,
+                        event.notification_id,
+                        event.generation,
+                        sink,
+                        event.expires_at_ms,
+                    ),
+                )
+
+    def replay_decision(self, event: NotificationEvent, *, coalesced_count: int) -> NotificationDecision:
+        row = self._db.fetch_one(
+            """
+            SELECT decision_json FROM notification_router_decisions
+             WHERE principal_id=? AND workspace_id=? AND notification_id=? AND generation=?
+            """,
+            (
+                event.principal_id,
+                event.workspace_id,
+                event.notification_id,
+                event.generation,
+            ),
+        )
+        if row is None:
+            raise NotificationRoutingError("exact notification replay has no durable decision state")
+        raw = json.loads(str(row["decision_json"]))
+        presentation = dict(raw.get("presentation", {}))
+        for key in ("origin_chain", "action_handles"):
+            if key in presentation:
+                presentation[key] = tuple(presentation[key])
+        hooks = tuple(TypedHookAction(**item) for item in raw.get("hooks", ()))
+        return NotificationDecision(
+            notification_id=str(raw["notification_id"]),
+            decision=str(raw["decision"]),
+            sinks=tuple(raw.get("sinks", ())),
+            presentation=presentation,
+            evidence=tuple(raw.get("evidence", ())),
+            hooks=hooks,
+            duplicate=True,
+            coalesced_count=coalesced_count,
+        )
 
     def record_presentations(self, event: NotificationEvent, sinks: Sequence[str]) -> None:
         with self._db.transaction(immediate=True) as conn:
@@ -771,6 +879,8 @@ class NotificationRouter:
         content_mode = self.policy.content_mode(event.app)
         digest = event.content_digest or self._content_digest(event, include_body=content_mode == "full_content")
         duplicate, seen_count, exact_replay = self.store.observe(event, digest, now)
+        if exact_replay:
+            return self.store.replay_decision(event, coalesced_count=seen_count)
         recent_count = self.store.recent_app_count(event, now)
         feedback = self.store.feedback(event)
 
@@ -801,7 +911,6 @@ class NotificationRouter:
                 hooks=hooks,
                 duplicate=duplicate,
                 coalesced_count=seen_count,
-                preserve_presentations=exact_replay,
             )
 
         route_policy = self.policy.route_policy(event.app)
@@ -816,7 +925,6 @@ class NotificationRouter:
                 now,
                 duplicate=duplicate,
                 coalesced_count=seen_count,
-                preserve_presentations=exact_replay,
             )
         presentation = self._presentation(
             event,
@@ -833,7 +941,6 @@ class NotificationRouter:
             hooks=hooks,
             duplicate=duplicate,
             coalesced_count=seen_count,
-            preserve_presentations=exact_replay,
         )
 
     def execute_hooks(
@@ -1001,8 +1108,9 @@ class NotificationRouter:
             duplicate=duplicate,
             coalesced_count=coalesced_count,
         )
-        if not preserve_presentations:
-            self.store.record_presentations(event, result.sinks)
+        if preserve_presentations:
+            raise NotificationRoutingError("replay must use the durable notification decision")
+        self.store.record_route_state(event, result)
         self.store.audit(event, decision, result.evidence, now_ms)
         return result
 
