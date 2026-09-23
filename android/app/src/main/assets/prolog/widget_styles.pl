@@ -1,5 +1,5 @@
 % Zara Android home-screen widgets. This is the complete styling source.
-% Import a replacement .pl from Themes; no Kotlin, XML, or APK rebuild is needed.
+% Import a replacement .pl from Appearance; no Kotlin, XML, or APK rebuild is needed.
 zara_widget_stylesheet(1).
 widget_style(zara_default).
 widget_theme(zara_default, current).
@@ -36,7 +36,7 @@ widget_text(zara_default, assistant, tertiary_label, 'LOGIC').
 widget_text(zara_default, runtime, eyebrow, 'ZARA RUNTIME').
 widget_text(zara_default, runtime, title, 'Runtime').
 widget_text(zara_default, runtime, subtitle, 'Last known device state').
-widget_text(zara_default, runtime, primary_label, 'REMOTE').
+widget_text(zara_default, runtime, primary_label, 'RUNTIME').
 widget_text(zara_default, runtime, secondary_label, 'DIAGNOSTICS').
 widget_text(zara_default, runtime, tertiary_label, 'LOGIC').
 
@@ -57,5 +57,5 @@ widget_alignment(zara_default, all, start).
 widget_action(zara_default, all, primary, chat).
 widget_action(zara_default, all, secondary, voice).
 widget_action(zara_default, all, tertiary, logic).
-widget_action(zara_default, runtime, primary, remote).
+widget_action(zara_default, runtime, primary, runtime).
 widget_action(zara_default, runtime, secondary, diagnostics).
