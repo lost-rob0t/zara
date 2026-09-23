@@ -1,6 +1,5 @@
 package ai.zara.app.widget
 
-import ai.zara.app.MainActivity
 import ai.zara.app.R
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.ui.theme.ZaraSemanticTokens
@@ -25,9 +24,6 @@ import android.view.View
 import android.widget.RemoteViews
 import androidx.compose.ui.graphics.toArgb
 import java.io.File
-
-const val ACTION_WIDGET_ROUTE = "ai.zara.app.action.WIDGET_ROUTE"
-const val EXTRA_WIDGET_ROUTE = "ai.zara.app.extra.WIDGET_ROUTE"
 
 class ZaraAssistantWidgetProvider : ZaraWidgetProvider(WidgetKind.ASSISTANT)
 class ZaraRuntimeWidgetProvider : ZaraWidgetProvider(WidgetKind.RUNTIME)
@@ -292,11 +288,9 @@ private object ZaraWidgetRenderer {
         slot: Int,
         route: WidgetRoute,
     ): PendingIntent {
-        val intent = Intent(context, MainActivity::class.java)
-            .setAction(ACTION_WIDGET_ROUTE)
-            .putExtra(EXTRA_WIDGET_ROUTE, route.atom)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        return PendingIntent.getActivity(
+        val intent = Intent(context, WidgetRouteReceiver::class.java)
+            .putExtra(WidgetRouteReceiver.EXTRA_ROUTE, route.atom)
+        return PendingIntent.getBroadcast(
             context,
             appWidgetId * 10 + slot,
             intent,
