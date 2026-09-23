@@ -19,6 +19,11 @@ class WearSurfaceContractTest {
 
         assertTrue(manifest.contains("ZaraStatusComplicationService"))
         assertTrue(manifest.contains("ZaraVoiceComplicationService"))
+        (1..6).forEach { lane ->
+            assertTrue(manifest.contains("OrgSchedule${lane}ComplicationService"))
+        }
+        assertTrue(manifest.contains("OrgNextTodoComplicationService"))
+        assertTrue(manifest.contains("android:value=\"RANGED_VALUE\""))
         assertTrue(manifest.contains("com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER"))
         assertTrue(manifest.contains("android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST"))
     }
@@ -47,18 +52,55 @@ class WearSurfaceContractTest {
         assertTrue(contract.contains("ai.zara.wear.voice"))
         assertTrue(contract.contains("ai.zara.wear.voice.WearVoiceActivity"))
         assertTrue(contract.contains("ai.zara.action.WEAR_VOICE"))
+        assertTrue(contract.contains("ai.zara.action.OPEN_ORG_TODO"))
+        assertTrue(contract.contains("ORG_TODO_ID"))
+        assertTrue(contract.contains("require(todoId.isNotBlank())"))
+        assertTrue(contract.contains("appendPath(todoId)"))
+        assertTrue(contract.contains(".setData("))
 
         val tile = File("src/main/java/ai/zara/wear/surface/ZaraTileService.kt").readText()
         val status = File("src/main/java/ai/zara/wear/surface/ZaraStatusComplicationService.kt").readText()
         val voice = File("src/main/java/ai/zara/wear/surface/ZaraVoiceComplicationService.kt").readText()
-        listOf(tile, status, voice).forEach { source ->
-            assertTrue(source.contains("ZaraWearLaunchTargets"))
+        val orgSchedule = File("src/main/java/ai/zara/wear/surface/OrgScheduleComplicationServices.kt").readText()
+        listOf(tile, status, voice, orgSchedule).forEach { source ->
             assertFalse(source.contains("CURVE"))
             assertFalse(source.contains("PRIVATE KEY"))
         }
+        assertTrue(tile.contains("ZaraWearLaunchTargets"))
+        assertTrue(status.contains("ZaraWearLaunchTargets"))
+        assertTrue(voice.contains("ZaraWearLaunchTargets"))
+        assertTrue(orgSchedule.contains("orgTodoPendingIntent"))
         assertTrue(tile.contains("voicePendingIntent") || tile.contains("voiceComponent"))
         assertTrue(status.contains("mainPendingIntent"))
         assertTrue(voice.contains("voicePendingIntent"))
+    }
+
+    @Test
+    fun orgScheduleProviderUsesDurableSerializedPushCacheNotPolling() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val store = File("src/main/java/ai/zara/wear/surface/OrgScheduleSnapshotStore.kt").readText()
+        val provider = File("src/main/java/ai/zara/wear/surface/OrgScheduleComplicationServices.kt").readText()
+
+        val orgProviderBlocks = Regex(
+            """(?s)<service\s+android:name="ai\.zara\.wear\.complications\.Org[^"]+".*?</service>""",
+        ).findAll(manifest).toList()
+        assertEquals(7, orgProviderBlocks.size)
+        val pushOnlyPeriod = Regex(
+            """android:name="android\.support\.wearable\.complications\.UPDATE_PERIOD_SECONDS"\s+android:value="0""",
+        )
+        orgProviderBlocks.forEach { block ->
+            assertTrue(pushOnlyPeriod.containsMatchIn(block.value))
+        }
+
+        assertTrue(store.contains("snapshot_v1"))
+        assertTrue(store.contains("Context.MODE_PRIVATE"))
+        assertTrue(store.contains("@Synchronized"))
+        assertTrue(store.contains(".commit()"))
+        assertFalse(store.contains(".apply()"))
+        assertTrue(provider.contains("NoDataComplicationData"))
+        assertTrue(provider.contains("RangedValueComplicationData.Builder"))
+        assertTrue(provider.contains("snapshot.currentOrNextId"))
+        assertFalse(provider.contains("snapshot.allocations.firstOrNull()"))
     }
 
     @Test
