@@ -29,6 +29,7 @@ def _assert_projection_structure() -> None:
         "ANDROID_NDK_ROOT",
         "ZARA_ANDROID_NDK_VERSION",
         "ZARA_TREALLA_SOURCE_DIR",
+        "ZARA_TREALLA_LIBRARY_ROOT",
     ):
         assert f"export {export}=" in android_flake
 
@@ -52,8 +53,11 @@ set -euo pipefail
 : "${ANDROID_HOME:?root Android shell must export ANDROID_HOME}"
 : "${ANDROID_NDK_ROOT:?root Android shell must export ANDROID_NDK_ROOT}"
 : "${ZARA_TREALLA_SOURCE_DIR:?root Android shell must export ZARA_TREALLA_SOURCE_DIR}"
+: "${ZARA_TREALLA_LIBRARY_ROOT:?root Android shell must export ZARA_TREALLA_LIBRARY_ROOT}"
 test -d "$ANDROID_NDK_ROOT"
 test -d "$ZARA_TREALLA_SOURCE_DIR"
+test -f "$ZARA_TREALLA_LIBRARY_ROOT/arm64-v8a/libtrealla.a"
+test -f "$ZARA_TREALLA_LIBRARY_ROOT/x86_64/libtrealla.a"
 test "$ANDROID_NDK_ROOT" = "$ANDROID_HOME/ndk/$ZARA_ANDROID_NDK_VERSION"
 cd android
 gradle --no-daemon :app:assembleDebug
