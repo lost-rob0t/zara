@@ -85,6 +85,24 @@ def test_visual_acceptance_stays_non_mutating_but_dedicated_remote_gate_connects
     assert 'device_remote_acceptance.py' in gate
 
 
+def test_remote_gate_binds_rendered_evidence_to_exact_source_and_apk():
+    remote = REMOTE_ACCEPTANCE.read_text(encoding="utf-8")
+    gate = EMULATOR_GATE.read_text(encoding="utf-8")
+
+    assert 'from device_acceptance import Device, SHA256_RE, open_menu, verified_source_sha' in remote
+    assert 'parser.add_argument("--source-sha")' in remote
+    assert 'parser.add_argument("--apk-sha256", required=True)' in remote
+    assert 'source_sha = verified_source_sha(args.source_sha)' in remote
+    assert 'device.source_sha = source_sha' in remote
+    assert 'device.apk_sha256 = apk_sha256' in remote
+    assert 'device.current_profile = "default"' in remote
+    assert 'device.device_api = device.adb("shell", "getprop", "ro.build.version.sdk").strip()' in remote
+    assert '"source_sha": source_sha' in remote
+    assert '"apk_sha256": apk_sha256' in remote
+    assert '--source-sha "$source_sha"' in gate
+    assert '--apk-sha256 "$phone_apk_sha256"' in gate
+
+
 def test_drawer_conversation_overflow_has_pixel_and_geometry_catcher():
     text = source()
     android_flake = ANDROID_FLAKE.read_text(encoding="utf-8")
