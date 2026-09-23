@@ -32,10 +32,29 @@ class WidgetRuntimeProjectionTest {
         val store = WidgetRuntimeSnapshotStore(file)
         val snapshot = WidgetRuntimeSnapshot("CONNECTED", "LOCAL READY", "REMOTE", 91)
         store.save(snapshot)
-        assertEquals(snapshot, WidgetRuntimeSnapshotStore(file).load())
+        assertEquals(snapshot, WidgetRuntimeSnapshotStore(file).load(nowEpochMillis = 91, freshnessMillis = 1_000))
 
         file.writeBytes(ByteArray(9_000) { 1 })
-        assertEquals(WidgetRuntimeSnapshot.unknown(), store.load())
+        assertEquals(WidgetRuntimeSnapshot.unknown(), store.load(nowEpochMillis = 91, freshnessMillis = 1_000))
+    }
+
+    @Test
+    fun `stale or future runtime snapshot degrades instead of remaining ready`() {
+        val root = Files.createTempDirectory("zara-widget-runtime-stale").toFile()
+        val file = File(root, "runtime.bin")
+        val store = WidgetRuntimeSnapshotStore(file)
+        val live = WidgetRuntimeSnapshot("CONNECTED", "LOCAL READY", "LOCAL", 10_000)
+        store.save(live)
+
+        assertEquals(live, store.load(nowEpochMillis = 10_500, freshnessMillis = 1_000))
+        assertEquals(
+            WidgetRuntimeSnapshot("STALE", "LOCAL UNKNOWN", "UNKNOWN", 10_000),
+            store.load(nowEpochMillis = 11_001, freshnessMillis = 1_000),
+        )
+        assertEquals(
+            WidgetRuntimeSnapshot("STALE", "LOCAL UNKNOWN", "UNKNOWN", 10_000),
+            store.load(nowEpochMillis = 9_999, freshnessMillis = 1_000),
+        )
     }
 
     @Test
