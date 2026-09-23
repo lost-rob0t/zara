@@ -77,3 +77,93 @@
             (zara::%pending-promise
              (gethash "duplicate-request"
                       (zara::client-pending client)))))))
+
+(test owner-local-endpoint-is-enforced
+  (signals error
+    (zara:make-client :endpoint "tcp://127.0.0.1:5555")))
+
+(test outbound-queue-limit-fails-closed
+  (let* ((client
+           (zara:make-client
+            :endpoint "ipc:///tmp/zara-test-outbound-limit.sock"
+            :outbound-limit 1))
+         (first
+           (zara::make-%outbound
+            :message
+            (zara::%make-protocol-message
+             :type "ping"
+             :id "queued-1"
+             :timestamp-ns 1)
+            :promise (zara::%make-promise)
+            :kind :ping
+            :deadline (+ (zara::%monotonic-seconds) 1.0d0)))
+         (second
+           (zara::make-%outbound
+            :message
+            (zara::%make-protocol-message
+             :type "ping"
+             :id "queued-2"
+             :timestamp-ns 1)
+            :promise (zara::%make-promise)
+            :kind :ping
+            :deadline (+ (zara::%monotonic-seconds) 1.0d0))))
+    (zara::%enqueue-outbound client first)
+    (signals zara:client-backpressure
+      (zara::%enqueue-outbound client second))
+    (is (= 1 (length (zara::client-outbound-queue client))))
+    (is (eq first (car (zara::client-outbound-queue client))))))
+
+(test event-queue-limit-is-bounded
+  (let* ((client
+           (zara:make-client
+            :endpoint "ipc:///tmp/zara-test-event-limit.sock"
+            :event-limit 1))
+         (first
+           (zara::%make-protocol-message
+            :type "assistant.started"
+            :id "event-1"
+            :timestamp-ns 1))
+         (second
+           (zara::%make-protocol-message
+            :type "assistant.started"
+            :id "event-2"
+            :timestamp-ns 2)))
+    (zara::%enqueue-event client first)
+    (zara::%enqueue-event client second)
+    (is (= 1 (length (zara::client-event-queue client))))
+    (is (string= "event-2"
+                 (zara:protocol-message-id
+                  (car (zara::client-event-queue client)))))))
+
+(test restart-clears-stale-client-generation
+  (let* ((client
+           (zara:make-client
+            :endpoint "ipc:///tmp/zara-test-restart.sock"))
+         (promise (zara::%make-promise))
+         (message
+           (zara::%make-protocol-message
+            :type "ping"
+            :id "stale-request"
+            :timestamp-ns 1)))
+    (setf (zara::client-session-id client) "stale-session"
+          (zara::client-conversation-id client) "stale-conversation")
+    (zara::%enqueue-outbound
+     client
+     (zara::make-%outbound
+      :message message
+      :promise promise
+      :kind :ping
+      :deadline (+ (zara::%monotonic-seconds) 1.0d0)))
+    (zara::%enqueue-event client message)
+    (setf (gethash "stale-request" (zara::client-pending client))
+          (zara::make-%pending
+           :promise promise
+           :kind :ping
+           :deadline (+ (zara::%monotonic-seconds) 1.0d0)))
+    (is (eq :start (zara::%prepare-client-start client)))
+    (is (eq :starting (zara:client-state client)))
+    (is (null (zara:client-session-id client)))
+    (is (null (zara:client-conversation-id client)))
+    (is (null (zara::client-outbound-queue client)))
+    (is (null (zara::client-event-queue client)))
+    (is (zerop (hash-table-count (zara::client-pending client))))))
