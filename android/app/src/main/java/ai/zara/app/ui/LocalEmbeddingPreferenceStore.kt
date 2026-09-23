@@ -47,19 +47,17 @@ class LocalEmbeddingPreferenceStore private constructor(
     }
 
     fun save(configuration: LocalEmbeddingConfiguration): LocalEmbeddingPreferenceSaveResult {
-        val directory = file.absoluteFile.parentFile
-            ?: return LocalEmbeddingPreferenceSaveResult.Failed(
-                "Embedding preference path has no parent directory",
-            )
-
-        if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) {
-            return LocalEmbeddingPreferenceSaveResult.Failed(
-                "Embedding preference directory is unavailable",
-            )
-        }
-
         var temporary: File? = null
         return try {
+            val directory = file.absoluteFile.parentFile
+                ?: return LocalEmbeddingPreferenceSaveResult.Failed(
+                    "Embedding preference path has no parent directory",
+                )
+            if (!directory.isDirectory && !directory.mkdirs() && !directory.isDirectory) {
+                return LocalEmbeddingPreferenceSaveResult.Failed(
+                    "Embedding preference directory is unavailable",
+                )
+            }
             temporary = Files.createTempFile(
                 directory.toPath(),
                 ".${file.name}.",
@@ -73,13 +71,11 @@ class LocalEmbeddingPreferenceStore private constructor(
             replace(temporary, file)
             LocalEmbeddingPreferenceSaveResult.Saved
         } catch (_: Exception) {
+            val cleaned = temporary?.let(::removeIfPresent) ?: true
             LocalEmbeddingPreferenceSaveResult.Failed(
-                "Embedding preference could not be saved",
+                if (cleaned) "Embedding preference could not be saved"
+                else "Embedding preference could not be saved; staged file cleanup is pending",
             )
-        } finally {
-            temporary?.let { temp ->
-                if (temp.exists()) temp.delete()
-            }
         }
     }
 
@@ -99,8 +95,12 @@ class LocalEmbeddingPreferenceStore private constructor(
                 val configuration = LocalEmbeddingConfiguration(enabled = old.enabled)
                 when (val migration = save(configuration)) {
                     LocalEmbeddingPreferenceSaveResult.Saved -> {
-                        legacy.delete()
-                        LocalEmbeddingPreferenceLoadResult(configuration = configuration)
+                        val cleaned = removeIfPresent(legacy)
+                        LocalEmbeddingPreferenceLoadResult(
+                            configuration = configuration,
+                            warning = if (cleaned) null else
+                                "Embedding preference migrated; legacy file cleanup is pending",
+                        )
                     }
                     is LocalEmbeddingPreferenceSaveResult.Failed -> LocalEmbeddingPreferenceLoadResult(
                         configuration = configuration,
@@ -112,11 +112,11 @@ class LocalEmbeddingPreferenceStore private constructor(
     }
 
     private fun read(candidate: File): PreferenceRead {
-        if (!candidate.exists()) return PreferenceRead.Missing
-        if (!candidate.isFile || candidate.length() !in 1..MAX_EMBEDDING_PREFERENCE_BYTES.toLong()) {
-            return PreferenceRead.Failed("Embedding preference is unreadable")
-        }
         return try {
+            if (!candidate.exists()) return PreferenceRead.Missing
+            if (!candidate.isFile || candidate.length() !in 1..MAX_EMBEDDING_PREFERENCE_BYTES.toLong()) {
+                return PreferenceRead.Failed("Embedding preference is unreadable")
+            }
             when (candidate.readText().trim()) {
                 ENABLED -> PreferenceRead.Value(enabled = true)
                 DISABLED -> PreferenceRead.Value(enabled = false)
@@ -125,6 +125,12 @@ class LocalEmbeddingPreferenceStore private constructor(
         } catch (_: Exception) {
             PreferenceRead.Failed("Embedding preference is unreadable")
         }
+    }
+
+    private fun removeIfPresent(candidate: File): Boolean = try {
+        !candidate.exists() || candidate.delete()
+    } catch (_: SecurityException) {
+        false
     }
 
     private fun replace(source: File, destination: File) {
