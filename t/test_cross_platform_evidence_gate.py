@@ -52,9 +52,19 @@ def _write_android_evidence(root: Path, source_sha: str, *, passed: bool = True)
     screenshot = evidence / "empty-shell.png"
     screenshot.write_bytes(payload)
     screenshot_sha = hashlib.sha256(payload).hexdigest()
+    apk_sha256 = "b" * 64
+    runtime = {
+        "mode": None,
+        "runtime_id": None,
+        "model": None,
+        "quantization": None,
+        "phase": None,
+    }
 
     text_evidence = evidence / "empty-shell.ui.txt"
     text_evidence.write_text(
+        'route="chat"\n'
+        f"runtime={json.dumps(runtime, sort_keys=True, separators=(',', ':'))}\n"
         'class="android.widget.TextView" text="Chat" content_desc="" '
         'enabled=true clickable=false selected=true focused=false bounds=[20,40][180,96]\n',
         encoding="utf-8",
@@ -68,8 +78,11 @@ def _write_android_evidence(root: Path, source_sha: str, *, passed: bool = True)
     scenario = {
         "scenario_id": "android.ui.empty-shell",
         "source_sha": source_sha,
+        "apk_sha256": apk_sha256,
         "device_api": "35",
         "profile": "default",
+        "route": "chat",
+        "runtime": runtime,
         "actions": ["capture:empty-shell"],
         "assertions": [
             {
@@ -97,6 +110,7 @@ def _write_android_evidence(root: Path, source_sha: str, *, passed: bool = True)
     )
     manifest = {
         "source_sha": source_sha,
+        "apk_sha256": apk_sha256,
         "serial": "emulator-5554",
         "passed": passed,
         "device": {"api": "35"},
