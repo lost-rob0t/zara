@@ -589,15 +589,35 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 invocation.result = result
 
         if raw_outcome.get("stale"):
-            self._discard_invalid_success(
-                result,
-                handle,
-                expert_operation,
-                idempotency_key,
-            )
-            raise ExpertStaleGenerationError(
+            stale_message = (
                 "expert completion crossed a registry/runtime generation change"
             )
+            if durable_claim is not None:
+                stale_result = replace(
+                    result,
+                    verdict=ExpertVerdict.UNKNOWN,
+                    data={},
+                    evidence_refs=(),
+                    error_code=ExpertErrorCode.INTERRUPTED,
+                    error_message=stale_message,
+                )
+                invocation = self._invocations.get(stale_result.invocation_id)
+                if invocation is not None:
+                    invocation.verdict = stale_result.verdict
+                    invocation.evidence_refs = stale_result.evidence_refs
+                    invocation.usage = dict(stale_result.usage)
+                    invocation.effect_receipts = stale_result.effect_receipts
+                    invocation.result = stale_result
+                    invocation.state = "completed"
+                self._commit_durable_result(durable_claim, stale_result)
+            else:
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertStaleGenerationError(stale_message)
 
         return self._commit_durable_result(durable_claim, result)
 
