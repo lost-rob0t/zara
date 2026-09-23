@@ -13,7 +13,6 @@ import xml.etree.ElementTree as ET
 UI_DUMP = "/data/local/tmp/zara-local-ai-ipc.xml"
 PERMISSION = "ai.zara.app.permission.LOCAL_AI"
 HOST_PACKAGE = "ai.zara.app"
-HOST_COMPONENT = "ai.zara.app/.MainActivity"
 HOST_PROCESS = "ai.zara.app:voice"
 NORMAL_PACKAGE = "ai.zara.llmserve"
 ADVERSARY_PACKAGE = "ai.zara.llmserve.adversary"
@@ -107,14 +106,21 @@ class Device:
             "shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2)
         )
 
-    def await_contains(self, fragment: str, timeout: float = 15.0) -> str:
+    def refresh_until(self, fragment: str, timeout: float = 15.0) -> str:
         deadline = time.monotonic() + timeout
+        last_text = ""
         while time.monotonic() < deadline:
+            self.tap("Refresh status")
+            time.sleep(0.15)
             node = self.find_contains(fragment)
             if node is not None:
                 return node.get("text") or node.get("content-desc") or fragment
+            texts = [node.get("text") or "" for node in self.nodes()]
+            last_text = " | ".join(text for text in texts if text)
             time.sleep(0.2)
-        raise AssertionError(f"UI did not show text containing: {fragment}")
+        raise AssertionError(
+            f"UI did not show refreshed status containing {fragment!r}; last={last_text!r}"
+        )
 
     def permission(self, package: str) -> str:
         return self.adb("shell", "pm", "check-permission", PERMISSION, package)
@@ -129,6 +135,9 @@ class Device:
         )
         value = result.stdout.strip()
         return value or None
+
+    def kill_owner_process(self, pid: str) -> None:
+        self.adb("shell", "run-as", HOST_PACKAGE, "kill", "-9", pid)
 
     def wait_pid_gone(self, old_pid: str, timeout: float = 10.0) -> None:
         deadline = time.monotonic() + timeout
@@ -200,7 +209,7 @@ def main() -> None:
             raise AssertionError(f"Adversary unexpectedly has signature permission: {permission}")
         device.launch(ADVERSARY_PACKAGE)
         device.tap("Start server")
-        status = device.await_contains("permission denied")
+        status = device.refresh_until("permission denied")
         evidence["adversary_status"] = status
         evidence["wrong_signer_denied"] = True
         screenshot = args.output / "local-ai-ipc-wrong-signer.png"
@@ -218,7 +227,7 @@ def main() -> None:
     if normal_permission != "granted":
         raise AssertionError(f"Same-lineage llm-serve lacks signature permission: {normal_permission}")
     device.tap("Start server")
-    status = device.await_contains("No verified local model is installed")
+    status = device.refresh_until("no model")
     evidence["signed_client_status"] = status
     evidence["signed_client_reached_owner"] = True
     pid_before = device.pid()
@@ -229,17 +238,16 @@ def main() -> None:
     digest = device.capture(screenshot)
     evidence["screenshots"].append({"file": screenshot.name, "sha256": digest})
 
-    device.force_stop(HOST_PACKAGE)
+    # Kill only the :voice process without force-stopping the package. The
+    # llm-serve process and its LocalAiRemoteClient stay alive, so the next
+    # request must observe binder death and rebind to a newly created canonical
+    # owner process instead of constructing a second runtime.
+    device.kill_owner_process(pid_before)
     device.wait_pid_gone(pid_before)
-    host_start = device.adb("shell", "am", "start", "-W", "-n", HOST_COMPONENT)
-    if "Status: ok" not in host_start:
-        raise AssertionError(f"Canonical Zara owner did not recreate: {host_start}")
+    device.tap("Start server")
     pid_after = device.wait_new_pid(pid_before)
     evidence["owner_pid_after"] = pid_after
-
-    device.launch(NORMAL_PACKAGE)
-    device.tap("Start server")
-    recovered_status = device.await_contains("No verified local model is installed")
+    recovered_status = device.refresh_until("no model")
     evidence["recovered_status"] = recovered_status
     evidence["owner_process_recreated"] = True
     screenshot = args.output / "local-ai-ipc-rebound.png"
