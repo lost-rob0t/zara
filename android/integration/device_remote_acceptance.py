@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,8 @@ from zmq.utils import z85
 
 APP_PACKAGE = "ai.zara.app"
 APP_DIAGNOSTICS_PATH = "no_backup/zara/diagnostics/local-runtime.log"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PHONE_APK = REPO_ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 _FATAL_LOG_MARKERS = (
     "FATAL EXCEPTION",
     "ANR in ai.zara.app",
@@ -101,10 +104,6 @@ def find_curve_public_key(device: Device) -> str:
 def type_printable_ascii(device: Device, value: str) -> None:
     if not value or any(ord(char) < 0x20 or ord(char) > 0x7E for char in value):
         raise AssertionError("Remote acceptance input must be printable ASCII")
-    # Avoid adb-shell metacharacter handling entirely: only a base64 token enters
-    # the remote command. Keep the whole shell pipeline in one adb shell argument;
-    # splitting it through `sh -c` makes adb join the argv before the device shell
-    # sees it, so only `input` becomes the -c program and no text reaches Compose.
     encoded = base64.b64encode(value.encode("ascii")).decode("ascii")
     command = f'input text "$(printf %s \'{encoded}\' | base64 -d)"'
     device.adb("shell", command)
@@ -129,6 +128,23 @@ def enroll_live_server(fixture: dict[str, str], public_key: str) -> None:
         raise AssertionError("Stock Zara server did not activate Android client enrollment")
     if result.get("public_key") != public_key:
         raise AssertionError("Stock Zara server enrolled a different Android public key")
+
+
+def candidate_apk_sha256(claimed: str | None) -> str:
+    if not PHONE_APK.is_file():
+        raise AssertionError(f"Candidate Android APK is missing: {PHONE_APK}")
+    actual = hashlib.sha256(PHONE_APK.read_bytes()).hexdigest()
+    if claimed is None:
+        return actual
+    normalized = claimed.lower()
+    if SHA256_RE.fullmatch(normalized) is None:
+        raise ValueError("--apk-sha256 must be exactly 64 hexadecimal characters")
+    if normalized != actual:
+        raise AssertionError(
+            "Claimed Android APK SHA-256 does not match the installed candidate: "
+            f"claimed={normalized} actual={actual}"
+        )
+    return actual
 
 
 def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
@@ -180,7 +196,6 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.adb("shell", "pm", "clear", APP_PACKAGE)
     device.start()
 
-    # First prove the embedded Android Local server through the installed UI.
     open_menu(device, "Settings")
     device.tap_tab("Runtime")
     device.await_contains("LOCAL ZARA SERVER", timeout=20.0)
@@ -196,7 +211,6 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.await_contains("LOCAL", timeout=5.0)
     device.capture("local-text-turn")
 
-    # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
     device.tap_tab("Connection")
     device.await_label("Create client identity")
@@ -223,8 +237,6 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.await_contains("session", timeout=5.0)
     device.capture("remote-connected")
 
-    # Force the exact Remote routing policy for the turn so a Local response
-    # cannot accidentally satisfy this end-to-end gate.
     device.tap_tab("Runtime")
     device.tap("Remote")
     open_menu(device, "Chat")
@@ -254,7 +266,7 @@ def main() -> None:
     parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL"))
     parser.add_argument("--fixture-file", type=Path, required=True)
     parser.add_argument("--source-sha")
-    parser.add_argument("--apk-sha256", required=True)
+    parser.add_argument("--apk-sha256")
     parser.add_argument(
         "--output",
         type=Path,
@@ -265,9 +277,7 @@ def main() -> None:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
 
     source_sha = verified_source_sha(args.source_sha)
-    apk_sha256 = args.apk_sha256.lower()
-    if SHA256_RE.fullmatch(apk_sha256) is None:
-        parser.error("--apk-sha256 must be exactly 64 hexadecimal characters")
+    apk_sha256 = candidate_apk_sha256(args.apk_sha256)
 
     args.output.mkdir(parents=True, exist_ok=True)
     fixture = read_fixture(args.fixture_file)
