@@ -315,6 +315,20 @@ class ExpertRegistry(_impl.ExpertRegistry):
             idempotency_key,
         )
         if durable_replay is not None:
+            replay_usage = durable_replay.usage
+            replay_model_calls = (
+                replay_usage.get("model_calls")
+                if isinstance(replay_usage, Mapping)
+                else None
+            )
+            if type(replay_model_calls) is not int or replay_model_calls < 0:
+                raise ExpertInvalidInputError(
+                    "durable replay usage.model_calls must be a non-negative built-in integer"
+                )
+            if replay_model_calls > admitted_limits.max_model_calls:
+                raise ExpertBudgetExceededError(
+                    "durable replay usage.model_calls exceeds admitted max_model_calls"
+                )
             return durable_replay
         durable_started = False
         registered_handler = self._handlers.get(handle.expert_id)
