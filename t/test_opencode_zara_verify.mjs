@@ -51,7 +51,7 @@ test('forged positive return is rejected', async () => {
     await assert.rejects(gate.assert('s'), /invalid_receipt/);
   }
 });
-test('mutation while running cannot produce a current receipt', async () => {
+test('mutation while running rejects stale output before receipt admission', async () => {
   let release;
   const waiting=new Promise(resolve=>{release=resolve;});
   const gate=createVerifyGate({snapshot:async()=>({}),policyDigest:async()=>'p',
@@ -60,8 +60,9 @@ test('mutation while running cannot produce a current receipt', async () => {
       merge_authorized:false,reasons:[],expert:{expert_id:'zara:verifier',operation:'verify.assert',verdict:'succeeded',data:{verified:true},usage:{model_calls:0}}};},now:()=>10});
   const pending=gate.invoke('run','s');
   await new Promise(resolve=>setTimeout(resolve,0));
-  gate.invalidate(); release(); await pending;
-  await assert.rejects(gate.assert('s'),/stale_generation/);
+  gate.invalidate(); release();
+  await assert.rejects(pending,/stale_generation/);
+  await assert.rejects(gate.assert('s'),/verification_required/);
 });
 test('no concurrent verifier process storms', async () => {
   let release; const wait=new Promise(resolve=>{release=resolve;});
@@ -75,9 +76,10 @@ test('no concurrent verifier process storms', async () => {
 
 test('actual hooks reject completed todos and replace unverified completion', async () => {
   const {gate}=fixture(); const hooks=createVerificationHooks(gate);
+  await gate.invoke('run','s');
   await hooks['tool.execute.before']({tool:'edit',sessionID:'s'}, {args:{}});
   await assert.rejects(hooks['tool.execute.before']({tool:'todowrite',sessionID:'s'},
-    {args:{todos:[{status:'completed'}]}}),/verification_required/);
+    {args:{todos:[{status:'completed'}]}}),/stale_generation/);
   const output={text:'Everything is green!'};
   await hooks['experimental.text.complete']({sessionID:'s'},output);
   assert.match(output.text,/BLOCKED/); assert.doesNotMatch(output.text,/Everything is green/);
