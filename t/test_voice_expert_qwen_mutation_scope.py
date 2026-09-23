@@ -1,22 +1,35 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from zara.voice_expert import VoiceExpert
+from zara.tts import Qwen3TTSClient
 
 
-class FakeProlog:
-    def query_once(self, goal: str):
-        raise AssertionError(f"unexpected Prolog query: {goal}")
+class ForbiddenSession:
+    closed = False
+
+    def get(self, *args, **kwargs):
+        raise AssertionError("remote provider inventory must not be read")
+
+    def post(self, *args, **kwargs):
+        raise AssertionError("remote provider mutation must not begin")
+
+    def delete(self, *args, **kwargs):
+        raise AssertionError("remote provider mutation must not begin")
+
+    async def close(self):
+        self.closed = True
 
 
-def expert_for(endpoint: str) -> VoiceExpert:
-    return VoiceExpert(
-        FakeProlog(),
-        {"tts": {"provider": "qwen3", "endpoint": endpoint}},
-    )
+def remote_client(endpoint: str) -> Qwen3TTSClient:
+    client = Qwen3TTSClient(endpoint)
+    client.session = ForbiddenSession()
+    return client
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -26,33 +39,19 @@ def expert_for(endpoint: str) -> VoiceExpert:
         "http://[2001:db8::44]:7860",
     ],
 )
-def test_remote_qwen_clone_rejected_before_provider_or_media_effects(
+async def test_remote_qwen_registration_is_rejected_before_provider_effect(
     endpoint: str,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ):
-    expert = expert_for(endpoint)
-
-    async def forbidden_provider_read():
-        raise AssertionError("remote provider inventory must not be read")
-
-    monkeypatch.setattr(expert, "_qwen_list_voices", forbidden_provider_read)
-    monkeypatch.setattr(
-        expert,
-        "_download_youtube_audio",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            AssertionError("media download must not begin")
-        ),
-    )
+    audio = tmp_path / "authorized.wav"
+    audio.write_bytes(b"RIFFxxxxWAVEfmt data")
+    client = remote_client(endpoint)
 
     with pytest.raises(RuntimeError, match="loopback"):
-        expert.clone_from_youtube(
-            "https://www.youtube.com/watch?v=fixture",
-            "authorized_voice",
-            rights_basis="self",
-            attest_not_public_figure=True,
-        )
+        await client.register_voice("authorized_voice", str(audio), "fixture")
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "endpoint",
     [
@@ -62,19 +61,11 @@ def test_remote_qwen_clone_rejected_before_provider_or_media_effects(
         "http://[2001:db8::44]:7860",
     ],
 )
-def test_remote_qwen_delete_rejected_before_provider_effect(
-    endpoint: str,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    expert = expert_for(endpoint)
-
-    async def forbidden_provider_read():
-        raise AssertionError("remote provider inventory must not be read")
-
-    monkeypatch.setattr(expert, "_qwen_list_voices", forbidden_provider_read)
+async def test_remote_qwen_delete_is_rejected_before_provider_effect(endpoint: str):
+    client = remote_client(endpoint)
 
     with pytest.raises(RuntimeError, match="loopback"):
-        expert.delete_voice("authorized_voice")
+        await client.delete_voice("authorized_voice")
 
 
 @pytest.mark.parametrize(
@@ -87,5 +78,5 @@ def test_remote_qwen_delete_rejected_before_provider_effect(
         "http://[::1]:7860",
     ],
 )
-def test_qwen_voice_mutation_scope_accepts_only_loopback_endpoints(endpoint: str):
-    expert_for(endpoint)._require_local_qwen_mutation_endpoint()
+def test_qwen_voice_mutation_scope_accepts_loopback_endpoints(endpoint: str):
+    Qwen3TTSClient(endpoint)._require_local_voice_mutation_endpoint()
