@@ -11,7 +11,7 @@ import re
 import socket
 import time
 
-from device_acceptance import Device, open_menu
+from device_acceptance import Device, SHA256_RE, open_menu, verified_source_sha
 from zara.security_admin import SecurityAdminClient
 from zmq.utils import z85
 
@@ -253,6 +253,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL"))
     parser.add_argument("--fixture-file", type=Path, required=True)
+    parser.add_argument("--source-sha")
+    parser.add_argument("--apk-sha256", required=True)
     parser.add_argument(
         "--output",
         type=Path,
@@ -262,13 +264,28 @@ def main() -> None:
     if not args.serial:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
 
+    source_sha = verified_source_sha(args.source_sha)
+    apk_sha256 = args.apk_sha256.lower()
+    if SHA256_RE.fullmatch(apk_sha256) is None:
+        parser.error("--apk-sha256 must be exactly 64 hexadecimal characters")
+
     args.output.mkdir(parents=True, exist_ok=True)
     fixture = read_fixture(args.fixture_file)
     device = Device(args.serial, args.output)
+    device.source_sha = source_sha
+    device.apk_sha256 = apk_sha256
+    device.current_profile = "default"
+    device.device_api = device.adb("shell", "getprop", "ro.build.version.sdk").strip()
+    if not re.fullmatch(r"\d+", device.device_api):
+        raise AssertionError(f"Android device API is unavailable: {device.device_api!r}")
     result: dict[str, object] = {
+        "source_sha": source_sha,
+        "apk_sha256": apk_sha256,
         "serial": args.serial,
+        "device": {"api": device.device_api},
         "passed": False,
         "screenshots": device.screenshots,
+        "scenarios": device.scenario_evidence,
     }
 
     try:
