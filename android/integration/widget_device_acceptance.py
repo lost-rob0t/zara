@@ -262,6 +262,7 @@ class Device:
 
     def tap_action_and_assert_route(self, action: str, route_label: str, scenario: str) -> None:
         self.home()
+        self.wait_for(action)
         root = self.hierarchy()
         assertion = self._action_assertion(root, action)
         node = self.find(action, root)
