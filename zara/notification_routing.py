@@ -952,8 +952,21 @@ class NotificationRouter:
         now_ms: Optional[int] = None,
     ) -> tuple[NotificationActionResult, ...]:
         now = int(time.time() * 1000) if now_ms is None else _exact_int(now_ms, "now_ms")
+        durable_decision = self.store.replay_decision(
+            event,
+            coalesced_count=decision.coalesced_count,
+        )
+        if (
+            decision.notification_id != durable_decision.notification_id
+            or decision.decision != durable_decision.decision
+            or decision.sinks != durable_decision.sinks
+            or dict(decision.presentation) != dict(durable_decision.presentation)
+            or decision.evidence != durable_decision.evidence
+            or decision.hooks != durable_decision.hooks
+        ):
+            raise NotificationDenied("notification hook decision does not match durable route decision")
         results: list[NotificationActionResult] = []
-        for hook in decision.hooks:
+        for hook in durable_decision.hooks:
             effect_key = f"hook:{event.notification_id}:{event.generation}:{hook.hook_id}"
             if self.store.effect_done(event.principal_id, event.workspace_id, effect_key):
                 continue
@@ -963,7 +976,7 @@ class NotificationRouter:
                 generation=event.generation,
                 principal_id=event.principal_id,
                 workspace_id=event.workspace_id,
-                sink_peer=decision.sinks[0] if decision.sinks else self.local_peer_id,
+                sink_peer=durable_decision.sinks[0] if durable_decision.sinks else self.local_peer_id,
                 action=hook.kind,
                 argument=hook.argument,
             )
