@@ -37,8 +37,12 @@ def _workflow_step(workflow: str, name: str) -> str:
 def _first_python_heredoc(step: str) -> str:
     marker = "<<'PY'\n"
     start = step.index(marker) + len(marker)
-    end = step.index("\nPY\n", start)
-    return step[start:end]
+    body_lines: list[str] = []
+    for line in step[start:].splitlines():
+        if line.strip() == "PY":
+            return textwrap.dedent("\n".join(body_lines)) + "\n"
+        body_lines.append(line)
+    raise ValueError("unterminated Python heredoc")
 
 
 def _run_recovery_selector(
@@ -156,7 +160,7 @@ def test_release_notes_preserve_canonical_markdown_section() -> None:
 def test_release_notes_reject_missing_duplicate_or_entryless_sections(markdown: str) -> None:
     module = _module()
 
-    with pytest.raises(module.ReleaseChangelogError):
+    with pytest.raises(module.ReleaseChangelogError, match="already tagged"):
         module.extract_version_notes(markdown, "1.2.3")
 
 
