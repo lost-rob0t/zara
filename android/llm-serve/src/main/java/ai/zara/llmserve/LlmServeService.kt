@@ -37,7 +37,14 @@ class LlmServeService : Service() {
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> startServer()
             ACTION_STOP -> stopServerAndSelf()
-            ACTION_IMPORT_MODEL -> importModel(intent)
+            ACTION_IMPORT_MODEL -> {
+                val importIntent = intent
+                if (importIntent == null) {
+                    persistStatus("failed: missing import intent")
+                } else {
+                    importModel(importIntent)
+                }
+            }
             else -> persistStatus("error: unsupported action")
         }
         return START_STICKY

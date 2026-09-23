@@ -11,6 +11,8 @@ def test_llm_serve_module_is_part_of_android_build():
     assert 'include(":llm-serve")' in settings
     assert 'applicationId = "ai.zara.llmserve"' in build
     assert '../app/src/main/java/ai/zara/app/localai' in build
+    assert "kotlin.directories" in build
+    assert ".java.srcDir" not in build
     assert "libs.litert.lm.android" in build
 
 

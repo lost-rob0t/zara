@@ -37,7 +37,9 @@ android {
     }
 
     sourceSets {
-        getByName("main").java.srcDir("../app/src/main/java/ai/zara/app/localai")
+        getByName("main") {
+            kotlin.directories += "../app/src/main/java/ai/zara/app/localai"
+        }
     }
 
     signingConfigs {
