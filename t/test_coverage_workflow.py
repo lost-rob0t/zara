@@ -45,3 +45,15 @@ def test_standalone_coverage_scopes_trusted_base_to_coverage_gate() -> None:
 def test_coverage_script_emits_junit_in_uploaded_artifact_dir() -> None:
     text = _read(COVERAGE_SCRIPT)
     assert '--junit-xml="$ARTIFACT_DIR/junit.xml"' in text
+
+
+def test_coverage_script_generates_required_audio_fixtures_before_pytest() -> None:
+    text = _read(COVERAGE_SCRIPT)
+    fixture_dir = 'fixture_dir="$repo_root/t/fixtures/audio"'
+    generator = 'python "$repo_root/scripts/generate-audio-fixtures.py" "$fixture_dir"'
+    pytest = "python -m pytest"
+
+    assert fixture_dir in text
+    assert generator in text
+    assert text.index(generator) < text.index(pytest)
+    assert 'trap \'rm -rf "$fixture_dir"\' EXIT' in text
