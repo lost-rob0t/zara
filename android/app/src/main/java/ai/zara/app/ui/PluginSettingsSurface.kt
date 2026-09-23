@@ -11,6 +11,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,11 +19,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -322,16 +323,27 @@ private fun PluginInstallSettings() {
 @Composable
 private fun PluginPickerAction(enabled: Boolean, onClick: () -> Unit) {
     val tokens = LocalZaraTokens.current
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "Choose APK" },
-        colors = ButtonDefaults.buttonColors(
-            containerColor = tokens.primary,
-            contentColor = Color(0xFF160018),
-        ),
+    Surface(
+        color = if (enabled) tokens.primary else tokens.surface,
+        contentColor = if (enabled) Color(0xFF160018) else tokens.textMuted,
+        shape = MaterialTheme.shapes.medium,
     ) {
-        Text("Choose APK")
+        Row(
+            modifier = Modifier
+                .clickable(
+                    enabled = enabled,
+                    role = Role.Button,
+                    onClick = onClick,
+                )
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "Choose APK"
+                }
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Choose APK")
+        }
     }
 }
 
