@@ -66,6 +66,17 @@ class YouTubeSearchArgs(BaseModel):
 class VoiceCloneYouTubeArgs(BaseModel):
     url: str = Field(..., min_length=1, max_length=2048)
     voice_name: str = Field(..., min_length=1, max_length=MAX_VOICE_NAME_CHARS)
+    rights_basis: Literal["self", "consent", "licensed"] = Field(
+        ...,
+        description="Authority for creating the reference voice.",
+    )
+    attest_not_public_figure: bool = Field(
+        ...,
+        description=(
+            "Must be true: the operator explicitly attests that the source subject "
+            "is not a public figure."
+        ),
+    )
     start_seconds: float = Field(0.0, ge=0.0, le=86_400.0)
     duration_seconds: float = Field(15.0, ge=3.0, le=45.0)
     reference_text: str = Field("", max_length=2000)
@@ -346,11 +357,17 @@ class VoiceExpert:
         self,
         url: str,
         voice_name: str,
+        rights_basis: str,
+        attest_not_public_figure: bool,
         start_seconds: float = 0.0,
         duration_seconds: float = 15.0,
         reference_text: str = "",
         speaker_id: Optional[str] = None,
     ) -> str:
+        rights_basis = self._validate_clone_authority(
+            rights_basis,
+            attest_not_public_figure,
+        )
         self._validate_voice_name(voice_name)
         self._youtube_url(url)
         ffmpeg = self._require_binary("ffmpeg")
@@ -445,12 +462,23 @@ class VoiceExpert:
                     reference_text=str(reference_text).strip(),
                 )
             )
+
+        inventory = [str(voice) for voice in asyncio.run(self._qwen_list_voices())]
+        if voice_name not in inventory:
+            raise RuntimeError(
+                "voice registration was not confirmed by fresh provider inventory"
+            )
         return json.dumps(
             {
                 "registered": True,
                 "provider": "qwen3",
                 "voice": voice_name,
+                "rights_basis": rights_basis,
                 "provider_result": result,
+                "postcondition": {
+                    "source": "fresh_provider_inventory",
+                    "voice_present": True,
+                },
                 "source_segment": (
                     selected_segment.to_dict()
                     if selected_segment is not None
@@ -466,12 +494,21 @@ class VoiceExpert:
     def delete_voice(self, voice_name: str) -> str:
         self._validate_voice_name(voice_name)
         result = asyncio.run(self._qwen_delete_voice(voice_name))
+        inventory = [str(voice) for voice in asyncio.run(self._qwen_list_voices())]
+        if voice_name in inventory:
+            raise RuntimeError(
+                "voice deletion was not confirmed by fresh provider inventory"
+            )
         return json.dumps(
             {
                 "deleted": True,
                 "provider": "qwen3",
                 "voice": voice_name,
                 "provider_result": result,
+                "postcondition": {
+                    "source": "fresh_provider_inventory",
+                    "voice_present": False,
+                },
             },
             ensure_ascii=False,
         )
@@ -648,6 +685,20 @@ class VoiceExpert:
             )
 
     @staticmethod
+    def _validate_clone_authority(
+        rights_basis: str,
+        attest_not_public_figure: bool,
+    ) -> str:
+        normalized = str(rights_basis).strip().lower()
+        if normalized not in {"self", "consent", "licensed"}:
+            raise ValueError("rights_basis must be one of: self, consent, licensed")
+        if attest_not_public_figure is not True:
+            raise ValueError(
+                "voice cloning requires explicit attestation that the subject is not a public figure"
+            )
+        return normalized
+
+    @staticmethod
     def _youtube_url(url: str) -> str:
         parsed = urlsplit(str(url).strip())
         host = (parsed.hostname or "").lower().rstrip(".")
@@ -785,8 +836,9 @@ def build_voice_tools(prolog_engine: Any, config: Any) -> list[StructuredTool]:
             expert.clone_from_youtube,
             name="voice_clone_from_youtube",
             description=(
-                "Create a Qwen3-TTS reference voice from a short YouTube clip of any "
-                "person. Optionally select a diarized speaker_id so Zara automatically "
+                "Create a Qwen3-TTS reference voice from an authorized short YouTube clip. "
+                "Requires an explicit rights basis and attestation that the source subject "
+                "is not a public figure. Optionally select a diarized speaker_id so Zara "
                 "uses that speaker's longest VAD-confirmed segment."
             ),
             args_schema=VoiceCloneYouTubeArgs,
