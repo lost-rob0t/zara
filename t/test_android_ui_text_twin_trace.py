@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 from pathlib import Path
 
@@ -23,11 +24,7 @@ def _load_device_acceptance_module():
     return module
 
 
-def test_text_twin_contains_bounded_action_and_assertion_trace(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    module = _load_device_acceptance_module()
+def _prepared_device(module, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     device = module.Device("emulator-5554", tmp_path)
     device.source_sha = "a" * 40
     device.apk_sha256 = "b" * 64
@@ -57,6 +54,15 @@ def test_text_twin_contains_bounded_action_and_assertion_trace(
 
     monkeypatch.setattr(device, "adb", fake_adb)
     monkeypatch.setattr(device, "_hierarchy_text", lambda: hierarchy)
+    return device
+
+
+def test_text_twin_contains_bounded_action_and_assertion_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = _prepared_device(module, monkeypatch, tmp_path)
 
     device.record_action("tap:Runtime")
     device.record_assertion("local-ready", passed=True, detail="runtime phase is ready")
@@ -67,3 +73,29 @@ def test_text_twin_contains_bounded_action_and_assertion_trace(
     assert "ACTION 2 capture:local-ready" in text_twin
     assert "ASSERT PASS local-ready runtime phase is ready" in text_twin
     assert "ASSERT PASS screenshot-png device returned PNG screenshot evidence" in text_twin
+
+
+def test_text_twin_and_hash_track_late_visual_assertion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = _prepared_device(module, monkeypatch, tmp_path)
+    device.capture("overflow")
+    record = device.scenario_evidence[0]
+    original_hash = record["text_evidence"]["sha256"]
+
+    device._append_scenario_assertion(
+        "overflow",
+        assertion_name="transient-surface-visible",
+        detail="actions=Pin,Rename,Move to project viewport=1080x2400",
+    )
+
+    text_path = tmp_path / "overflow.ui.txt"
+    text_twin = text_path.read_text(encoding="utf-8")
+    assert (
+        "ASSERT PASS transient-surface-visible "
+        "actions=Pin,Rename,Move to project viewport=1080x2400"
+    ) in text_twin
+    assert record["text_evidence"]["sha256"] == hashlib.sha256(text_path.read_bytes()).hexdigest()
+    assert record["text_evidence"]["sha256"] != original_hash
