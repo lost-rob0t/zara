@@ -209,6 +209,13 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.tap("↑")
     device.await_contains("zara_ready", timeout=20.0)
     device.await_contains("LOCAL", timeout=5.0)
+    device.runtime_evidence = {
+        "mode": "local",
+        "runtime_id": "local-zara-server",
+        "model": None,
+        "quantization": None,
+        "phase": "ready",
+    }
     device.capture("local-text-turn")
 
     open_menu(device, "Settings")
@@ -235,6 +242,13 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.tap("Connect")
     device.await_label("connected", timeout=20.0)
     device.await_contains("session", timeout=5.0)
+    device.runtime_evidence = {
+        "mode": "local",
+        "runtime_id": "local-zara-server",
+        "model": None,
+        "quantization": None,
+        "phase": "connected",
+    }
     device.capture("remote-connected")
 
     device.tap_tab("Runtime")
@@ -248,6 +262,13 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     signal_turn_acceptance(fixture)
     device.await_contains("stock server response", timeout=20.0)
     device.await_contains("REMOTE", timeout=5.0)
+    device.runtime_evidence = {
+        "mode": "remote",
+        "runtime_id": "stock-zara-server",
+        "model": None,
+        "quantization": None,
+        "phase": "connected",
+    }
     device.capture("remote-text-turn")
 
     return {
