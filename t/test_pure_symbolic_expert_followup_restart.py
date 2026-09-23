@@ -108,3 +108,52 @@ async def test_persisted_expert_answer_routes_why_after_restart(tmp_path) -> Non
     assert current.provider_calls == 0
     assert current.model_calls == 0
     reopened_database.close()
+
+
+def test_persisted_dialogue_state_uses_one_canonical_projection_snapshot() -> None:
+    conversation_id = "conv-atomic-dialogue-state"
+    prior_act = "answer(expert,\"checked\",evidence('evidence:atomic'))"
+    projection = SymbolicConversationProjection(
+        conversation_id=conversation_id,
+        projection_generation=7,
+        runtime_generation=9,
+        turn_id="turn-expert-answer",
+        outcome="success",
+        project_id="workspace:atomic",
+        project_generation=4,
+        dialogue_act="expert.answer",
+        dialogue_state={
+            "response_act_term": prior_act,
+            "prolog_context_term": "[]",
+            "prolog_context_project_id": "workspace:atomic",
+            "prolog_context_project_generation": 4,
+        },
+        renderer_provenance="symbolic-dcg/v1",
+        providers_enabled=False,
+        max_model_calls=0,
+        provider_calls=0,
+        model_calls=0,
+    )
+
+    class OneShotProjectionStore:
+        def __init__(self) -> None:
+            self.loads = 0
+
+        def load_symbolic_projection(self, requested_conversation_id: str):
+            assert requested_conversation_id == conversation_id
+            self.loads += 1
+            if self.loads != 1:
+                raise AssertionError("dialogue state was assembled from split snapshots")
+            return projection
+
+    store = OneShotProjectionStore()
+    adapter = PureSymbolicProjectionAdapter(store)
+
+    context_term, previous_act_term, generation = adapter.load_dialogue_state(
+        conversation_id
+    )
+
+    assert context_term == "[]"
+    assert previous_act_term == prior_act
+    assert generation == 7
+    assert store.loads == 1
