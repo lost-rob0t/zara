@@ -370,6 +370,13 @@ class VoiceExpert:
         )
         self._validate_voice_name(voice_name)
         self._youtube_url(url)
+        inventory_before = [
+            str(voice) for voice in asyncio.run(self._qwen_list_voices())
+        ]
+        if voice_name in inventory_before:
+            raise RuntimeError(
+                f"voice {voice_name!r} already exists; refusing ambiguous registration"
+            )
         ffmpeg = self._require_binary("ffmpeg")
 
         selected_segment = None
