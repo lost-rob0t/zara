@@ -198,12 +198,12 @@ def test_coverage_entrypoint_rejects_unknown_arguments_before_pytest(tmp_path):
     )
     fake_python.chmod(0o755)
     env = os.environ.copy()
-    env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+    env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
     env["COVERAGE_PYTHON_MARKER"] = str(marker)
     env["ARTIFACT_DIR"] = str(tmp_path / "artifacts")
 
     result = subprocess.run(
-        ["/bin/bash", str(ROOT / "scripts" / "test-coverage.sh"), "--bogus"],
+        ["bash", str(ROOT / "scripts" / "test-coverage.sh"), "--bogus"],
         cwd=ROOT,
         env=env,
         capture_output=True,
