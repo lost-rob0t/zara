@@ -27,6 +27,7 @@ mkdir -p "$ARTIFACT_DIR"
 python -m pytest \
   -q \
   -o faulthandler_timeout=15 \
+  --junit-xml="$ARTIFACT_DIR/junit.xml" \
   --cov=zara \
   --cov-branch \
   --cov-config="$repo_root/.coveragerc" \
