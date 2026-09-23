@@ -6,16 +6,21 @@ import path from 'node:path';
 
 const executeFile = promisify(execFile);
 const protocol = 'ZARA-VERIFY/1';
+const releaseBaseRef = 'origin/release/0.3.x';
 const protectedPaths = [
   'verification/zara_verify_runner.py', 'verification/zara_verify.pl',
   'verification/zara_verifier_expert.py', 'contracts/zara-verify-v1/spec.json',
   '.opencode/plugins/zara-verify.js', '.opencode/lib/zara-verify.mjs',
 ];
 
+export function verificationBaseRef() {
+  return releaseBaseRef;
+}
+
 export function makeRunner(root) {
   async function execute(operation, session, signal) {
     const args = [path.join(root, 'verification/zara_verify_runner.py'), operation,
-      '--root', root, '--base', 'origin/master', '--session', session];
+      '--root', root, '--base', releaseBaseRef, '--session', session];
     let output;
     try {
       const result = await executeFile('python3', args, {
@@ -72,7 +77,9 @@ export function createVerifyGate({execute, snapshot, policyDigest, now=Date.now}
         report.ttl_ms <= 0 || report.ttl_ms > 600000 ||
         report.expert?.expert_id !== 'zara:verifier' || report.expert?.operation !== 'verify.assert' ||
         report.expert?.verdict !== 'succeeded' || report.expert?.data?.verified !== true ||
-        report.expert?.usage?.model_calls !== 0) throw new Error('invalid_receipt');
+        report.expert?.usage?.model_calls !== 0 || report.expert?.usage?.provider_calls !== 0) {
+      throw new Error('invalid_receipt');
+    }
     const at = now();
     if (report.created_ms > at || at >= report.created_ms + report.ttl_ms) throw new Error('expired_receipt');
     const source = await snapshot(session);
