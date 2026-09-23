@@ -38,7 +38,6 @@ object LocalAiRemoteProtocol {
 
     private const val KEY_QUANTIZATION = "quantization"
     private const val KEY_SHA256 = "sha256"
-    private const val KEY_PATH = "path"
     private const val KEY_MAX_CONTEXT_TOKENS = "max_context_tokens"
     private const val KEY_BACKEND = "backend"
     private const val KEY_FORMAT = "format"
@@ -71,9 +70,7 @@ object LocalAiRemoteProtocol {
         format = LocalModelFormat.requireKnown(requireString(bundle, KEY_FORMAT)),
     )
 
-    fun modelToBundle(spec: LocalModelSpec): Bundle = metadataToBundle(spec.metadata()).apply {
-        putString(KEY_PATH, spec.path)
-    }
+    fun modelToBundle(spec: LocalModelSpec): Bundle = metadataToBundle(spec.metadata())
 
     fun modelFromBundle(bundle: Bundle): LocalModelSpec {
         val metadata = metadataFromBundle(bundle)
@@ -82,7 +79,7 @@ object LocalAiRemoteProtocol {
             version = metadata.version,
             quantization = metadata.quantization,
             sha256 = metadata.sha256,
-            path = requireString(bundle, KEY_PATH),
+            path = "${metadata.id}@${metadata.version}${metadata.format.extension}",
             maxContextTokens = metadata.maxContextTokens,
             backend = metadata.backend,
             format = metadata.format,
