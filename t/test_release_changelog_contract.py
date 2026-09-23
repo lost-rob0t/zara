@@ -291,6 +291,31 @@ def test_existing_tag_ref_is_release_source_authority_not_target_commitish() -> 
     assert '--verify-tag' in stage
 
 
+def test_release_workflow_python_heredocs_stay_inside_yaml_run_blocks() -> None:
+    lines = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8").splitlines()
+    heredocs = 0
+    block_indent = " " * 10
+
+    for index, line in enumerate(lines):
+        if "<<'PY'" not in line:
+            continue
+        heredocs += 1
+        cursor = index + 1
+        while cursor < len(lines) and lines[cursor].strip() != "PY":
+            if lines[cursor]:
+                assert lines[cursor].startswith(block_indent), (
+                    f"Python heredoc line escaped YAML run block at {cursor + 1}: "
+                    f"{lines[cursor]!r}"
+                )
+            cursor += 1
+        assert cursor < len(lines), f"unterminated Python heredoc starting at {index + 1}"
+        assert lines[cursor] == f"{block_indent}PY", (
+            f"Python heredoc terminator escaped YAML run block at {cursor + 1}"
+        )
+
+    assert heredocs >= 5
+
+
 def test_recovery_accepts_owned_draft_with_default_target_commitish(
     tmp_path: Path,
 ) -> None:
