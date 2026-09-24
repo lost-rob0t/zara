@@ -461,71 +461,102 @@ class NotificationRouterStore:
 
     def observe(self, event: NotificationEvent, digest: str, now_ms: int) -> tuple[bool, int, bool]:
         event_json = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
-        row = self._db.fetch_one(
-            """
-            SELECT generation, content_digest, event_json, count
-              FROM notification_router_seen
-             WHERE principal_id = ? AND workspace_id = ? AND notification_id = ?
-            """,
-            (event.principal_id, event.workspace_id, event.notification_id),
-        )
-        if row is not None:
-            stored_generation = int(row["generation"])
-            if stored_generation > event.generation:
-                raise NotificationStale("notification generation is older than durable route state")
-            if stored_generation == event.generation:
-                if str(row["content_digest"]) != digest or str(row["event_json"]) != event_json:
-                    raise NotificationStale("notification generation replay diverges from durable route state")
-                count = int(row["count"]) + 1
-                self._db.execute(
+        key = (event.principal_id, event.workspace_id, event.notification_id)
+        with self._db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                """
+                SELECT generation, content_digest, event_json, count
+                  FROM notification_router_seen
+                 WHERE principal_id = ? AND workspace_id = ? AND notification_id = ?
+                """,
+                key,
+            ).fetchone()
+            if row is not None:
+                stored_generation = int(row["generation"])
+                if stored_generation > event.generation:
+                    raise NotificationStale(
+                        "notification generation is older than durable route state"
+                    )
+                if stored_generation == event.generation:
+                    if (
+                        str(row["content_digest"]) != digest
+                        or str(row["event_json"]) != event_json
+                    ):
+                        raise NotificationStale(
+                            "notification generation replay diverges from durable route state"
+                        )
+                    count = int(row["count"]) + 1
+                    conn.execute(
+                        """
+                        UPDATE notification_router_seen
+                           SET last_seen_ms=?, count=count+1
+                         WHERE principal_id=? AND workspace_id=? AND notification_id=?
+                           AND generation=?
+                        """,
+                        (now_ms, *key, event.generation),
+                    )
+                    return True, count, True
+
+            duplicate = row is not None and str(row["content_digest"]) == digest
+            count = int(row["count"]) + 1 if row is not None else 1
+            if row is None:
+                conn.execute(
                     """
-                    UPDATE notification_router_seen
-                       SET last_seen_ms=?, count=count+1
-                     WHERE principal_id=? AND workspace_id=? AND notification_id=?
+                    INSERT INTO notification_router_seen (
+                        principal_id, workspace_id, notification_id, generation, app,
+                        owner_peer, content_digest, event_json, first_seen_ms,
+                        last_seen_ms, expires_at_ms, count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        now_ms,
                         event.principal_id,
                         event.workspace_id,
                         event.notification_id,
+                        event.generation,
+                        event.app,
+                        event.owner_peer,
+                        digest,
+                        event_json,
+                        now_ms,
+                        now_ms,
+                        event.expires_at_ms,
+                        count,
                     ),
                 )
-                return True, count, True
-        duplicate = row is not None and row["content_digest"] == digest
-        count = int(row["count"]) + 1 if row is not None else 1
-        self._db.execute(
-            """
-            INSERT INTO notification_router_seen (
-                principal_id, workspace_id, notification_id, generation, app,
-                owner_peer, content_digest, event_json, first_seen_ms,
-                last_seen_ms, expires_at_ms, count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(principal_id, workspace_id, notification_id) DO UPDATE SET
-                generation=excluded.generation,
-                app=excluded.app,
-                owner_peer=excluded.owner_peer,
-                content_digest=excluded.content_digest,
-                event_json=excluded.event_json,
-                last_seen_ms=excluded.last_seen_ms,
-                expires_at_ms=excluded.expires_at_ms,
-                count=notification_router_seen.count + 1
-            """,
-            (
-                event.principal_id,
-                event.workspace_id,
-                event.notification_id,
-                event.generation,
-                event.app,
-                event.owner_peer,
-                digest,
-                event_json,
-                now_ms,
-                now_ms,
-                event.expires_at_ms,
-                count,
-            ),
-        )
-        return duplicate, count, False
+            else:
+                updated = conn.execute(
+                    """
+                    UPDATE notification_router_seen
+                       SET generation=?,
+                           app=?,
+                           owner_peer=?,
+                           content_digest=?,
+                           event_json=?,
+                           last_seen_ms=?,
+                           expires_at_ms=?,
+                           count=count+1
+                     WHERE principal_id=? AND workspace_id=? AND notification_id=?
+                       AND generation < ?
+                    """,
+                    (
+                        event.generation,
+                        event.app,
+                        event.owner_peer,
+                        digest,
+                        event_json,
+                        now_ms,
+                        event.expires_at_ms,
+                        event.principal_id,
+                        event.workspace_id,
+                        event.notification_id,
+                        event.generation,
+                    ),
+                )
+                if updated.rowcount != 1:
+                    raise NotificationStale(
+                        "notification generation lost durable admission authority"
+                    )
+            return duplicate, count, False
 
     def recent_app_count(self, event: NotificationEvent, now_ms: int, window_ms: int = 60_000) -> int:
         row = self._db.fetch_one(
@@ -588,8 +619,30 @@ class NotificationRouterStore:
         return NotificationEvent(**raw)
 
     def record_route_state(self, event: NotificationEvent, decision: NotificationDecision) -> None:
+        event_json = json.dumps(asdict(event), sort_keys=True, separators=(",", ":"))
         decision_json = json.dumps(asdict(decision), sort_keys=True, separators=(",", ":"))
         with self._db.transaction(immediate=True) as conn:
+            admitted = conn.execute(
+                """
+                SELECT generation, event_json
+                  FROM notification_router_seen
+                 WHERE principal_id=? AND workspace_id=? AND notification_id=?
+                """,
+                (
+                    event.principal_id,
+                    event.workspace_id,
+                    event.notification_id,
+                ),
+            ).fetchone()
+            if (
+                admitted is None
+                or int(admitted["generation"]) != event.generation
+                or str(admitted["event_json"]) != event_json
+            ):
+                raise NotificationStale(
+                    "notification route state no longer matches durable source authority"
+                )
+
             existing = conn.execute(
                 """
                 SELECT decision_json FROM notification_router_decisions
