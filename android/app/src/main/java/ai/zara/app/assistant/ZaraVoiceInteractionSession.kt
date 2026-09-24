@@ -94,6 +94,7 @@ class ZaraVoiceInteractionSession(
                 mode = appSession.runtimeMode(),
                 localState = appSession.localServerState(),
                 runtimeState = appSession.state(),
+                remoteModelReady = appSession.cloudModelReady(),
             )
         ) {
             AssistantCapturePlan.Local -> {
@@ -138,6 +139,7 @@ class ZaraVoiceInteractionSession(
                 mode = appSession.runtimeMode(),
                 localState = appSession.localServerState(),
                 runtimeState = appSession.state(),
+                remoteModelReady = appSession.cloudModelReady(),
             )
         ) {
             AssistantCapturePlan.Local -> beginLocalPushToTalk(permissionGranted)
