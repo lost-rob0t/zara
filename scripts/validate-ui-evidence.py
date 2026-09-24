@@ -460,6 +460,17 @@ def validate_android(
         for supplemental_name in ("remote-manifest.json", "recovery-manifest.json"):
             supplemental_path = manifest_path.with_name(supplemental_name)
             if supplemental_path != manifest_path and supplemental_path.is_file():
+                supplemental_manifest = _load_manifest(supplemental_path)
+                supplemental_apk_sha256 = _require_sha256(
+                    supplemental_manifest.get("apk_sha256"),
+                    label=f"android supplemental {supplemental_name} apk_sha256",
+                )
+                if supplemental_apk_sha256 != manifest_apk_sha256:
+                    raise EvidenceError(
+                        "android supplemental apk_sha256 mismatch: "
+                        f"{supplemental_name}: expected {manifest_apk_sha256}, "
+                        f"got {supplemental_apk_sha256}"
+                    )
                 count += validate_android(
                     supplemental_path,
                     source_sha,
