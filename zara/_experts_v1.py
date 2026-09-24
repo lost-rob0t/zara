@@ -14,6 +14,7 @@ import hashlib
 import inspect
 import json
 import logging
+import math
 import re
 import threading
 import uuid
@@ -943,7 +944,11 @@ def _validate_input_value(value: Any, *, depth: int = 0) -> None:
         raise ExpertInvalidInputError("input payload exceeds bounded depth")
     if isinstance(value, bool):
         return
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ExpertInvalidInputError("input payload contains non-finite number")
         return
     if isinstance(value, str):
         if len(value) > _MAX_INPUT_STRING:
@@ -977,6 +982,10 @@ def _check_field_value(spec: FieldSpec, value: Any) -> None:
     elif field_type is FieldType.NUMBER:
         if type(value) not in (int, float):
             raise ExpertInvalidInputError(f"input field {spec.name!r} must be a number")
+        if type(value) is float and not math.isfinite(value):
+            raise ExpertInvalidInputError(
+                f"input field {spec.name!r} must be a finite number"
+            )
     elif field_type in (
         FieldType.STRING,
         FieldType.REFERENCE,
@@ -1581,7 +1590,10 @@ class ExpertRegistry:
         try:
             _validate_input_value(resolved_input)
             serialized = json.dumps(
-                resolved_input, sort_keys=True, separators=(",", ":")
+                resolved_input,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
             )
         except (TypeError, ValueError) as error:
             raise ExpertInvalidInputError(
