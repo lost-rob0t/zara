@@ -24,7 +24,7 @@ class Observations:
         return {'required':['repository']}
     def verified_receipt(self):
         self.receipt = {'protocol':'ZARA-VERIFY/1','scope':'local','verdict':'verified',
-            'source':self.snapshot(),'model_calls':0,'merge_authorized':False,
+            'source':self.snapshot(),'model_calls':0,'provider_calls':0,'merge_authorized':False,
             'created_ms':int(time.time()*1000),'ttl_ms':600000,'reasons':[]}
 
 
@@ -46,6 +46,16 @@ def test_host_observed_receipt_is_required():
     result=ZaraVerifierExpert(host)(expert_operation='verify.assert')
     assert result['verdict']=='succeeded' and result['data']['verified'] is True
     assert result['data']['merge_authorized'] is False
+
+
+def test_provider_accounting_tamper_blocks_host_receipt():
+    for value in (None, 1, False):
+        host=Observations(); host.verified_receipt()
+        if value is None:
+            del host.receipt['provider_calls']
+        else:
+            host.receipt['provider_calls']=value
+        assert ZaraVerifierExpert(host)(expert_operation='verify.assert')['verdict']=='blocked'
 
 
 def test_scope_change_during_observation_fences_result():
