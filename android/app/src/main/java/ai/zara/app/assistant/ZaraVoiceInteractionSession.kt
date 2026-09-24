@@ -107,7 +107,16 @@ class ZaraVoiceInteractionSession(
                     updateStatus("Voice unavailable: ${UiOperationFailure.summarize(error)}")
                 }
             }
-            AssistantCapturePlan.Remote -> updateStatus("Hold to talk to Zara")
+            AssistantCapturePlan.Remote -> {
+                captureBackend = CaptureBackend.Local
+                try {
+                    localVoice.start(permissionGranted)
+                    updateStatus("Listening locally…")
+                } catch (_: Throwable) {
+                    captureBackend = null
+                    updateStatus("Hold to talk to Zara")
+                }
+            }
             is AssistantCapturePlan.Reject ->
                 updateStatus("Voice unavailable: ${plan.reason}")
         }
