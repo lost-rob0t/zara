@@ -171,6 +171,7 @@ def test_ignored_generated_namespace_is_not_source_mutation(
     git(repository, 'add', '.gitignore')
     git(repository, 'commit', '-qm', 'ignore generated fixture')
     target = repository / 'pkg' / 'generated.tmp'
+    assert runner.git_ignored(repository, 'pkg/generated.tmp')
 
     result = run_fixture(
         repository,
@@ -180,7 +181,7 @@ def test_ignored_generated_namespace_is_not_source_mutation(
     )
 
     assert not target.exists()
-    assert result['verdict'] == 'verified', result
+    assert result['verdict'] == 'verified', result['reasons']
     assert result['reasons'] == []
 
 
