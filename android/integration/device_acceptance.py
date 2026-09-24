@@ -28,6 +28,10 @@ SYSTEM_ANR_DIALOGS = (
         "com.google.android.googlesdksetup isn't responding",
     ),
 )
+SYSTEM_ANR_ACTIONS = {
+    "Close app": "android:id/aerr_close",
+    "Wait": "android:id/aerr_wait",
+}
 SYSTEM_ANR_DISMISSAL_LIMIT = 2
 SYSTEM_ANR_CLEAR_ATTEMPTS = 3
 SYSTEM_ANR_CLEAR_RETRY_DELAY_SECONDS = 0.1
@@ -95,14 +99,25 @@ class Device:
         ) from last_error
 
     def find(self, label: str):
-        return next(
-            (
-                node
-                for node in self.nodes()
-                if label in (node.get("text"), node.get("content-desc"))
-            ),
-            None,
-        )
+        matches = [
+            node
+            for node in self.nodes()
+            if label in (node.get("text"), node.get("content-desc"))
+        ]
+        expected_resource_id = SYSTEM_ANR_ACTIONS.get(label)
+        if expected_resource_id is not None:
+            system_action = next(
+                (
+                    node
+                    for node in matches
+                    if node.get("package") == "android"
+                    and node.get("resource-id") == expected_resource_id
+                ),
+                None,
+            )
+            if system_action is not None:
+                return system_action
+        return matches[0] if matches else None
 
     def find_contains(self, fragment: str):
         return next(
@@ -141,10 +156,15 @@ class Device:
         )
 
     def exact_anr_is_present(self, package: str, dialog_text: str) -> bool:
-        node = self.find_contains(dialog_text)
-        if node is None:
+        first_match = self.find_contains(dialog_text)
+        if first_match is None:
             return False
-        return self.node_label(node) == dialog_text and node.get("package") == package
+        if self.node_label(first_match) == dialog_text and first_match.get("package") == package:
+            return True
+        return any(
+            self.node_label(node) == dialog_text and node.get("package") == package
+            for node in self.nodes()
+        )
 
     def reveal(self, label: str) -> None:
         width, height = self.size()
