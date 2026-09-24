@@ -94,6 +94,27 @@ def test_overflow_visual_gate_rejects_border_only_contrast(tmp_path: Path) -> No
             screenshot_name="border-only",
         )
 
+    scenario = device.scenario_evidence[-1]
+    failed_assertion = next(
+        assertion
+        for assertion in scenario["assertions"]
+        if assertion["name"] == "transient-surface-visible"
+    )
+    assert failed_assertion["passed"] is False
+    assert "visually blank" in failed_assertion["detail"]
+
+    twin = tmp_path / scenario["text_evidence"]["file"]
+    assertions = tmp_path / scenario["assertion_evidence"]["file"]
+    persisted = json.loads((tmp_path / "border-only.json").read_text(encoding="utf-8"))
+    expected_failure = "ASSERT FAIL transient-surface-visible"
+    assert expected_failure in twin.read_text(encoding="utf-8")
+    assert expected_failure in assertions.read_text(encoding="utf-8")
+    assert scenario["text_evidence"]["sha256"] == hashlib.sha256(twin.read_bytes()).hexdigest()
+    assert scenario["assertion_evidence"]["sha256"] == hashlib.sha256(
+        assertions.read_bytes()
+    ).hexdigest()
+    assert persisted == scenario
+
 
 def test_overflow_visual_gate_accepts_interior_text_like_contrast(tmp_path: Path) -> None:
     """Deterministic interior glyph-like strokes remain acceptable visual evidence."""
