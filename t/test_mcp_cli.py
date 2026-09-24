@@ -93,13 +93,13 @@ def test_main_list_add_remove_and_toggle(store, capsys):
 
     assert cli.main([
         "add", "local", "--transport", "stdio", "--command", "python",
-        "--arg", "-m", "--cwd", "/tmp", "--env", "A=1", "--disabled",
+        "--arg", "module", "--cwd", "/tmp", "--env", "A=1", "--disabled",
         "--connect-timeout", "2", "--request-timeout", "3",
     ], config=config) == 0
     name, values = store.saved[-1]
     assert name == "local"
     assert values["enabled"] is False and values["command"] == "python"
-    assert values["args"] == ["-m"] and values["env"] == {"A": "1"}
+    assert values["args"] == ["module"] and values["env"] == {"A": "1"}
 
     assert cli.main([
         "add", "remote", "--transport", "http", "--url", "https://mcp.invalid",

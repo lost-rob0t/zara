@@ -112,6 +112,7 @@ def test_qr_fingerprint_and_pair_client_main(monkeypatch, capsys):
 
 def test_pair_client_protocol_rejections_are_fail_closed(monkeypatch):
     public_key = "b" * 40
+    monkeypatch.setattr(pairing.time, "time", lambda: 1000)
 
     class Store:
         def identity_or_create(self):
