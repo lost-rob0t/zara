@@ -974,4 +974,3 @@ def test_key_rotation_supersedes_old_route_before_connection_quota(
         if new_dealer is not None:
             new_dealer.close(0)
         gateway.close(timeout=1.0)
-
