@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 artifact_dir="${ARTIFACT_DIR:-$(mktemp -d)}"
 mkdir -p "$artifact_dir"
-source_sha="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
+source_sha="$(git -C "$repo_root" rev-parse HEAD)"
 
 pytest -q "$repo_root/t/test_latency_metrics.py"
 python "$repo_root/scripts/benchmark-voice.py" \
