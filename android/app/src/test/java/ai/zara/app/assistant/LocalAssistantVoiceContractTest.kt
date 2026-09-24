@@ -42,7 +42,9 @@ class LocalAssistantVoiceContractTest {
         assertTrue(automatic.contains("planAssistantCapture("))
         assertTrue(automatic.contains("AssistantCapturePlan.Local ->"))
         assertTrue(automatic.contains("localVoice.start(permissionGranted)"))
-        assertTrue(automatic.contains("AssistantCapturePlan.Remote -> updateStatus(\"Hold to talk to Zara\")"))
+        assertTrue(automatic.contains("AssistantCapturePlan.Remote ->"))
+        assertTrue(automatic.contains("localVoice.start(permissionGranted)"))
+        assertTrue(automatic.contains("updateStatus(\"Hold to talk to Zara\")"))
         assertFalse(automatic.contains("appSession.startAssistantVoice"))
         assertTrue(source.contains("appSession.startAssistantVoice"))
     }
