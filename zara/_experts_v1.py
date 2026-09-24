@@ -1788,6 +1788,25 @@ def _input_digest(serialized: str) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
+def _result_output_size_bytes(result: ExpertResult) -> int:
+    payload = {
+        "verdict": result.verdict.value,
+        "data": result.data,
+        "evidence_refs": list(result.evidence_refs),
+        "usage": result.usage,
+        "effect_receipts": list(result.effect_receipts),
+        "error_code": result.error_code.value if result.error_code else None,
+        "error_message": result.error_message,
+    }
+    serialized = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=repr,
+    )
+    return len(serialized.encode("utf-8"))
+
+
 def _bounded_mapping(value: Any, label: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise ExpertInvalidInputError(f"handler {label} must be a mapping")
