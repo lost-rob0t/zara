@@ -294,10 +294,78 @@ class Device:
                 }
             )
 
-    def capture(self, name: str) -> None:
+    @staticmethod
+    def _rendered_node(node) -> dict:
+        return {
+            "text": node.get("text") or "",
+            "content_description": node.get("content-desc") or "",
+            "class": node.get("class") or "",
+            "bounds": node.get("bounds") or "",
+            "clickable": node.get("clickable") == "true",
+            "enabled": node.get("enabled") == "true",
+        }
+
+    @staticmethod
+    def _rendered_bounds(node: dict) -> tuple[int, int, int, int]:
+        values = [int(value) for value in re.findall(r"\d+", node["bounds"])]
+        if len(values) != 4:
+            raise AssertionError(f"Malformed rendered bounds: {node['bounds']!r}")
+        return tuple(values)
+
+    @classmethod
+    def _assert_named_action_owner(cls, rendered_nodes: list[dict], label: str) -> None:
+        action = next(
+            (
+                node
+                for node in rendered_nodes
+                if label in (node["text"], node["content_description"])
+                and node["clickable"]
+                and node["enabled"]
+            ),
+            None,
+        )
+        if action is None:
+            raise AssertionError(f"Required rendered action is not usable: {label}")
+
+        left, top, right, bottom = cls._rendered_bounds(action)
+        for node in rendered_nodes:
+            if node is action or not node["clickable"] or not node["enabled"]:
+                continue
+            if node["text"] or node["content_description"]:
+                continue
+            other_left, other_top, other_right, other_bottom = cls._rendered_bounds(node)
+            contains_action = (
+                other_left <= left
+                and other_top <= top
+                and other_right >= right
+                and other_bottom >= bottom
+            )
+            if contains_action:
+                raise AssertionError(
+                    f"Required rendered action has a distinct unlabeled clickable owner: {label}"
+                )
+
+    def capture(self, name: str, *, required_actions: tuple[str, ...] = ()) -> None:
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
+
+        rendered_nodes = [self._rendered_node(node) for node in self.nodes()]
+        for label in required_actions:
+            self._assert_named_action_owner(rendered_nodes, label)
+
+        twin = {
+            "state": name,
+            "asserted_actions": list(required_actions),
+            "nodes": rendered_nodes,
+        }
+        twin_data = (
+            json.dumps(twin, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            + "\n"
+        ).encode("utf-8")
+        twin_path = self.output / f"{name}.ui.json"
+        twin_path.write_bytes(twin_data)
+
         path = self.output / f"{name}.png"
         path.write_bytes(data)
         self.screenshots.append(
@@ -305,6 +373,9 @@ class Device:
                 "state": name,
                 "file": path.name,
                 "sha256": hashlib.sha256(data).hexdigest(),
+                "text_twin_file": twin_path.name,
+                "text_twin_sha256": hashlib.sha256(twin_data).hexdigest(),
+                "asserted_actions": list(required_actions),
             }
         )
 
@@ -465,8 +536,34 @@ def exercise_three_menu_ui(device: Device) -> None:
     ):
         device.tap_tab(tab)
         device.assert_accessible_targets((tab,))
+        if tab == "Plugins":
+            device.await_label("PLUGIN HOST")
+            device.assert_accessible_targets(("Plugins", "Publisher SHA-256", "Choose APK"))
         time.sleep(0.4)
-        device.capture(f"settings-{tab.lower()}")
+        device.capture(
+            f"settings-{tab.lower()}",
+            required_actions=("Choose APK",) if tab == "Plugins" else (),
+        )
+
+    device.tap_tab("Plugins")
+    device.set_display_profile(
+        "plugins-narrow-large-font", target_width_dp=320, font_scale=2.00
+    )
+    device.await_label("PLUGIN HOST")
+    device.reveal("Choose APK")
+    device.capture(
+        "settings-plugins-narrow-large-font",
+        required_actions=("Choose APK",),
+    )
+    device.tap("Choose APK")
+    device.await_contains("Enter the publisher's 64-character SHA-256.")
+    device.reveal("Choose APK")
+    device.capture(
+        "settings-plugins-install-narrow-large-font",
+        required_actions=("Choose APK",),
+    )
+    device.restore_profile()
+    device.await_label("Plugins")
 
     device.tap_tab("Appearance")
     device.tap("Outrun")
