@@ -41,11 +41,12 @@ def _prolog_data_files():
     base = pathlib.PurePosixPath("share/zarathushtra")
     sources: list[str] = []
 
-    main_pl = ROOT / "main.pl"
-    if main_pl.exists():
-        sources.append("main.pl")
+    for root_file in ("main.pl", "version.properties", "CHANGELOG.md"):
+        path = ROOT / root_file
+        if path.exists():
+            sources.append(root_file)
 
-    for sub in ("kb", "modules", "assets"):
+    for sub in ("kb", "modules", "contracts", "assets", "browser-addon"):
         sub_root = ROOT / sub
         if not sub_root.is_dir():
             continue
@@ -134,7 +135,7 @@ setup(
     },
     include_package_data=True,
     package_data={
-        "zara": ["py.typed"],
+        "zara": ["py.typed", "conversation_schema.sql"],
     },
     data_files=_prolog_data_files(),
 )

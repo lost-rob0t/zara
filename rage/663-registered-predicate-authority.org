@@ -1,0 +1,82 @@
+#+title: #663 registered-predicate authority — P0 Mega-Brain integration slice
+
+* Scope
+This slice freezes the inert wire boundary needed by =zara-expert= without
+pretending the security owner has landed.  It does not add another expert
+registry, planner, provider runtime, permission plane, history store or Prolog
+engine.
+
+Producer/consumer chain:
+
+#+begin_src text
+#897 activation owner
+        +
+#663 out-of-interpreter registered-predicate execution owner
+        |
+        v
+ZARA-PREDICATE/1 inert request/result wire contract (this slice)
+        |
+        v
+#1238/#1446 CanonicalExpertInvocationPort projection
+        |
+        v
+AndroidAppSession -> MainActivity -> #1282 conversation consumer
+#+end_src
+
+=zara-plugins= remains the downstream =zara-expert= adapter/host.  Generic
+expert/language/style semantics remain upstream in =prolog-rlm=; DotfilesExpert
+style/project knowledge remains in =dotfiles=.  No reusable semantics are copied
+into Android.
+
+* Threat model decision
+The current Python closure repair is not an authority boundary.  PR
+=lost-rob0t/zara-plugins#1163@d17e4ca9df4baae2b5a2a17f900820fb2a0f7a43=
+proves same-process code can recover the nested issuer and registry by closure
+introspection.  Moving those objects into another underscore name, closure,
+frozen dataclass, module secret or in-process broker is rejected.
+
+The GREEN implementation for #663 must therefore own executable predicate
+registration outside the generic plugin interpreter (isolated worker/process or
+an equivalent boundary).  Trusted construction binds:
+
+- authenticated principal/session (not request data),
+- namespace,
+- logical operation id,
+- exact predicate + arity + argument schema,
+- registration/runtime generation,
+- cancellation/deadline correlation.
+
+The plugin-facing request may carry only request id, logical operation,
+expected generation, bounded inert arguments and timeout.  It may not carry
+principal, namespace, predicate, arity, module, goal, query, capability token or
+raw backend/process metadata.
+
+Successful results must bind fresh observed execution provenance to exact
+namespace + predicate + arity + generation + request id.  Process exit zero is
+not domain success.  Missing/ambiguous/stale/cancelled/crashed execution remains
+=unknown=/=cancelled=/=error= and must not become verified truth.
+
+* This branch
+- =zara/plugins/predicate_authority.py= defines only the inert wire data contract.
+- =t/test_registered_predicate_authority_contract.py= pins the caller-data and
+  provenance invariants.
+- There is intentionally no authority owner implementation in this slice.
+
+* Required next producer slice
+Implement the Core-owned out-of-interpreter owner behind this wire contract and
+prove:
+
+1. caller-side Python import/frame/closure/GC/object-graph inspection cannot mint,
+   mutate or substitute executable predicate identity;
+2. no caller-authored callable Prolog term crosses the seam;
+3. namespace/principal mismatch, stale generation and replay fail closed;
+4. reload/revoke fences old registrations;
+5. cancellation/timeout/process crash fences late output/effects;
+6. output/result bounds remain enforced;
+7. actual effects still cross canonical Zara capability/approval/tool boundaries;
+8. an effect-dependent =succeeded= verdict requires fresh postcondition evidence;
+9. pure-symbolic acceptance retains providers disabled and exact
+   =max_model_calls=0= / =model_calls=0=.
+
+Only after that producer is GREEN may #1238 transport the existing owner and
+#1282 inject it into Android production composition.

@@ -1,9 +1,4 @@
-"""Production Zara server facade with opt-in authenticated remote transport.
-
-The process/runtime lifecycle remains in :mod:`zara.server_core`. Local IPC is
-still the default. A TCP listener is accepted only when an explicit persistent
-security state is supplied, and is always backed by CURVE/ZAP.
-"""
+"""Production Zara server facade with authenticated local and remote transport."""
 
 from __future__ import annotations
 
@@ -12,6 +7,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import sys
 import threading
 from pathlib import Path
@@ -35,6 +31,9 @@ default_zmq_endpoint = _core.default_zmq_endpoint
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_REMOTE_ENDPOINT = "tcp://0.0.0.0:17865"
+_WILDCARD_REMOTE_HOSTS = frozenset({"", "0.0.0.0", "::", "*"})
+_LOOPBACK_REMOTE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _SAFE_REMOTE_CAPABILITIES = frozenset(
     {
         "session.basic",
@@ -54,8 +53,81 @@ class _ScalarSingleValueAction(argparse.Action):
         setattr(namespace, self.dest, values[0])
 
 
+def default_security_state_directory() -> Path:
+    """Return Zara's persistent owner-private daemon security-state directory."""
+    explicit = os.environ.get("ZARA_SECURITY_DIR", "").strip()
+    if explicit:
+        path = Path(explicit).expanduser()
+        if not path.is_absolute():
+            raise ValueError("ZARA_SECURITY_DIR must be an absolute path")
+        return path
+    xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
+    if xdg_state and Path(xdg_state).is_absolute():
+        root = Path(xdg_state)
+    else:
+        root = Path.home() / ".local" / "state"
+    return root / "zarathushtra" / "security"
+
+
+def default_control_socket_path(runtime_dir: Path | str | None = None) -> Path:
+    """Return the owner-local live daemon control socket without acquiring its lease."""
+    return ServerLease(runtime_dir)._runtime_dir() / "zara-control.sock"
+
+
+def _split_tcp_endpoint(endpoint: str) -> tuple[str, int]:
+    if not isinstance(endpoint, str) or not endpoint.startswith("tcp://"):
+        raise ValueError("remote endpoint must use TCP")
+    address = endpoint.removeprefix("tcp://")
+    if address.startswith("["):
+        close = address.find("]")
+        if close <= 1 or close + 1 >= len(address) or address[close + 1] != ":":
+            raise ValueError("remote endpoint is malformed")
+        host = address[1:close]
+        port_text = address[close + 2 :]
+    else:
+        host, separator, port_text = address.rpartition(":")
+        if not separator or not host:
+            raise ValueError("remote endpoint is malformed")
+    try:
+        port = int(port_text)
+    except ValueError as error:
+        raise ValueError("remote endpoint port is invalid") from error
+    if not 1 <= port <= 65535:
+        raise ValueError("remote endpoint port is invalid")
+    return host, port
+
+
+def _local_route_address() -> str:
+    """Resolve the normal outbound IPv4 source address without sending traffic."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))
+        address = str(probe.getsockname()[0])
+    except OSError as error:
+        raise ServerError("could not determine a reachable local address") from error
+    finally:
+        probe.close()
+    if address in _WILDCARD_REMOTE_HOSTS or address in _LOOPBACK_REMOTE_HOSTS:
+        raise ServerError("could not determine a reachable local address")
+    return address
+
+
+def _advertised_remote_endpoint(endpoint: str) -> str:
+    host, port = _split_tcp_endpoint(endpoint)
+    if host in _WILDCARD_REMOTE_HOSTS:
+        configured = os.environ.get("ZARA_ADVERTISE_HOST", "").strip()
+        if configured:
+            if len(configured) > 255 or any(character.isspace() for character in configured):
+                raise ServerError("ZARA_ADVERTISE_HOST is invalid")
+            host = configured.removeprefix("[").removesuffix("]")
+        else:
+            host = _local_route_address()
+    rendered_host = f"[{host}]" if ":" in host else host
+    return f"tcp://{rendered_host}:{port}"
+
+
 class ZaraServer(_core.ZaraServer):
-    """Zara service with secure opt-in TCP and unchanged local IPC defaults."""
+    """Zara service with owner-controlled authenticated TCP bootstrap."""
 
     def __init__(
         self,
@@ -74,12 +146,12 @@ class ZaraServer(_core.ZaraServer):
     ) -> None:
         secure_tcp = isinstance(endpoint, str) and endpoint.startswith("tcp://")
         if remote_endpoint is not None:
+            if security_state is None:
+                raise ValueError("remote endpoint requires explicit security state")
             if not isinstance(remote_endpoint, str) or not remote_endpoint.startswith("tcp://"):
                 raise ValueError("remote endpoint must use TCP")
             if secure_tcp:
                 raise ValueError("remote endpoint requires a local IPC primary endpoint")
-            if security_state is None:
-                raise ValueError("remote endpoint requires explicit security state")
             if gateway_factory is not None:
                 raise ValueError("remote endpoint does not accept a custom gateway factory")
             from zara.security import validate_listener_security
@@ -111,9 +183,13 @@ class ZaraServer(_core.ZaraServer):
         self._gateway_transport_config = gateway_transport_config
         self._secure_tcp = secure_tcp
         self._remote_endpoint = remote_endpoint
+        self._remote_advertised_endpoint: str | None = None
         self._remote_gateway = None
+        self._remote_listener_lock = threading.RLock()
         self._security_registry = None
         self._security_admin = None
+        self._security_admin_lock = threading.RLock()
+        self._security_admin_closing = False
         if secure_tcp:
             self._endpoint_override = endpoint
 
@@ -151,38 +227,84 @@ class ZaraServer(_core.ZaraServer):
             voice_ingress=voice_ingress,
         )
 
+    def _security_state_object(self):
+        state = self._security_state
+        if state is None:
+            from zara.security_state import PersistentSecurityState
+
+            state = PersistentSecurityState(default_security_state_directory())
+            self._security_state = state
+        return state
+
+    def _control_socket_path(self) -> Path:
+        if self._secure_tcp and self._security_state is not None:
+            return self._security_state.control_socket_path
+        lease_path = self._lease.path
+        if lease_path is not None:
+            return Path(lease_path).parent / "zara-control.sock"
+        return default_control_socket_path(self._runtime_dir_override)
+
+    def _ensure_security_admin(self):
+        with self._security_admin_lock:
+            if self._security_admin_closing:
+                raise ServerStateError("zara-server owner control is shutting down")
+            if self._security_admin is not None:
+                return self._security_admin
+
+            from zara.security import Capability
+            from zara.security_admin import SecurityAdminServer
+
+            state = self._security_state_object()
+            admin = SecurityAdminServer(
+                state,
+                capabilities={Capability(value) for value in _SAFE_REMOTE_CAPABILITIES},
+                control_socket_path=self._control_socket_path(),
+                ensure_remote_listener=self.ensure_remote_listener,
+                remote_listener_status=self.remote_listener_status,
+            )
+            self._security_admin = admin
+            try:
+                admin.start()
+            except BaseException:
+                self._security_admin = None
+                raise
+            return admin
+
+    def _ensure_security_registry(self):
+        with self._security_admin_lock:
+            if self._security_registry is not None:
+                return self._security_registry
+            admin = self._ensure_security_admin()
+            state = self._security_state_object()
+            state.initialize()
+            registry = state.load_registry()
+            admin.bind_registry(registry)
+            self._security_registry = registry
+            return registry
+
     def _build_secure_gateway(self, endpoint: str, *, supervisor, voice_ingress):
-        from zara.security import Capability
-        from zara.security_admin import SecurityAdminServer
         from zara.security_gateway import SecureZaraZmqGateway
 
-        admin = SecurityAdminServer(
-            self._security_state,
-            capabilities={Capability(value) for value in _SAFE_REMOTE_CAPABILITIES},
+        registry = self._ensure_security_registry()
+        state = self._security_state
+        if state is None:
+            raise ServerError("secure listener authority is unavailable")
+        return SecureZaraZmqGateway(
+            endpoint,
+            supervisor=supervisor,
+            security_registry=registry,
+            curve_server=state.load_server_config(),
+            context=None,
+            config=self._gateway_transport_config,
+            voice_ingress=voice_ingress,
         )
-        admin.start()
-        try:
-            registry = self._security_state.load_registry()
-            admin.bind_registry(registry)
-            gateway = SecureZaraZmqGateway(
-                endpoint,
-                supervisor=supervisor,
-                security_registry=registry,
-                curve_server=self._security_state.load_server_config(),
-                context=None,
-                config=self._gateway_transport_config,
-                voice_ingress=voice_ingress,
-            )
-        except BaseException:
-            admin.close(timeout=self._shutdown_timeout)
-            raise
-        self._security_registry = registry
-        self._security_admin = admin
-        return gateway
 
     def _close_security_admin(self) -> bool:
-        admin = self._security_admin
-        self._security_admin = None
+        with self._security_admin_lock:
+            self._security_admin_closing = True
+            admin = self._security_admin
+            self._security_admin = None
+            self._security_registry = None
         if admin is None:
             return True
         try:
@@ -192,39 +314,102 @@ class ZaraServer(_core.ZaraServer):
             logger.exception("Failed to stop owner security admin endpoint cleanly")
             return False
 
+    def _remote_metadata_locked(self, *, active: bool) -> dict[str, object]:
+        state = self._security_state
+        public_key = None
+        if active and state is not None and self._security_registry is not None:
+            public_key = state.server_public_key()
+        endpoint = self._remote_advertised_endpoint if active else None
+        return {
+            "active": active,
+            "endpoint": endpoint,
+            "server_public_key": public_key,
+        }
+
+    def _start_remote_gateway_locked(self, endpoint: str) -> None:
+        advertised = _advertised_remote_endpoint(endpoint)
+        gateway = self._build_secure_gateway(
+            endpoint,
+            supervisor=self._supervisor,
+            voice_ingress=self._voice_ingress,
+        )
+        self._remote_gateway = gateway
+        try:
+            gateway.start().result(timeout=self._shutdown_timeout)
+        except BaseException:
+            self._remote_gateway = None
+            try:
+                gateway.close(timeout=self._shutdown_timeout)
+            except BaseException:
+                logger.exception("Failed to close remote ZARA/1 gateway after startup failure")
+            raise
+        self._remote_endpoint = endpoint
+        self._remote_advertised_endpoint = advertised
+
+    def ensure_remote_listener(self) -> dict[str, object]:
+        """Idempotently expose authenticated ZARA/1 from an owner-local request."""
+        with self._remote_listener_lock:
+            if self.state not in {ServerState.READY, ServerState.DEGRADED}:
+                raise ServerStateError("zara-server is not ready for remote listener activation")
+            self._ensure_security_admin()
+            if self._secure_tcp:
+                self._ensure_security_registry()
+                if self._remote_advertised_endpoint is None:
+                    self._remote_advertised_endpoint = _advertised_remote_endpoint(
+                        str(self._endpoint_override)
+                    )
+                return self._remote_metadata_locked(active=True)
+            if self._remote_gateway is None:
+                self._start_remote_gateway_locked(
+                    self._remote_endpoint or _DEFAULT_REMOTE_ENDPOINT
+                )
+            return self._remote_metadata_locked(active=True)
+
+    def remote_listener_status(self) -> dict[str, object]:
+        with self._remote_listener_lock:
+            active = self.state in {ServerState.READY, ServerState.DEGRADED} and (
+                self._secure_tcp or self._remote_gateway is not None
+            )
+            if active and self._remote_advertised_endpoint is None:
+                endpoint = self._endpoint_override if self._secure_tcp else self._remote_endpoint
+                if endpoint is not None:
+                    self._remote_advertised_endpoint = _advertised_remote_endpoint(str(endpoint))
+            return self._remote_metadata_locked(active=active)
+
     def start(self) -> ServerState:
+        with self._security_admin_lock:
+            self._security_admin_closing = False
         try:
             state = super().start()
-            if self._remote_endpoint is not None and self._remote_gateway is None:
-                gateway = self._build_secure_gateway(
-                    self._remote_endpoint,
-                    supervisor=self._supervisor,
-                    voice_ingress=self._voice_ingress,
-                )
-                self._remote_gateway = gateway
-                gateway.start().result(timeout=self._shutdown_timeout)
+            self._ensure_security_admin()
+            with self._remote_listener_lock:
+                if self._secure_tcp:
+                    self._remote_advertised_endpoint = _advertised_remote_endpoint(
+                        str(self._endpoint_override)
+                    )
+                elif self._remote_endpoint is not None and self._remote_gateway is None:
+                    self._start_remote_gateway_locked(self._remote_endpoint)
             return state
         except BaseException:
-            if self._remote_endpoint is not None and self.state in {
-                ServerState.READY,
-                ServerState.DEGRADED,
-            }:
+            if self.state in {ServerState.READY, ServerState.DEGRADED}:
                 self.stop()
             else:
                 self._close_security_admin()
             raise
 
     def stop(self) -> bool:
-        remote_clean = True
-        remote = self._remote_gateway
-        self._remote_gateway = None
-        if remote is not None:
-            try:
-                remote.close(timeout=self._shutdown_timeout)
-            except BaseException:
-                logger.exception("Failed to stop remote ZARA/1 gateway cleanly")
-                remote_clean = False
         admin_clean = self._close_security_admin()
+        remote_clean = True
+        with self._remote_listener_lock:
+            remote = self._remote_gateway
+            self._remote_gateway = None
+            self._remote_advertised_endpoint = None
+            if remote is not None:
+                try:
+                    remote.close(timeout=self._shutdown_timeout)
+                except BaseException:
+                    logger.exception("Failed to stop remote ZARA/1 gateway cleanly")
+                    remote_clean = False
         return super().stop() and admin_clean and remote_clean
 
 
@@ -240,8 +425,8 @@ def _parse_curve_public_key(value: str) -> str:
 def _parser():
     parser = _core._parser()
     parser.description = (
-        "Long-lived Zara assistant service. Local IPC is the default; remote TCP "
-        "requires explicit owner-managed CURVE/ZAP security state."
+        "Long-lived Zara assistant service. Local IPC is the default; authenticated "
+        "remote ZARA/1 can be enabled through the owner-local control plane."
     )
     parser.add_argument(
         "--security-dir",
@@ -295,12 +480,15 @@ def _security_state(args):
     return PersistentSecurityState(args.security_dir)
 
 
-def _live_security_admin(state):
-    if not os.path.lexists(state.control_socket_path):
-        return None
+def _live_security_admin(state, *, runtime_dir: Path | str | None = None):
     from zara.security_admin import SecurityAdminClient
 
-    return SecurityAdminClient(state.control_socket_path)
+    runtime_path = default_control_socket_path(runtime_dir)
+    if os.path.lexists(runtime_path):
+        return SecurityAdminClient(runtime_path)
+    if os.path.lexists(state.control_socket_path):
+        return SecurityAdminClient(state.control_socket_path)
+    return None
 
 
 def _require_daemon_offline(args) -> None:
@@ -345,7 +533,7 @@ def _run_security_management(args) -> Optional[int]:
     if args.security_enroll_key is not None:
         if not args.security_device_id:
             raise ValueError("--security-enroll-key requires --security-device-id")
-        admin = _live_security_admin(state)
+        admin = _live_security_admin(state, runtime_dir=args.runtime_dir)
         if admin is not None:
             result = admin.request(
                 "enroll",
@@ -378,7 +566,7 @@ def _run_security_management(args) -> Optional[int]:
         )
         return 0
     if args.security_revoke_device is not None:
-        admin = _live_security_admin(state)
+        admin = _live_security_admin(state, runtime_dir=args.runtime_dir)
         if admin is not None:
             result = admin.request("revoke", device_id=args.security_revoke_device)
             print(json.dumps(result, sort_keys=True))
@@ -388,7 +576,7 @@ def _run_security_management(args) -> Optional[int]:
         print(json.dumps({"device_id": args.security_revoke_device, "active": False}, sort_keys=True))
         return 0
     if args.security_list_clients:
-        admin = _live_security_admin(state)
+        admin = _live_security_admin(state, runtime_dir=args.runtime_dir)
         if admin is not None:
             clients = admin.request("list")
         else:
@@ -415,13 +603,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         return management_result
 
     security_state = _security_state(args)
+    if args.remote_endpoint is not None and security_state is None:
+        print("remote endpoint requires --security-dir", file=sys.stderr)
+        return 2
     if isinstance(args.endpoint, str) and args.endpoint.startswith("tcp://"):
         if security_state is None:
             print("TCP endpoint requires --security-dir", file=sys.stderr)
             return 2
-    if args.remote_endpoint is not None and security_state is None:
-        print("remote endpoint requires --security-dir", file=sys.stderr)
-        return 2
 
     stop_event = threading.Event()
 
@@ -474,6 +662,8 @@ __all__ = [
     "ServerState",
     "ServerStateError",
     "ZaraServer",
+    "default_control_socket_path",
+    "default_security_state_directory",
     "default_zmq_endpoint",
     "main",
 ]

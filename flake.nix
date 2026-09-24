@@ -284,11 +284,13 @@
                 cp -r $src/zara $out/lib/python/
 
                 ${if withProlog then ''
-                  # Copy ALL Prolog sources with structure intact
+                  # Copy canonical runtime resources with structure intact.
                   cp $src/*.pl $out/share/zarathushtra/ 2>/dev/null || true
                   cp -r $src/kb $out/share/zarathushtra/
                   cp -r $src/modules $out/share/zarathushtra/
+                  cp -r $src/contracts $out/share/zarathushtra/
                   cp -r $src/assets $out/share/zarathushtra/
+                  cp -r $src/browser-addon $out/share/zarathushtra/
                 '' else ""}
 
                 # Create wrapper with correct Python interpreter and environment
@@ -348,13 +350,15 @@
               mkdir -p $out/share/zarathushtra
               mkdir -p $out/bin
 
-              # Copy ALL Prolog sources with structure intact
+              # Copy canonical runtime resources with structure intact.
               cp $src/*.pl $out/share/zarathushtra/ 2>/dev/null || true
               cp -r $src/kb $out/share/zarathushtra/
               cp -r $src/modules $out/share/zarathushtra/
+              cp -r $src/contracts $out/share/zarathushtra/
               cp -r $src/scripts $out/share/zarathushtra/
               cp -r $src/zara $out/share/zarathushtra/
               cp -r $src/assets $out/share/zarathushtra/
+              cp -r $src/browser-addon $out/share/zarathushtra/
 
               # zara-console (Python wrapper)
               makeWrapper ${pythonLibs}/bin/python3 $out/bin/zara-console \
@@ -430,6 +434,29 @@
                 touch $out
               '';
 
+            # Formally prove the hard AGENTIC-15 fleet invariants and their
+            # negative fixtures. This is intentionally part of nix flake check so
+            # the existing required CI path cannot skip the proof.
+            agentic-verify = pkgs.runCommand "zara-check-agentic-verify"
+              {
+                nativeBuildInputs = [ pkgs.swi-prolog ];
+                src = ./.;
+              }
+              ''
+                cd $src
+                export HOME=$(mktemp -d)
+                export XDG_CONFIG_HOME=$HOME/.config
+                swipl -q \
+                  -s verification/agentic_fleet_verify.pl \
+                  -g "(agentic_fleet_verify:verify -> halt(0); halt(1))" \
+                  -t "halt(1)"
+                swipl -q \
+                  -s t/agentic_fleet_verify.pl \
+                  -g "(run_tests -> halt(0); halt(1))" \
+                  -t "halt(1)"
+                touch $out
+              '';
+
             # Ensure main.pl and its module graph load cleanly in SWI-Prolog.
             # An isolated HOME prevents the user's local config from masking
             # load failures (or causing spurious ones) during the check.
@@ -499,6 +526,10 @@
                 grep -q "usage:" $HOME/dictate.out
                 command -v zara-desktop >/dev/null
                 test -x "$(command -v zara-desktop)"
+                # The Nix packages are an authoritative install surface: prove
+                # the complete canonical contract tree survives installation.
+                diff -r $src/contracts ${zara-cli}/share/zarathushtra/contracts
+                diff -r $src/contracts ${zara-prolog}/share/zarathushtra/contracts
                 touch $out
               '';
           };

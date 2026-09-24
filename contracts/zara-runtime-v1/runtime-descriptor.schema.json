@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zara.ai/contracts/zara-runtime-v1/runtime-descriptor.schema.json",
+  "title": "ZARA-RUNTIME/1 RuntimeDescriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "display_name",
+    "protocol",
+    "runtime_version",
+    "implementation_version",
+    "installed",
+    "available",
+    "health",
+    "locality",
+    "transport",
+    "capabilities",
+    "profiles",
+    "provider_control",
+    "model_control",
+    "supports_streaming",
+    "supports_cancel",
+    "supports_context_handles",
+    "supports_host_tools",
+    "provenance"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "protocol": {
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^ZARA-RUNTIME/[1-9][0-9]*$"
+    },
+    "runtime_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "implementation_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?!\\s)(?!.*\\s$)[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "installed": {"type": "boolean"},
+    "available": {"type": "boolean"},
+    "health": {"enum": ["starting", "ready", "busy", "degraded", "failed", "stopped"]},
+    "locality": {"enum": ["embedded", "local_process", "local_sidecar", "remote"]},
+    "transport": {"enum": ["in_process", "stdio", "loopback_http", "binder", "zara_remote"]},
+    "capabilities": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}
+    },
+    "profiles": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"}
+    },
+    "provider_control": {"enum": ["runtime", "zara", "mixed"]},
+    "model_control": {"enum": ["runtime", "zara", "mixed"]},
+    "supports_streaming": {"type": "boolean"},
+    "supports_cancel": {"type": "boolean"},
+    "supports_context_handles": {"type": "boolean"},
+    "supports_host_tools": {"type": "boolean"},
+    "provenance": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^(?:[a-z0-9][a-z0-9._-]{0,63}:[a-z0-9][a-z0-9._-]{0,127})?$"
+    }
+  }
+}

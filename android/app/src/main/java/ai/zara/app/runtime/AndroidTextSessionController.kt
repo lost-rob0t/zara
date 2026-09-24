@@ -49,6 +49,14 @@ class AndroidTextSessionController(
     private var runtimeState = initialState
     private var closed = false
     private var stateObserver: ((RuntimeState) -> Unit)? = null
+    private var connectionLossListener: ((code: String, reason: String) -> Unit)? = null
+
+    fun setConnectionLossListener(listener: ((code: String, reason: String) -> Unit)?) {
+        synchronized(lock) {
+            check(!closed) { "Android text session controller is closed" }
+            connectionLossListener = listener
+        }
+    }
 
     fun state(): RuntimeState = synchronized(lock) { runtimeState }
 
@@ -169,12 +177,47 @@ class AndroidTextSessionController(
 
     fun connectionLost(reason: String) {
         require(reason.isNotBlank()) { "connection loss reason is required" }
+        val listener = synchronized(lock) {
+            if (closed) return
+            connectionLossListener
+        }
+        val code = if (reason.contains("timed out", ignoreCase = true)) {
+            ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_TIMEOUT
+        } else {
+            ai.zara.app.telemetry.ZaraFailureCodes.TRANSPORT_CLOSED
+        }
+        listener?.invoke(code, reason)
         val shouldReconnect = synchronized(lock) {
             if (closed) return
             val previousGeneration = runtimeState.generation
             runtimeState = reduce(
                 runtimeState,
                 RuntimeEvent.ConnectionLost(previousGeneration, reason),
+            )
+            runtimeState.server is ServerConnection.Reconnecting &&
+                runtimeState.generation != previousGeneration
+        }
+        publishState()
+        if (shouldReconnect) {
+            client.disconnect()
+            scheduleReconnect()
+        }
+    }
+
+    fun clientReportedFailure(failure: ai.zara.app.telemetry.ZaraFailure) {
+        val listener = synchronized(lock) {
+            if (closed) return
+            connectionLossListener
+        }
+        listener?.invoke(failure.code, failure.message)
+        val shouldReconnect = synchronized(lock) {
+            if (closed) return
+            val connected = runtimeState.server as? ServerConnection.Connected ?: return
+            if (failure.connectionGeneration != null && failure.connectionGeneration != connected.generation) return
+            val previousGeneration = runtimeState.generation
+            runtimeState = reduce(
+                runtimeState,
+                RuntimeEvent.ConnectionLost(previousGeneration, failure.code),
             )
             runtimeState.server is ServerConnection.Reconnecting &&
                 runtimeState.generation != previousGeneration
@@ -209,6 +252,33 @@ class AndroidTextSessionController(
         client.disconnect()
     }
 
+    fun suspendRemoteForLocalMode() {
+        val shouldDisconnect = synchronized(lock) {
+            check(!closed) { "Android text session controller is closed" }
+            val active = when (runtimeState.server) {
+                is ServerConnection.Connecting,
+                is ServerConnection.Connected,
+                is ServerConnection.Reconnecting -> true
+                is ServerConnection.Disconnected,
+                is ServerConnection.OfflineDegraded -> false
+            }
+            if (!active) {
+                false
+            } else {
+                runtimeState = runtimeState.copy(
+                    server = ServerConnection.Disconnected,
+                    generation = runtimeState.generation + 1,
+                    sessionId = null,
+                )
+                true
+            }
+        }
+        if (shouldDisconnect) {
+            publishState()
+            client.disconnect()
+        }
+    }
+
     fun observeAssistantRole(outcome: RoleOutcome) {
         synchronized(lock) {
             if (closed) return
@@ -231,37 +301,69 @@ class AndroidTextSessionController(
         profile: ServerProfile,
         generation: Long,
     ): CompletableFuture<ConnectedTextSession> {
-        val future = client.connect(profile, generation)
-        future.whenComplete { session, error ->
+        val clientFuture = client.connect(profile, generation)
+        val resultFuture = CompletableFuture<ConnectedTextSession>()
+        clientFuture.whenComplete { session, error ->
             var scheduleNext = false
             var changed = false
+            var stale = false
+            var accepted = false
             synchronized(lock) {
-                if (closed || runtimeState.generation != generation) return@whenComplete
-                val previous = runtimeState
-                if (error == null && session != null) {
-                    runtimeState = reduce(
-                        runtimeState,
-                        RuntimeEvent.HelloAccepted(session.generation, session.sessionId),
-                    )
+                if (closed || runtimeState.generation != generation) {
+                    stale = true
                 } else {
-                    runtimeState = reduce(
-                        runtimeState,
-                        RuntimeEvent.ConnectionFailed(
-                            generation,
-                            ConnectionFailureReason.summarize(error),
-                        ),
-                    )
-                    scheduleNext = runtimeState.server is ServerConnection.Reconnecting
+                    val previous = runtimeState
+                    if (error == null && session != null) {
+                        runtimeState = reduce(
+                            runtimeState,
+                            RuntimeEvent.HelloAccepted(session.generation, session.sessionId),
+                        )
+                        accepted = runtimeState.server is ServerConnection.Connected &&
+                            runtimeState.generation == generation &&
+                            runtimeState.sessionId == session.sessionId
+                    } else {
+                        runtimeState = reduce(
+                            runtimeState,
+                            RuntimeEvent.ConnectionFailed(
+                                generation,
+                                ConnectionFailureReason.summarize(error),
+                            ),
+                        )
+                        scheduleNext = runtimeState.server is ServerConnection.Reconnecting
+                    }
+                    changed = runtimeState != previous
                 }
-                changed = runtimeState != previous
             }
+
+            if (stale) {
+                resultFuture.completeExceptionally(
+                    StaleTextSessionException(
+                        "connection completed for superseded generation $generation",
+                    ),
+                )
+                return@whenComplete
+            }
+
             if (changed) publishState()
             if (scheduleNext) {
                 client.disconnect()
                 scheduleReconnect()
             }
+
+            when {
+                error != null -> resultFuture.completeExceptionally(error)
+                session == null -> resultFuture.completeExceptionally(
+                    IllegalStateException("text client completed without a session"),
+                )
+                !accepted -> resultFuture.completeExceptionally(
+                    StaleTextSessionException(
+                        "connection result did not become current for generation $generation",
+                    ),
+                )
+                else -> resultFuture.complete(session)
+            }
         }
-        return future
+        return resultFuture
     }
 
     private fun publishState() {

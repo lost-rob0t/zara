@@ -1,11 +1,40 @@
 package ai.zara.app.automation
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AutomationManifestContractTest {
+    @Test
+    fun `launcher entrypoints own distinct Android tasks`() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val launchers = listOf(
+            ".MainActivity",
+            ".automation.AutomationActivity",
+            ".watch.WatchSetupActivity",
+        ).map { name ->
+            manifest
+                .substringAfter("android:name=\"$name\"")
+                .substringBefore("</activity>")
+        }
+
+        launchers.forEach { activity ->
+            assertTrue(activity.contains("android.intent.category.LAUNCHER"))
+        }
+        val affinities = launchers.map { activity ->
+            Regex("""android:taskAffinity="([^"]+)"""")
+                .find(activity)
+                ?.groupValues
+                ?.get(1)
+                ?: error("launcher activity has no explicit taskAffinity")
+        }
+
+        assertEquals(launchers.size, affinities.toSet().size)
+        assertTrue(affinities.all { it.startsWith("ai.zara.app.task.") })
+    }
+
     @Test
     fun `automation surface declares platform owned special access`() {
         val manifest = File("src/main/AndroidManifest.xml").readText()

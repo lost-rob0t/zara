@@ -2,7 +2,6 @@ package ai.zara.app.runtime
 
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.prolog.TreallaBridge
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -32,59 +31,51 @@ class LocalZaraServerTest {
         assertEquals(listOf("bob"), result.terms)
         assertEquals(listOf("/private/semantic_core.pl"), bridge.initialized)
         assertEquals(listOf("family.pl"), bridge.consulted.map { it.substringAfterLast('/') })
-        assertEquals(
-            "call_with_time_limit(${LocalZaraServer.QUERY_TIME_LIMIT_SECONDS}, (parent(alice, Result)))",
-            bridge.queries.single(),
-        )
+        assertEquals(listOf("Result = zara_ready", "parent(alice, Result)"), bridge.queries)
         assertEquals(1, bridge.threadNames.distinct().size)
         assertTrue(bridge.threadNames.distinct().single().contains("zara-local-server"))
         server.close()
     }
 
     @Test
-    fun cancelCommandImmediatelyInvalidatesActiveQueryAndDiscardsItsResult() {
-        val bridge = BlockingTreallaBridge()
+    fun readinessProbeFailureFailsBootAndEmitsDiagnostic() {
+        val bridge = RecordingTreallaBridge().apply {
+            readinessResult = emptyList()
+        }
+        val events = mutableListOf<String>()
         val server = LocalZaraServer(
-            bridge,
-            "/private/core.pl",
-            PrologWorkspace(temporary.newFolder("cancel")),
+            bridge = bridge,
+            corePath = "/private/core.pl",
+            workspace = PrologWorkspace(temporary.newFolder("readiness-failure")),
+            diagnostics = { event, _, _ -> events += event },
         )
-        server.start().get(2, TimeUnit.SECONDS)
 
-        val active = server.query("member(Result, [one, two])")
-        assertTrue(bridge.entered.await(2, TimeUnit.SECONDS))
+        val state = server.start().get(2, TimeUnit.SECONDS)
 
-        val cancelled = server.query(LocalZaraServer.CANCEL_QUERY_COMMAND).get(1, TimeUnit.SECONDS)
-        assertTrue(cancelled.cancelled)
-        bridge.release.countDown()
-
-        val stale = active.get(2, TimeUnit.SECONDS)
-        assertTrue(stale.cancelled)
-        assertTrue(stale.terms.isEmpty())
+        assertEquals(LocalServerPhase.FAILED, state.phase)
+        assertTrue(state.failure?.contains("readiness", ignoreCase = true) == true)
+        assertTrue(events.contains("local_server.self_test.begin"))
+        assertTrue(events.contains("local_server.self_test.failed"))
+        assertTrue(events.contains("local_server.boot.failed"))
+        assertTrue(!events.contains("local_server.ready"))
         server.close()
     }
 
     @Test
-    fun cancelAlsoSuppressesAStaleNativeTimeoutOrEvaluationError() {
-        val bridge = BlockingTreallaBridge(failAfterRelease = true)
+    fun resolveUsesCanonicalPortableSemanticModule() {
+        val bridge = RecordingTreallaBridge()
         val server = LocalZaraServer(
             bridge,
             "/private/core.pl",
-            PrologWorkspace(temporary.newFolder("cancel-error")),
+            PrologWorkspace(temporary.newFolder("qualified-resolve")),
         )
         server.start().get(2, TimeUnit.SECONDS)
 
-        val active = server.query("member(Result, [one, two])")
-        assertTrue(bridge.entered.await(2, TimeUnit.SECONDS))
-        assertTrue(server.query(LocalZaraServer.CANCEL_QUERY_COMMAND).get(1, TimeUnit.SECONDS).cancelled)
-        bridge.release.countDown()
+        server.resolve("hello").get(2, TimeUnit.SECONDS)
 
-        val stale = active.get(2, TimeUnit.SECONDS)
-        assertTrue(stale.cancelled)
-        assertTrue(stale.terms.isEmpty())
+        assertTrue(bridge.queries.last().startsWith("zara_portable_semantic_core:resolve_frames("))
         server.close()
     }
-
     @Test
     fun reloadRecreatesRuntimeSoEditedFactsDoNotAccumulate() {
         val bridge = RecordingTreallaBridge()
@@ -99,6 +90,10 @@ class LocalZaraServerTest {
         assertEquals(2, bridge.initialized.size)
         assertEquals(1, bridge.shutdownCount)
         assertEquals(2, bridge.consulted.size)
+        assertEquals(
+            listOf("Result = zara_ready", "Result = zara_ready"),
+            bridge.queries,
+        )
         server.close()
     }
 
@@ -117,7 +112,7 @@ class LocalZaraServerTest {
         }.exceptionOrNull()
 
         assertTrue(failure != null)
-        assertTrue(bridge.queries.isEmpty())
+        assertEquals(listOf("Result = zara_ready"), bridge.queries)
         server.close()
     }
 
@@ -145,6 +140,7 @@ class LocalZaraServerTest {
         val threadNames = mutableListOf<String>()
         var shutdownCount = 0
         var failNextConsult = false
+        var readinessResult = listOf("zara_ready")
 
         override fun initialize(coreAssetPath: String) {
             initialized += coreAssetPath
@@ -163,31 +159,12 @@ class LocalZaraServerTest {
         override fun evaluate(query: String): List<String> {
             queries += query
             threadNames += Thread.currentThread().name
-            return listOf("bob")
+            return if (query == "Result = zara_ready") readinessResult else listOf("bob")
         }
 
         override fun shutdown() {
             shutdownCount += 1
             threadNames += Thread.currentThread().name
         }
-    }
-
-    private class BlockingTreallaBridge(
-        private val failAfterRelease: Boolean = false,
-    ) : TreallaBridge {
-        val entered = CountDownLatch(1)
-        val release = CountDownLatch(1)
-
-        override fun initialize(coreAssetPath: String) = Unit
-        override fun consult(sourcePath: String) = Unit
-
-        override fun evaluate(query: String): List<String> {
-            entered.countDown()
-            check(release.await(2, TimeUnit.SECONDS)) { "test bridge was not released" }
-            if (failAfterRelease) error("native query timed out")
-            return listOf("one")
-        }
-
-        override fun shutdown() = Unit
     }
 }

@@ -24,6 +24,14 @@ class GitConfigTemplateImporterContractTest {
     }
 
     @Test
+    fun `manifest gated common dotfiles layout is supported`() {
+        assertTrue(source.contains("DEFAULT_ANDROID_DOTFILES_DIRECTORY"))
+        assertTrue(source.contains(".config/zarathushtra/android"))
+        assertTrue(source.contains("directory == null && org == null"))
+        assertTrue(source.contains("Template declares no Prolog sources and has no canonical Android dotfiles directory"))
+    }
+
+    @Test
     fun `template prolog is data only`() {
         assertTrue(source.contains("ALLOWED_DIRECTIVE"))
         assertTrue(source.contains("DANGEROUS_PREDICATE"))

@@ -1,31 +1,27 @@
 package ai.zara.app.ui
 
+import ai.zara.app.prolog.LogicGraph
+import ai.zara.app.prolog.LogicNodeKind
+import ai.zara.app.prolog.PrologDocument
+import ai.zara.app.prolog.PrologCompletionEngine
+import ai.zara.app.prolog.PrologEditorHistory
+import ai.zara.app.prolog.PrologExampleCatalog
+import ai.zara.app.prolog.PrologSource
+import ai.zara.app.prolog.PrologSourceAnalyzer
+import ai.zara.app.prolog.PrologSchemaValidator
+import ai.zara.app.prolog.PrologSearch
+import ai.zara.app.prolog.PrologLexer
+import ai.zara.app.prolog.PrologTokenKind
 import ai.zara.app.prolog.DeterministicIntentHelperGenerator
 import ai.zara.app.prolog.IntentArgument
 import ai.zara.app.prolog.IntentHelperRequest
-import ai.zara.app.prolog.LogicGraph
-import ai.zara.app.prolog.LogicNodeKind
-import ai.zara.app.prolog.PrologAuthorityPolicy
-import ai.zara.app.prolog.PrologClauseKind
-import ai.zara.app.prolog.PrologCompletionEngine
-import ai.zara.app.prolog.PrologDocument
-import ai.zara.app.prolog.PrologEditorHistory
-import ai.zara.app.prolog.PrologExampleCatalog
-import ai.zara.app.prolog.PrologLexer
-import ai.zara.app.prolog.PrologReplace
-import ai.zara.app.prolog.PrologSchemaValidator
-import ai.zara.app.prolog.PrologSearch
-import ai.zara.app.prolog.PrologSource
-import ai.zara.app.prolog.PrologSourceAnalyzer
-import ai.zara.app.prolog.PrologTokenKind
 import ai.zara.app.prolog.PrologTutorialCatalog
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
-import ai.zara.app.runtime.LocalZaraServer
 import ai.zara.ui.theme.ZaraSemanticTokens
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,7 +43,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,13 +51,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -100,23 +93,10 @@ internal fun PrologStudioSurface(
     var selectedName by rememberSaveable { mutableStateOf(first?.name.orEmpty()) }
     var draft by rememberSaveable { mutableStateOf(first?.text.orEmpty()) }
     var query by rememberSaveable { mutableStateOf(firstExampleQuery(selectedName)) }
-    var requestedLine by rememberSaveable { mutableStateOf<Int?>(null) }
     val selected = sources.firstOrNull { it.name == selectedName } ?: first
     val document = remember(selectedName, draft) {
         val analyzed = PrologSourceAnalyzer.analyze(selectedName.ifBlank { "scratch.pl" }, draft)
-        analyzed.copy(
-            diagnostics = (
-                analyzed.diagnostics +
-                    PrologSchemaValidator.validate(analyzed) +
-                    PrologAuthorityPolicy.validate(analyzed)
-                ).distinct(),
-        )
-    }
-    val workspaceDocuments = remember(sources, selectedName, document) {
-        val analyzed = sources.map { source ->
-            if (source.name == selectedName) document else PrologSourceAnalyzer.analyze(source.name, source.text)
-        }
-        if (analyzed.isEmpty()) listOf(document) else analyzed
+        analyzed.copy(diagnostics = analyzed.diagnostics + PrologSchemaValidator.validate(analyzed))
     }
     val pane = StudioPane.entries.firstOrNull { it.name == paneName } ?: StudioPane.Editor
 
@@ -151,13 +131,10 @@ internal fun PrologStudioSurface(
                 query = query,
                 queryResult = queryResult,
                 operationBusy = operationBusy,
-                requestedLine = requestedLine,
-                onRequestedLineConsumed = { requestedLine = null },
                 onSelect = { source ->
                     selectedName = source.name
                     draft = source.text
                     query = firstExampleQuery(source.name)
-                    requestedLine = null
                 },
                 onCreateSource = { name ->
                     val normalized = if (name.endsWith(".pl")) name else "$name.pl"
@@ -168,20 +145,12 @@ internal fun PrologStudioSurface(
                 onSave = { onSaveSource(selectedName.ifBlank { "scratch.pl" }, draft) },
                 onReload = onReload,
                 onRunQuery = { onRunQuery(query) },
-                onCancelQuery = { onRunQuery(LocalZaraServer.CANCEL_QUERY_COMMAND) },
             )
-            StudioPane.Expert -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                ExpertEditorPane(
-                    sources = sources,
-                    operationBusy = operationBusy,
-                    onSaveSource = onSaveSource,
-                )
-                PrologStructuredBuilderPane(
-                    sources = sources,
-                    operationBusy = operationBusy,
-                    onSaveSource = onSaveSource,
-                )
-            }
+            StudioPane.Expert -> ExpertEditorPane(
+                sources = sources,
+                operationBusy = operationBusy,
+                onSaveSource = onSaveSource,
+            )
             StudioPane.Syntax -> SyntaxEditorPane(
                 sources = sources,
                 operationBusy = operationBusy,
@@ -197,21 +166,13 @@ internal fun PrologStudioSurface(
                 onImportWorkspace = onImportWorkspace,
                 onExportWorkspace = onExportWorkspace,
             )
-            StudioPane.Graph -> GraphPane(workspaceDocuments) { sourceName, line ->
-                sources.firstOrNull { it.name == sourceName }?.let { source ->
-                    selectedName = source.name
-                    draft = source.text
-                    requestedLine = line
-                    paneName = StudioPane.Editor.name
-                }
-            }
+            StudioPane.Graph -> GraphPane(document)
             StudioPane.Learn -> TutorialPane(
                 onOpen = { fileName, exampleQuery ->
                     sources.firstOrNull { it.name == fileName }?.let { source ->
                         selectedName = source.name
                         draft = source.text
                         query = exampleQuery
-                        requestedLine = null
                         paneName = StudioPane.Editor.name
                     }
                 },
@@ -249,8 +210,6 @@ private fun EditorPane(
     query: String,
     queryResult: LocalQueryResult?,
     operationBusy: Boolean,
-    requestedLine: Int?,
-    onRequestedLineConsumed: () -> Unit,
     onSelect: (PrologSource) -> Unit,
     onCreateSource: (String) -> Unit,
     onDraft: (String) -> Unit,
@@ -258,64 +217,22 @@ private fun EditorPane(
     onSave: () -> Unit,
     onReload: () -> Unit,
     onRunQuery: () -> Unit,
-    onCancelQuery: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
-    var editorValue by remember(selectedName) {
-        mutableStateOf(TextFieldValue(draft, TextRange(draft.length)))
+    val completions = remember(draft, document) {
+        PrologCompletionEngine.complete(draft, draft.length, listOf(document))
     }
     var history by remember(selectedName) { mutableStateOf(PrologEditorHistory.initial(draft)) }
     var searchQuery by rememberSaveable(selectedName) { mutableStateOf("") }
-    var replacement by rememberSaveable(selectedName) { mutableStateOf("") }
-    var queryHistory by rememberSaveable(selectedName) { mutableStateOf("") }
-    var queryPending by rememberSaveable(selectedName) { mutableStateOf(false) }
-    var creatingSource by rememberSaveable { mutableStateOf(false) }
-    var newSourceName by rememberSaveable { mutableStateOf("") }
-
-    fun moveCursorToLine(line: Int) {
-        val offset = lineStartOffset(editorValue.text, line)
-        editorValue = editorValue.copy(selection = TextRange(offset))
-    }
-
-    LaunchedEffect(requestedLine, selectedName) {
-        requestedLine?.let { line ->
-            moveCursorToLine(line)
-            onRequestedLineConsumed()
-        }
-    }
-    LaunchedEffect(operationBusy, queryResult) {
-        if (!operationBusy || queryResult?.cancelled == true) queryPending = false
-    }
-
-    val cursor = editorValue.selection.start.coerceIn(0, editorValue.text.length)
-    val prefixToCursor = editorValue.text.take(cursor)
-    val cursorLine = prefixToCursor.count { it == '\n' } + 1
-    val cursorColumn = cursor - prefixToCursor.lastIndexOf('\n')
-    val dirty = editorValue.text != selected?.text.orEmpty()
-    val completionDocuments = remember(sources, selectedName, document) {
-        val analyzed = sources.map { source ->
-            if (source.name == selectedName) document else PrologSourceAnalyzer.analyze(source.name, source.text)
-        }
-        if (analyzed.isEmpty()) listOf(document) else analyzed
-    }
-    val completions = remember(editorValue.text, cursor, completionDocuments) {
-        PrologCompletionEngine.complete(editorValue.text, cursor, completionDocuments)
-    }
-    val searchMatches = remember(searchQuery, editorValue.text, selectedName) {
+    val searchMatches = remember(searchQuery, draft, selectedName) {
         if (searchQuery.isBlank()) emptyList() else PrologSearch.find(
-            listOf(PrologSource(selectedName.ifBlank { "scratch.pl" }, editorValue.text)),
+            listOf(PrologSource(selectedName.ifBlank { "scratch.pl" }, draft)),
             searchQuery,
             limit = 50,
         )
     }
-
-    fun commitText(text: String, nextCursor: Int) {
-        val safeCursor = nextCursor.coerceIn(0, text.length)
-        history = history.edit(text, safeCursor)
-        editorValue = TextFieldValue(text, TextRange(safeCursor))
-        onDraft(text)
-    }
-
+    var creatingSource by rememberSaveable { mutableStateOf(false) }
+    var newSourceName by rememberSaveable { mutableStateOf("") }
     SectionCard("SOURCES") {
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -355,13 +272,10 @@ private fun EditorPane(
     }
     SectionCard("EDITOR · ${selected?.name ?: "scratch.pl"}") {
         OutlinedTextField(
-            value = editorValue,
-            onValueChange = { value ->
-                if (value.text != editorValue.text) {
-                    history = history.edit(value.text, value.selection.start)
-                    onDraft(value.text)
-                }
-                editorValue = value
+            value = draft,
+            onValueChange = {
+                history = history.edit(it, it.length)
+                onDraft(it)
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp),
             textStyle = MaterialTheme.typography.bodySmall.copy(
@@ -372,8 +286,6 @@ private fun EditorPane(
             visualTransformation = remember(tokens) { PrologVisualTransformation(tokens) },
             colors = studioFieldColors(),
         )
-        KeyValueRow("cursor", "$cursorLine:$cursorColumn")
-        KeyValueRow("buffer", if (dirty) "dirty" else "saved")
         if (completions.isNotEmpty()) {
             Text("AUTOCOMPLETE", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
             Row(
@@ -382,17 +294,13 @@ private fun EditorPane(
             ) {
                 completions.take(6).forEach { completion ->
                     TextButton(onClick = {
-                        val before = editorValue.text.substring(0, cursor)
-                        val prefix = before.takeLastWhile { it.isLetterOrDigit() || it == '_' }
+                        val prefix = draft.takeLastWhile { it.isLetterOrDigit() || it == '_' }
                         val predicate = completion.label.substringBefore('/')
                         val arity = completion.label.substringAfter('/', "0").toIntOrNull() ?: 0
                         val arguments = (1..arity).joinToString(", ") { "Arg$it" }
-                        val insertion = predicate + if (arity == 0) "" else "($arguments)"
-                        val insertionStart = before.length - prefix.length
-                        val updated = before.dropLast(prefix.length) + insertion + editorValue.text.substring(cursor)
-                        commitText(updated, insertionStart + insertion.length)
+                        onDraft(draft.dropLast(prefix.length) + predicate + if (arity == 0) "" else "($arguments)")
                     }) {
-                        Text("${completion.label} · ${completion.detail}", fontFamily = FontFamily.Monospace)
+                        Text(completion.label, fontFamily = FontFamily.Monospace)
                     }
                 }
             }
@@ -400,12 +308,10 @@ private fun EditorPane(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SecondaryAction("Undo", history.canUndo) {
                 history = history.undo()
-                editorValue = TextFieldValue(history.current.text, TextRange(history.current.cursor))
                 onDraft(history.current.text)
             }
             SecondaryAction("Redo", history.canRedo) {
                 history = history.redo()
-                editorValue = TextFieldValue(history.current.text, TextRange(history.current.cursor))
                 onDraft(history.current.text)
             }
         }
@@ -417,43 +323,17 @@ private fun EditorPane(
             singleLine = true,
             colors = studioFieldColors(),
         )
-        OutlinedTextField(
-            value = replacement,
-            onValueChange = { replacement = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Replace with") },
-            singleLine = true,
-            colors = studioFieldColors(),
-        )
         if (searchQuery.isNotBlank()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SecondaryAction("Replace next", !operationBusy) {
-                    val result = PrologReplace.replaceNext(editorValue.text, searchQuery, replacement, cursor)
-                    if (result.replacements > 0) commitText(result.text, result.cursor)
-                }
-                SecondaryAction("Replace all", !operationBusy) {
-                    val result = PrologReplace.replaceAll(editorValue.text, searchQuery, replacement)
-                    if (result.replacements > 0) commitText(result.text, result.cursor)
-                }
-            }
             KeyValueRow("matches", searchMatches.size.toString())
             searchMatches.take(8).forEach { match ->
-                TextButton(onClick = { moveCursorToLine(match.line) }) {
-                    Text("${match.source}:${match.line}:${match.column}", color = tokens.textMuted, fontFamily = FontFamily.Monospace)
-                }
+                Text("${match.source}:${match.line}:${match.column}", color = tokens.textMuted, fontFamily = FontFamily.Monospace)
             }
         }
         if (document.diagnostics.isEmpty()) {
             KeyValueRow("analysis", "${document.clauses.size} clauses · clean")
         } else {
             document.diagnostics.forEach { diagnostic ->
-                TextButton(onClick = { moveCursorToLine(diagnostic.line) }) {
-                    Text(
-                        "line ${diagnostic.line}: ${diagnostic.message}",
-                        color = tokens.accentMagenta,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
+                ErrorBanner("line ${diagnostic.line}: ${diagnostic.message}")
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -470,36 +350,12 @@ private fun EditorPane(
             textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
             colors = studioFieldColors(),
         )
-        MutedNotice("Queries are bounded to ${LocalZaraServer.QUERY_TIME_LIMIT_SECONDS}s and must bind Result. File, process, meta-call, database mutation, network, FFI, and arbitrary consult predicates are blocked.")
-        if (queryPending && operationBusy) {
-            SecondaryAction("Cancel query", true) {
-                queryPending = false
-                onCancelQuery()
-            }
-        } else {
-            PrimaryAction("Run query", !operationBusy && query.isNotBlank()) {
-                val historyItems = if (queryHistory.isBlank()) emptyList() else queryHistory.split('\u001F')
-                queryHistory = (historyItems + query).takeLast(12).joinToString("\u001F")
-                queryPending = true
-                onRunQuery()
-            }
-        }
-        if (queryHistory.isNotBlank()) {
-            Text("HISTORY", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-            queryHistory.split('\u001F').asReversed().take(5).forEach { previous ->
-                TextButton(onClick = { onQuery(previous) }) {
-                    Text(previous, fontFamily = FontFamily.Monospace)
-                }
-            }
-        }
+        MutedNotice("Queries are bounded and must bind Result. File, process, meta-call, database mutation, and arbitrary consult predicates are blocked.")
+        PrimaryAction("Run query", !operationBusy && query.isNotBlank(), onRunQuery)
         queryResult?.let { result ->
             SelectionContainer {
                 Text(
-                    when {
-                        result.cancelled -> "cancelled."
-                        result.terms.isEmpty() -> "false."
-                        else -> result.terms.joinToString("\n")
-                    },
+                    if (result.terms.isEmpty()) "false." else result.terms.joinToString("\n"),
                     color = tokens.text,
                     fontFamily = FontFamily.Monospace,
                 )
@@ -597,29 +453,7 @@ private fun AdvancedKbPane(
     var bundle by rememberSaveable { mutableStateOf("") }
     var boxOne by rememberSaveable { mutableStateOf("member(Result, [one, two])") }
     var boxTwo by rememberSaveable { mutableStateOf("triage_explain(alice, Result)") }
-    var boxOneHistory by rememberSaveable { mutableStateOf("") }
-    var boxTwoHistory by rememberSaveable { mutableStateOf("") }
-    var boxOneResult by rememberSaveable { mutableStateOf("") }
-    var boxTwoResult by rememberSaveable { mutableStateOf("") }
-    var pendingBox by rememberSaveable { mutableStateOf("") }
     val tokens = LocalZaraTokens.current
-
-    LaunchedEffect(queryResult) {
-        val result = queryResult ?: return@LaunchedEffect
-        if (pendingBox.isBlank()) return@LaunchedEffect
-        val rendered = when {
-            result.cancelled -> "cancelled."
-            result.terms.isEmpty() -> "false."
-            else -> result.terms.take(50).joinToString("\n").take(8_192)
-        }
-        val snapshot = "$rendered\n@generation ${result.generation}"
-        when (pendingBox) {
-            "BOX 1" -> boxOneResult = snapshot
-            "BOX 2" -> boxTwoResult = snapshot
-        }
-        pendingBox = ""
-    }
-
     SectionCard("KNOWLEDGE BASE MANAGEMENT") {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             sources.forEach { source ->
@@ -655,52 +489,22 @@ private fun AdvancedKbPane(
         )
     }
     SectionCard("MINI PROLOG BOXES") {
-        Text("BOX 1", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-        OutlinedTextField(
-            value = boxOne,
-            onValueChange = { boxOne = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            colors = studioFieldColors(),
-        )
-        PrimaryAction("Run BOX 1", !operationBusy && boxOne.isNotBlank()) {
-            val items = if (boxOneHistory.isBlank()) emptyList() else boxOneHistory.split('\u001F')
-            boxOneHistory = (items + boxOne).takeLast(10).joinToString("\u001F")
-            pendingBox = "BOX 1"
-            onRunQuery(boxOne)
+        listOf("BOX 1" to boxOne, "BOX 2" to boxTwo).forEach { (label, value) ->
+            Text(label, color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+            OutlinedTextField(
+                value = value,
+                onValueChange = { changed -> if (label == "BOX 1") boxOne = changed else boxTwo = changed },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                colors = studioFieldColors(),
+            )
+            PrimaryAction("Run $label", !operationBusy && value.isNotBlank()) { onRunQuery(value) }
         }
-        if (boxOneHistory.isNotBlank()) {
-            boxOneHistory.split('\u001F').asReversed().take(4).forEach { previous ->
-                TextButton(onClick = { boxOne = previous }) { Text(previous, fontFamily = FontFamily.Monospace) }
+        queryResult?.let { result ->
+            SelectionContainer {
+                Text(result.terms.ifEmpty { listOf("false.") }.joinToString("\n"), color = tokens.text, fontFamily = FontFamily.Monospace)
             }
-        }
-        if (boxOneResult.isNotBlank()) {
-            SelectionContainer { Text(boxOneResult, color = tokens.text, fontFamily = FontFamily.Monospace) }
-        }
-
-        Text("BOX 2", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-        OutlinedTextField(
-            value = boxTwo,
-            onValueChange = { boxTwo = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            colors = studioFieldColors(),
-        )
-        PrimaryAction("Run BOX 2", !operationBusy && boxTwo.isNotBlank()) {
-            val items = if (boxTwoHistory.isBlank()) emptyList() else boxTwoHistory.split('\u001F')
-            boxTwoHistory = (items + boxTwo).takeLast(10).joinToString("\u001F")
-            pendingBox = "BOX 2"
-            onRunQuery(boxTwo)
-        }
-        if (boxTwoHistory.isNotBlank()) {
-            boxTwoHistory.split('\u001F').asReversed().take(4).forEach { previous ->
-                TextButton(onClick = { boxTwo = previous }) { Text(previous, fontFamily = FontFamily.Monospace) }
-            }
-        }
-        if (boxTwoResult.isNotBlank()) {
-            SelectionContainer { Text(boxTwoResult, color = tokens.text, fontFamily = FontFamily.Monospace) }
         }
     }
 }
@@ -738,39 +542,19 @@ private fun SyntaxEditorPane(
 }
 
 @Composable
-private fun GraphPane(
-    documents: List<PrologDocument>,
-    onNavigate: (String, Int) -> Unit,
-) {
+private fun GraphPane(document: PrologDocument) {
     val tokens = LocalZaraTokens.current
-    val graph = remember(documents) {
-        LogicGraph(
-            nodes = documents.flatMap { it.graph.nodes }.distinctBy { it.id },
-            edges = documents.flatMap { it.graph.edges }.distinct(),
-        )
-    }
-    val definitions = remember(documents) {
-        documents.flatMap { document ->
-            document.clauses.filter { it.kind != PrologClauseKind.DIRECTIVE }
-        }.distinctBy { "${it.source}:${it.line}:${it.predicate.indicator}" }
-    }
     SectionCard("FACT / RULE GRAPH") {
-        if (graph.nodes.isEmpty()) {
+        if (document.graph.nodes.isEmpty()) {
             MutedNotice("Add facts or rules in the IDE to build the graph.")
             return@SectionCard
         }
-        LogicGraphCanvas(graph)
-        definitions.forEach { clause ->
-            TextButton(onClick = { onNavigate(clause.source, clause.line) }) {
-                Text(
-                    "${clause.predicate.indicator} · ${clause.source}:${clause.line}",
-                    color = tokens.text,
-                    fontFamily = FontFamily.Monospace,
-                )
-            }
+        LogicGraphCanvas(document.graph)
+        document.graph.nodes.filter { it.kind == LogicNodeKind.PREDICATE }.forEach { node ->
+            KeyValueRow(node.label, "${node.source}:${node.line}")
         }
         Text("EDGES", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
-        graph.edges.filter { it.label == "calls" }.forEach { edge ->
+        document.graph.edges.filter { it.label == "calls" }.forEach { edge ->
             Text(
                 "${edge.from.removePrefix("predicate:")} → ${edge.to.removePrefix("predicate:")}",
                 color = tokens.textMuted,
@@ -850,18 +634,6 @@ private fun TutorialPane(onOpen: (String, String) -> Unit) {
             Spacer(Modifier.size(8.dp))
         }
     }
-}
-
-private fun lineStartOffset(text: String, line: Int): Int {
-    if (line <= 1) return 0
-    var currentLine = 1
-    text.forEachIndexed { index, character ->
-        if (character == '\n') {
-            currentLine += 1
-            if (currentLine == line) return index + 1
-        }
-    }
-    return text.length
 }
 
 private fun firstExampleQuery(fileName: String): String =

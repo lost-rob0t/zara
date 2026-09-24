@@ -29,7 +29,7 @@ class StockZaraServerInteropTest {
                 acceptancePort = fixture.getValue("acceptance_port").toInt(),
             )
         }
-        val actor = ZaraTextClientActor(factory, requestTimeoutMillis = 2_000)
+        val actor = ZaraTextClientActor(factory, requestTimeoutMillis = 5_000)
         try {
             val session = actor.connect(
                 ServerProfile.create(fixture.getValue("endpoint")),
@@ -69,6 +69,7 @@ class StockZaraServerInteropTest {
                 "client_secret",
                 "acceptance_host",
                 "acceptance_port",
+                "security_admin_path",
             ),
             values.keys,
         )
@@ -92,6 +93,13 @@ private class FixtureJeroMqDealer(
     init {
         socket.setLinger(0)
         socket.setHandshakeIvl(2_000)
+        // Fail closed unless the CURVE connection is actually attached, and
+        // keep the fixture alive under the same bounded heartbeat contract as
+        // the stock ROUTER instead of silently queueing onto a dead route.
+        check(socket.setImmediate(true))
+        check(socket.setHeartbeatIvl(100))
+        check(socket.setHeartbeatTimeout(5_000))
+        check(socket.setSendTimeOut(2_000))
         check(socket.setCurveServerKey(JeroMqCurveKeyCodec.decode(serverPublic)))
         check(socket.setCurvePublicKey(JeroMqCurveKeyCodec.decode(clientPublic)))
         check(socket.setCurveSecretKey(JeroMqCurveKeyCodec.decode(clientSecret)))
