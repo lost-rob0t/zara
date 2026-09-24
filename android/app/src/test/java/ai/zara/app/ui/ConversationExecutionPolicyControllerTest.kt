@@ -148,6 +148,42 @@ class ConversationExecutionPolicyControllerTest {
     }
 
     @Test
+    fun failedCanonicalControlCommitCannotPersistProviderEnablingPolicy() {
+        val directory = createTempDirectory("zara-execution-controller").toFile()
+        val file = File(directory, "conversation-policy.bin")
+        val store = ConversationExecutionPolicyStore(file)
+        store.save(ConversationExecutionPolicy.PURE_SYMBOLIC)
+        val providerCalls = AtomicInteger(0)
+        val controller = ConversationExecutionPolicyController(
+            store = store,
+            pureSymbolicSubmit = { _, conversationId ->
+                CompletableFuture.completedFuture(symbolicTurn(conversationId, "symbolic answer"))
+            },
+            standardSubmit = { _, conversationId ->
+                providerCalls.incrementAndGet()
+                CompletableFuture.completedFuture(turn(conversationId, "provider answer"))
+            },
+        )
+
+        val failure = runCatching {
+            controller.selectAfterCanonicalCommit(ConversationExecutionPolicy.STANDARD) {
+                val duringTransition = controller.submit("probe", "conversation-1").join()
+                assertEquals("symbolic answer", duringTransition.text)
+                assertEquals(0, providerCalls.get())
+                error("terminal persistence failed")
+            }
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        assertEquals(ConversationExecutionPolicy.PURE_SYMBOLIC, controller.policy())
+        assertEquals(
+            ConversationExecutionPolicy.PURE_SYMBOLIC,
+            ConversationExecutionPolicyStore(file).load(),
+        )
+        assertEquals(0, providerCalls.get())
+    }
+
+    @Test
     fun pureSymbolicEvidenceIsHardZeroByConstruction() {
         val evidence = symbolicTurn("conversation-1", "answer")
 
