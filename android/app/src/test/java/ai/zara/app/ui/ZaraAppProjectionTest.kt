@@ -49,7 +49,15 @@ class ZaraAppProjectionTest {
             ),
         )
         assertEquals(
-            "LOCAL  •  SYMBOLIC  •  PRIVATE",
+            "SYMBOLIC ONLY  •  PRIVATE  •  NO MODEL",
+            chatFooter(
+                mode = RuntimeMode.Symbolic,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "LOCAL AI  •  SYMBOLIC FIRST  •  PRIVATE",
             chatFooter(
                 mode = RuntimeMode.Local,
                 server = ServerConnection.Connected(1),
