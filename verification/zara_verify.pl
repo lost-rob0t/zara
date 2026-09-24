@@ -60,6 +60,9 @@ evaluator_path(Path) :-
                      'scripts/test-expert-contract.sh',
                      'scripts/test-runtime-tool-approvals.sh',
                      'scripts/test-android.sh',
+                     'scripts/check-coverage-ratchet.py',
+                     'coverage-baseline.json',
+                     '.coveragerc',
                      'flake.nix',
                      'flake.lock']).
 release_path('version.properties').
