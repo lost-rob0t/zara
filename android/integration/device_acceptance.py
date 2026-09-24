@@ -229,17 +229,15 @@ class Device:
             for node in nodes
             if "isn't responding" in self.node_label(node)
         ]
-        if len(anr_candidates) == 1 and len(matches) == 1:
-            return matches[0]
-
         selected_path = self.hierarchy_path(selected_anr)
-        if selected_path is None:
+        if selected_path is None or not selected_path:
             raise AssertionError(f"ANR action ownership is not provable: {label}")
+        selected_owner_path = selected_path[:-1]
         candidate_paths = {
             id(candidate): self.hierarchy_path(candidate)
             for candidate in anr_candidates
         }
-        if any(path is None for path in candidate_paths.values()):
+        if any(path is None or not path for path in candidate_paths.values()):
             raise AssertionError(f"ANR action ownership is not provable: {label}")
 
         scored: list[tuple[int, object]] = []
@@ -247,6 +245,8 @@ class Device:
             action_path = self.hierarchy_path(action)
             if action_path is None:
                 raise AssertionError(f"ANR action ownership is not provable: {label}")
+            if action_path[: len(selected_owner_path)] != selected_owner_path:
+                continue
             selected_depth = self.common_path_depth(selected_path, action_path)
             competing_depth = max(
                 (
