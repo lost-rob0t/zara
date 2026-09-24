@@ -93,7 +93,10 @@ class LocalAiRuntimeTest {
             second.get(2, TimeUnit.SECONDS)
         }
         assertFalse(first.isDone)
-        runtime.cancel().get(2, TimeUnit.SECONDS)
+        val cancelled = runtime.cancel().get(2, TimeUnit.SECONDS)
+        assertEquals(LocalAiPhase.READY, cancelled.phase)
+        assertTrue("rejecting another request must not orphan the active backend session", backend.cancelled)
+        assertTrue("the originally active generation must remain cancellable", first.isCompletedExceptionally)
         runtime.close()
     }
 
