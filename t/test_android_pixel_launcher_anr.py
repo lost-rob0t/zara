@@ -284,3 +284,56 @@ def test_non_launcher_anr_is_never_dismissed(
 
     assert device.dismiss_pixel_launcher_anr() is False
     assert adb_calls == []
+
+
+def test_exact_anr_presence_searches_past_wrong_package_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    dialog_text = "Pixel Launcher isn't responding"
+    wrong_package = module.ET.fromstring(
+        f'<node text="{dialog_text}" package="ai.zara.app" bounds="[10,10][90,90]" />'
+    )
+    real_dialog = module.ET.fromstring(
+        f'<node text="{dialog_text}" package="com.google.android.apps.nexuslauncher" '
+        'bounds="[100,10][190,90]" />'
+    )
+
+    monkeypatch.setattr(device, "find_contains", lambda _fragment: wrong_package)
+    monkeypatch.setattr(device, "nodes", lambda: iter((wrong_package, real_dialog)))
+
+    assert device.exact_anr_is_present(
+        "com.google.android.apps.nexuslauncher",
+        dialog_text,
+    ) is True
+
+
+@pytest.mark.parametrize(
+    ("label", "resource_id"),
+    (
+        ("Close app", "android:id/aerr_close"),
+        ("Wait", "android:id/aerr_wait"),
+    ),
+)
+def test_anr_action_lookup_skips_wrong_package_before_system_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    label: str,
+    resource_id: str,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    wrong_action = module.ET.fromstring(
+        f'<node text="{label}" package="ai.zara.app" resource-id="fake:{label}" '
+        'bounds="[10,10][90,90]" />'
+    )
+    system_action = module.ET.fromstring(
+        f'<node text="{label}" package="android" resource-id="{resource_id}" '
+        'bounds="[100,10][190,90]" />'
+    )
+
+    monkeypatch.setattr(device, "nodes", lambda: iter((wrong_action, system_action)))
+
+    assert device.find(label) is system_action
