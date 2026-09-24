@@ -34,3 +34,12 @@ def test_zmq_audio_metric_provenance_is_explicit():
         "wan_result": False,
         "audio_end_to_end_result": False,
     }
+
+def test_latency_gate_uses_checked_out_head_for_source_sha():
+    repo_root = Path(__file__).resolve().parents[1]
+    script = (repo_root / "scripts" / "test-latency-metrics.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'source_sha="$(git -C "$repo_root" rev-parse HEAD)"' in script
+    assert "GITHUB_SHA" not in script
+
