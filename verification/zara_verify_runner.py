@@ -84,6 +84,21 @@ def safe_path(raw: bytes) -> str:
     return value
 
 
+def authority_ancestor_paths(path: Path, boundary: Path) -> set[Path]:
+    path = path.resolve(strict=False)
+    boundary = boundary.resolve()
+    try:
+        path.relative_to(boundary)
+    except ValueError as error:
+        raise VerificationError('source_authority_path_escape') from error
+    ancestors = {boundary}
+    current = path.parent
+    while current != boundary:
+        ancestors.add(current)
+        current = current.parent
+    return ancestors
+
+
 def source_authority_paths(root: Path, policy_root: Path) -> list[Path]:
     root = Path(root).resolve()
     policy_root = Path(policy_root).resolve()
@@ -92,8 +107,15 @@ def source_authority_paths(root: Path, policy_root: Path) -> list[Path]:
     names = sorted({safe_path(raw) for raw in (tracked + untracked).split(b'\0') if raw})
     if len(names) > MAX_FILES:
         raise VerificationError('source_file_count_limit')
-    targets = {root / name for name in names}
-    targets.update(policy_root / name for name in PROTECTED)
+    source_targets = {root / name for name in names}
+    policy_targets = {policy_root / name for name in PROTECTED}
+    targets = source_targets | policy_targets
+    for path in source_targets:
+        targets.update(authority_ancestor_paths(path, root))
+    for path in policy_targets:
+        targets.update(authority_ancestor_paths(path, policy_root))
+    if len(targets) > MAX_FILES * 2:
+        raise VerificationError('source_authority_path_limit')
     return sorted(targets, key=lambda path: os.fsencode(str(path)))
 
 
@@ -387,16 +409,33 @@ def execute_gate(gate_id: str, argv: list[str], root: Path, directory: Path,
             'artifact': str(log_path), 'artifact_sha256': retained_digest, 'bytes': retained_bytes}
 
 
+def junit_summary_failed(root: ET.Element) -> bool:
+    for element in root.iter():
+        if element.tag not in {'testsuite', 'testsuites'}:
+            continue
+        for field in ('failures', 'errors', 'skipped'):
+            raw = element.get(field)
+            if raw is None:
+                continue
+            if re.fullmatch(r'(?:0|[1-9][0-9]*)', raw) is None:
+                raise VerificationError('invalid_junit_summary')
+            if raw != '0':
+                return True
+    return False
+
+
 def parse_junit(path: Path, include_digest: bool = False) -> dict[str, Any]:
     try:
         data = retained_file_bytes(path, MAX_JSON_BYTES)
         if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
             raise VerificationError('unsafe_junit')
         root = ET.fromstring(data)
+        summary_failed = junit_summary_failed(root)
         cases = list(root.iter('testcase'))
         failures = sum(case.find('failure') is not None or case.find('error') is not None for case in cases)
         skipped = sum(case.find('skipped') is not None for case in cases)
-        state = 'passed' if len(cases) > skipped and failures == 0 else 'failed'
+        state = ('passed' if len(cases) > skipped and failures == 0 and not summary_failed
+                 else 'failed')
         result = {'state': state, 'tests': len(cases), 'failures': failures, 'skipped': skipped}
         if include_digest:
             result['sha256'] = hashlib.sha256(data).hexdigest()
