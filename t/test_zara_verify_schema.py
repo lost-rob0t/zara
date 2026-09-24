@@ -53,7 +53,10 @@ def test_verifier_workflow_retains_machine_readable_evidence_on_failure():
     assert 'path: .artifacts/zara-verify' in workflow
     assert 'if-no-files-found: error' in workflow
     assert "github.event.pull_request.base.sha" in workflow
-    assert 'snapshot --root . --base "$EXPECTED_BASE_SHA"' in workflow
+    assert 'python verification/zara_verify_runner.py snapshot --root . --base "$EXPECTED_BASE_SHA"' in workflow
+    assert '> .artifacts/zara-verify/base-identity.json' in workflow
+    assert "json.loads(Path('.artifacts/zara-verify/base-identity.json').read_text())" in workflow
+    assert 'nix develop -c python verification/zara_verify_runner.py snapshot' not in workflow
 
 
 @pytest.mark.parametrize('mutation', ['expert', 'plan', 'boolean', 'merge', 'unknown', 'reason', 'provider'])
