@@ -15,6 +15,10 @@ import xml.etree.ElementTree as ET
 UI_DUMP = "/data/local/tmp/zara-local-ai-ipc.xml"
 UI_DUMP_ATTEMPTS = 3
 UI_DUMP_RETRY_DELAY_SECONDS = 0.2
+SYSTEM_DIALOG_RETRY_DELAY_SECONDS = 0.2
+PIXEL_LAUNCHER_ANR_TITLE = "Pixel Launcher isn't responding"
+ANDROID_ALERT_TITLE_RESOURCE = "android:id/alertTitle"
+ANDROID_ANR_WAIT_RESOURCE = "android:id/aerr_wait"
 PERMISSION = "ai.zara.app.permission.LOCAL_AI"
 HOST_PACKAGE = "ai.zara.app"
 HOST_PROCESS = "ai.zara.app:voice"
@@ -154,14 +158,60 @@ class Device:
             raise AssertionError(f"Malformed bounds: {node.attrib.get('bounds')}")
         return tuple(values)
 
-    def tap(self, label: str) -> None:
-        node = self.find(label)
-        if node is None:
-            raise AssertionError(f"Missing control: {label}")
+    @staticmethod
+    def _find_in_nodes(nodes, label: str):
+        return next(
+            (
+                node
+                for node in nodes
+                if label in (node.get("text"), node.get("content-desc"))
+            ),
+            None,
+        )
+
+    def _tap_node(self, node) -> None:
         left, top, right, bottom = self.bounds(node)
         self.adb(
             "shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2)
         )
+
+    def _dismiss_unrelated_pixel_launcher_anr(self, nodes) -> bool:
+        title = next(
+            (
+                node
+                for node in nodes
+                if node.get("package") == "android"
+                and node.get("resource-id") == ANDROID_ALERT_TITLE_RESOURCE
+                and node.get("text") == PIXEL_LAUNCHER_ANR_TITLE
+            ),
+            None,
+        )
+        wait = next(
+            (
+                node
+                for node in nodes
+                if node.get("package") == "android"
+                and node.get("resource-id") == ANDROID_ANR_WAIT_RESOURCE
+                and node.get("text") == "Wait"
+                and node.get("clickable") == "true"
+                and node.get("enabled") == "true"
+            ),
+            None,
+        )
+        if title is None or wait is None:
+            return False
+        self._tap_node(wait)
+        return True
+
+    def tap(self, label: str) -> None:
+        nodes = list(self.nodes())
+        node = self._find_in_nodes(nodes, label)
+        if node is None and self._dismiss_unrelated_pixel_launcher_anr(nodes):
+            time.sleep(SYSTEM_DIALOG_RETRY_DELAY_SECONDS)
+            node = self._find_in_nodes(list(self.nodes()), label)
+        if node is None:
+            raise AssertionError(f"Missing control: {label}")
+        self._tap_node(node)
 
     def refresh_until(self, fragment: str, timeout: float = 15.0) -> str:
         deadline = time.monotonic() + timeout
