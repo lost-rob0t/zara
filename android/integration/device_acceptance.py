@@ -32,6 +32,7 @@ SYSTEM_ANR_ACTIONS = {
     "Close app": "android:id/aerr_close",
     "Wait": "android:id/aerr_wait",
 }
+ANR_HIERARCHY_PATH_ATTR = "zara-anr-hierarchy-path"
 SYSTEM_ANR_DISMISSAL_LIMIT = 2
 SYSTEM_ANR_CLEAR_ATTEMPTS = 3
 SYSTEM_ANR_CLEAR_RETRY_DELAY_SECONDS = 0.1
@@ -93,7 +94,8 @@ class Device:
                     time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
                     continue
                 break
-            return ET.fromstring(hierarchy).iter("node")
+            root = ET.fromstring(hierarchy)
+            return iter(self.annotate_hierarchy(root))
         raise AssertionError(
             f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
         ) from last_error
@@ -153,6 +155,41 @@ class Device:
             or "<unknown ANR dialog>"
         )
 
+    @staticmethod
+    def annotate_hierarchy(root) -> list:
+        nodes: list = []
+
+        def visit(element, path: tuple[int, ...]) -> None:
+            if element.tag == "node":
+                element.set(
+                    ANR_HIERARCHY_PATH_ATTR,
+                    ".".join(str(index) for index in path),
+                )
+                nodes.append(element)
+            for index, child in enumerate(list(element)):
+                visit(child, path + (index,))
+
+        visit(root, ())
+        return nodes
+
+    @staticmethod
+    def hierarchy_path(node) -> tuple[int, ...] | None:
+        raw_path = node.get(ANR_HIERARCHY_PATH_ATTR)
+        if raw_path is None:
+            return None
+        if not raw_path:
+            return ()
+        return tuple(int(index) for index in raw_path.split("."))
+
+    @staticmethod
+    def common_path_depth(left: tuple[int, ...], right: tuple[int, ...]) -> int:
+        depth = 0
+        for left_index, right_index in zip(left, right):
+            if left_index != right_index:
+                break
+            depth += 1
+        return depth
+
     def exact_anr_is_present(self, package: str, dialog_text: str) -> bool:
         return any(
             self.node_label(node) == dialog_text and node.get("package") == package
@@ -175,8 +212,7 @@ class Device:
         ]
         return (allowlisted[0] if allowlisted else candidates[0]), nodes
 
-    @staticmethod
-    def bound_anr_action(nodes, label: str):
+    def bound_anr_action(self, nodes, selected_anr, label: str):
         expected_resource_id = SYSTEM_ANR_ACTIONS[label]
         matches = [
             node
@@ -185,9 +221,55 @@ class Device:
             and node.get("package") == "android"
             and node.get("resource-id") == expected_resource_id
         ]
-        if len(matches) > 1:
-            raise AssertionError(f"Ambiguous system ANR action: {label}")
-        return matches[0] if matches else None
+        if not matches:
+            return None
+
+        anr_candidates = [
+            node
+            for node in nodes
+            if "isn't responding" in self.node_label(node)
+        ]
+        if len(anr_candidates) == 1 and len(matches) == 1:
+            return matches[0]
+
+        selected_path = self.hierarchy_path(selected_anr)
+        if selected_path is None:
+            raise AssertionError(f"ANR action ownership is not provable: {label}")
+        candidate_paths = {
+            id(candidate): self.hierarchy_path(candidate)
+            for candidate in anr_candidates
+        }
+        if any(path is None for path in candidate_paths.values()):
+            raise AssertionError(f"ANR action ownership is not provable: {label}")
+
+        scored: list[tuple[int, object]] = []
+        for action in matches:
+            action_path = self.hierarchy_path(action)
+            if action_path is None:
+                raise AssertionError(f"ANR action ownership is not provable: {label}")
+            selected_depth = self.common_path_depth(selected_path, action_path)
+            competing_depth = max(
+                (
+                    self.common_path_depth(path, action_path)
+                    for candidate in anr_candidates
+                    if candidate is not selected_anr
+                    for path in (candidate_paths[id(candidate)],)
+                    if path is not None
+                ),
+                default=-1,
+            )
+            if selected_depth > competing_depth:
+                scored.append((selected_depth, action))
+
+        if not scored:
+            return None
+        best_depth = max(depth for depth, _action in scored)
+        best_matches = [
+            action for depth, action in scored if depth == best_depth
+        ]
+        if len(best_matches) != 1:
+            raise AssertionError(f"Ambiguous system ANR action owner: {label}")
+        return best_matches[0]
 
     def reveal(self, label: str) -> None:
         width, height = self.size()
@@ -286,10 +368,10 @@ class Device:
         )
         while prior_attempts < SYSTEM_ANR_DISMISSAL_LIMIT:
             action_label = "Close app"
-            action = self.bound_anr_action(snapshot, action_label)
+            action = self.bound_anr_action(snapshot, anr, action_label)
             if action is None:
                 action_label = "Wait"
-                action = self.bound_anr_action(snapshot, action_label)
+                action = self.bound_anr_action(snapshot, anr, action_label)
             receipt = {
                 "package": package,
                 "dialog": dialog_text,
@@ -328,6 +410,7 @@ class Device:
                     raise AssertionError(
                         f"System ANR changed during sanitation: {dialog_text}"
                     )
+                anr = next_anr
 
         raise AssertionError(
             f"System ANR sanitation limit exceeded for {dialog_text}"
