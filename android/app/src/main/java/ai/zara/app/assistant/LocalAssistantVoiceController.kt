@@ -127,7 +127,13 @@ internal class LocalAssistantVoiceController(
                 statusObserver("Local voice did not hear a usable utterance")
                 return
             }
-            statusObserver("Thinking locally…")
+            statusObserver(
+                if (appSession.runtimeMode() == ai.zara.app.runtime.RuntimeMode.Remote) {
+                    "Thinking remotely…"
+                } else {
+                    "Thinking locally…"
+                }
+            )
             val turn = appSession.submitText(transcript)
             pendingTurn.track(turn)
             turn.whenComplete { result, error ->
@@ -136,7 +142,7 @@ internal class LocalAssistantVoiceController(
                     pendingTurn.clear(turn)
                     if (!isCurrent(token, lifecycleToken)) return@execute
                     if (error != null) {
-                        statusObserver("Local assistant failed: ${UiOperationFailure.summarize(error)}")
+                        statusObserver("Assistant failed: ${UiOperationFailure.summarize(error)}")
                     } else if (result != null) {
                         statusObserver(result.text)
                         if (result.text.isNotBlank()) speaker.speak(result.text)
