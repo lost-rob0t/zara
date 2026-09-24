@@ -35,6 +35,8 @@ import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelQuantization
 import ai.zara.app.localai.LocalModelSpec
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.ServerConnection
@@ -122,6 +124,8 @@ fun ZaraApp(
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    localVoiceActive: Boolean,
+    localVoiceStatus: String?,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
@@ -137,6 +141,8 @@ fun ZaraApp(
     localAiState: LocalAiState,
     localModels: List<LocalModelSpec>,
     localModelBusy: Boolean,
+    cloudModelState: CloudModelState,
+    cloudModelBusy: Boolean,
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
@@ -144,6 +150,8 @@ fun ZaraApp(
     onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
     onSelectLocalModel: (String, String) -> Unit,
     onUnloadLocalModel: () -> Unit,
+    onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
+    onClearCloudModelApiKey: () -> Unit,
     onScanPairingQr: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
@@ -195,6 +203,8 @@ fun ZaraApp(
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
                 voiceState = voiceState,
+                localVoiceActive = localVoiceActive,
+                localVoiceStatus = localVoiceStatus,
                 voiceStreamState = voiceStreamState,
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
@@ -210,6 +220,8 @@ fun ZaraApp(
                 localAiState = localAiState,
                 localModels = localModels,
                 localModelBusy = localModelBusy,
+                cloudModelState = cloudModelState,
+                cloudModelBusy = cloudModelBusy,
                 projectState = projectState,
                 onSelectTheme = onSelectTheme,
                 onSelectRuntimeMode = onSelectRuntimeMode,
@@ -217,6 +229,8 @@ fun ZaraApp(
                 onImportLocalModel = onImportLocalModel,
                 onSelectLocalModel = onSelectLocalModel,
                 onUnloadLocalModel = onUnloadLocalModel,
+                onConfigureCloudModel = onConfigureCloudModel,
+                onClearCloudModelApiKey = onClearCloudModelApiKey,
                 onCreateIdentity = onCreateIdentity,
                 onPinServer = onPinServer,
                 onReplaceServerPin = onReplaceServerPin,
