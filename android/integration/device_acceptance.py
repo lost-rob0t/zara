@@ -106,7 +106,7 @@ class Device:
         ]
         expected_resource_id = SYSTEM_ANR_ACTIONS.get(label)
         if expected_resource_id is not None:
-            system_action = next(
+            return next(
                 (
                     node
                     for node in matches
@@ -115,8 +115,6 @@ class Device:
                 ),
                 None,
             )
-            if system_action is not None:
-                return system_action
         return matches[0] if matches else None
 
     def find_contains(self, fragment: str):
