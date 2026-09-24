@@ -187,4 +187,3 @@ failures in the existing ZARA/1 gateway and SecurityRegistry boundaries:
   - non-negotiated early audio quiet + gateway remains alive.
 - No alternate protocol type, audio runtime, provider route, session owner, or
   transport registry was introduced.
-
