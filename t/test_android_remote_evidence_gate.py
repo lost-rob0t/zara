@@ -32,6 +32,7 @@ def _write_android_manifest(
     state: str,
     source_sha: str,
     apk_sha256: str = "b" * 64,
+    device_api: str = "35",
 ) -> Path:
     evidence.mkdir(parents=True, exist_ok=True)
     screenshot = evidence / f"{state}.png"
@@ -72,7 +73,7 @@ def _write_android_manifest(
         "scenario_id": f"android.ui.{state}",
         "source_sha": source_sha,
         "apk_sha256": apk_sha256,
-        "device_api": "35",
+        "device_api": device_api,
         "profile": "default",
         "route": "chat",
         "runtime": runtime,
@@ -100,7 +101,7 @@ def _write_android_manifest(
         "apk_sha256": apk_sha256,
         "serial": "emulator-5554",
         "passed": True,
-        "device": {"api": "35"},
+        "device": {"api": device_api},
         "screenshots": [
             {
                 "state": state,
@@ -173,4 +174,40 @@ def test_primary_android_gate_rejects_supplemental_evidence_from_different_apk(
     )
 
     with pytest.raises(validator.EvidenceError, match="supplemental apk_sha256 mismatch"):
+        validator.validate_android(primary, source_sha)
+
+
+@pytest.mark.parametrize(
+    ("manifest_name", "state"),
+    (
+        ("remote-manifest.json", "remote-text-turn"),
+        ("recovery-manifest.json", "recovery-text-turn"),
+    ),
+)
+def test_primary_android_gate_rejects_supplemental_evidence_from_different_device_api(
+    tmp_path: Path,
+    manifest_name: str,
+    state: str,
+) -> None:
+    validator = _load_validator()
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    evidence = tmp_path / "android"
+    primary = _write_android_manifest(
+        evidence,
+        manifest_name="manifest.json",
+        state="empty-shell",
+        source_sha=source_sha,
+        apk_sha256="b" * 64,
+        device_api="35",
+    )
+    _write_android_manifest(
+        evidence,
+        manifest_name=manifest_name,
+        state=state,
+        source_sha=source_sha,
+        apk_sha256="b" * 64,
+        device_api="34",
+    )
+
+    with pytest.raises(validator.EvidenceError, match="supplemental device API mismatch"):
         validator.validate_android(primary, source_sha)
