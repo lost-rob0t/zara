@@ -921,4 +921,3 @@ def test_early_audio_is_dropped_when_route_did_not_negotiate_output(
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
-
