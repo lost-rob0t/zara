@@ -260,6 +260,7 @@
             p.pyzmq
             # Testing
             p.pytest
+            p.pytest-cov
             p.pytest-asyncio
             # Python packaging companion for scripts/zara-ytdlp.
             p.yt-dlp
@@ -413,7 +414,7 @@
             # writable temp dir so tests that resolve ``Path.home()`` work.
             pytest = pkgs.runCommand "zara-check-pytest"
               {
-                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper pkgs.cacert ];
+                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper pkgs.cacert pkgs.bash pkgs.git ];
                 src = ./.;
               }
               ''
