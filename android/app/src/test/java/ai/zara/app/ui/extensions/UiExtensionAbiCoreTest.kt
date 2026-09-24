@@ -75,6 +75,63 @@ class UiExtensionAbiCoreTest {
     }
 
     @Test
+    fun portablePythonParserRejectsDedentedTopLevelUiAddAndPreservesLastGoodOwner() {
+        val registry = UiExtensionRegistry()
+        val accepted = PortablePythonUiInitParser.parse(
+            """
+            def register(ui):
+                ui.add("last_good", "drawer", "text", "Last good", "", 1, ["android"])
+            """.trimIndent(),
+        )
+        registry.replaceOwner("plugin:notes", accepted)
+
+        val malformed = """
+            def register(ui):
+                ui.add("body", "drawer", "text", "Body", "", 1, ["android"])
+            ui.add("top_level", "drawer", "text", "Top level", "", 2, ["android"])
+        """.trimIndent()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            registry.replaceOwner("plugin:notes", PortablePythonUiInitParser.parse(malformed))
+        }
+
+        val retained = registry.forPlatform(UiPlatform.ANDROID)
+        assertEquals(listOf("last_good"), retained.map { it.id })
+        assertEquals(listOf("Last good"), retained.map { it.label })
+    }
+
+    @Test
+    fun portablePythonParserRejectsExecutableBodyAndTopLevelContinuation() {
+        val malformed = """
+            def register(ui):
+                pass
+            ui.add("top_level", "drawer", "text", "Top level", "", 1, ["android"])
+        """.trimIndent()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            PortablePythonUiInitParser.parse(malformed)
+        }
+    }
+
+    @Test
+    fun portablePythonParserRejectsMixedOrInconsistentBodyIndentation() {
+        val mixedIndent =
+            "def register(ui):\n" +
+                "    ui.add(\"one\", \"drawer\", \"text\", \"One\", \"\", 1, [\"android\"])\n" +
+                "\tui.add(\"two\", \"drawer\", \"text\", \"Two\", \"\", 2, [\"android\"])"
+        val partialDedent =
+            "def register(ui):\n" +
+                "    ui.add(\"one\", \"drawer\", \"text\", \"One\", \"\", 1, [\"android\"])\n" +
+                "  ui.add(\"two\", \"drawer\", \"text\", \"Two\", \"\", 2, [\"android\"])"
+
+        listOf(mixedIndent, partialDedent).forEach { malformed ->
+            assertThrows(IllegalArgumentException::class.java) {
+                PortablePythonUiInitParser.parse(malformed)
+            }
+        }
+    }
+
+    @Test
     fun contributionValidationFailsClosedOnUnknownActionsAndInteractiveItemsWithoutActions() {
         assertThrows(IllegalArgumentException::class.java) {
             UiContribution(
