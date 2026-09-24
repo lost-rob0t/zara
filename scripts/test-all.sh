@@ -145,6 +145,13 @@ phase_api_service() {
 
 run_phase "Server api_service providers" phase_api_service
 
+# --- Phase 2d: WRAITH/1 Prolog authority contract -------------------------
+phase_wraith_contract() {
+  bash "$repo_root/scripts/test-wraith.sh"
+}
+
+run_phase "WRAITH/1 Prolog authority contract" phase_wraith_contract
+
 # --- Phase 3: Focused ZARA/1 protocol/transport gate ----------------------
 phase_zara1_protocol() {
   bash "$repo_root/scripts/test-zara1-protocol.sh"
