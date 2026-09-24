@@ -8,6 +8,7 @@ cd "$repo_root"
 
 code_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+phone_apk_sha256="$(sha256sum "$phone_apk" | awk '{print $1}')"
 trealla_library_root="$repo_root/android/app/build/trealla"
 evidence_dir="android/app/build/reports/device"
 instrumentation_log="$evidence_dir/connected-debug-android-test.log"
@@ -16,7 +17,7 @@ instrumentation_log="$evidence_dir/connected-debug-android-test.log"
 # failed acceptance run still leaves exact-head diagnostics instead of an empty
 # artifact slot. This is local CI evidence only; it is not a runtime fallback.
 mkdir -p "$evidence_dir"
-printf 'source_sha=%s\nserial=%s\n' "$source_sha" "$serial" > "$evidence_dir/run-context.txt"
+printf 'source_sha=%s\nserial=%s\napk_sha256=%s\n' "$source_sha" "$serial" "$phone_apk_sha256" > "$evidence_dir/run-context.txt"
 
 copy_connected_test_diagnostics() {
   local diagnostics_dir="$evidence_dir/instrumentation"
@@ -106,6 +107,7 @@ nix develop "$repo_root/android" -c \
   python3 "$repo_root/android/integration/device_acceptance.py" \
   --serial "$serial" \
   --source-sha "$source_sha" \
+  --apk-sha256 "$phone_apk_sha256" \
   --output android/app/build/reports/device
 
 visual_manifest="$repo_root/android/app/build/reports/device/manifest.json"
@@ -114,6 +116,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shlex
 import sys
 import xml.etree.ElementTree as ET
 
@@ -209,11 +212,39 @@ for file_key, hash_key in (
         )
 
 text_twin_path = evidence_dir / receipt["text_twin_file"]
-try:
-    text_twin_root = ET.parse(text_twin_path).getroot()
-except ET.ParseError as error:
-    raise SystemExit(f"overflow visual text twin is malformed XML: {error}") from error
-text_twin_nodes = list(text_twin_root.iter("node"))
+text_twin_raw = text_twin_path.read_text(encoding="utf-8")
+text_twin_nodes: list[dict[str, str]] = []
+if text_twin_raw.lstrip().startswith("<"):
+    try:
+        text_twin_root = ET.fromstring(text_twin_raw)
+    except ET.ParseError as error:
+        raise SystemExit(f"overflow visual text twin is malformed XML: {error}") from error
+    text_twin_nodes = [
+        {
+            "text": node.get("text", ""),
+            "content_desc": node.get("content-desc", ""),
+            "bounds": node.get("bounds", ""),
+        }
+        for node in text_twin_root.iter("node")
+    ]
+else:
+    for line in text_twin_raw.splitlines():
+        if not line.startswith("class="):
+            continue
+        fields: dict[str, str] = {}
+        try:
+            tokens = shlex.split(line)
+        except ValueError as error:
+            raise SystemExit(f"overflow visual text twin contains malformed semantics: {error}") from error
+        for token in tokens:
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            fields[key] = value
+        text_twin_nodes.append(fields)
+if not text_twin_nodes:
+    raise SystemExit("overflow visual text twin omitted normalized UI semantics")
+
 action_rects = []
 for action in actions:
     label = action.get("label")
@@ -242,7 +273,7 @@ for action in actions:
     matching_label_nodes = [
         node
         for node in text_twin_nodes
-        if label in (node.get("text"), node.get("content-desc"))
+        if label in (node.get("text"), node.get("content_desc"))
     ]
     if not matching_label_nodes:
         raise SystemExit(f"overflow visual text twin is missing action: {label}")
@@ -345,6 +376,8 @@ nix develop "$repo_root" -c env \
   python3 "$repo_root/android/integration/device_remote_acceptance.py" \
   --serial "$serial" \
   --fixture-file "$interop_fixture" \
+  --source-sha "$source_sha" \
+  --apk-sha256 "$phone_apk_sha256" \
   --output "$repo_root/$evidence_dir"
 
 # A successful UI path is not enough: the acceptance contract requires current
@@ -441,6 +474,8 @@ nix develop "$repo_root" -c env \
   python3 "$repo_root/android/integration/device_remote_recovery_acceptance.py" \
   --serial "$serial" \
   --fixture-file "$recovery_fixture" \
+  --source-sha "$source_sha" \
+  --apk-sha256 "$phone_apk_sha256" \
   --output "$repo_root/android/app/build/reports/device"
 
 recovery_manifest="$repo_root/android/app/build/reports/device/recovery-manifest.json"

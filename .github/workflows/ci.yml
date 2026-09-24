@@ -122,17 +122,9 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           ZARA_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          nix develop -c python - <<'PY'
-          import os
-          from pathlib import Path
-
-          from zara.desktop.ui_fixtures import render_copilot_fixtures
-
-          render_copilot_fixtures(
-              Path(os.environ["ARTIFACT_DIR"]) / "ui",
-              source_commit=os.environ["ZARA_SOURCE_COMMIT"],
-          )
-          PY
+          nix develop -c python scripts/desktop_ui_evidence.py \
+            --output "$ARTIFACT_DIR/ui" \
+            --source-sha "$ZARA_SOURCE_COMMIT"
 
       - name: Upload test artifacts
         if: always()

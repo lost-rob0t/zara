@@ -26,8 +26,44 @@ def _write_desktop_evidence(root: Path, source_sha: str) -> Path:
     payload = _png_bytes("desktop")
     screenshot = evidence / "copilot-empty-compact.png"
     screenshot.write_bytes(payload)
+    actions = ["render:empty-compact"]
+    assertions = [
+        {
+            "name": "same-state-semantics",
+            "passed": True,
+            "detail": "widget semantics stable across screenshot capture",
+        },
+        {
+            "name": "screenshot-png",
+            "passed": True,
+            "detail": "Qt produced PNG screenshot evidence",
+        },
+    ]
+    trace = (
+        "ACTION 1 render:empty-compact\n"
+        "ASSERT PASS same-state-semantics widget semantics stable across screenshot capture\n"
+        "ASSERT PASS screenshot-png Qt produced PNG screenshot evidence\n"
+    )
+    metadata = {
+        "state": "empty-compact",
+        "source_commit": source_sha,
+        "theme": "signal-cabin",
+        "width": 680,
+        "height": 460,
+    }
+    text_evidence = evidence / "empty-compact.ui.txt"
+    text_evidence.write_text(
+        "meta="
+        + json.dumps(metadata, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        + "\n"
+        + 'widget={"bounds":[0,0,680,460],"checked":null,"class":"CopilotWindow","enabled":true,"object_name":"","text":[],"visible":true}\n'
+        + trace,
+        encoding="utf-8",
+    )
+    assertion_evidence = evidence / "empty-compact.assertions.txt"
+    assertion_evidence.write_text(trace, encoding="utf-8")
     manifest = {
-        "schema": 1,
+        "schema": 2,
         "fixtures": [
             {
                 "state": "empty-compact",
@@ -37,6 +73,16 @@ def _write_desktop_evidence(root: Path, source_sha: str) -> Path:
                 "theme": "signal-cabin",
                 "source_commit": source_sha,
                 "sha256": hashlib.sha256(payload).hexdigest(),
+                "actions": actions,
+                "assertions": assertions,
+                "text_evidence": {
+                    "file": text_evidence.name,
+                    "sha256": hashlib.sha256(text_evidence.read_bytes()).hexdigest(),
+                },
+                "assertion_evidence": {
+                    "file": assertion_evidence.name,
+                    "sha256": hashlib.sha256(assertion_evidence.read_bytes()).hexdigest(),
+                },
             }
         ],
     }
@@ -51,17 +97,78 @@ def _write_android_evidence(root: Path, source_sha: str, *, passed: bool = True)
     payload = _png_bytes("android")
     screenshot = evidence / "empty-shell.png"
     screenshot.write_bytes(payload)
+    screenshot_sha = hashlib.sha256(payload).hexdigest()
+    apk_sha256 = "b" * 64
+    runtime = {
+        "mode": None,
+        "runtime_id": None,
+        "model": None,
+        "quantization": None,
+        "phase": None,
+    }
+    trace = (
+        "ACTION 1 capture:empty-shell\n"
+        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n"
+    )
+
+    text_evidence = evidence / "empty-shell.ui.txt"
+    text_evidence.write_text(
+        'route="chat"\n'
+        f"runtime={json.dumps(runtime, sort_keys=True, separators=(',', ':'))}\n"
+        'class="android.widget.TextView" text="Chat" content_desc="" '
+        'enabled=true clickable=false selected=true focused=false bounds=[20,40][180,96]\n'
+        + trace,
+        encoding="utf-8",
+    )
+    assertion_evidence = evidence / "empty-shell.assertions.txt"
+    assertion_evidence.write_text(trace, encoding="utf-8")
+    scenario = {
+        "scenario_id": "android.ui.empty-shell",
+        "source_sha": source_sha,
+        "apk_sha256": apk_sha256,
+        "device_api": "35",
+        "profile": "default",
+        "route": "chat",
+        "runtime": runtime,
+        "actions": ["capture:empty-shell"],
+        "assertions": [
+            {
+                "name": "screenshot-png",
+                "passed": True,
+                "detail": "device returned PNG screenshot evidence",
+            }
+        ],
+        "screenshot": {
+            "file": screenshot.name,
+            "sha256": screenshot_sha,
+        },
+        "text_evidence": {
+            "file": text_evidence.name,
+            "sha256": hashlib.sha256(text_evidence.read_bytes()).hexdigest(),
+        },
+        "assertion_evidence": {
+            "file": assertion_evidence.name,
+            "sha256": hashlib.sha256(assertion_evidence.read_bytes()).hexdigest(),
+        },
+    }
+    (evidence / "empty-shell.json").write_text(
+        json.dumps(scenario, sort_keys=True),
+        encoding="utf-8",
+    )
     manifest = {
         "source_sha": source_sha,
+        "apk_sha256": apk_sha256,
         "serial": "emulator-5554",
         "passed": passed,
+        "device": {"api": "35"},
         "screenshots": [
             {
                 "state": "empty-shell",
                 "file": screenshot.name,
-                "sha256": hashlib.sha256(payload).hexdigest(),
+                "sha256": screenshot_sha,
             }
         ],
+        "scenarios": [scenario],
     }
     manifest_path = evidence / "manifest.json"
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -177,6 +284,7 @@ def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
     assert 'bash scripts/test-android-emulator-install.sh "$serial" "$SOURCE_SHA"' in workflow
     assert "android/integration/device_acceptance.py" in emulator_smoke
     assert '--source-sha "$source_sha"' in emulator_smoke
+    assert '--apk-sha256 "$phone_apk_sha256"' in emulator_smoke
     assert "--output android/app/build/reports/device" in emulator_smoke
     assert "android-ui-evidence" in workflow
     assert "Validate dual-surface screenshot evidence" in workflow

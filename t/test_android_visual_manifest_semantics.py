@@ -1,12 +1,24 @@
 import hashlib
+import importlib.util
 import json
 from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 EMULATOR_GATE = Path("scripts/test-android-emulator-install.sh")
+EVIDENCE_VALIDATOR = Path("scripts/validate-ui-evidence.py")
 SOURCE_SHA = "a" * 40
+APK_SHA256 = "b" * 64
+RUNTIME = {
+    "mode": None,
+    "runtime_id": None,
+    "model": None,
+    "quantization": None,
+    "phase": None,
+}
 
 
 def visual_manifest_verifier() -> str:
@@ -20,11 +32,40 @@ def visual_manifest_verifier() -> str:
     return source[start:end]
 
 
+def evidence_validator_module():
+    spec = importlib.util.spec_from_file_location(
+        "zara_ui_evidence_validator_test",
+        EVIDENCE_VALIDATOR,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
     screenshot = tmp_path / "drawer-conversation-overflow.png"
-    screenshot.write_bytes(b"synthetic screenshot bytes")
+    screenshot.write_bytes(b"\x89PNG\r\n\x1a\nsynthetic screenshot bytes")
+    screenshot_sha = hashlib.sha256(screenshot.read_bytes()).hexdigest()
     text_twin = tmp_path / "drawer-conversation-overflow.xml"
     text_twin.write_text(twin_xml, encoding="utf-8")
+
+    trace = (
+        "ACTION 1 capture:drawer-conversation-overflow\n"
+        "ASSERT PASS screenshot-png device returned PNG screenshot evidence\n"
+    )
+    scenario_text = tmp_path / "drawer-conversation-overflow.ui.txt"
+    scenario_text.write_text(
+        'route="chat"\n'
+        f"runtime={json.dumps(RUNTIME, sort_keys=True, separators=(',', ':'))}\n"
+        'class="android.widget.TextView" text="Rename" content_desc="" enabled=true '
+        'clickable=false selected=false focused=false bounds=[10,30][70,50]\n'
+        + trace,
+        encoding="utf-8",
+    )
+    scenario_assertions = tmp_path / "drawer-conversation-overflow.assertions.txt"
+    scenario_assertions.write_text(trace, encoding="utf-8")
 
     actions = [
         {
@@ -49,17 +90,51 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
             "occupied_luma_bins": 20,
         },
     ]
+    scenario = {
+        "scenario_id": "android.ui.drawer-conversation-overflow",
+        "source_sha": SOURCE_SHA,
+        "apk_sha256": APK_SHA256,
+        "device_api": "35",
+        "profile": "default",
+        "route": "chat",
+        "runtime": dict(RUNTIME),
+        "actions": ["capture:drawer-conversation-overflow"],
+        "assertions": [
+            {
+                "name": "screenshot-png",
+                "passed": True,
+                "detail": "device returned PNG screenshot evidence",
+            }
+        ],
+        "screenshot": {
+            "file": screenshot.name,
+            "sha256": screenshot_sha,
+        },
+        "text_evidence": {
+            "file": scenario_text.name,
+            "sha256": hashlib.sha256(scenario_text.read_bytes()).hexdigest(),
+        },
+        "assertion_evidence": {
+            "file": scenario_assertions.name,
+            "sha256": hashlib.sha256(scenario_assertions.read_bytes()).hexdigest(),
+        },
+    }
+    scenario_path = tmp_path / "drawer-conversation-overflow.json"
+    scenario_path.write_text(json.dumps(scenario, sort_keys=True), encoding="utf-8")
+
     manifest = {
         "passed": True,
         "source_sha": SOURCE_SHA,
+        "apk_sha256": APK_SHA256,
         "device": {"api": "35"},
         "screenshots": [
             {
                 "state": "drawer-conversation-overflow",
                 "file": screenshot.name,
-                "sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest(),
+                "sha256": screenshot_sha,
             }
         ],
+        "scenarios": [scenario],
         "visual_checks": [
             {
                 "state": "drawer-conversation-overflow",
@@ -70,7 +145,7 @@ def write_visual_bundle(tmp_path: Path, *, twin_xml: str) -> Path:
                 "action_union": [10, 10, 110, 70],
                 "viewport": [120, 100],
                 "screenshot_file": screenshot.name,
-                "screenshot_sha256": hashlib.sha256(screenshot.read_bytes()).hexdigest(),
+                "screenshot_sha256": screenshot_sha,
                 "text_twin_file": text_twin.name,
                 "text_twin_sha256": hashlib.sha256(text_twin.read_bytes()).hexdigest(),
                 "actions": actions,
@@ -172,3 +247,59 @@ def test_visual_manifest_verifier_rejects_union_that_disagrees_with_actions(tmp_
 
     assert result.returncode != 0
     assert "overflow visual receipt action_union differs from action bounds" in result.stderr
+
+
+def test_canonical_android_validator_accepts_complete_scenario_evidence(tmp_path: Path) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    validator = evidence_validator_module()
+
+    assert validator.validate_android(manifest_path, SOURCE_SHA) == 1
+
+
+def test_visual_manifest_verifier_rejects_missing_scenario_evidence(tmp_path: Path) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    del data["scenarios"]
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    validator = evidence_validator_module()
+
+    with pytest.raises(validator.EvidenceError, match="omitted per-scenario evidence"):
+        validator.validate_android(manifest_path, SOURCE_SHA)
+
+
+def test_visual_manifest_verifier_rejects_missing_scenario_assertion_file(
+    tmp_path: Path,
+) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    (tmp_path / "drawer-conversation-overflow.assertions.txt").unlink()
+    validator = evidence_validator_module()
+
+    with pytest.raises(validator.EvidenceError, match="scenario evidence file is missing"):
+        validator.validate_android(manifest_path, SOURCE_SHA)
+
+
+def test_visual_manifest_verifier_rejects_duplicate_scenario_id(tmp_path: Path) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["scenarios"].append(dict(data["scenarios"][0]))
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    validator = evidence_validator_module()
+
+    with pytest.raises(validator.EvidenceError, match="duplicate scenario id"):
+        validator.validate_android(manifest_path, SOURCE_SHA)
+
+
+def test_visual_manifest_verifier_rejects_scenario_screenshot_hash_drift(
+    tmp_path: Path,
+) -> None:
+    manifest_path = write_visual_bundle(tmp_path, twin_xml=matching_twin())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data["scenarios"][0]["screenshot"]["sha256"] = "0" * 64
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+    validator = evidence_validator_module()
+
+    with pytest.raises(
+        validator.EvidenceError,
+        match="android scenario screenshot .* hash mismatch",
+    ):
+        validator.validate_android(manifest_path, SOURCE_SHA)

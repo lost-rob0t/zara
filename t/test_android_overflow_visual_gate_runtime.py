@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -13,6 +14,8 @@ assert SPEC is not None and SPEC.loader is not None
 DEVICE_ACCEPTANCE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DEVICE_ACCEPTANCE)
 Device = DEVICE_ACCEPTANCE.Device
+SOURCE_SHA = "a" * 40
+APK_SHA256 = "b" * 64
 
 
 def node(*, bounds: tuple[int, int, int, int], label: str) -> ET.Element:
@@ -30,18 +33,33 @@ def node(*, bounds: tuple[int, int, int, int], label: str) -> ET.Element:
 def synthetic_device(tmp_path: Path, image: Image.Image) -> Device:
     path = tmp_path / "surface.png"
     image.save(path, format="PNG")
-    twin = tmp_path / "surface.xml"
-    twin.write_text("<hierarchy><node text='Rename'/></hierarchy>", encoding="utf-8")
+    screenshot_bytes = path.read_bytes()
+    hierarchy = "<hierarchy><node text='Rename'/></hierarchy>"
     device = Device("synthetic", tmp_path)
+    device.source_sha = SOURCE_SHA
+    device.apk_sha256 = APK_SHA256
+    device.device_api = "35"
+    device.current_profile = "default"
+    device.current_route = "chat"
+    device.runtime_evidence = {
+        "mode": None,
+        "runtime_id": None,
+        "model": None,
+        "quantization": None,
+        "phase": None,
+    }
     trigger = node(bounds=(100, 20, 140, 34), label="Actions for test")
     action = node(bounds=(40, 40, 120, 80), label="Rename")
     device.find_contains = lambda fragment: trigger if fragment == "Actions for " else None
     device.find = lambda label: action if label == "Rename" else None
-    device.capture = lambda screenshot_name: path
-    device.capture_text_twin = lambda state: {
-        "file": twin.name,
-        "sha256": hashlib.sha256(twin.read_bytes()).hexdigest(),
-    }
+    device._hierarchy_text = lambda: hierarchy
+
+    def synthetic_adb(*arguments: str, binary: bool = False):
+        if arguments == ("exec-out", "screencap", "-p") and binary:
+            return screenshot_bytes
+        raise AssertionError(f"Unexpected synthetic adb call: {arguments!r} binary={binary}")
+
+    device.adb = synthetic_adb
     return device
 
 
@@ -76,6 +94,27 @@ def test_overflow_visual_gate_rejects_border_only_contrast(tmp_path: Path) -> No
             screenshot_name="border-only",
         )
 
+    scenario = device.scenario_evidence[-1]
+    failed_assertion = next(
+        assertion
+        for assertion in scenario["assertions"]
+        if assertion["name"] == "transient-surface-visible"
+    )
+    assert failed_assertion["passed"] is False
+    assert "visually blank" in failed_assertion["detail"]
+
+    twin = tmp_path / scenario["text_evidence"]["file"]
+    assertions = tmp_path / scenario["assertion_evidence"]["file"]
+    persisted = json.loads((tmp_path / "border-only.json").read_text(encoding="utf-8"))
+    expected_failure = "ASSERT FAIL transient-surface-visible"
+    assert expected_failure in twin.read_text(encoding="utf-8")
+    assert expected_failure in assertions.read_text(encoding="utf-8")
+    assert scenario["text_evidence"]["sha256"] == hashlib.sha256(twin.read_bytes()).hexdigest()
+    assert scenario["assertion_evidence"]["sha256"] == hashlib.sha256(
+        assertions.read_bytes()
+    ).hexdigest()
+    assert persisted == scenario
+
 
 def test_overflow_visual_gate_accepts_interior_text_like_contrast(tmp_path: Path) -> None:
     """Deterministic interior glyph-like strokes remain acceptable visual evidence."""
@@ -87,6 +126,7 @@ def test_overflow_visual_gate_accepts_interior_text_like_contrast(tmp_path: Path
     )
 
     assert device.visual_checks[-1]["state"] == "interior-glyphs"
+    assert device.scenario_evidence[-1]["scenario_id"] == "android.ui.interior-glyphs"
 
 
 def test_overflow_visual_gate_uses_preopen_trigger_bounds_after_trigger_disappears(
@@ -106,18 +146,15 @@ def test_overflow_visual_gate_uses_preopen_trigger_bounds_after_trigger_disappea
 
     receipt = device.visual_checks[-1]
     assert receipt["trigger_bounds"] == [100, 20, 140, 34]
+    assert device.scenario_evidence[-1]["scenario_id"] == "android.ui.trigger-hidden"
 
 
 def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
     tmp_path: Path,
 ) -> None:
-    """Review evidence must bind pixels and UI semantics from the popup state."""
+    """Review evidence must bind pixels and the capture-fenced scenario text twin."""
     device = synthetic_device(tmp_path, text_like_image())
-    screenshot = tmp_path / "surface.png"
-    twin = tmp_path / "overflow.xml"
-    twin.write_text("<hierarchy><node text='Rename'/></hierarchy>", encoding="utf-8")
-    twin_sha = hashlib.sha256(twin.read_bytes()).hexdigest()
-    device.capture_text_twin = lambda state: {"file": twin.name, "sha256": twin_sha}
+    screenshot = tmp_path / "bound-evidence.png"
 
     device.assert_transient_surface_visible(
         trigger_fragment="Actions for ",
@@ -126,7 +163,42 @@ def test_overflow_visual_receipt_binds_same_state_screenshot_and_text_twin(
         screenshot_name="bound-evidence",
     )
 
+    scenario = device.scenario_evidence[-1]
     receipt = device.visual_checks[-1]
+    twin = tmp_path / scenario["text_evidence"]["file"]
+    persisted = json.loads((tmp_path / "bound-evidence.json").read_text(encoding="utf-8"))
+    twin_text = twin.read_text(encoding="utf-8")
+
     assert receipt["screenshot_sha256"] == hashlib.sha256(screenshot.read_bytes()).hexdigest()
-    assert receipt["text_twin_file"] == twin.name
-    assert receipt["text_twin_sha256"] == twin_sha
+    assert receipt["text_twin_file"] == scenario["text_evidence"]["file"]
+    assert receipt["text_twin_sha256"] == scenario["text_evidence"]["sha256"]
+    assert receipt["text_twin_sha256"] == hashlib.sha256(twin.read_bytes()).hexdigest()
+    assert persisted["text_evidence"] == scenario["text_evidence"]
+    assert 'text="Rename"' in twin_text
+    assert (
+        "ASSERT PASS transient-surface-visible "
+        "actions=Rename viewport=160x120"
+    ) in twin_text
+
+
+def test_overflow_visual_receipt_reuses_capture_bound_text_evidence(
+    tmp_path: Path,
+) -> None:
+    """The visual receipt must not recapture UI semantics after the screenshot fence."""
+    device = synthetic_device(tmp_path, text_like_image())
+
+    def reject_late_recapture(_state: str) -> dict:
+        raise AssertionError("late UI hierarchy recapture escaped the screenshot fence")
+
+    device.capture_text_twin = reject_late_recapture
+    device.assert_transient_surface_visible(
+        trigger_fragment="Actions for ",
+        trigger_bounds=(100, 20, 140, 34),
+        action_labels=("Rename",),
+        screenshot_name="same-state-bound",
+    )
+
+    scenario = device.scenario_evidence[-1]
+    receipt = device.visual_checks[-1]
+    assert receipt["text_twin_file"] == scenario["text_evidence"]["file"]
+    assert receipt["text_twin_sha256"] == scenario["text_evidence"]["sha256"]

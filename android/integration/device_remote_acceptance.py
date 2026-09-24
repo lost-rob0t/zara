@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,13 +12,15 @@ import re
 import socket
 import time
 
-from device_acceptance import Device, open_menu
+from device_acceptance import Device, SHA256_RE, open_menu, verified_source_sha
 from zara.security_admin import SecurityAdminClient
 from zmq.utils import z85
 
 
 APP_PACKAGE = "ai.zara.app"
 APP_DIAGNOSTICS_PATH = "no_backup/zara/diagnostics/local-runtime.log"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PHONE_APK = REPO_ROOT / "android" / "app" / "build" / "outputs" / "apk" / "debug" / "app-debug.apk"
 _FATAL_LOG_MARKERS = (
     "FATAL EXCEPTION",
     "ANR in ai.zara.app",
@@ -141,6 +144,23 @@ def read_app_diagnostics(device: Device) -> str:
     )
 
 
+def candidate_apk_sha256(claimed: str | None) -> str:
+    if not PHONE_APK.is_file():
+        raise AssertionError(f"Candidate Android APK is missing: {PHONE_APK}")
+    actual = hashlib.sha256(PHONE_APK.read_bytes()).hexdigest()
+    if claimed is None:
+        return actual
+    normalized = claimed.lower()
+    if SHA256_RE.fullmatch(normalized) is None:
+        raise ValueError("--apk-sha256 must be exactly 64 hexadecimal characters")
+    if normalized != actual:
+        raise AssertionError(
+            "Claimed Android APK SHA-256 does not match the installed candidate: "
+            f"claimed={normalized} actual={actual}"
+        )
+    return actual
+
+
 def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
     evidence: dict[str, object] = {}
     try:
@@ -198,6 +218,14 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.tap("↑")
     device.await_contains("zara_ready", timeout=20.0)
     device.await_contains("LOCAL", timeout=5.0)
+    device.runtime_evidence = {
+        "mode": "local",
+        "runtime_id": "local-zara-server",
+        "model": None,
+        "quantization": None,
+        "phase": "ready",
+    }
+    device.capture("local-text-turn")
 
     # Readiness alone is insufficient for the zero-model gate. Exercise ordinary
     # natural language through the installed APK before any enrollment/network
@@ -241,6 +269,13 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.tap("Connect")
     device.await_label("connected", timeout=20.0)
     device.await_contains("session", timeout=5.0)
+    device.runtime_evidence = {
+        "mode": "local",
+        "runtime_id": "local-zara-server",
+        "model": None,
+        "quantization": None,
+        "phase": "connected",
+    }
     device.capture("remote-connected")
 
     # Force the exact Remote routing policy for the turn so a Local response
@@ -256,6 +291,13 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     signal_turn_acceptance(fixture)
     device.await_contains("stock server response", timeout=20.0)
     device.await_contains("REMOTE", timeout=5.0)
+    device.runtime_evidence = {
+        "mode": "remote",
+        "runtime_id": "stock-zara-server",
+        "model": None,
+        "quantization": None,
+        "phase": "connected",
+    }
     device.capture("remote-text-turn")
 
     return {
@@ -275,6 +317,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL"))
     parser.add_argument("--fixture-file", type=Path, required=True)
+    parser.add_argument("--source-sha")
+    parser.add_argument("--apk-sha256")
     parser.add_argument(
         "--output",
         type=Path,
@@ -284,13 +328,26 @@ def main() -> None:
     if not args.serial:
         parser.error("Select a test emulator explicitly with --serial or ANDROID_SERIAL")
 
+    source_sha = verified_source_sha(args.source_sha)
+    apk_sha256 = candidate_apk_sha256(args.apk_sha256)
+
     args.output.mkdir(parents=True, exist_ok=True)
     fixture = read_fixture(args.fixture_file)
     device = Device(args.serial, args.output)
+    device.source_sha = source_sha
+    device.apk_sha256 = apk_sha256
+    device.current_profile = "default"
+    device.device_api = device.adb("shell", "getprop", "ro.build.version.sdk").strip()
+    if not re.fullmatch(r"\d+", device.device_api):
+        raise AssertionError(f"Android device API is unavailable: {device.device_api!r}")
     result: dict[str, object] = {
+        "source_sha": source_sha,
+        "apk_sha256": apk_sha256,
         "serial": args.serial,
+        "device": {"api": device.device_api},
         "passed": False,
         "screenshots": device.screenshots,
+        "scenarios": device.scenario_evidence,
     }
 
     try:
