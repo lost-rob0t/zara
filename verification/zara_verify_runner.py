@@ -87,6 +87,15 @@ def safe_path(raw: bytes) -> str:
     return value
 
 
+def repository_exclude_path(root: Path) -> Path:
+    root = Path(root).resolve()
+    raw = git_bytes(root, 'rev-parse', '--git-path', 'info/exclude').decode().strip()
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve(strict=False)
+
+
 def source_authority_paths(root: Path, policy_root: Path) -> list[Path]:
     root = Path(root).resolve()
     policy_root = Path(policy_root).resolve()
@@ -97,12 +106,7 @@ def source_authority_paths(root: Path, policy_root: Path) -> list[Path]:
         raise VerificationError('source_file_count_limit')
     targets = {root / name for name in names}
     targets.update(policy_root / name for name in PROTECTED)
-    ignore_raw = git_bytes(root, 'rev-parse', '--git-path', 'info/exclude').decode().strip()
-    ignore_path = Path(ignore_raw)
-    if not ignore_path.is_absolute():
-        ignore_path = root / ignore_path
-    if ignore_path.exists():
-        targets.add(ignore_path.resolve(strict=False))
+    targets.add(repository_exclude_path(root))
     return sorted(targets, key=lambda path: os.fsencode(str(path)))
 
 
@@ -422,6 +426,17 @@ def collect_snapshot(root: Path, base_ref: str, policy_root: Path) -> dict[str, 
             raise VerificationError('source_total_size_limit')
         source.update(json.dumps([name, kind, hashlib.sha256(data).hexdigest()]).encode())
         source.update(b'\0')
+    exclude_path = repository_exclude_path(root)
+    try:
+        exclude_data = retained_file_bytes(exclude_path, MAX_FILE_BYTES)
+        exclude_state = 'present'
+    except FileNotFoundError:
+        exclude_data = b''
+        exclude_state = 'missing'
+    source.update(json.dumps([
+        'repository_exclude', exclude_state, hashlib.sha256(exclude_data).hexdigest()
+    ]).encode())
+    source.update(b'\0')
     changed = git_bytes(root, 'diff', '--no-ext-diff', '--name-only', '--no-renames',
                         '-z', merge_base, '--') + untracked
     changed_paths = sorted({safe_path(raw) for raw in changed.split(b'\0') if raw})
