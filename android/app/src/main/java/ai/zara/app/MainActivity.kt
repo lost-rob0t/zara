@@ -196,19 +196,20 @@ class MainActivity : ComponentActivity() {
                         else -> null
                     }
                     if (requestedPolicy != null) {
-                        executionPolicyController.select(requestedPolicy)
                         val enabled = requestedPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
-                        conversationState = conversationStore.completeTurn(
-                            conversationId = conversationId,
-                            assistantText = if (enabled) {
-                                "Pure symbolic mode enabled. max_model_calls=0 and max_provider_calls=0."
-                            } else {
-                                "Pure symbolic mode disabled. Standard execution policy restored."
-                            },
-                            success = true,
-                            expectedTurnId = requireNotNull(expectedTurnId),
-                            remoteConversationId = null,
-                        )
+                        conversationState = executionPolicyController.selectAfterCanonicalCommit(requestedPolicy) {
+                            conversationStore.completeTurn(
+                                conversationId = conversationId,
+                                assistantText = if (enabled) {
+                                    "Pure symbolic mode enabled. max_model_calls=0 and max_provider_calls=0."
+                                } else {
+                                    "Pure symbolic mode disabled. Standard execution policy restored."
+                                },
+                                success = true,
+                                expectedTurnId = requireNotNull(expectedTurnId),
+                                remoteConversationId = null,
+                            )
+                        }
                         operationBusy = false
                     } else {
                         val executionPolicy = executionPolicyController.policy()

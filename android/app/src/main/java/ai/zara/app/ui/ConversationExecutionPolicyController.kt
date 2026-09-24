@@ -32,6 +32,23 @@ class ConversationExecutionPolicyController(
         current = policy
     }
 
+    @Synchronized
+    fun <T> selectAfterCanonicalCommit(
+        policy: ConversationExecutionPolicy,
+        canonicalCommit: () -> T,
+    ): T {
+        if (policy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
+            store.save(policy)
+            current = policy
+            return canonicalCommit()
+        }
+
+        val result = canonicalCommit()
+        store.save(policy)
+        current = policy
+        return result
+    }
+
     fun submit(text: String, conversationId: String): CompletableFuture<TextTurnResult> {
         val fallback = standardSubmit
         return submit(text, conversationId) {
