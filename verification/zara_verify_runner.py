@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -30,6 +31,8 @@ MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_FILES = 20000
 MAX_PATHS = 4096
 MAX_JSON_BYTES = 2 * 1024 * 1024
+MAX_NAMESPACE_EVENTS = 100000
+MAX_NAMESPACE_PATH_BYTES = 8192
 PROTECTED = (
     'verification/zara_verify_runner.py', 'verification/zara_verify.pl',
     'verification/zara_verifier_expert.py', 'contracts/zara-verify-v1/spec.json',
@@ -49,7 +52,7 @@ def canonical_digest(value: Any) -> str:
 
 def git_bytes(root: Path, *args: str) -> bytes:
     try:
-        result = subprocess.run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-C', str(root), *args],
+        result = subprocess.run(['git', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.excludesFile=/dev/null', '-C', str(root), *args],
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 timeout=15, check=True)
     except (OSError, subprocess.SubprocessError) as error:
@@ -84,38 +87,22 @@ def safe_path(raw: bytes) -> str:
     return value
 
 
-def authority_ancestor_paths(path: Path, boundary: Path) -> set[Path]:
-    path = path.resolve(strict=False)
-    boundary = boundary.resolve()
-    try:
-        path.relative_to(boundary)
-    except ValueError as error:
-        raise VerificationError('source_authority_path_escape') from error
-    ancestors = {boundary}
-    current = path.parent
-    while current != boundary:
-        ancestors.add(current)
-        current = current.parent
-    return ancestors
-
-
 def source_authority_paths(root: Path, policy_root: Path) -> list[Path]:
     root = Path(root).resolve()
     policy_root = Path(policy_root).resolve()
     tracked = git_bytes(root, 'ls-files', '--cached', '-z')
     untracked = git_bytes(root, 'ls-files', '--others', '--exclude-standard', '-z')
-    names = sorted({safe_path(raw) for raw in (tracked + untracked).split(b'\0') if raw})
+    names = sorted({safe_path(raw) for raw in (tracked + untracked).split(b'\\0') if raw})
     if len(names) > MAX_FILES:
         raise VerificationError('source_file_count_limit')
-    source_targets = {root / name for name in names}
-    policy_targets = {policy_root / name for name in PROTECTED}
-    targets = source_targets | policy_targets
-    for path in source_targets:
-        targets.update(authority_ancestor_paths(path, root))
-    for path in policy_targets:
-        targets.update(authority_ancestor_paths(path, policy_root))
-    if len(targets) > MAX_FILES * 2:
-        raise VerificationError('source_authority_path_limit')
+    targets = {root / name for name in names}
+    targets.update(policy_root / name for name in PROTECTED)
+    ignore_raw = git_bytes(root, 'rev-parse', '--git-path', 'info/exclude').decode().strip()
+    ignore_path = Path(ignore_raw)
+    if not ignore_path.is_absolute():
+        ignore_path = root / ignore_path
+    if ignore_path.exists():
+        targets.add(ignore_path.resolve(strict=False))
     return sorted(targets, key=lambda path: os.fsencode(str(path)))
 
 
@@ -125,20 +112,7 @@ def mutation_epoch_entry(path: Path) -> tuple[Any, ...]:
         return ('present', info.st_dev, info.st_ino, info.st_mode,
                 info.st_size, info.st_ctime_ns)
     except FileNotFoundError:
-        anchor = path.parent
-        while True:
-            try:
-                info = anchor.lstat()
-                break
-            except FileNotFoundError:
-                parent = anchor.parent
-                if parent == anchor:
-                    raise VerificationError('mutation_epoch_anchor_missing')
-                anchor = parent
-        if not stat.S_ISDIR(info.st_mode):
-            raise VerificationError('mutation_epoch_anchor_invalid')
-        return ('missing', str(anchor), info.st_dev, info.st_ino,
-                info.st_mode, info.st_size, info.st_ctime_ns)
+        return ('missing',)
 
 
 def capture_mutation_epoch(root: Path, policy_root: Path) -> dict[str, tuple[Any, ...]]:
@@ -150,6 +124,239 @@ def assert_mutation_epoch(epoch: dict[str, tuple[Any, ...]]) -> None:
     for raw_path, expected in epoch.items():
         if mutation_epoch_entry(Path(raw_path)) != expected:
             raise VerificationError('source_mutated_during_verification')
+
+
+def ignored_directory_prefixes(root: Path) -> tuple[str, ...]:
+    raw = git_bytes(root, 'ls-files', '--others', '--ignored',
+                    '--exclude-standard', '--directory', '-z')
+    return tuple(sorted({
+        safe_path(item[:-1]) for item in raw.split(b'\\0')
+        if item and item.endswith(b'/')
+    }))
+
+
+def source_namespace_directories(root: Path) -> list[Path]:
+    root = Path(root).resolve()
+    ignored = ignored_directory_prefixes(root)
+    directories = []
+    for current, children, _files in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        kept = []
+        for name in children:
+            child = current_path / name
+            if child.is_symlink():
+                continue
+            relative = child.relative_to(root).as_posix()
+            if relative == '.git':
+                continue
+            safe_path(relative.encode())
+            if any(relative == prefix or relative.startswith(prefix + '/') for prefix in ignored):
+                continue
+            kept.append(name)
+        children[:] = kept
+        directories.append(current_path)
+        if len(directories) > MAX_FILES * 2:
+            raise VerificationError('namespace_watch_path_limit')
+    return directories
+
+
+def policy_namespace_directories(policy_root: Path, source_root: Path) -> list[Path]:
+    policy_root = Path(policy_root).resolve()
+    if policy_root == Path(source_root).resolve():
+        return []
+    directories = []
+    for current, children, _files in os.walk(policy_root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        children[:] = [name for name in children if not (current_path / name).is_symlink()]
+        directories.append(current_path)
+        if len(directories) > MAX_FILES:
+            raise VerificationError('namespace_watch_path_limit')
+    return directories
+
+
+def git_ignored(root: Path, relative: str) -> bool:
+    env = os.environ.copy()
+    env['GIT_CONFIG_GLOBAL'] = os.devnull
+    env['GIT_CONFIG_SYSTEM'] = os.devnull
+    try:
+        result = subprocess.run(
+            ['git', '--no-optional-locks', '-c', 'core.fsmonitor=false',
+             '-c', 'core.hooksPath=/dev/null', '-c', 'core.excludesFile=/dev/null',
+             '-C', str(root), 'check-ignore', '-q', '--no-index', '--', relative],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=5, env=env)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise VerificationError('git_ignore_observation_failed') from error
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise VerificationError('git_ignore_observation_failed')
+
+
+def namespace_relative(raw_path: str, boundary: Path) -> str | None:
+    boundary_text = os.path.abspath(os.fspath(boundary))
+    path_text = os.path.abspath(raw_path)
+    try:
+        common = os.path.commonpath([boundary_text, path_text])
+    except ValueError as error:
+        raise VerificationError('namespace_path_escape') from error
+    if common != boundary_text or path_text == boundary_text:
+        return None
+    relative = os.path.relpath(path_text, boundary_text).replace(os.sep, '/')
+    return safe_path(relative.encode('utf-8', errors='strict'))
+
+
+class NamespaceMutationWatch:
+    def __init__(self, root: Path, policy_root: Path):
+        self.root = Path(root).resolve()
+        self.policy_root = Path(policy_root).resolve()
+        self.process = None
+        self.reader = None
+        self.condition = threading.Condition()
+        self.events = []
+        self.cursor = 0
+        self.overflow = False
+        self.temp = None
+        self.barrier_root = None
+
+    def start(self) -> None:
+        executable = shutil.which('inotifywait')
+        if executable is None:
+            raise VerificationError('namespace_watcher_unavailable')
+        self.temp = tempfile.TemporaryDirectory(prefix='zara-verify-namespace-')
+        temp_root = Path(self.temp.name)
+        self.barrier_root = temp_root / 'barrier'
+        self.barrier_root.mkdir()
+        watch_paths = set(source_namespace_directories(self.root))
+        watch_paths.update(policy_namespace_directories(self.policy_root, self.root))
+        watch_paths.add(self.barrier_root)
+        watch_list = temp_root / 'watch-list'
+        encoded = []
+        for path in sorted(watch_paths, key=lambda item: os.fsencode(str(item))):
+            raw = os.fsencode(str(path))
+            if any(byte < 32 for byte in raw):
+                raise VerificationError('unsafe_namespace_watch_path')
+            encoded.append(raw)
+        watch_list.write_bytes(b'\\n'.join(encoded) + b'\\n')
+        self.process = subprocess.Popen(
+            [executable, '--monitor', '--no-dereference',
+             '--event', 'create', '--event', 'delete',
+             '--event', 'moved_from', '--event', 'moved_to',
+             '--format', '%w%f%0', '--no-newline',
+             '--fromfile', str(watch_list)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True)
+        self._wait_ready()
+        self.reader = threading.Thread(target=self._read_events, daemon=True)
+        self.reader.start()
+
+    def _wait_ready(self) -> None:
+        deadline = time.monotonic() + 5
+        buffered = b''
+        with selectors.DefaultSelector() as selector:
+            selector.register(self.process.stderr, selectors.EVENT_READ)
+            while b'Watches established.\\n' not in buffered:
+                if self.process.poll() is not None:
+                    raise VerificationError('namespace_watcher_start_failed')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise VerificationError('namespace_watcher_start_timeout')
+                if not selector.select(min(0.1, remaining)):
+                    continue
+                chunk = os.read(self.process.stderr.fileno(), 4096)
+                if not chunk:
+                    raise VerificationError('namespace_watcher_start_failed')
+                buffered += chunk
+
+    def _read_events(self) -> None:
+        buffered = b''
+        try:
+            while True:
+                chunk = os.read(self.process.stdout.fileno(), 65536)
+                if not chunk:
+                    break
+                buffered += chunk
+                while b'\\0' in buffered:
+                    raw, buffered = buffered.split(b'\\0', 1)
+                    with self.condition:
+                        if len(raw) > MAX_NAMESPACE_PATH_BYTES or len(self.events) >= MAX_NAMESPACE_EVENTS:
+                            self.overflow = True
+                        else:
+                            self.events.append(raw)
+                        self.condition.notify_all()
+        except OSError:
+            pass
+
+    def _sync(self) -> None:
+        if self.process is None or self.barrier_root is None:
+            raise VerificationError('namespace_watcher_not_started')
+        marker = self.barrier_root / ('barrier-' + uuid.uuid4().hex)
+        marker.write_bytes(b'')
+        expected = os.fsencode(str(marker))
+        deadline = time.monotonic() + 5
+        with self.condition:
+            while expected not in self.events:
+                if self.overflow:
+                    raise VerificationError('namespace_event_limit')
+                if self.process.poll() is not None:
+                    raise VerificationError('namespace_watcher_failed')
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise VerificationError('namespace_watcher_sync_timeout')
+                self.condition.wait(timeout=min(0.05, remaining))
+        marker.unlink(missing_ok=True)
+
+    def assert_clean(self) -> None:
+        self._sync()
+        with self.condition:
+            if self.overflow:
+                raise VerificationError('namespace_event_limit')
+            pending = self.events[self.cursor:]
+            self.cursor = len(self.events)
+        barrier_root = os.path.abspath(os.fspath(self.barrier_root))
+        protected_dirs = {
+            os.path.abspath(os.fspath((self.policy_root / name).parent))
+            for name in PROTECTED
+        }
+        for raw in pending:
+            try:
+                raw_path = raw.decode('utf-8', errors='strict')
+            except UnicodeDecodeError as error:
+                raise VerificationError('non_utf8_namespace_path') from error
+            absolute = os.path.abspath(raw_path)
+            if os.path.commonpath([barrier_root, absolute]) == barrier_root:
+                continue
+            policy_relative = namespace_relative(absolute, self.policy_root)
+            if policy_relative is not None and any(
+                    os.path.commonpath([directory, absolute]) == directory
+                    for directory in protected_dirs):
+                raise VerificationError('source_mutated_during_verification')
+            source_relative = namespace_relative(absolute, self.root)
+            if source_relative is not None:
+                if git_ignored(self.root, source_relative):
+                    continue
+                raise VerificationError('source_mutated_during_verification')
+            if policy_relative is not None:
+                raise VerificationError('source_mutated_during_verification')
+            raise VerificationError('namespace_watcher_foreign_event')
+
+    def close(self) -> None:
+        if self.process is not None:
+            if self.process.poll() is None:
+                try:
+                    os.killpg(self.process.pid, signal.SIGTERM)
+                    self.process.wait(timeout=2)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    if self.process.poll() is None:
+                        terminate_group(self.process)
+            if self.process.stdout is not None:
+                self.process.stdout.close()
+            if self.process.stderr is not None:
+                self.process.stderr.close()
+        if self.reader is not None:
+            self.reader.join(timeout=2)
+        if self.temp is not None:
+            self.temp.cleanup()
 
 
 def collect_snapshot(root: Path, base_ref: str, policy_root: Path) -> dict[str, Any]:
@@ -500,9 +707,13 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
         'model_calls': 0, 'provider_calls': 0, 'merge_authorized': False,
         'reasons': [], 'evidence': [],
     }
+    namespace_watch = None
     try:
         epoch = capture_mutation_epoch(root, policy_root)
+        namespace_watch = NamespaceMutationWatch(root, policy_root)
+        namespace_watch.start()
         source = collect_snapshot(root, base_ref, policy_root)
+        namespace_watch.assert_clean()
         assert_mutation_epoch(epoch)
         report['source'] = source
         spec = load_spec(policy_root)
@@ -554,6 +765,7 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
                 report['evidence'].append(item)
             if not progress:
                 raise VerificationError('dependency_cycle')
+        namespace_watch.assert_clean()
         after = collect_snapshot(root, base_ref, policy_root)
         if after != source:
             raise VerificationError('source_changed_during_verification')
@@ -561,6 +773,7 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
         decision = invoke_policy({'operation': 'evaluate', 'source': source,
                                   'run_id': run_id, 'source_digest': canonical_digest(source),
                                   'evidence': report['evidence']}, policy_root)
+        namespace_watch.assert_clean()
         after_policy = collect_snapshot(root, base_ref, policy_root)
         if after_policy != source:
             raise VerificationError('source_changed_during_verification')
@@ -579,6 +792,9 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
     except (VerificationError, OSError, ValueError) as error:
         report['verdict'] = 'blocked'
         report['reasons'] = [str(error)[:256]]
+    finally:
+        if namespace_watch is not None:
+            namespace_watch.close()
     return report
 
 
