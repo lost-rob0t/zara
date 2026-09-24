@@ -1275,8 +1275,9 @@ private fun SettingsSurface(
                                 Text(
                                     when (mode) {
                                         RuntimeMode.Auto -> "Prefer authenticated remote; fall back to local"
-                                        RuntimeMode.Local -> "Never send this turn to the network"
-                                        RuntimeMode.Remote -> "Require an authenticated remote session"
+                                        RuntimeMode.Symbolic -> "Prolog/tools/KB only; never call a model or provider"
+                                        RuntimeMode.Local -> "Prolog first, then the verified on-device model; never use network inference"
+                                        RuntimeMode.Remote -> "Require an authenticated remote session or configured remote provider"
                                     },
                                     color = tokens.textMuted,
                                     style = MaterialTheme.typography.bodySmall,
@@ -1907,7 +1908,8 @@ internal fun chatFooter(
         RuntimeMode.Remote -> "REMOTE  •  " +
             (if (authenticated) "AUTHENTICATED" else "UNENROLLED") +
             "  •  $transport  •  $symbolic"
-        RuntimeMode.Local -> "LOCAL  •  $symbolic  •  PRIVATE"
+        RuntimeMode.Symbolic -> "SYMBOLIC ONLY  •  PRIVATE  •  NO MODEL"
+        RuntimeMode.Local -> "LOCAL AI  •  $symbolic FIRST  •  PRIVATE"
         RuntimeMode.Auto -> if (server is ServerConnection.Connected) {
             "REMOTE AVAILABLE  •  LOCAL $symbolic  •  PRIVATE"
         } else {
