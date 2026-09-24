@@ -57,10 +57,9 @@ class AssistantServiceManifestContractTest {
         assertTrue(activity.contains("appSession.completeAssistantRoleRequest()"))
         assertTrue(activity.contains("appSession.assistantRoleRequestIntent()"))
         assertTrue(activity.contains("onRequestAssistantRole"))
-        assertTrue(platform.contains("Settings.ACTION_VOICE_INPUT_SETTINGS"))
-        assertTrue(platform.contains("Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS"))
+        assertTrue(platform.contains("roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)"))
         assertTrue(platform.contains("VoiceInteractionService.isActiveService"))
-        assertFalse(platform.contains("createRequestRoleIntent"))
+        assertFalse(platform.contains("Settings.ACTION_VOICE_INPUT_SETTINGS"))
     }
 
     @Test
