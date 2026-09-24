@@ -469,7 +469,7 @@ def exercise_three_menu_ui(device: Device) -> None:
         time.sleep(0.4)
         device.capture(f"settings-{capture_name}")
         device.press_back()
-        device.await_label("Private, explicit, device-first controls")
+        device.reveal("Private, explicit, device-first controls")
 
     device.tap("Appearance")
     device.tap("Outrun")
@@ -480,7 +480,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("theme-light")
     device.tap("Outrun")
     device.press_back()
-    device.await_label("Private, explicit, device-first controls")
+    device.reveal("Private, explicit, device-first controls")
 
     open_menu(device, "Chat")
     device.set_display_profile(
@@ -522,7 +522,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-connection-draft")
 
     device.press_back()
-    device.await_label("Private, explicit, device-first controls")
+    device.reveal("Private, explicit, device-first controls")
     device.press_back()
     device.await_label("Chat")
     device.capture("back-to-chat")
