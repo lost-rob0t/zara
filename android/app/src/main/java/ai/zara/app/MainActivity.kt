@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.assistant.AssistantLifecycleFence
+import ai.zara.app.assistant.LocalAssistantVoiceController
 import ai.zara.app.auth.PairingProgress
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
@@ -69,11 +71,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
     private lateinit var pairingCoordinator: AndroidPairingCoordinator
     private lateinit var conversationStore: ConversationStore
+    private lateinit var localVoiceController: LocalAssistantVoiceController
+    private val localVoiceFence = AssistantLifecycleFence()
     private var conversationState by mutableStateOf(ConversationState())
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
     private var turnFailure by mutableStateOf<TurnFailure?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
+    private var localVoiceActive by mutableStateOf(false)
+    private var localVoiceStatus by mutableStateOf<String?>(null)
     private var enrollmentPublicKey by mutableStateOf<String?>(null)
     private var pinnedServerPublicKey by mutableStateOf<String?>(null)
     private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
@@ -95,6 +101,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        localVoiceController = LocalAssistantVoiceController(
+            applicationContext,
+            appSession,
+            localVoiceFence,
+        ) { status ->
+            runOnUiThread { localVoiceStatus = status }
+        }
         pairingCoordinator = AndroidPairingCoordinator(applicationContext, appSession)
         val updateManager = (application as ZaraApplication).updateManager
         val changelogSeenStore = ChangelogSeenStore(this)
@@ -333,6 +346,8 @@ class MainActivity : ComponentActivity() {
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
                 voiceState = voiceState,
+                localVoiceActive = localVoiceActive,
+                localVoiceStatus = localVoiceStatus,
                 voiceStreamState = voiceStreamState,
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
@@ -568,34 +583,54 @@ class MainActivity : ComponentActivity() {
                 },
                 onStartVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (shouldUseRemoteVoiceTransport(runtimeMode, runtimeState)) {
+                        operationBusy = true
+                        appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
+                        }
+                    } else {
+                        try {
+                            localVoiceController.start(microphonePermissionGranted)
+                            localVoiceActive = true
+                        } catch (error: Throwable) {
+                            localVoiceActive = false
+                            operationError = UiOperationFailure.summarize(error)
                         }
                     }
                 },
                 onStopVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.releasePushToTalk().whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (localVoiceActive) {
+                        localVoiceController.stop()
+                        localVoiceActive = false
+                    } else {
+                        operationBusy = true
+                        appSession.releasePushToTalk().whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
                         }
                     }
                 },
                 onCancelVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.cancelPushToTalk().whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (localVoiceActive) {
+                        localVoiceController.cancel()
+                        localVoiceActive = false
+                    } else {
+                        operationBusy = true
+                        appSession.cancelPushToTalk().whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
                         }
                     }
                 },
@@ -774,8 +809,25 @@ class MainActivity : ComponentActivity() {
             appSession.setLocalServerObserver(null)
             (application as ZaraApplication).updateManager.setObserver(null)
         }
+        if (::localVoiceController.isInitialized) {
+            localVoiceFence.invalidate()
+            localVoiceController.close()
+        }
         if (::pairingCoordinator.isInitialized) pairingCoordinator.close()
         super.onDestroy()
+    }
+
+    private fun shouldUseRemoteVoiceTransport(
+        mode: ai.zara.app.runtime.RuntimeMode,
+        state: ai.zara.app.runtime.RuntimeState,
+    ): Boolean {
+        val remoteReady =
+            state.enrollment == ai.zara.app.runtime.EnrollmentReadiness.Ready &&
+                state.server is ServerConnection.Connected &&
+                state.sessionId != null
+        return remoteReady &&
+            (mode == ai.zara.app.runtime.RuntimeMode.Remote ||
+                mode == ai.zara.app.runtime.RuntimeMode.Auto)
     }
 
     private fun scanPairingQr() {
