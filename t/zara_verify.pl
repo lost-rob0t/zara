@@ -31,6 +31,16 @@ test(ipc_requires_independent_review) :-
     memberchk(independent_review,G), memberchk(security,G).
 test(verifier_cannot_self_approve) :-
     source(['verification/zara_verify.pl'],S), zara_verify:plan(S,G), memberchk(independent_review,G).
+test(evaluator_harness_requires_independent_review,
+     [forall(member(Path, ['scripts/test-all.sh',
+                           'scripts/test-coverage.sh',
+                           'scripts/test-zara-verify.sh',
+                           'scripts/test-expert-contract.sh',
+                           'scripts/test-runtime-tool-approvals.sh',
+                           'scripts/test-android.sh',
+                           'flake.nix',
+                           'flake.lock']))]) :-
+    source([Path],S), zara_verify:plan(S,G), memberchk(independent_review,G).
 test(unknown_files_fail_closed) :-
     source(['mystery/thing'],S), zara_verify:plan(S,G), memberchk(scope_review,G).
 test(release_requires_provenance) :-
