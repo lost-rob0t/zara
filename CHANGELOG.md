@@ -6,7 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 - Android adds an explicit Symbolic-only mode that keeps Prolog/tools/KB active while forbidding local-model and remote-provider inference; Local mode remains Prolog-first with optional on-device LLM fallback.
 
-- Android system-assistant invocation now requests the Assistant role through RoleManager and automatically starts on-device voice capture for Symbolic/Local routes; explicit Remote mode can use local STT/TTS around an enabled OpenRouter or OpenAI-compatible model profile when no Zara server session is active.
+- Android system-assistant invocation now requests the Assistant role through RoleManager and automatically attempts on-device speech recognition for the selected Symbolic/Local/Auto/Remote route, with the existing remote push-to-talk stream retained as fallback; the normal Voice surface is also local-first, and explicit Remote mode can use local STT/TTS around an enabled OpenRouter or OpenAI-compatible model profile when no Zara server session is active.
 
 - Runtime settings now configure OpenRouter or generic OpenAI-compatible HTTPS model APIs with explicit endpoint/model selection and Android-Keystore-wrapped credentials; remote model APIs are only used by explicit Remote routing.
 
