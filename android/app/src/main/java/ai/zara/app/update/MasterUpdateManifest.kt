@@ -1,10 +1,10 @@
 package ai.zara.app.update
 
 class MasterUpdateManifest private constructor(
-    val release: UpdateRelease,
-    val versionName: String,
-    val versionCode: Long,
-) {
+    override val release: UpdateRelease,
+    override val versionName: String,
+    override val versionCode: Long,
+) : UpdateApkProvenance {
     fun isUpdateFor(
         currentSourceSha: String,
         currentVersion: String,

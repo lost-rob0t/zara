@@ -48,9 +48,11 @@ class AndroidUpdateManager(
         "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-latest.manifest.txt",
 ) : AutoCloseable {
     private data class Candidate(
-        val release: UpdateRelease,
-        val masterManifest: MasterUpdateManifest? = null,
-    )
+        val provenance: UpdateApkProvenance,
+    ) {
+        val release: UpdateRelease
+            get() = provenance.release
+    }
 
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-update").apply { isDaemon = true }
@@ -94,7 +96,7 @@ class AndroidUpdateManager(
             val rollingCandidate = runCatching { rollingMasterCandidate() }
                 .getOrNull()
                 ?.takeIf { candidate ->
-                    candidate.masterManifest?.isUpdateFor(
+                    (candidate.provenance as? MasterUpdateManifest)?.isUpdateFor(
                         currentSourceSha = currentSourceSha,
                         currentVersion = currentVersion,
                         currentVersionCode = currentVersionCode,
@@ -201,9 +203,7 @@ class AndroidUpdateManager(
                 destination.delete()
                 "Downloaded APK checksum does not match release metadata"
             }
-            selected.masterManifest?.let { manifest ->
-                verifyMasterApk(destination, manifest)
-            }
+            verifyUpdateApk(destination, selected.provenance)
             UpdateState(
                 UpdatePhase.READY,
                 release = selected.release,
@@ -323,19 +323,26 @@ class AndroidUpdateManager(
         }
     }
 
-    private fun verifyMasterApk(apk: File, manifest: MasterUpdateManifest) {
+    private fun verifyUpdateApk(apk: File, provenance: UpdateApkProvenance) {
         val info = context.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
         check(info != null && info.packageName == context.packageName) {
-            "Master update is not a Zara phone APK"
+            "Update is not a Zara phone APK"
         }
         check(
-            info.versionName == manifest.versionName &&
-                info.longVersionCode == manifest.versionCode
+            info.versionName == provenance.versionName &&
+                info.longVersionCode == provenance.versionCode
         ) {
-            "Master update APK version does not match its provenance manifest"
+            "Update APK version does not match its provenance manifest"
         }
-        check(info.longVersionCode >= currentVersionCode) {
-            "Master update would downgrade the installed app"
+        when (provenance.release.channel) {
+            UpdateChannel.Master ->
+                check(info.longVersionCode >= currentVersionCode) {
+                    "Master update would downgrade the installed app"
+                }
+            UpdateChannel.Versioned ->
+                check(info.longVersionCode > currentVersionCode) {
+                    "Versioned update must increase the Android version code"
+                }
         }
     }
 
@@ -345,35 +352,49 @@ class AndroidUpdateManager(
             readText(rollingManifestUrl, MasterUpdateManifest.MAX_MANIFEST_BYTES),
             apkUrl,
         ).getOrThrow()
-        return Candidate(manifest.release, masterManifest = manifest)
+        return Candidate(manifest)
     }
 
     private fun releaseCandidate(json: JSONObject): Candidate? {
         if (json.optBoolean("draft", false)) return null
         val version = json.optString("tag_name").removePrefix("v")
-        val sourceSha = json.optString("target_commitish")
         val assets = json.optJSONArray("assets") ?: return null
-        val apk = (0 until assets.length())
-            .map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name").endsWith(".apk") }
-            ?: return null
-        val checksum = (0 until assets.length())
-            .map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name") == "${apk.optString("name")}.sha256" }
-            ?: return null
+        val apk = uniqueAsset(assets, VersionedUpdateManifest.apkName(version)) ?: return null
+        val checksum = uniqueAsset(
+            assets,
+            VersionedUpdateManifest.checksumName(version),
+        ) ?: return null
+        val manifestAsset = uniqueAsset(
+            assets,
+            VersionedUpdateManifest.manifestName(version),
+        ) ?: return null
+        val apkUrl = UpdateSecurity.requireTrustedTransport(
+            apk.optString("browser_download_url")
+        )
+        val manifestUrl = UpdateSecurity.requireTrustedTransport(
+            manifestAsset.optString("browser_download_url")
+        )
+        val manifest = VersionedUpdateManifest.parse(
+            text = readText(manifestUrl, VersionedUpdateManifest.MAX_MANIFEST_BYTES),
+            expectedVersion = version,
+            apkUrl = apkUrl,
+        ).getOrNull() ?: return null
         val checksumUrl = UpdateSecurity.requireTrustedTransport(
             checksum.optString("browser_download_url")
         )
-        val checksumText = readText(checksumUrl, MAX_CHECKSUM_BYTES)
-        val sha256 = checksumText.trim().substringBefore(' ').lowercase()
-        val release = UpdateRelease(
-            version = version,
-            sourceSha = sourceSha,
-            apkUrl = apk.optString("browser_download_url"),
-            sha256 = sha256,
-        )
-        return UpdateSecurity.validate(release).getOrNull()?.let(::Candidate)
+        val sidecarSha = readText(checksumUrl, MAX_CHECKSUM_BYTES)
+            .trim()
+            .substringBefore(' ')
+            .lowercase()
+        if (sidecarSha != manifest.release.sha256) return null
+        return Candidate(manifest)
     }
+
+    private fun uniqueAsset(assets: JSONArray, name: String): JSONObject? =
+        (0 until assets.length())
+            .map { assets.getJSONObject(it) }
+            .filter { it.optString("name") == name }
+            .singleOrNull()
 
     private fun readText(url: String, maxBytes: Int): String {
         val connection = openTrusted(url)
