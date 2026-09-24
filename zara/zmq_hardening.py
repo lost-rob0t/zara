@@ -246,7 +246,27 @@ class HardenedZmqZaraClient(ZmqZaraClient):
             self._request_deadlines[message.id] = (
                 time.monotonic() + float(self._config.request_timeout)
             )
+        future.add_done_callback(
+            lambda done, request_id=message.id: self._retire_cancelled_request(
+                request_id,
+                done,
+            )
+        )
         return future
+
+    def _retire_cancelled_request(
+        self,
+        request_id: str,
+        future: concurrent.futures.Future,
+    ) -> None:
+        if not future.cancelled():
+            return
+        with self._pending_lock:
+            pending = self._pending.get(request_id)
+            if pending is None or pending.future is not future:
+                return
+            self._pending.pop(request_id, None)
+            self._request_deadlines.pop(request_id, None)
 
     def _expire_pending_requests(self) -> None:
         now = time.monotonic()
@@ -270,9 +290,29 @@ class HardenedZmqZaraClient(ZmqZaraClient):
                     )
                 )
 
+    def _resolve_pending(self, pending, message: ProtocolMessage) -> None:
+        if message.reply_to:
+            with self._pending_lock:
+                self._request_deadlines.pop(message.reply_to, None)
+        if pending.future.cancelled():
+            return
+        super()._resolve_pending(pending, message)
+
     def _request_is_live(self, request_id: str) -> bool:
         with self._pending_lock:
-            return request_id in self._pending
+            pending = self._pending.get(request_id)
+            if pending is None:
+                return False
+            if pending.future.cancelled():
+                self._pending.pop(request_id, None)
+                self._request_deadlines.pop(request_id, None)
+                return False
+            return True
+
+    def _fail_pending(self, error: BaseException) -> None:
+        with self._pending_lock:
+            self._request_deadlines.clear()
+            super()._fail_pending(error)
 
     def _drain_client_outbound(self, socket: zmq.Socket) -> None:
         self._expire_pending_requests()

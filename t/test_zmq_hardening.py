@@ -233,3 +233,55 @@ def test_client_drops_expired_queued_work_before_transport_send():
     assert socket.sent == []
     assert client._retry_outbound is None
     client.close(timeout=0.0)
+
+def test_client_cancelled_backpressured_retry_is_retired_before_next_fifo_item():
+    client = _ready_client()
+    cancelled = client.ping()
+    cancelled_id = next(iter(client._pending))
+    socket = _AgainThenWritableSocket()
+
+    client._drain_client_outbound(socket)
+    assert client._retry_outbound is not None
+
+    assert cancelled.cancel() is True
+    assert cancelled_id not in client._pending
+    assert cancelled_id not in client._request_deadlines
+
+    live = client.ping()
+    live_id = next(iter(client._pending))
+    client._drain_client_outbound(socket)
+
+    observed = [decode_message(frames).message.id for frames in socket.sent]
+    assert observed == [live_id]
+    assert client._retry_outbound is None
+
+    client._fail_pending(RuntimeError("test cleanup"))
+    with pytest.raises(RuntimeError, match="test cleanup"):
+        live.result(timeout=0.1)
+    assert not client._request_deadlines
+    client.close(timeout=0.0)
+
+
+def test_client_late_reply_cannot_resolve_a_cancelled_future():
+    client = _ready_client()
+    future = client.ping()
+    request_id = next(iter(client._pending))
+    pending = client._pending[request_id]
+
+    assert future.cancel() is True
+    reply = ProtocolMessage(
+        type="pong",
+        id="late-reply",
+        reply_to=request_id,
+        session_id=client._session_id,
+        timestamp_ns=1,
+        payload_count=0,
+    )
+
+    client._resolve_pending(pending, reply)
+
+    assert future.cancelled()
+    assert request_id not in client._pending
+    assert request_id not in client._request_deadlines
+    client.close(timeout=0.0)
+
