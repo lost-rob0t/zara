@@ -28,6 +28,7 @@ IDEMPOTENCY_KEY = "idempotency:output-schema-durable"
 class OutputHandler:
     summary: Any
     calls: int = 0
+    with_effect: bool = True
 
     def __call__(self, *, expert_operation: str, **payload: Any) -> dict[str, Any]:
         assert expert_operation == "route.diagnose"
@@ -38,7 +39,11 @@ class OutputHandler:
             "data": {"summary": self.summary},
             "evidence_refs": ["evidence:observed-output"],
             "usage": {"model_calls": 0},
-            "effect_receipts": [{"effect_id": "effect:observed-output"}],
+            "effect_receipts": (
+                [{"effect_id": "effect:observed-output"}]
+                if self.with_effect
+                else []
+            ),
         }
 
 
@@ -166,7 +171,7 @@ def test_legacy_schema_invalid_success_replay_is_downgraded_without_redispatch(
 ) -> None:
     path = tmp_path / "legacy-output-schema-durable.db"
     database = DatabaseManager(path)
-    seed_handler = OutputHandler(summary="valid")
+    seed_handler = OutputHandler(summary="valid", with_effect=False)
     registry, handle = _runtime(database, seed_handler)
 
     seeded = _invoke(registry, handle)
@@ -218,7 +223,7 @@ def test_legacy_schema_invalid_success_replay_is_downgraded_without_redispatch(
     assert replay.data == {}
     assert replay.evidence_refs == ()
     assert replay.usage == {"model_calls": 0}
-    assert replay.effect_receipts == ({"effect_id": "effect:observed-output"},)
+    assert replay.effect_receipts == ()
     assert replacement_handler.calls == 0
 
     persisted = restarted_database.fetch_one(
