@@ -395,7 +395,7 @@
             # writable temp dir so tests that resolve ``Path.home()`` work.
             pytest = pkgs.runCommand "zara-check-pytest"
               {
-                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper pkgs.cacert pkgs.bash pkgs.git ];
+                nativeBuildInputs = [ pythonLibs pkgs.swi-prolog pkgs.makeWrapper pkgs.cacert pkgs.bash pkgs.git pkgs.inotify-tools ];
                 src = ./.;
               }
               ''
@@ -591,6 +591,7 @@
               pkgs.mpv  # Alternative for streaming audio playback
               pkgs.portaudio
               pkgs.swi-prolog
+              pkgs.inotify-tools
               pkgs.pulseaudio
             ];
 
