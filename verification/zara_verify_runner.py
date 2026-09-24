@@ -113,7 +113,6 @@ def collect_snapshot(root: Path, base_ref: str, policy_root: Path) -> dict[str, 
             elif stat.S_ISREG(info.st_mode):
                 if info.st_size > MAX_FILE_BYTES:
                     raise VerificationError('source_file_size_limit: ' + name)
-                # O_NOFOLLOW closes the lstat/open symlink substitution window.
                 fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
                 with os.fdopen(fd, 'rb') as stream:
                     data = stream.read(MAX_FILE_BYTES + 1)
@@ -135,7 +134,6 @@ def collect_snapshot(root: Path, base_ref: str, policy_root: Path) -> dict[str, 
     if len(changed_paths) > MAX_PATHS:
         raise VerificationError('changed_path_limit')
     status = git_bytes(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
-    # Index state matters even if staged/unstaged bytes happen to cancel out.
     source.update(stage)
     source.update(status)
     return {'workspace': str(root), 'head': head, 'base': base, 'merge_base': merge_base,
@@ -154,6 +152,7 @@ def current_report(report: Any, snapshot: dict[str, Any], now_ms: int | None = N
         and report.get('verdict') == 'verified' and report.get('source') == snapshot
         and report.get('merge_authorized') is False
         and type(report.get('model_calls')) is int and report['model_calls'] == 0
+        and type(report.get('provider_calls')) is int and report['provider_calls'] == 0
         and type(created) is int and type(ttl) is int and 0 < ttl <= 600000
         and created <= now < created + ttl and report.get('reasons') == []
     )
@@ -221,7 +220,6 @@ def gate_environment(directory: Path) -> dict[str, str]:
 
 
 def terminate_group(process: subprocess.Popen) -> None:
-    # The group can outlive its leader; always kill it, even after leader exit.
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -339,7 +337,8 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
     report: dict[str, Any] = {
         'protocol': PROTOCOL, 'scope': 'local', 'verdict': 'blocked', 'run_id': run_id,
         'session_id': session_id, 'created_ms': created, 'ttl_ms': 600000,
-        'model_calls': 0, 'merge_authorized': False, 'reasons': [], 'evidence': [],
+        'model_calls': 0, 'provider_calls': 0, 'merge_authorized': False,
+        'reasons': [], 'evidence': [],
     }
     try:
         source = collect_snapshot(root, base_ref, policy_root)
@@ -405,7 +404,6 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
         report['reasons'] = decision['reasons']
         if report['verdict'] == 'verified' and report['reasons']:
             raise VerificationError('contradictory_policy_decision')
-        # TTL begins at completed observation, not at the start of a long test run.
         report['created_ms'] = int(time.time() * 1000)
         report['required'] = required
         (evidence_dir / 'observations.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -417,7 +415,6 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
 
 def through_expert(result: dict[str, Any], root: Path, base_ref: str,
                    policy_root: Path, session: str, operation: str) -> dict[str, Any]:
-    # Only host observations are injected. No receipt is accepted on stdin/argv.
     sys.path.insert(0, str(policy_root))
     from verification.zara_verifier_expert import invoke_verifier_expert
 
@@ -438,6 +435,8 @@ def through_expert(result: dict[str, Any], root: Path, base_ref: str,
         assertion['verdict'] == 'succeeded' and assertion['data'].get('verified') is True
         and type(assertion['usage'].get('model_calls')) is int
         and assertion['usage']['model_calls'] == 0
+        and type(assertion['usage'].get('provider_calls')) is int
+        and assertion['usage']['provider_calls'] == 0
     ):
         result['verdict'] = 'blocked'
         result['reasons'] = result.get('reasons', []) + ['expert_assertion_blocked']
@@ -448,7 +447,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='ZARA-VERIFY/1 host verifier')
     parser.add_argument('operation', choices=['plan', 'run', 'snapshot'])
     parser.add_argument('--root', type=Path, default=Path.cwd())
-    parser.add_argument('--base', default='origin/master')
+    parser.add_argument('--base', default='origin/release/0.3.x')
     parser.add_argument('--session', default='local-cli')
     args = parser.parse_args()
     policy_root = Path(__file__).resolve().parents[1]
