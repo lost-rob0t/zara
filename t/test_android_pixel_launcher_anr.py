@@ -337,3 +337,21 @@ def test_anr_action_lookup_skips_wrong_package_before_system_action(
     monkeypatch.setattr(device, "nodes", lambda: iter((wrong_action, system_action)))
 
     assert device.find(label) is system_action
+
+
+@pytest.mark.parametrize("label", ("Close app", "Wait"))
+def test_anr_action_lookup_rejects_wrong_package_without_system_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    label: str,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    wrong_action = module.ET.fromstring(
+        f'<node text="{label}" package="ai.zara.app" resource-id="fake:{label}" '
+        'bounds="[10,10][90,90]" />'
+    )
+
+    monkeypatch.setattr(device, "nodes", lambda: iter((wrong_action,)))
+
+    assert device.find(label) is None
