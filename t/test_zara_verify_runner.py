@@ -43,7 +43,7 @@ def report(source):
     return {'protocol': 'ZARA-VERIFY/1', 'scope': 'local', 'verdict': 'verified',
             'source': source, 'run_id': 'a' * 32, 'created_ms': int(time.time() * 1000),
             'ttl_ms': 600000, 'merge_authorized': False, 'model_calls': 0,
-            'reasons': [], 'evidence': []}
+            'provider_calls': 0, 'reasons': [], 'evidence': []}
 
 
 def test_canonical_digest_is_order_independent():
@@ -117,8 +117,9 @@ def test_report_is_bound_to_snapshot_and_freshness(repository):
 
 @pytest.mark.parametrize('patch', [
     {'verdict': 'passed'}, {'scope': 'merge'}, {'model_calls': False},
-    {'model_calls': 1}, {'merge_authorized': True}, {'ttl_ms': True},
-    {'protocol': 'ZARA-VERIFY/2'}, {'reasons': ['failed']}, {'created_ms': True},
+    {'model_calls': 1}, {'provider_calls': False}, {'provider_calls': 1},
+    {'merge_authorized': True}, {'ttl_ms': True}, {'protocol': 'ZARA-VERIFY/2'},
+    {'reasons': ['failed']}, {'created_ms': True},
 ])
 def test_report_rejects_false_or_wrong_scope_success(repository, patch):
     source = snapshot(repository)
@@ -196,12 +197,12 @@ def test_spec_has_closed_commands_and_bounded_limits():
 
 
 def test_runner_missing_prolog_is_explicitly_blocked(repository, monkeypatch):
-    # This tests dependency failure, not a replacement implementation of the policy.
     import verification.zara_verify_runner as runner
     monkeypatch.setattr(runner.shutil, 'which', lambda name: None if name == 'swipl' else '/usr/bin/' + name)
     result = run_verification(repository, 'HEAD', ROOT, 'fixture-session')
     assert result['verdict'] == 'blocked'
     assert result['model_calls'] == 0
+    assert result['provider_calls'] == 0
     assert result['evidence'] == []
     assert 'prolog_unavailable' in result['reasons']
 
@@ -232,6 +233,7 @@ def test_host_runs_observed_commands_and_binds_evidence(repository, monkeypatch)
     result = run_verification(repository, 'HEAD', ROOT, 'session')
     assert result['verdict'] == 'verified'
     assert result['merge_authorized'] is False
+    assert result['model_calls'] == 0 and result['provider_calls'] == 0
     row = result['evidence'][0]
     assert row['source_digest'] == canonical_digest(result['source'])
     assert row['run_id'] == result['run_id']
