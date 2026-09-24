@@ -283,7 +283,7 @@ def execute_gate(gate_id: str, argv: list[str], root: Path, directory: Path,
     process = None
     written = 0
     digest = hashlib.sha256()
-    with log_path.open('wb') as output:
+    with log_path.open('wb', buffering=0) as output:
         try:
             process = subprocess.Popen(argv, cwd=root, env=gate_environment(directory),
                                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
