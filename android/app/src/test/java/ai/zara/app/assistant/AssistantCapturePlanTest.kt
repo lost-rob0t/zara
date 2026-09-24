@@ -12,6 +12,25 @@ import org.junit.Test
 
 class AssistantCapturePlanTest {
     @Test
+    fun `symbolic mode uses embedded runtime without model or remote requirements`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Symbolic,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
     fun `strict local mode uses embedded runtime without remote enrollment or connection`() {
         val state = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Unenrolled,
