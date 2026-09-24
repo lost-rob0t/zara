@@ -176,3 +176,64 @@ def test_single_anr_does_not_claim_unrelated_system_action(
             "cleared": False,
         }
     ]
+
+
+@pytest.mark.parametrize("unexpected_first", [False, True])
+def test_mixed_anr_snapshot_fails_closed_before_any_system_tap(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    unexpected_first: bool,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    pixel_dialog = """
+      <node resource-id="pixel-anr" bounds="[0,0][240,220]">
+        <node text="Pixel Launcher isn't responding"
+              package="com.google.android.apps.nexuslauncher"
+              bounds="[20,20][220,80]" />
+        <node text="Close app" package="android"
+              resource-id="android:id/aerr_close"
+              bounds="[20,100][120,160]" />
+      </node>
+    """
+    unexpected_dialog = """
+      <node resource-id="zara-anr" bounds="[250,0][500,220]">
+        <node text="ai.zara.app isn't responding"
+              package="ai.zara.app"
+              bounds="[270,20][480,80]" />
+      </node>
+    """
+    dialogs = (
+        unexpected_dialog + pixel_dialog
+        if unexpected_first
+        else pixel_dialog + unexpected_dialog
+    )
+    hierarchy = f"""
+    <hierarchy>
+      <node package="android" bounds="[0,0][500,500]">
+        {dialogs}
+      </node>
+    </hierarchy>
+    """
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(device, "nodes", lambda: _snapshot(device, module, hierarchy))
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **_kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(AssertionError, match="Unexpected ANR dialog blocks acceptance"):
+        device.dismiss_pixel_launcher_anr()
+
+    assert adb_calls == []
+    assert device.system_anr_sanitation == [
+        {
+            "package": "ai.zara.app",
+            "dialog": "ai.zara.app isn't responding",
+            "action": None,
+            "cleared": False,
+        }
+    ]
