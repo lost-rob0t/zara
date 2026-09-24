@@ -128,7 +128,7 @@ internal class LocalAssistantVoiceController(
                 return
             }
             statusObserver("Thinking locally…")
-            val turn = appSession.submitLocalText(transcript)
+            val turn = appSession.submitText(transcript)
             pendingTurn.track(turn)
             turn.whenComplete { result, error ->
                 appContext.mainExecutor.execute {
