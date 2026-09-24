@@ -134,18 +134,37 @@ object PortablePythonUiInitParser {
     fun parse(source: String): List<UiContribution> {
         val contributions = mutableListOf<UiContribution>()
         var sawRegister = false
+        var bodyIndent: String? = null
         source.lineSequence().forEachIndexed { index, raw ->
-            val line = raw.trim()
-            if (line.isEmpty() || line.startsWith("#")) return@forEachIndexed
-            if (line == "def register(ui):") {
-                require(!sawRegister) { "init.py may define register(ui) only once" }
+            val line = raw.trimEnd()
+            val content = line.trimStart()
+            if (content.isEmpty() || content.startsWith("#")) return@forEachIndexed
+            val indent = line.substring(0, line.length - content.length)
+            if (!sawRegister) {
+                require(indent.isEmpty() && content == "def register(ui):") {
+                    "init.py must begin with top-level def register(ui); line ${index + 1} is executable Python"
+                }
                 sawRegister = true
                 return@forEachIndexed
             }
-            require(sawRegister && line.startsWith("ui.add(") && line.endsWith(")")) {
+            require(indent.isNotEmpty()) {
+                "Android portable init.py only permits statements inside register(ui); line ${index + 1} is top-level Python"
+            }
+            if (bodyIndent == null) {
+                require(indent.all { it == ' ' } || indent.all { it == '\t' }) {
+                    "register(ui) body indentation must not mix tabs and spaces"
+                }
+                bodyIndent = indent
+            } else {
+                require(indent == bodyIndent) {
+                    "register(ui) body must use one consistent indentation level; line ${index + 1} is mis-indented"
+                }
+            }
+            val bodyLine = line.removePrefix(bodyIndent!!)
+            require(bodyLine.startsWith("ui.add(") && bodyLine.endsWith(")")) {
                 "Android portable init.py only permits ui.add(...) calls; line ${index + 1} is executable Python"
             }
-            contributions += parseAdd(line, index + 1)
+            contributions += parseAdd(bodyLine, index + 1)
             require(contributions.size <= MAX_CONTRIBUTIONS) {
                 "init.py contains too many UI contributions"
             }
