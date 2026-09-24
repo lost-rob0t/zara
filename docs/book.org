@@ -504,7 +504,7 @@ The Android product target makes Zara a *chat-first symbolic workspace*.
 
 Default theme: *Outrun*.
 
-The accepted navigation direction is currently *ACTIVE / EVOLVING*. It groups the product into three primary left-side menus rather than treating every screen as a top-level destination:
+The three-menu navigation hierarchy is *IMPLEMENTED* in current =master=. It groups the product into three primary left-side menus rather than treating every screen as a top-level destination:
 
 #+begin_example
 Chat
@@ -516,7 +516,7 @@ Settings
   Plugins | Updates | Diagnostics | About
 #+end_example
 
-Compact windows use a left drawer; wide windows target a persistent left rail. The current =master= may still contain the older flat navigation until the active Android UI change lands, so do not confuse the accepted product target with an already-merged screen hierarchy.
+Compact windows use a left drawer; wide windows use the persistent left rail at the current breakpoint. The three-menu shell is merged and acceptance-tested; individual secondary screens and hardware-gated capabilities can still remain *ACTIVE / EVOLVING*.
 
 The shell still owns conversation/history selection, honest local/remote runtime state, the bottom composer, and lifecycle state that survives recreation where the runtime supports it. Some secondary routes remain implementation targets rather than uniformly complete in every build.
 
@@ -1164,7 +1164,7 @@ This table is intentionally conservative.
 | Android one-step pairing UX | ACTIVE / EVOLVING |
 | Complete Android daily-driver UI | ACTIVE / EVOLVING |
 | Android local AI service/provider + verified model store | IMPLEMENTED foundation; real-model/device evidence ACTIVE / EVOLVING |
-| Android three-menu navigation target | ACTIVE / EVOLVING; not yet merged in current =master= |
+| Android three-menu navigation hierarchy | IMPLEMENTED in current =master=; individual secondary screens/capabilities may still be ACTIVE / EVOLVING |
 | Android capability APKs (Companion / Screen Vision / Notes) | GATED / PLANNED under fleet architecture vote and implementation handoffs |
 | Deep Android automation bus | ACTIVE / EVOLVING |
 | Android Assistant/Samsung system integration | ACTIVE / EVOLVING / hardware-gated |
