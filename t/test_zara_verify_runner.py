@@ -192,7 +192,7 @@ def test_spec_has_closed_commands_and_bounded_limits():
     assert spec['protocol'] == 'ZARA-VERIFY/1'
     assert spec['gates']['repository']['argv'] == ['bash', 'scripts/test-all.sh']
     assert spec['gates']['coverage']['argv'] == [
-        'bash', 'scripts/test-coverage.sh', '--base-ref', 'origin/release/0.3.x']
+        'bash', 'scripts/test-coverage.sh', '--base-ref', '@SOURCE_BASE@']
     assert all(gate['timeout_seconds'] <= 3600 for gate in spec['gates'].values())
 
 
