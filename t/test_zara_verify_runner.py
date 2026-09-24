@@ -187,6 +187,30 @@ def test_junit_requires_real_test_cases_not_summary_attributes(tmp_path):
     assert result == {'state': 'passed', 'tests': 1, 'failures': 0, 'skipped': 0}
 
 
+@pytest.mark.parametrize('xml', [
+    '<testsuite failures="1"><testcase name="real"/></testsuite>',
+    '<testsuite errors="1"><testcase name="real"/></testsuite>',
+    '<testsuites failures="1"><testsuite><testcase name="real"/></testsuite></testsuites>',
+    '<testsuite skipped="1"><testcase name="real"/></testsuite>',
+    '<testsuite failures="-1"><testcase name="real"/></testsuite>',
+    '<testsuite errors="not-an-integer"><testcase name="real"/></testsuite>',
+])
+def test_junit_summary_failure_error_skip_counters_fail_closed(tmp_path, xml):
+    path = tmp_path / 'junit.xml'
+    path.write_text(xml)
+    assert parse_junit(path)['state'] != 'passed'
+
+
+def test_junit_zero_summaries_do_not_replace_real_testcase_count(tmp_path):
+    path = tmp_path / 'junit.xml'
+    path.write_text(
+        '<testsuites tests="999" failures="0" errors="0" skipped="0">'
+        '<testsuite tests="998" failures="0" errors="0" skipped="0">'
+        '<testcase name="real"/></testsuite></testsuites>')
+    assert parse_junit(path) == {
+        'state': 'passed', 'tests': 1, 'failures': 0, 'skipped': 0}
+
+
 def test_spec_has_closed_commands_and_bounded_limits():
     spec = load_spec(ROOT)
     assert spec['protocol'] == 'ZARA-VERIFY/1'

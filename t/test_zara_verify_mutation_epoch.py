@@ -29,6 +29,24 @@ finally:
 '''
 
 
+TRANSIENT_NEW_PATH = r'''
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+content = sys.argv[2]
+if path.exists():
+    raise SystemExit(4)
+try:
+    path.write_text(content)
+    if path.read_text() != content:
+        raise SystemExit(3)
+    print('transient-new-path-observed', flush=True)
+finally:
+    path.unlink(missing_ok=True)
+'''
+
+
 def git(root: Path, *args: str) -> str:
     return subprocess.check_output(['git', '-C', str(root), *args], text=True).strip()
 
@@ -41,6 +59,8 @@ def repository(tmp_path: Path) -> Path:
     git(root, 'config', 'user.email', 'fixture@example.invalid')
     git(root, 'config', 'user.name', 'Fixture')
     (root / 'rules.pl').write_text('fact(alpha).\n')
+    (root / 'pkg').mkdir()
+    (root / 'pkg' / 'anchor.py').write_text('ANCHOR = True\n')
     git(root, 'add', '.')
     git(root, 'commit', '-qm', 'initial')
     return root
@@ -109,6 +129,38 @@ def test_transient_protected_policy_mutation_invalidates_verified_receipt(
     )
 
     assert target.read_bytes() == original
+    assert result['verdict'] == 'blocked'
+    assert 'source_mutated_during_verification' in result['reasons']
+
+
+def test_transient_new_source_path_invalidates_verified_receipt(
+        repository, policy_root, monkeypatch):
+    target = repository / 'pkg' / 'transient.py'
+
+    result = run_fixture(
+        repository,
+        policy_root,
+        monkeypatch,
+        [sys.executable, '-c', TRANSIENT_NEW_PATH, str(target), 'TRANSIENT = True\\n'],
+    )
+
+    assert not target.exists()
+    assert result['verdict'] == 'blocked'
+    assert 'source_mutated_during_verification' in result['reasons']
+
+
+def test_transient_new_policy_path_invalidates_verified_receipt(
+        repository, policy_root, monkeypatch):
+    target = policy_root / 'verification' / 'transient_helper.py'
+
+    result = run_fixture(
+        repository,
+        policy_root,
+        monkeypatch,
+        [sys.executable, '-c', TRANSIENT_NEW_PATH, str(target), 'TRANSIENT = True\\n'],
+    )
+
+    assert not target.exists()
     assert result['verdict'] == 'blocked'
     assert 'source_mutated_during_verification' in result['reasons']
 
