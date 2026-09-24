@@ -100,3 +100,30 @@ def test_anr_and_action_under_generic_root_are_not_a_proven_dialog_owner(
         </hierarchy>
         """,
     )
+
+def test_nested_generic_containers_are_not_a_dialog_owner_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _assert_unprovable_owner(
+        monkeypatch,
+        tmp_path,
+        """
+        <hierarchy>
+          <node package="android" class="android.widget.FrameLayout"
+                bounds="[0,0][1080,2400]">
+            <node package="android" class="android.widget.FrameLayout"
+                  bounds="[0,0][1080,2400]">
+              <node text="Pixel Launcher isn't responding"
+                    package="com.google.android.apps.nexuslauncher"
+                    bounds="[10,10][190,90]" />
+              <node text="Close app"
+                    package="android"
+                    resource-id="android:id/aerr_close"
+                    bounds="[20,100][180,160]" />
+            </node>
+          </node>
+        </hierarchy>
+        """,
+    )
+
