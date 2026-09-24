@@ -471,6 +471,18 @@ def validate_android(
                         f"{supplemental_name}: expected {manifest_apk_sha256}, "
                         f"got {supplemental_apk_sha256}"
                     )
+                supplemental_device = supplemental_manifest.get("device")
+                supplemental_device_api = (
+                    supplemental_device.get("api")
+                    if isinstance(supplemental_device, dict)
+                    else None
+                )
+                if supplemental_device_api != manifest_device_api:
+                    raise EvidenceError(
+                        "android supplemental device API mismatch: "
+                        f"{supplemental_name}: expected {manifest_device_api}, "
+                        f"got {supplemental_device_api}"
+                    )
                 count += validate_android(
                     supplemental_path,
                     source_sha,
