@@ -206,6 +206,17 @@ def test_junit_rejects_non_junit_root(tmp_path):
     assert parse_junit(path)['state'] != 'passed'
 
 
+@pytest.mark.parametrize('xml', [
+    '<testsuite><testcase name="real"><failure xmlns="urn:foreign"/></testcase></testsuite>',
+    '<testsuites><testsuite xmlns="urn:foreign" failures="1"/>'
+    '<testsuite><testcase name="real"/></testsuite></testsuites>',
+])
+def test_junit_rejects_namespaced_failure_semantics(tmp_path, xml):
+    path = tmp_path / 'junit.xml'
+    path.write_text(xml)
+    assert parse_junit(path)['state'] != 'passed'
+
+
 def test_junit_requires_real_test_cases_not_summary_attributes(tmp_path):
     path = tmp_path / 'junit.xml'
     path.write_text('<testsuite tests="999"><testcase name="real"/></testsuite>')
