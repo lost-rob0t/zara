@@ -207,6 +207,23 @@ class ExpertRegistry(_impl.ExpertRegistry):
             ),
         )
 
+    @staticmethod
+    def _charge_delegation_usage(
+        parent: Optional[_DelegationFrame],
+        model_calls: int,
+    ) -> bool:
+        """Charge one accepted child result into the canonical parent ledger."""
+
+        if parent is None or model_calls == 0:
+            return True
+        if model_calls > parent.remaining_model_calls:
+            parent.delegated_model_calls += model_calls
+            parent.remaining_model_calls = 0
+            return False
+        parent.remaining_model_calls -= model_calls
+        parent.delegated_model_calls += model_calls
+        return True
+
     def _durable_idempotency_preflight_unlocked(
         self,
         handle: ActivationHandle,
@@ -358,6 +375,10 @@ class ExpertRegistry(_impl.ExpertRegistry):
             if replay_model_calls > admitted_limits.max_model_calls:
                 raise ExpertBudgetExceededError(
                     "durable replay usage.model_calls exceeds admitted max_model_calls"
+                )
+            if not self._charge_delegation_usage(delegation_parent, replay_model_calls):
+                raise ExpertBudgetExceededError(
+                    "delegated expert aggregate usage exceeds parent model-call budget"
                 )
             return durable_replay
         durable_started = False
@@ -607,9 +628,11 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 invocation.result = result
 
         if delegation_parent is not None and charge_model_calls:
-            if charge_model_calls > delegation_parent.remaining_model_calls:
-                delegation_parent.delegated_model_calls += charge_model_calls
-                delegation_parent.remaining_model_calls = 0
+            budget_ok = self._charge_delegation_usage(
+                delegation_parent,
+                charge_model_calls,
+            )
+            if not budget_ok:
                 budget_message = (
                     "delegated expert aggregate usage exceeds parent model-call budget"
                 )
@@ -626,8 +649,6 @@ class ExpertRegistry(_impl.ExpertRegistry):
                         idempotency_key,
                     )
                 raise ExpertBudgetExceededError(budget_message)
-            delegation_parent.remaining_model_calls -= charge_model_calls
-            delegation_parent.delegated_model_calls += charge_model_calls
 
         if aggregate_model_calls > admitted_limits.max_model_calls:
             budget_message = (
