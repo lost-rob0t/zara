@@ -21,12 +21,16 @@ def _write_plugin(path, *, name: str, tool_name: str | None = None):
             def read(value: str) -> str:
                 return value
 
-            def _tools():
-                return [StructuredTool.from_function(
+            _TOOLS = (
+                StructuredTool.from_function(
                     read,
                     name={tool_name!r},
                     description="composition authorization test tool",
-                )]
+                ),
+            )
+
+            def _tools():
+                return list(_TOOLS)
             """
         )
     else:
@@ -294,7 +298,7 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
         registry,
         allowed=("provider.read",),
         invoker=invoke,
-        lifecycle_timeout=1.0,
+        lifecycle_timeout=0.1,
     )
     await manager.start()
     handle = manager._resolve_capability("consumer", "provider.read")
@@ -314,7 +318,7 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
 
     stop_task = asyncio.create_task(manager.stop())
     try:
-        await asyncio.wait_for(asyncio.shield(stop_task), timeout=1.5)
+        await asyncio.wait_for(asyncio.shield(stop_task), timeout=0.5)
     except asyncio.TimeoutError:
         release_invocation.set()
         await stop_task
