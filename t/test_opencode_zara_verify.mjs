@@ -7,7 +7,7 @@ function fixture() {
   let policy = 'policy-a';
   let time = 100;
   const report = () => ({protocol:'ZARA-VERIFY/1', scope:'local', verdict:'verified',
-    source: {identity:state}, created_ms:time, ttl_ms:600000, model_calls:0,
+    source: {identity:state}, created_ms:time, ttl_ms:600000, model_calls:0, provider_calls:0,
     merge_authorized:false, reasons:[], expert:{expert_id:'zara:verifier',operation:'verify.assert',verdict:'succeeded',data:{verified:true},usage:{model_calls:0,provider_calls:0}}});
   const gate = createVerifyGate({
     snapshot:async () => ({identity:state}), policyDigest:async () => policy,
@@ -57,7 +57,7 @@ test('forged positive return is rejected', async () => {
 });
 test('provider-backed receipt cannot satisfy zero-model verifier', async () => {
   const payload={protocol:'ZARA-VERIFY/1',scope:'local',verdict:'verified',source:{},
-    created_ms:10,ttl_ms:100,model_calls:0,merge_authorized:false,reasons:[],
+    created_ms:10,ttl_ms:100,model_calls:0,provider_calls:0,merge_authorized:false,reasons:[],
     expert:{expert_id:'zara:verifier',operation:'verify.assert',verdict:'succeeded',
       data:{verified:true},usage:{model_calls:0,provider_calls:1}}};
   const gate=createVerifyGate({snapshot:async()=>({}),policyDigest:async()=>'p',
@@ -65,12 +65,25 @@ test('provider-backed receipt cannot satisfy zero-model verifier', async () => {
   await gate.invoke('run','s');
   await assert.rejects(gate.assert('s'),/invalid_receipt/);
 });
+test('top-level provider accounting is authoritative', async () => {
+  for (const value of [undefined, 1, false]) {
+    const payload={protocol:'ZARA-VERIFY/1',scope:'local',verdict:'verified',source:{},
+      created_ms:10,ttl_ms:100,model_calls:0,provider_calls:0,merge_authorized:false,reasons:[],
+      expert:{expert_id:'zara:verifier',operation:'verify.assert',verdict:'succeeded',
+        data:{verified:true},usage:{model_calls:0,provider_calls:0}}};
+    if (value === undefined) delete payload.provider_calls; else payload.provider_calls=value;
+    const gate=createVerifyGate({snapshot:async()=>({}),policyDigest:async()=>'p',
+      execute:async()=>payload,now:()=>10});
+    await gate.invoke('run','s');
+    await assert.rejects(gate.assert('s'),/invalid_receipt/);
+  }
+});
 test('mutation while running rejects stale output before receipt admission', async () => {
   let release;
   const waiting=new Promise(resolve=>{release=resolve;});
   const gate=createVerifyGate({snapshot:async()=>({}),policyDigest:async()=>'p',
     execute:async()=>{await waiting;return {protocol:'ZARA-VERIFY/1',scope:'local',
-      verdict:'verified',source:{},created_ms:10,ttl_ms:100,model_calls:0,
+      verdict:'verified',source:{},created_ms:10,ttl_ms:100,model_calls:0,provider_calls:0,
       merge_authorized:false,reasons:[],expert:{expert_id:'zara:verifier',operation:'verify.assert',verdict:'succeeded',data:{verified:true},usage:{model_calls:0,provider_calls:0}}};},now:()=>10});
   const pending=gate.invoke('run','s');
   await new Promise(resolve=>setTimeout(resolve,0));
