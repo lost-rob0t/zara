@@ -137,7 +137,7 @@ evaluate(Request, Decision) :-
     ),
     protocol(Protocol),
     Decision = _{protocol:Protocol, verdict:Verdict, required:Gates, reasons:Reasons,
-                 scope:local, merge_authorized:false, model_calls:0}.
+                 scope:local, merge_authorized:false, model_calls:0, provider_calls:0}.
 
 dispatch(Request, Reply) :-
     get_dict(operation, Request, Operation),
