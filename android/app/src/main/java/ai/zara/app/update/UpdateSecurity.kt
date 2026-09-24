@@ -1,6 +1,7 @@
 package ai.zara.app.update
 
 import java.io.File
+import java.math.BigInteger
 import java.net.URI
 import java.security.MessageDigest
 
@@ -29,7 +30,10 @@ data class UpdateRelease(
 object UpdateSecurity {
     private val sha = Regex("[0-9a-f]{40}")
     private val digest = Regex("[0-9a-f]{64}")
-    private val version = Regex("^v?(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?$")
+    private val version = Regex(
+        "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)" +
+            "(?:-([0-9A-Za-z.-]+))?(?:\\+([0-9A-Za-z.-]+))?$"
+    )
     private val trustedUpdateHosts = setOf(
         "api.github.com",
         "github.com",
@@ -73,8 +77,6 @@ object UpdateSecurity {
             }
         }
         if (next.prerelease == installed.prerelease) return false
-        if (next.prerelease == null) return true
-        if (installed.prerelease == null) return false
         return comparePrerelease(next.prerelease, installed.prerelease) > 0
     }
 
@@ -105,31 +107,46 @@ object UpdateSecurity {
     }
 
     private data class ParsedVersion(
-        val numbers: List<Int>,
-        val prerelease: String?,
+        val numbers: List<BigInteger>,
+        val prerelease: List<String>,
     )
 
     private fun isVersion(value: String): Boolean = parseVersion(value) != null
 
     private fun parseVersion(value: String): ParsedVersion? {
-        val match = version.matchEntire(value.trim()) ?: return null
-        val numbers = (1..3).map { match.groupValues[it].toIntOrNull() ?: return null }
-        return ParsedVersion(numbers, match.groupValues[4].ifBlank { null })
+        val match = version.matchEntire(value) ?: return null
+        val numbers = (1..3).map { match.groupValues[it].toBigIntegerOrNull() ?: return null }
+        val prereleaseText = match.groupValues[4]
+        val prerelease = if (prereleaseText.isEmpty()) emptyList() else prereleaseText.split('.')
+        if (prerelease.any { identifier ->
+                identifier.isEmpty() ||
+                    (
+                        identifier.all(Char::isDigit) &&
+                            identifier.length > 1 &&
+                            identifier.first() == '0'
+                    )
+            }) {
+            return null
+        }
+        val build = match.groupValues[5]
+        if (build.isNotEmpty() && build.split('.').any(String::isEmpty)) return null
+        return ParsedVersion(numbers, prerelease)
     }
 
-    private fun comparePrerelease(left: String, right: String): Int {
-        val leftParts = left.split('.')
-        val rightParts = right.split('.')
-        val length = maxOf(leftParts.size, rightParts.size)
+    private fun comparePrerelease(left: List<String>, right: List<String>): Int {
+        if (left.isEmpty() && right.isEmpty()) return 0
+        if (left.isEmpty()) return 1
+        if (right.isEmpty()) return -1
+        val length = maxOf(left.size, right.size)
         for (index in 0 until length) {
-            val a = leftParts.getOrNull(index) ?: return -1
-            val b = rightParts.getOrNull(index) ?: return 1
-            val aNumber = a.toIntOrNull()
-            val bNumber = b.toIntOrNull()
+            val a = left.getOrNull(index) ?: return -1
+            val b = right.getOrNull(index) ?: return 1
+            val aNumeric = a.all(Char::isDigit)
+            val bNumeric = b.all(Char::isDigit)
             val comparison = when {
-                aNumber != null && bNumber != null -> aNumber.compareTo(bNumber)
-                aNumber != null -> -1
-                bNumber != null -> 1
+                aNumeric && bNumeric -> a.toBigInteger().compareTo(b.toBigInteger())
+                aNumeric -> -1
+                bNumeric -> 1
                 else -> a.compareTo(b)
             }
             if (comparison != 0) return comparison
