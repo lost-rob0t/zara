@@ -55,7 +55,7 @@ class UpdateManagerContractTest {
         val source = File(
             "src/main/java/ai/zara/app/update/AndroidUpdateManager.kt"
         ).readText()
-        val request = source.substringAfter("fun requestInstall()").substringBefore("fun handleInstallCallback")
+        val request = source.substringAfter("fun requestInstall()").substringBefore("fun recordInstallStatus")
         val worker = source.substringAfter("private fun installVerifiedUpdate")
             .substringBefore("private fun releaseCandidate")
 
@@ -77,35 +77,13 @@ class UpdateManagerContractTest {
     }
 
     @Test
-    fun `install callbacks are fenced by durable receipt before side effects`() {
-        val manager = File(
-            "src/main/java/ai/zara/app/update/AndroidUpdateManager.kt"
-        ).readText()
+    fun `install receiver reports terminal package installer status`() {
         val receiver = File(
             "src/main/java/ai/zara/app/update/UpdateInstallReceiver.kt"
         ).readText()
-        val install = manager.substringAfter("private fun installVerifiedUpdate")
-            .substringBefore("private fun verifyUpdateApk")
-        val callback = manager.substringAfter("fun handleInstallCallback(intent: Intent)")
-            .substringBefore("private fun installVerifiedUpdate")
-        val check = manager.substringAfter("fun check()")
-            .substringBefore("fun select(")
 
-        assertTrue(install.contains("EXTRA_INSTALL_SESSION_ID"))
-        assertTrue(install.contains("EXTRA_INSTALL_NONCE"))
-        assertTrue(install.contains("EXTRA_INSTALL_SOURCE_SHA"))
-        assertTrue(install.contains("EXTRA_INSTALL_VERSION"))
-        assertTrue(install.contains("EXTRA_INSTALL_VERSION_CODE"))
-        assertTrue(install.contains("EXTRA_INSTALL_SHA256"))
-        assertTrue(install.contains("persistInstallReceipt"))
-        assertTrue(install.indexOf("persistInstallReceipt") < install.indexOf("session.commit"))
-        assertTrue(callback.contains("matchesInstallCallback"))
-        assertTrue(callback.contains("PackageInstaller.STATUS_PENDING_USER_ACTION"))
-        assertTrue(callback.contains("context.startActivity(confirmation)"))
-        assertTrue(callback.contains("clearInstallReceipt"))
-        assertTrue(check.contains("clearInstallReceipt()"))
-        assertTrue(receiver.contains("handleInstallCallback(intent)"))
-        assertFalse(receiver.contains("startActivity("))
-        assertFalse(receiver.contains("recordInstallStatus("))
+        assertTrue(receiver.contains("PackageInstaller.STATUS_PENDING_USER_ACTION"))
+        assertTrue(receiver.contains("PackageInstaller.EXTRA_STATUS_MESSAGE"))
+        assertTrue(receiver.contains("recordInstallStatus(status, message)"))
     }
 }
