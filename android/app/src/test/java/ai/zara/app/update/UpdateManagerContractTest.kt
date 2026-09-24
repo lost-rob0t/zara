@@ -35,7 +35,7 @@ class UpdateManagerContractTest {
         assertTrue(candidate.contains("VersionedUpdateManifest.parse"))
         assertTrue(candidate.contains("uniqueAsset"))
         assertFalse(candidate.contains("target_commitish"))
-        assertFalse(candidate.contains("endsWith(\\".apk\\")"))
+        assertFalse(candidate.contains("endsWith(\".apk\")"))
     }
 
     @Test
