@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="zara_tile_description">Zara status and actions</string>
     <string-array name="android_wear_capabilities">
         <item>zara_watch</item>
     </string-array>
