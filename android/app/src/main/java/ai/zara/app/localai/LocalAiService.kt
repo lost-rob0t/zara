@@ -14,6 +14,7 @@ import android.os.RemoteException
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStream
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -28,6 +29,8 @@ class LocalAiService : Service() {
     private lateinit var runtime: LocalAiRuntime
     private lateinit var ttsRegistry: LocalTtsProviderRegistry
     private lateinit var remoteMessenger: Messenger
+    private val remoteGenerationLock = Any()
+    private var activeRemoteGeneration: RemoteGenerationRegistration? = null
 
     @Volatile
     private lateinit var tts: LocalTtsProvider
@@ -59,6 +62,7 @@ class LocalAiService : Service() {
 
     override fun onDestroy() {
         loading?.cancel(true)
+        clearRemoteGeneration()?.lease?.finish()
         runtime.close()
         ttsRegistry.close()
         modelIo.shutdownNow()
@@ -161,30 +165,15 @@ class LocalAiService : Service() {
                             prompt = requireRemoteString(message.data, LocalAiRemoteProtocol.KEY_PROMPT),
                             maxOutputTokens = message.data.getInt(LocalAiRemoteProtocol.KEY_MAX_OUTPUT_TOKENS),
                         )
-                        val generation = generate(request) { chunk ->
-                            sendRemote(
-                                replyTo,
-                                LocalAiRemoteProtocol.EVENT_CHUNK,
-                                Bundle().apply {
-                                    putLong(LocalAiRemoteProtocol.KEY_REQUEST_ID, requestId)
-                                    putString(LocalAiRemoteProtocol.KEY_CHUNK, chunk)
-                                },
-                            )
-                        }
-                        replyFuture(requestId, replyTo, generation) { result ->
-                            Bundle().apply {
-                                putBundle(
-                                    LocalAiRemoteProtocol.KEY_RESULT,
-                                    LocalAiRemoteProtocol.generationResultToBundle(result),
-                                )
-                            }
-                        }
+                        val registration = registerRemoteGeneration(requestId, replyTo)
+                        val generation = generateRemote(registration, request)
+                        replyRemoteGeneration(registration, replyTo, generation)
                     }
 
                     LocalAiRemoteProtocol.MSG_CANCEL -> replyFuture(
                         requestId,
                         replyTo,
-                        runtime.cancel(),
+                        cancelRemoteGeneration(replyTo),
                     ) { state ->
                         Bundle().apply {
                             putBundle(LocalAiRemoteProtocol.KEY_STATE, LocalAiRemoteProtocol.stateToBundle(state))
@@ -276,14 +265,154 @@ class LocalAiService : Service() {
         replyTo: Messenger,
         what: Int,
         payload: Bundle,
-    ) {
+    ): Boolean = try {
+        replyTo.send(Message.obtain(null, what).apply { data = payload })
+        true
+    } catch (_: RemoteException) {
+        false
+    }
+
+    private fun registerRemoteGeneration(
+        requestId: Long,
+        replyTo: Messenger,
+    ): RemoteGenerationRegistration {
+        val replyBinder = replyTo.binder
+        lateinit var deathRecipient: IBinder.DeathRecipient
+        deathRecipient = IBinder.DeathRecipient {
+            remoteGenerationCallerDied(requestId, replyBinder)
+        }
+        val lease = LocalAiRemoteGenerationLease(
+            cancel = { runtime.cancel() },
+            unlink = { replyBinder.unlinkToDeath(deathRecipient, 0) },
+        )
+        val registration = RemoteGenerationRegistration(
+            requestId = requestId,
+            replyBinder = replyBinder,
+            lease = lease,
+        )
+        synchronized(remoteGenerationLock) {
+            check(activeRemoteGeneration == null) { "A remote local generation is already active" }
+            activeRemoteGeneration = registration
+        }
         try {
-            replyTo.send(Message.obtain(null, what).apply { data = payload })
-        } catch (_: RemoteException) {
-            // The caller disappeared. The canonical runtime keeps its own lifecycle;
-            // cancellation remains an explicit request rather than an IPC side effect.
+            replyBinder.linkToDeath(deathRecipient, 0)
+        } catch (error: RemoteException) {
+            if (removeRemoteGeneration(registration)) lease.finish()
+            throw LocalAiUnavailableException("Local AI IPC caller disconnected")
+        }
+        return registration
+    }
+
+    private fun generateRemote(
+        registration: RemoteGenerationRegistration,
+        request: LocalGenerationRequest,
+    ): CompletableFuture<LocalGenerationResult> =
+        loadActiveModel().thenCompose {
+            registration.lease.runIfActive {
+                runtime.generate(request) { chunk ->
+                    registration.lease.runIfActive {
+                        val sent = sendRemote(
+                            Messenger(registration.replyBinder),
+                            LocalAiRemoteProtocol.EVENT_CHUNK,
+                            Bundle().apply {
+                                putLong(LocalAiRemoteProtocol.KEY_REQUEST_ID, registration.requestId)
+                                putString(LocalAiRemoteProtocol.KEY_CHUNK, chunk)
+                            },
+                        )
+                        if (!sent) {
+                            remoteGenerationCallerDied(registration.requestId, registration.replyBinder)
+                        }
+                    }
+                }
+            } ?: failedRemoteGeneration()
+        }
+
+    private fun replyRemoteGeneration(
+        registration: RemoteGenerationRegistration,
+        replyTo: Messenger,
+        future: CompletableFuture<LocalGenerationResult>,
+    ) {
+        future.whenComplete { result, error ->
+            if (!finishRemoteGeneration(registration)) return@whenComplete
+            if (error != null) {
+                sendRemoteError(registration.requestId, replyTo, rootCause(error))
+            } else {
+                sendRemote(
+                    replyTo,
+                    LocalAiRemoteProtocol.RESULT_OK,
+                    Bundle().apply {
+                        putLong(LocalAiRemoteProtocol.KEY_REQUEST_ID, registration.requestId)
+                        putBundle(
+                            LocalAiRemoteProtocol.KEY_RESULT,
+                            LocalAiRemoteProtocol.generationResultToBundle(result),
+                        )
+                    },
+                )
+            }
         }
     }
+
+    private fun cancelRemoteGeneration(replyTo: Messenger): CompletableFuture<LocalAiState> {
+        val registration = synchronized(remoteGenerationLock) {
+            val current = activeRemoteGeneration
+                ?: return CompletableFuture.completedFuture(runtime.state())
+            if (current.replyBinder != replyTo.binder) {
+                return failedFuture(SecurityException("Local AI IPC cancel caller does not own active generation"))
+            }
+            activeRemoteGeneration = null
+            current
+        }
+        registration.lease.finish()
+        return runtime.cancel()
+    }
+
+    private fun remoteGenerationCallerDied(
+        requestId: Long,
+        replyBinder: IBinder,
+    ) {
+        val registration = synchronized(remoteGenerationLock) {
+            val current = activeRemoteGeneration
+            if (current?.requestId != requestId || current.replyBinder != replyBinder) {
+                null
+            } else {
+                activeRemoteGeneration = null
+                current
+            }
+        }
+        registration?.lease?.callerDied()
+    }
+
+    private fun finishRemoteGeneration(registration: RemoteGenerationRegistration): Boolean {
+        if (!removeRemoteGeneration(registration)) return false
+        return registration.lease.finish()
+    }
+
+    private fun removeRemoteGeneration(registration: RemoteGenerationRegistration): Boolean =
+        synchronized(remoteGenerationLock) {
+            if (activeRemoteGeneration !== registration) {
+                false
+            } else {
+                activeRemoteGeneration = null
+                true
+            }
+        }
+
+    private fun clearRemoteGeneration(): RemoteGenerationRegistration? =
+        synchronized(remoteGenerationLock) {
+            activeRemoteGeneration.also { activeRemoteGeneration = null }
+        }
+
+    private fun failedRemoteGeneration(): CompletableFuture<LocalGenerationResult> =
+        failedFuture(CancellationException("Local AI IPC caller disconnected"))
+
+    private fun <T> failedFuture(error: Throwable): CompletableFuture<T> =
+        CompletableFuture<T>().also { it.completeExceptionally(error) }
+
+    private data class RemoteGenerationRegistration(
+        val requestId: Long,
+        val replyBinder: IBinder,
+        val lease: LocalAiRemoteGenerationLease,
+    )
 
     private fun requireRemoteString(payload: Bundle, key: String): String =
         payload.getString(key)?.takeIf(String::isNotBlank)
