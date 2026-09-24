@@ -257,7 +257,7 @@ def test_gateway_device_action_deadline_capability_backpressure_and_cancel(monke
             principal_id="w07-owner",
             session_id=state.session_id,
             capability="open_uri",
-            args={},
+            args={"uri": "https://example.invalid/overflow"},
             deadline_ns=transport._now_ns() + 1_000_000_000,
         )
 
