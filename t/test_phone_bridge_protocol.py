@@ -123,3 +123,50 @@ def test_phone_runtime_event_has_no_tool_or_prolog_authority() -> None:
     }
     assert "tool" not in repr(message.body).lower()
     assert "prolog" not in repr(message.body).lower()
+
+
+def test_desktop_sms_command_is_session_bound_and_closed() -> None:
+    request = ProtocolMessage(
+        type="phone.sms.send",
+        id="sms-request-1",
+        session_id="desktop-session",
+        timestamp_ns=3,
+        payload_count=0,
+        body={"to": "+15551234567", "text": "hello"},
+    )
+    assert round_trip(request) == request
+
+    result = ProtocolMessage(
+        type="phone.sms.result",
+        id="sms-result-1",
+        reply_to="sms-request-1",
+        session_id="desktop-session",
+        timestamp_ns=4,
+        payload_count=0,
+        body={"outcome": "completed"},
+    )
+    assert round_trip(result) == result
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"to": "+15551234567"},
+        {"text": "hello"},
+        {"to": "", "text": "hello"},
+        {"to": "+15551234567", "text": ""},
+        {"to": "+15551234567", "text": "hello", "device_id": "pretend-authority"},
+    ],
+)
+def test_desktop_sms_command_rejects_ambiguous_or_client_authoritative_shapes(body) -> None:
+    with pytest.raises(ProtocolValidationError):
+        encode_message(
+            ProtocolMessage(
+                type="phone.sms.send",
+                id="sms-request-1",
+                session_id="desktop-session",
+                timestamp_ns=3,
+                payload_count=0,
+                body=body,
+            )
+        )
