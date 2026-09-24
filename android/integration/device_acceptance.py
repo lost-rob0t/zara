@@ -190,6 +190,36 @@ class Device:
             depth += 1
         return depth
 
+    @classmethod
+    def dialog_owner_boundary(cls, nodes, owner_path: tuple[int, ...]):
+        node_by_path = {
+            path: node
+            for node in nodes
+            for path in (cls.hierarchy_path(node),)
+            if path is not None
+        }
+        owner = node_by_path.get(owner_path)
+        parent = node_by_path.get(owner_path[:-1])
+        if owner is None or parent is None:
+            return None
+        if not (owner.get("resource-id") or "").strip():
+            return None
+        try:
+            owner_bounds = cls.bounds(owner)
+            parent_bounds = cls.bounds(parent)
+        except (AssertionError, KeyError):
+            return None
+        owner_left, owner_top, owner_right, owner_bottom = owner_bounds
+        parent_left, parent_top, parent_right, parent_bottom = parent_bounds
+        if not (
+            parent_left <= owner_left < owner_right <= parent_right
+            and parent_top <= owner_top < owner_bottom <= parent_bottom
+        ):
+            return None
+        if owner_bounds == parent_bounds:
+            return None
+        return owner
+
     def exact_anr_is_present(self, package: str, dialog_text: str) -> bool:
         return any(
             self.node_label(node) == dialog_text and node.get("package") == package
@@ -252,6 +282,8 @@ class Device:
             if owner_depth < 2:
                 continue
             owner_path = selected_path[:owner_depth]
+            if self.dialog_owner_boundary(nodes, owner_path) is None:
+                continue
             owned_anrs = [
                 candidate
                 for candidate in anr_candidates
