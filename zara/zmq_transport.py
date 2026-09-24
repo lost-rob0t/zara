@@ -640,6 +640,14 @@ class ZaraZmqGateway:
                     )
                     return False
                 buffer = self._early_turn_events[key] = deque(maxlen=128)
+            if len(buffer) >= 128:
+                logger.warning(
+                    "Early turn-event per-turn capacity full; refusing event "
+                    "principal=%s turn_id=%s",
+                    principal_id,
+                    turn_id,
+                )
+                return False
             buffer.append(held)
             return True
 
