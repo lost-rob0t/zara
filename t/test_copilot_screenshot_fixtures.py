@@ -29,6 +29,7 @@ REQUIRED_SCREENSHOTS = {
     "copilot-expanded.png",
     "copilot-history.png",
     "copilot-smallest-supported.png",
+    "settings-appearance.png",
 }
 
 
@@ -61,6 +62,29 @@ def test_copilot_fixture_renderer_emits_bounded_manifest_and_required_pngs(tmp_p
         assert len(data) > 64
         assert data.startswith(b"\x89PNG\r\n\x1a\n")
         assert entry["sha256"] == hashlib.sha256(data).hexdigest()
+
+
+def test_fixture_manifest_binds_actual_theme_and_settings_semantic_twin(tmp_path):
+    manifest = render_copilot_fixtures(tmp_path / "ui", source_commit="theme-provenance")
+    entries = {entry["state"]: entry for entry in manifest["fixtures"]}
+
+    settings = entries["settings-appearance"]
+    assert settings["theme"] == "dotfiles-outrun"
+    assert settings["text_twin"] == {
+        "window_title": "Zara Settings",
+        "category": "Appearance",
+        "theme_label": "Dotfiles Outrun",
+    }
+    assert settings["actions"] == [
+        {"id": "save-settings", "text": "Save settings", "enabled": True},
+        {"id": "restart-zara", "text": "Restart Zara", "enabled": True},
+    ]
+
+    copilot_entries = [
+        entry for state, entry in entries.items() if state != "settings-appearance"
+    ]
+    assert copilot_entries
+    assert {entry["theme"] for entry in copilot_entries} == {"signal-cabin"}
 
 
 def test_copilot_fixture_renderer_isolated_from_user_state(tmp_path, monkeypatch):

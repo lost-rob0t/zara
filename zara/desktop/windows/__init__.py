@@ -3,7 +3,7 @@
 from .chat import FullChatWindow
 from .copilot import CopilotPresentation, CopilotWindow
 from .quick import QuickCopilotWindow
-from .settings import SettingsWindow
+from .settings_mobile import SettingsWindow
 from .status import DesktopStatusWindow
 
 __all__ = [

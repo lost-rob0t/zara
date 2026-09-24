@@ -56,14 +56,20 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
     try:
         assert window.objectName() == "zaraSettings"
         assert [window.category_list.item(index).text() for index in range(window.category_list.count())] == [
+            "Runtime",
+            "Connection",
+            "Permissions",
             "Appearance",
-            "Assistant",
-            "Connections",
-            "Voice & Speech",
-            "Tools & Privacy",
-            "Prolog",
-            "Advanced",
+            "Plugins",
+            "Updates",
+            "Diagnostics",
+            "About",
         ]
+        assert window.settings_search.objectName() == "zaraSettingsSearch"
+        assert window.settings_search.placeholderText() == "Search settings"
+        assert window.settings_title.text() == "Settings"
+        assert window.settings_subtitle.text() == "Desktop · same Zara settings language as Android"
+        assert window.stack.count() == 8
         assert {
             "desktop.theme",
             "llm.provider",
@@ -85,8 +91,11 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
             "database.path",
             "prolog.main_file",
             "prolog.load_on_startup",
+            "plugins.lifecycle_timeout",
+            "plugins.event_queue_size",
+            "plugins.max_managed_workers",
         } <= set(window.setting_widgets)
-        assert len(window.setting_widgets) >= 20
+        assert len(window.setting_widgets) >= 23
         assert [button.theme_key for button in window.theme_buttons] == [
             "signal-cabin",
             "dotfiles-outrun",
@@ -94,6 +103,68 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
             "dracula",
             "chatgpt-neutral",
         ]
+    finally:
+        dispose(window)
+
+
+def test_settings_search_filters_mobile_parity_sections_without_new_state(tmp_path):
+    window, _, _, _ = make_window(tmp_path)
+    try:
+        window.settings_search.setText("theme")
+        app().processEvents()
+        visible = [
+            window.category_list.item(index).text()
+            for index in range(window.category_list.count())
+            if not window.category_list.item(index).isHidden()
+        ]
+        assert visible == ["Appearance"]
+        assert window.category_list.currentItem().text() == "Appearance"
+
+        window.settings_search.setText("pair")
+        app().processEvents()
+        visible = [
+            window.category_list.item(index).text()
+            for index in range(window.category_list.count())
+            if not window.category_list.item(index).isHidden()
+        ]
+        assert visible == ["Connection"]
+        assert window.pairing_button.text() == "Pair this desktop"
+
+        window.settings_search.setText("plugin")
+        app().processEvents()
+        visible = [
+            window.category_list.item(index).text()
+            for index in range(window.category_list.count())
+            if not window.category_list.item(index).isHidden()
+        ]
+        assert visible == ["Plugins"]
+
+        window.settings_search.clear()
+        app().processEvents()
+        assert all(
+            not window.category_list.item(index).isHidden()
+            for index in range(window.category_list.count())
+        )
+    finally:
+        dispose(window)
+
+
+def test_settings_rows_expose_mobile_style_description_and_restart_semantics(tmp_path):
+    window, _, _, _ = make_window(tmp_path)
+    try:
+        theme = window.setting_widgets["desktop.theme"]
+        assert theme.property("zaraApplyMode") == "live"
+        assert "theme" in theme.toolTip().lower()
+
+        model = window.setting_widgets["llm.model"]
+        assert model.property("zaraApplyMode") == "restart"
+        assert model.toolTip()
+
+        plugin_queue = window.setting_widgets["plugins.event_queue_size"]
+        assert plugin_queue.property("zaraApplyMode") == "restart"
+        assert "queue" in plugin_queue.toolTip().lower()
+
+        assert window.category_list.currentItem().text() == "Runtime"
     finally:
         dispose(window)
 
@@ -190,7 +261,6 @@ def test_config_source_editor_validates_and_saves_actual_toml(tmp_path):
         assert window.feedback_label.text() == "config.toml saved. Restart Zara to apply runtime changes."
     finally:
         dispose(window)
-
 
 
 def test_connections_page_exposes_pairing_flow_without_raw_key_fields(tmp_path):

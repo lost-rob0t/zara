@@ -17,16 +17,18 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
+from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
 from zara.desktop.theme import apply_desktop_theme
-from zara.desktop.windows import CopilotPresentation, CopilotWindow
+from zara.desktop.windows import CopilotPresentation, CopilotWindow, SettingsWindow
 from zara.runtime import events
 
 _COMPACT_SIZE = (680, 460)
 _EXPANDED_SIZE = (960, 680)
 _MINIMUM_SIZE = (480, 320)
 _THEME = "signal-cabin"
+_SETTINGS_THEME = "dotfiles-outrun"
 
 _FIXTURES: tuple[tuple[str, str], ...] = (
     ("empty-compact", "copilot-empty-compact.png"),
@@ -67,6 +69,16 @@ def _application() -> QApplication:
     app = QApplication([])
     app.setQuitOnLastWindowClosed(False)
     return app
+
+
+def _apply_fixture_theme(app: QApplication, theme_key: str) -> str:
+    apply_desktop_theme(app, theme_key)
+    applied = str(app.property("zaraTheme") or "")
+    if applied != theme_key:
+        raise RuntimeError(
+            f"desktop theme provenance mismatch: requested {theme_key!r}, applied {applied!r}"
+        )
+    return applied
 
 
 def _add_user_messages(service: ConversationService, conversation_id: str, *messages: str) -> None:
@@ -196,6 +208,7 @@ def _render_one(
     *,
     source_commit: str,
     root: Path,
+    theme_key: str,
 ) -> dict[str, object]:
     app = _application()
     db_path = root / f"{state}.db"
@@ -222,7 +235,7 @@ def _render_one(
             "path": filename,
             "width": pixmap.width(),
             "height": pixmap.height(),
-            "theme": _THEME,
+            "theme": theme_key,
             "source_commit": source_commit,
             "sha256": screenshot_sha256,
         }
@@ -232,6 +245,90 @@ def _render_one(
         window.deleteLater()
         app.processEvents()
         settings.sync()
+
+
+def _render_settings_fixture(
+    output_dir: Path,
+    *,
+    source_commit: str,
+    root: Path,
+) -> dict[str, object]:
+    app = _application()
+    fixture_root = root / "settings"
+    fixture_root.mkdir(parents=True, exist_ok=True)
+    config_path = fixture_root / "config.toml"
+    config_path.write_text(
+        DEFAULT_CONFIG_TOML.replace(
+            'theme = "signal-cabin"',
+            f'theme = "{_SETTINGS_THEME}"',
+        ),
+        encoding="utf-8",
+    )
+
+    repo_root = fixture_root / "repo"
+    (repo_root / "kb").mkdir(parents=True)
+    (repo_root / "modules").mkdir()
+    (repo_root / "main.pl").write_text("main :- true.\n", encoding="utf-8")
+    (repo_root / "kb" / "intents.pl").write_text("intent(ok).\n", encoding="utf-8")
+    (repo_root / "modules" / "logic.pl").write_text("logic(ok).\n", encoding="utf-8")
+
+    window = SettingsWindow(
+        ZaraConfig(str(config_path)),
+        repo_root=repo_root,
+        prolog_reload=lambda: True,
+    )
+    window.resize(1120, 760)
+    appearance_index = next(
+        index
+        for index in range(window.category_list.count())
+        if window.category_list.item(index).text() == "Appearance"
+    )
+    window.category_list.setCurrentRow(appearance_index)
+
+    try:
+        applied_theme = _apply_fixture_theme(app, _SETTINGS_THEME)
+        window.show()
+        app.processEvents()
+        pixmap = window.grab()
+        if pixmap.isNull():
+            raise RuntimeError("failed to render Settings fixture")
+        filename = "settings-appearance.png"
+        target = output_dir / filename
+        if not pixmap.save(str(target), "PNG"):
+            raise RuntimeError(f"failed to save Settings fixture: {target}")
+        current_category = window.category_list.currentItem()
+        theme_widget = window.setting_widgets["desktop.theme"]
+        return {
+            "state": "settings-appearance",
+            "path": filename,
+            "width": pixmap.width(),
+            "height": pixmap.height(),
+            "theme": applied_theme,
+            "source_commit": source_commit,
+            "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            "text_twin": {
+                "window_title": window.windowTitle(),
+                "category": current_category.text() if current_category is not None else "",
+                "theme_label": theme_widget.currentText(),  # type: ignore[union-attr]
+            },
+            "actions": [
+                {
+                    "id": "save-settings",
+                    "text": window.save_button.text(),
+                    "enabled": window.save_button.isEnabled(),
+                },
+                {
+                    "id": "restart-zara",
+                    "text": window.restart_button.text(),
+                    "enabled": window.restart_button.isEnabled(),
+                },
+            ],
+        }
+    finally:
+        window.prepare_for_quit()
+        window.close()
+        window.deleteLater()
+        app.processEvents()
 
 
 def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> dict[str, object]:
@@ -249,7 +346,7 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
     previous_style_name = app.style().objectName()
     app.setStyleSheet(previous_stylesheet)
     previous_theme = app.property("zaraTheme")
-    apply_desktop_theme(app, _THEME)
+    copilot_theme = _apply_fixture_theme(app, _THEME)
 
     try:
         with tempfile.TemporaryDirectory(prefix="zara-copilot-fixtures-") as temp_dir:
@@ -261,9 +358,17 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
                     filename,
                     source_commit=source_commit,
                     root=root,
+                    theme_key=copilot_theme,
                 )
                 for state, filename in _FIXTURES
             ]
+            fixtures.append(
+                _render_settings_fixture(
+                    target,
+                    source_commit=source_commit,
+                    root=root,
+                )
+            )
     finally:
         app.setStyle(previous_style_name)
         app.setPalette(previous_palette)
