@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def valid_report():
     return {'protocol': 'ZARA-VERIFY/1', 'scope': 'local', 'verdict': 'verified',
             'run_id': 'a' * 32, 'session_id': 'fixture', 'created_ms': 1, 'ttl_ms': 100,
-            'merge_authorized': False, 'model_calls': 0, 'reasons': [], 'evidence': [],
+            'merge_authorized': False, 'model_calls': 0, 'provider_calls': 0,
+            'reasons': [], 'evidence': [],
             'required': ['repository'], 'source': {
                 'workspace': '/repo', 'head': 'a' * 40, 'base': 'a' * 40,
                 'merge_base': 'a' * 40, 'worktree': 'b' * 64, 'policy': 'c' * 64,
