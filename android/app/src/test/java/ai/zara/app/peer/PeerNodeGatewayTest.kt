@@ -30,6 +30,7 @@ class PeerNodeGatewayTest {
         maxRoutes: Int = 32,
         rateMaxMessages: Int = 60,
         rateWindowMillis: Long = 1_000,
+        nanoTime: () -> Long = System::nanoTime,
     ): PeerNodeGateway = PeerNodeGateway(
         lifecycle = PeerNodeListenerLifecycle(identity(serverCertificate.publicKeyAsZ85)),
         registry = registry,
@@ -38,6 +39,7 @@ class PeerNodeGatewayTest {
         maxRoutes = maxRoutes,
         rateMaxMessages = rateMaxMessages,
         rateWindowMillis = rateWindowMillis,
+        nanoTime = nanoTime,
     )
 
     private fun nodeDocument(
@@ -434,6 +436,41 @@ class PeerNodeGatewayTest {
             val error = peer.receiveDecoded() as TextServerMessage.ProtocolError
 
             assertEquals("quota_exceeded", error.code)
+        } finally {
+            peer.close()
+            gateway.stop()
+        }
+    }
+
+    @Test
+    fun messageRateRecoversAfterWindowExpiryWithoutRestart() {
+        val registry = PeerEnrollmentRegistry()
+        val client = ZCert()
+        registry.enroll("desktop-01", client.publicKeyAsZ85, 3)
+        var nowNanos = 0L
+        val gateway = newGateway(
+            registry,
+            rateMaxMessages = 2,
+            rateWindowMillis = 1_000,
+            nanoTime = { nowNanos },
+        )
+        gateway.start()
+        val peer = connectClient(gateway, client)
+        try {
+            peer.send(helloFrames(client))
+            assertTrue(peer.receiveDecoded() is TextServerMessage.HelloOk)
+
+            peer.send(pingFrames())
+            assertEquals("pong", requireNotNull(peer.receiveEnvelope())["type"])
+
+            peer.send(pingFrames())
+            val limited = peer.receiveDecoded() as TextServerMessage.ProtocolError
+            assertEquals("quota_exceeded", limited.code)
+
+            nowNanos = 1_000_000_000L
+            peer.send(pingFrames())
+
+            assertEquals("pong", requireNotNull(peer.receiveEnvelope())["type"])
         } finally {
             peer.close()
             gateway.stop()
