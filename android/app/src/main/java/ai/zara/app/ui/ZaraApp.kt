@@ -105,7 +105,7 @@ enum class AppSurface(val label: String, val glyph: String, val gatedIssue: Stri
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
     Scheduled("Scheduled", "◷", "#654"),
-    Plugins("Plugins", "⬡", "#655"),
+    Plugins("Plugins", "⬡"),
     Themes("Themes", "◐"),
     Diagnostics("Diagnostics", "⌁"),
     Settings("Settings", "⚙"),
@@ -199,6 +199,7 @@ fun ZaraApp(
         mutableStateOf(AppNavigation())
     }
     val selected = navigation.route.surface()
+    val pluginInstallUi = rememberPluginInstallUi()
     val savedContent = rememberSaveableStateHolder()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -347,7 +348,7 @@ fun ZaraApp(
                                                 padding = padding,
                                             )
                                             AppSurface.Scheduled -> GatedSurface(selected, padding)
-                                            AppSurface.Plugins -> GatedSurface(selected, padding)
+                                            AppSurface.Plugins -> PluginSettingsSurface(pluginInstallUi, padding)
                                             AppSurface.Themes -> ThemesSurface(
                                                 selected = selectedTheme,
                                                 onSelectTheme = onSelectTheme,
