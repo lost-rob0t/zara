@@ -101,6 +101,30 @@ class LocalAiRuntimeTest {
     }
 
     @Test
+    fun backendGenerationFailureAfterClaimReturnsToReadyAndAllowsNextGeneration() {
+        val backend = FakeLlmBackend().apply {
+            nextGenerateFailure = IllegalStateException("backend start failed")
+        }
+        val runtime = LocalAiRuntime(backend)
+        runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+
+        val failed = runtime.generate(LocalGenerationRequest("fail once", 8))
+        assertThrows(Exception::class.java) {
+            failed.get(2, TimeUnit.SECONDS)
+        }
+        assertEquals(LocalAiPhase.READY, runtime.state().phase)
+        assertTrue(runtime.state().failure?.contains("backend start failed") == true)
+
+        val next = runtime.generate(LocalGenerationRequest("recover", 8))
+        assertTrue(backend.awaitGenerationStarted())
+        val cancelled = runtime.cancel().get(2, TimeUnit.SECONDS)
+        assertEquals(LocalAiPhase.READY, cancelled.phase)
+        assertTrue(backend.cancelled)
+        assertTrue(next.isCompletedExceptionally)
+        runtime.close()
+    }
+
+    @Test
     fun closeRejectsAllNewModelWorkBeforeBackendShutdownCompletes() {
         val backend = FakeLlmBackend().apply { blockClose = true }
         val runtime = LocalAiRuntime(backend)
@@ -287,6 +311,7 @@ class LocalAiRuntimeTest {
         var cancelled = false
         var unloaded = false
         var blockClose = false
+        var nextGenerateFailure: Throwable? = null
 
         override fun load(spec: LocalModelSpec) = Unit
 
@@ -294,6 +319,10 @@ class LocalAiRuntimeTest {
             request: LocalGenerationRequest,
             listener: LocalGenerationListener,
         ): LocalGenerationSession {
+            nextGenerateFailure?.let { failure ->
+                nextGenerateFailure = null
+                throw failure
+            }
             this.listener = listener
             generationStarted.countDown()
             return object : LocalGenerationSession {
