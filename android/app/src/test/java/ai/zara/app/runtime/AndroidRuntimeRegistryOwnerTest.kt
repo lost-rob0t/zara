@@ -113,6 +113,27 @@ class AndroidRuntimeRegistryOwnerTest {
         assertNotNull(snapshot.descriptors.single())
     }
 
+    @Test
+    fun duplicateOptionalRuntimeCannotReplaceEmbeddedRuntime() {
+        val duplicate = descriptor(EMBEDDED_LOCAL_RUNTIME_ID, RuntimeHealth.READY)
+        val owner = AndroidRuntimeRegistryOwner(
+            runtimeVersion = "0.2.2-alpha",
+            implementationVersion = "abc123",
+            optionalRuntimeSources = listOf({ duplicate }),
+        )
+
+        val snapshot = owner.refresh(LocalAiState(phase = LocalAiPhase.STOPPED))
+
+        assertEquals(1, snapshot.descriptors.size)
+        val embedded = snapshot.descriptors.single()
+        assertEquals(EMBEDDED_LOCAL_RUNTIME_ID, embedded.id)
+        assertEquals(RuntimeLocality.EMBEDDED, embedded.locality)
+        assertEquals(RuntimeHealth.STOPPED, embedded.health)
+        assertFalse(embedded.available)
+        assertFalse(embedded.selectable)
+        assertEquals(null, snapshot.selection)
+    }
+
     private fun owner(): AndroidRuntimeRegistryOwner = AndroidRuntimeRegistryOwner(
         runtimeVersion = "0.2.2-alpha",
         implementationVersion = "abc123",
