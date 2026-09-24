@@ -4,6 +4,9 @@ import ai.zara.app.voice.ManualVoiceCapture
 import ai.zara.app.voice.VoiceCaptureContext
 import ai.zara.app.voice.VoiceStreamEvent
 import java.util.ArrayDeque
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -67,6 +70,64 @@ class ZaraTextClientVoiceTest {
 
         assertEquals(1, events.size)
         assertEquals("listening", (events.single() as VoiceStreamEvent.Transcript).text)
+        client.close()
+    }
+
+    @Test fun `post commit protocol failure does not poison authenticated reconnect`() {
+        val first = VoiceScriptDealer(
+            listOf(
+                server("{\"body\":{\"max_payload_bytes\":4194304,\"max_payload_frame_bytes\":1048576,\"max_payload_frames\":16,\"version\":1},\"id\":\"hello-ok-1\",\"payload_count\":0,\"reply_to\":\"hello-1\",\"session_id\":\"session-1\",\"timestamp_ns\":2,\"type\":\"hello.ok\"}"),
+                server("{\"body\":{\"capabilities\":[]},\"id\":\"caps-ok-1\",\"payload_count\":0,\"reply_to\":\"caps-1\",\"session_id\":\"session-1\",\"timestamp_ns\":3,\"type\":\"capability.snapshot.ok\"}"),
+                server("{\"id\":\"start-ok-1\",\"payload_count\":0,\"reply_to\":\"start-1\",\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":4,\"type\":\"audio.input.started\"}"),
+                server("{\"id\":\"chunk-ok-1\",\"payload_count\":0,\"reply_to\":\"chunk-1\",\"seq\":0,\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":5,\"type\":\"audio.input.accepted\"}"),
+                server("{\"id\":\"commit-ok-1\",\"payload_count\":0,\"reply_to\":\"commit-1\",\"session_id\":\"session-1\",\"stream_id\":\"mic-1\",\"timestamp_ns\":6,\"type\":\"audio.input.committed\"}"),
+                server("{\"body\":{\"code\":\"voice_protocol_failure\",\"message\":\"fixture\",\"retryable\":true},\"id\":\"error-1\",\"payload_count\":0,\"session_id\":\"session-1\",\"timestamp_ns\":7,\"type\":\"protocol.error\"}"),
+            )
+        )
+        val second = VoiceScriptDealer(
+            listOf(
+                server("{\"body\":{\"max_payload_bytes\":4194304,\"max_payload_frame_bytes\":1048576,\"max_payload_frames\":16,\"version\":1},\"id\":\"hello-ok-2\",\"payload_count\":0,\"reply_to\":\"hello-2\",\"session_id\":\"session-2\",\"timestamp_ns\":8,\"type\":\"hello.ok\"}"),
+                server("{\"body\":{\"capabilities\":[]},\"id\":\"caps-ok-2\",\"payload_count\":0,\"reply_to\":\"caps-2\",\"session_id\":\"session-2\",\"timestamp_ns\":9,\"type\":\"capability.snapshot.ok\"}"),
+                server("{\"id\":\"start-ok-2\",\"payload_count\":0,\"reply_to\":\"start-2\",\"session_id\":\"session-2\",\"stream_id\":\"mic-2\",\"timestamp_ns\":10,\"type\":\"audio.input.started\"}"),
+            )
+        )
+        val dealers = ArrayDeque(listOf(first, second))
+        val failure = AtomicReference<Throwable?>()
+        val failureObserved = CountDownLatch(1)
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealers.removeFirst() },
+            requestIds = sequenceOf(
+                "hello-1",
+                "caps-1",
+                "start-1",
+                "chunk-1",
+                "commit-1",
+                "hello-2",
+                "caps-2",
+                "start-2",
+            ).iterator(),
+            timestamps = generateSequence(1L) { it + 1L }.iterator(),
+        )
+        client.setVoiceStreamFailureObserver {
+            failure.set(it)
+            failureObserved.countDown()
+        }
+
+        val firstSession = client.connect(ServerProfile.create("tcp://zara.example:7731"), 1).get()
+        val firstContext = VoiceCaptureContext(firstSession.sessionId, "conversation-1", "mic-1")
+        client.startVoice(firstContext).get()
+        client.sendVoiceChunk(firstContext, 0, ByteArray(ManualVoiceCapture.PCM_FRAME_BYTES)).get()
+        client.commitVoice(firstContext).get()
+
+        assertEquals(true, failureObserved.await(2, TimeUnit.SECONDS))
+        assertEquals(true, failure.get() is ZaraWireException)
+
+        val secondSession = client.connect(ServerProfile.create("tcp://zara.example:7731"), 2).get()
+        assertEquals(ConnectedTextSession(2, "session-2"), secondSession)
+        client.startVoice(
+            VoiceCaptureContext(secondSession.sessionId, "conversation-1", "mic-2")
+        ).get()
+
         client.close()
     }
 

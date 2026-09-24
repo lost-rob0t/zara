@@ -129,6 +129,11 @@ def _conversation_replay_payload(store, conversation_id: str) -> dict:
     if conversation is None:
         raise ValueError(f"unknown conversation {normalized!r}")
     messages = store.load_messages(normalized)
+    from .desktop.conversation.replay_status import symbolic_projection_payload
+
+    symbolic_projection = symbolic_projection_payload(
+        store.load_symbolic_projection(normalized)
+    )
     return {
         "version": CLI_REPLAY_VERSION,
         "conversation": {
@@ -149,6 +154,7 @@ def _conversation_replay_payload(store, conversation_id: str) -> dict:
             }
             for message in messages
         ],
+        "symbolic_projection": symbolic_projection,
     }
 
 
@@ -344,6 +350,14 @@ def main():
         from .mcp.cli import main as mcp_main
         sys.exit(mcp_main(sys.argv[2:], config=config))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "pair":
+        from .pairing import main as pairing_main
+        sys.exit(pairing_main(sys.argv[2:], config=config))
+
+    if len(sys.argv) > 1 and sys.argv[1] == "pair-client":
+        from .pairing import pair_client_main
+        sys.exit(pair_client_main(sys.argv[2:], config=config))
+
     parser = argparse.ArgumentParser(
         prog="zara",
         description="Zarathustra Voice Assistant - Unified Interface",
@@ -354,6 +368,8 @@ def main():
                "  zara --conversation-id emacs-main --context-id doc:alpha --json-events 'continue'\n"
                "  zara --replay-conversation emacs-main  # Replay durable history\n"
                "  zara --cancel-turn TURN_ID    # Cancel through ZARA/1\n"
+               "  zara pair                     # Start server pairing by QR\n"
+               "  zara pair-client URI          # Pair this desktop to a server\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
                "  zara --console                # Interactive REPL\n"

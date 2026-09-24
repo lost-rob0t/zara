@@ -38,6 +38,29 @@ class LocalZaraServerTest {
     }
 
     @Test
+    fun naturalLanguageResolveUsesQualifiedPortableCoreModule() {
+        val bridge = RecordingTreallaBridge()
+        val server = LocalZaraServer(
+            bridge,
+            "/private/core.pl",
+            PrologWorkspace(temporary.newFolder("resolve-qualified")),
+        )
+        server.start().get(2, TimeUnit.SECONDS)
+
+        val result = server.resolve("set a timer for 2 hours").get(2, TimeUnit.SECONDS)
+
+        assertEquals(listOf("bob"), result.terms)
+        assertEquals(
+            listOf(
+                "Result = zara_ready",
+                "zara_portable_semantic_core:resolve_frames(\"set a timer for 2 hours\", passive, [], Frames), member(Result, Frames)",
+            ),
+            bridge.queries,
+        )
+        server.close()
+    }
+
+    @Test
     fun readinessProbeFailureFailsBootAndEmitsDiagnostic() {
         val bridge = RecordingTreallaBridge().apply {
             readinessResult = emptyList()

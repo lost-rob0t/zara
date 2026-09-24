@@ -33,7 +33,7 @@ def test_canonical_schema_has_desktop_compatible_tables_and_columns(tmp_path):
     finally:
         conn.close()
 
-    assert CONVERSATION_SCHEMA_VERSION == 2
+    assert CONVERSATION_SCHEMA_VERSION == 4
     assert conversation_columns == {
         "id",
         "title",
