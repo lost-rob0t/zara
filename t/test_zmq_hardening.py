@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -260,6 +261,57 @@ def test_client_cancelled_backpressured_retry_is_retired_before_next_fifo_item()
         live.result(timeout=0.1)
     assert not client._request_deadlines
     client.close(timeout=0.0)
+
+
+def test_client_actual_dealer_backpressure_never_sends_cancelled_retry():
+    context = zmq.Context()
+    endpoint = f"inproc://hardening-cancel-{uuid.uuid4().hex}"
+    router = context.socket(zmq.ROUTER)
+    dealer = context.socket(zmq.DEALER)
+    router.setsockopt(zmq.RCVHWM, 1)
+    dealer.setsockopt(zmq.SNDHWM, 1)
+    router.setsockopt(zmq.LINGER, 0)
+    dealer.setsockopt(zmq.LINGER, 0)
+    router.bind(endpoint)
+    dealer.connect(endpoint)
+    client = _ready_client(TransportConfig(pending_request_limit=32, poll_interval_ms=1))
+    futures = [client.ping() for _ in range(16)]
+
+    client._drain_client_outbound(dealer)
+    assert client._retry_outbound is not None
+    cancelled_id = client._retry_outbound.message.id
+    cancelled = client._pending[cancelled_id].future
+    assert cancelled.cancel() is True
+
+    received_ids = []
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        while router.poll(0, zmq.POLLIN):
+            frames = router.recv_multipart()
+            received_ids.append(decode_message(frames[1:]).message.id)
+        client._drain_client_outbound(dealer)
+        if client._retry_outbound is None and client._outbound.empty():
+            while router.poll(10, zmq.POLLIN):
+                frames = router.recv_multipart()
+                received_ids.append(decode_message(frames[1:]).message.id)
+            break
+        time.sleep(0.001)
+
+    live_ids = [request_id for request_id in client._pending if request_id != cancelled_id]
+    assert cancelled_id not in received_ids
+    assert set(live_ids).issubset(received_ids)
+
+    client._fail_pending(RuntimeError("test cleanup"))
+    for future in futures:
+        if future is cancelled:
+            assert future.cancelled()
+            continue
+        with pytest.raises(RuntimeError, match="test cleanup"):
+            future.result(timeout=0.1)
+    client.close(timeout=0.0)
+    dealer.close(0)
+    router.close(0)
+    context.term()
 
 
 def test_client_late_reply_cannot_resolve_a_cancelled_future():
