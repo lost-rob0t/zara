@@ -31,9 +31,9 @@ def _write_android_manifest(
     manifest_name: str,
     state: str,
     source_sha: str,
+    apk_sha256: str = "b" * 64,
 ) -> Path:
     evidence.mkdir(parents=True, exist_ok=True)
-    apk_sha256 = "b" * 64
     screenshot = evidence / f"{state}.png"
     screenshot.write_bytes(_png_bytes(state))
     screenshot_sha256 = hashlib.sha256(screenshot.read_bytes()).hexdigest()
@@ -139,4 +139,38 @@ def test_primary_android_gate_rejects_tampered_remote_rendered_evidence(
     )
 
     with pytest.raises(validator.EvidenceError, match="hash mismatch"):
+        validator.validate_android(primary, source_sha)
+
+
+@pytest.mark.parametrize(
+    ("manifest_name", "state"),
+    (
+        ("remote-manifest.json", "remote-text-turn"),
+        ("recovery-manifest.json", "recovery-text-turn"),
+    ),
+)
+def test_primary_android_gate_rejects_supplemental_evidence_from_different_apk(
+    tmp_path: Path,
+    manifest_name: str,
+    state: str,
+) -> None:
+    validator = _load_validator()
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    evidence = tmp_path / "android"
+    primary = _write_android_manifest(
+        evidence,
+        manifest_name="manifest.json",
+        state="empty-shell",
+        source_sha=source_sha,
+        apk_sha256="b" * 64,
+    )
+    _write_android_manifest(
+        evidence,
+        manifest_name=manifest_name,
+        state=state,
+        source_sha=source_sha,
+        apk_sha256="c" * 64,
+    )
+
+    with pytest.raises(validator.EvidenceError, match="supplemental apk_sha256 mismatch"):
         validator.validate_android(primary, source_sha)
