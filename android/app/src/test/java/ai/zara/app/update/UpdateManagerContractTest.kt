@@ -55,7 +55,7 @@ class UpdateManagerContractTest {
         val source = File(
             "src/main/java/ai/zara/app/update/AndroidUpdateManager.kt"
         ).readText()
-        val request = source.substringAfter("fun requestInstall()").substringBefore("fun recordInstallStatus")
+        val request = source.substringAfter("fun requestInstall()").substringBefore("fun handleInstallCallback")
         val worker = source.substringAfter("private fun installVerifiedUpdate")
             .substringBefore("private fun releaseCandidate")
 
