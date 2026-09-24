@@ -9,6 +9,7 @@ import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.ConversationExecutionPolicy
 import ai.zara.app.ui.ConversationExecutionPolicyController
 import ai.zara.app.ui.ConversationExecutionPolicyStore
+import ai.zara.app.ui.LocalEmbeddingPreferenceSaveResult
 import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
@@ -98,8 +99,10 @@ class MainActivity : ComponentActivity() {
         var selectedTheme by mutableStateOf(themePreferenceStore.load())
         val runtimeModeStore = RuntimeModePreferenceStore(File(filesDir, "runtime-mode.bin"))
         var runtimeMode by mutableStateOf(runtimeModeStore.load())
-        val embeddingPreferenceStore = LocalEmbeddingPreferenceStore(File(filesDir, "local-embedding.bin"))
-        var localEmbedding by mutableStateOf(embeddingPreferenceStore.load())
+        val embeddingPreferenceStore = LocalEmbeddingPreferenceStore.create(applicationContext)
+        val embeddingPreferenceLoad = embeddingPreferenceStore.load()
+        var localEmbedding by mutableStateOf(embeddingPreferenceLoad.configuration)
+        embeddingPreferenceLoad.warning?.let { operationError = it }
         val projectStore = ProjectContextStore(File(filesDir, "projects.bin"))
         var projectState by mutableStateOf(projectStore.state())
         conversationStore = ConversationStore(File(filesDir, "conversations.bin"))
@@ -287,8 +290,14 @@ class MainActivity : ComponentActivity() {
                     appSession.setRuntimeMode(mode)
                 },
                 onSetLocalEmbeddingEnabled = { enabled ->
-                    localEmbedding = localEmbedding.copy(enabled = enabled)
-                    embeddingPreferenceStore.save(localEmbedding)
+                    operationError = null
+                    val nextEmbedding = localEmbedding.copy(enabled = enabled)
+                    when (val result = embeddingPreferenceStore.save(nextEmbedding)) {
+                        LocalEmbeddingPreferenceSaveResult.Saved -> localEmbedding = nextEmbedding
+                        is LocalEmbeddingPreferenceSaveResult.Failed -> {
+                            operationError = result.message
+                        }
+                    }
                 },
                 onScanPairingQr = ::scanPairingQr,
                 onCreateIdentity = {
