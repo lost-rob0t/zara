@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
 
 import pytest
@@ -198,3 +200,57 @@ def test_timeout_kills_worker_so_late_reply_cannot_poison_next_turn(authority):
     assert timed_out.error_code == "authority_timeout"
     assert later.verdict is PredicateVerdict.ERROR
     assert later.error_code == "authority_unavailable"
+
+
+def _descendant_late_effect_executor(binding, arguments, timeout_ms):
+    subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib,time;"
+                "time.sleep(0.35);"
+                "pathlib.Path(__import__('sys').argv[1]).write_text('late', encoding='utf-8')"
+            ),
+            arguments["marker_path"],
+        ],
+        close_fds=True,
+    )
+    time.sleep(0.6)
+    return PredicateExecutionOutcome(
+        verdict=PredicateVerdict.SUCCEEDED,
+        data={"completed": True},
+    )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX descendant lifecycle contract")
+def test_timeout_fences_descendant_late_effect(tmp_path):
+    marker_path = tmp_path / "late-effect"
+    owner = PredicateAuthorityProcess.start(
+        bindings={
+            "person.lookup": RegisteredPredicateBinding(
+                operation="person.lookup",
+                namespace="zara.expert.person",
+                predicate="person_lookup",
+                arity=2,
+                generation=7,
+            )
+        },
+        executor=_descendant_late_effect_executor,
+    )
+    try:
+        result = owner.client.invoke(
+            PredicateInvocationRequest(
+                request_id="req-descendant-timeout",
+                operation="person.lookup",
+                expected_generation=7,
+                arguments={"marker_path": str(marker_path)},
+                timeout_ms=50,
+            )
+        )
+        assert result.verdict is PredicateVerdict.CANCELLED
+        assert result.error_code == "authority_timeout"
+        time.sleep(0.45)
+        assert not marker_path.exists()
+    finally:
+        owner.stop(timeout=0.25)
