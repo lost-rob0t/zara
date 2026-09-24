@@ -30,7 +30,7 @@ internal fun planAssistantCapture(
         runtimeState.sessionId?.isNotBlank() == true
 
     return when (mode) {
-        RuntimeMode.Local -> if (localReady) {
+        RuntimeMode.Symbolic, RuntimeMode.Local -> if (localReady) {
             AssistantCapturePlan.Local
         } else {
             AssistantCapturePlan.Reject("Local Zara server is not ready")
