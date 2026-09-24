@@ -11,169 +11,25 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
-from types import MappingProxyType
-from typing import Mapping
 
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+from zara.themes import (
+    SEMANTIC_COLOR_KEYS,
+    THEME_REGISTRY,
+    ThemeDefinition,
+    configure_theme_registry,
+    load_theme_packages,
+    register_theme,
+    resolve_theme,
+    theme_css_variables,
+    theme_from_mapping,
+    unregister_theme,
+)
+
 MIN_TEXT_CONTRAST = 4.5
 
-
-@dataclass(frozen=True)
-class ThemeDefinition:
-    key: str
-    label: str
-    description: str
-    colors: Mapping[str, str]
-
-
-def _theme(
-    key: str,
-    label: str,
-    description: str,
-    *,
-    ground: str,
-    panel_deep: str,
-    panel: str,
-    panel_lift: str,
-    line: str,
-    line_strong: str,
-    text: str,
-    text_muted: str,
-    primary: str,
-    primary_hover: str,
-    primary_deep: str,
-    on_primary: str,
-    active: str,
-    danger: str,
-    danger_deep: str,
-) -> ThemeDefinition:
-    colors = {
-        "ground": ground,
-        "panel_deep": panel_deep,
-        "panel": panel,
-        "panel_lift": panel_lift,
-        "line": line,
-        "line_strong": line_strong,
-        "text": text,
-        "text_muted": text_muted,
-        "primary": primary,
-        "primary_hover": primary_hover,
-        "primary_deep": primary_deep,
-        "on_primary": on_primary,
-        "active": active,
-        "danger": danger,
-        "danger_deep": danger_deep,
-    }
-    return ThemeDefinition(key, label, description, MappingProxyType(colors))
-
-
-THEME_REGISTRY: Mapping[str, ThemeDefinition] = MappingProxyType(
-    {
-        "signal-cabin": _theme(
-            "signal-cabin",
-            "Signal Cabin",
-            "Charcoal enamel with warm ivory and precise route signals.",
-            ground="#0A1012",
-            panel_deep="#0D1518",
-            panel="#111A1E",
-            panel_lift="#172226",
-            line="#2A393E",
-            line_strong="#3C5358",
-            text="#F2E9D8",
-            text_muted="#A8B7B3",
-            primary="#61D095",
-            primary_hover="#7ADDA8",
-            primary_deep="#17382B",
-            on_primary="#0A1012",
-            active="#E7B84B",
-            danger="#E6544D",
-            danger_deep="#562727",
-        ),
-        "dotfiles-outrun": _theme(
-            "dotfiles-outrun",
-            "Dotfiles Outrun",
-            "The Doom Electric Outrun palette from the user's Qtile desktop.",
-            ground="#170C32",
-            panel_deep="#1B153A",
-            panel="#202146",
-            panel_lift="#2A2056",
-            line="#56325F",
-            line_strong="#92406E",
-            text="#F3F4F5",
-            text_muted="#D7B9D0",
-            primary="#2DE2E6",
-            primary_hover="#72F5F7",
-            primary_deep="#173F51",
-            on_primary="#170C32",
-            active="#FBA922",
-            danger="#DD546E",
-            danger_deep="#4D1F3C",
-        ),
-        "nord": _theme(
-            "nord",
-            "Nord",
-            "Polar-night surfaces with frost-blue controls.",
-            ground="#2E3440",
-            panel_deep="#282E39",
-            panel="#3B4252",
-            panel_lift="#434C5E",
-            line="#4C566A",
-            line_strong="#5E81AC",
-            text="#ECEFF4",
-            text_muted="#D8DEE9",
-            primary="#88C0D0",
-            primary_hover="#8FBCBB",
-            primary_deep="#3B5368",
-            on_primary="#20242C",
-            active="#EBCB8B",
-            danger="#BF616A",
-            danger_deep="#4C3038",
-        ),
-        "dracula": _theme(
-            "dracula",
-            "Dracula",
-            "Ink-dark violet surfaces with bright terminal accents.",
-            ground="#282A36",
-            panel_deep="#21222C",
-            panel="#343746",
-            panel_lift="#44475A",
-            line="#525568",
-            line_strong="#6272A4",
-            text="#F8F8F2",
-            text_muted="#C8C8D0",
-            primary="#50FA7B",
-            primary_hover="#69FF94",
-            primary_deep="#24452E",
-            on_primary="#20222B",
-            active="#F1FA8C",
-            danger="#FF5555",
-            danger_deep="#5A2A34",
-        ),
-        "chatgpt-neutral": _theme(
-            "chatgpt-neutral",
-            "ChatGPT Neutral",
-            "A calm neutral workspace inspired by modern conversational tools.",
-            ground="#FFFFFF",
-            panel_deep="#F7F7F8",
-            panel="#ECECF1",
-            panel_lift="#FFFFFF",
-            line="#D9D9E3",
-            line_strong="#B4B4C0",
-            text="#202123",
-            text_muted="#5F6368",
-            primary="#10A37F",
-            primary_hover="#0E8F70",
-            primary_deep="#D1F4EA",
-            on_primary="#0D0D0D",
-            active="#9A6700",
-            danger="#C92A2A",
-            danger_deep="#FDE8E8",
-        ),
-    }
-)
 
 SIGNAL_CABIN_COLORS = {
     **THEME_REGISTRY["signal-cabin"].colors,
@@ -828,15 +684,22 @@ __all__ = [
     "MIN_TEXT_CONTRAST",
     "SIGNAL_CABIN_COLORS",
     "THEME_REGISTRY",
+    "SEMANTIC_COLOR_KEYS",
     "ThemeDefinition",
     "apply_desktop_theme",
     "apply_readable_palette",
     "build_theme_palette",
     "build_signal_cabin_palette",
+    "configure_theme_registry",
     "contrast_ratio",
     "desktop_stylesheet",
+    "load_theme_packages",
     "refresh_dynamic_style",
+    "register_theme",
     "relative_luminance",
     "repair_palette",
     "resolve_theme",
+    "theme_css_variables",
+    "theme_from_mapping",
+    "unregister_theme",
 ]

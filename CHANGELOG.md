@@ -5,6 +5,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ## Unreleased
 
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
+- New Zara configs now enable a local-only beta tester console on `127.0.0.1:8787`; it exposes read-only runtime/theme views and shares the same semantic theme registry as Desktop instead of maintaining a second theme authority.
 
 ### Fixed
 
