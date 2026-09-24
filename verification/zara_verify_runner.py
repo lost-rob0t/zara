@@ -92,7 +92,7 @@ def source_authority_paths(root: Path, policy_root: Path) -> list[Path]:
     policy_root = Path(policy_root).resolve()
     tracked = git_bytes(root, 'ls-files', '--cached', '-z')
     untracked = git_bytes(root, 'ls-files', '--others', '--exclude-standard', '-z')
-    names = sorted({safe_path(raw) for raw in (tracked + untracked).split(b'\\0') if raw})
+    names = sorted({safe_path(raw) for raw in (tracked + untracked).split(b'\0') if raw})
     if len(names) > MAX_FILES:
         raise VerificationError('source_file_count_limit')
     targets = {root / name for name in names}
@@ -130,7 +130,7 @@ def ignored_directory_prefixes(root: Path) -> tuple[str, ...]:
     raw = git_bytes(root, 'ls-files', '--others', '--ignored',
                     '--exclude-standard', '--directory', '-z')
     return tuple(sorted({
-        safe_path(item[:-1]) for item in raw.split(b'\\0')
+        safe_path(item[:-1]) for item in raw.split(b'\0')
         if item and item.endswith(b'/')
     }))
 
@@ -237,7 +237,7 @@ class NamespaceMutationWatch:
             if any(byte < 32 for byte in raw):
                 raise VerificationError('unsafe_namespace_watch_path')
             encoded.append(raw)
-        watch_list.write_bytes(b'\\n'.join(encoded) + b'\\n')
+        watch_list.write_bytes(b'\n'.join(encoded) + b'\n')
         self.process = subprocess.Popen(
             [executable, '--monitor', '--no-dereference',
              '--event', 'create', '--event', 'delete',
@@ -255,7 +255,7 @@ class NamespaceMutationWatch:
         buffered = b''
         with selectors.DefaultSelector() as selector:
             selector.register(self.process.stderr, selectors.EVENT_READ)
-            while b'Watches established.\\n' not in buffered:
+            while b'Watches established.\n' not in buffered:
                 if self.process.poll() is not None:
                     raise VerificationError('namespace_watcher_start_failed')
                 remaining = deadline - time.monotonic()
@@ -276,8 +276,8 @@ class NamespaceMutationWatch:
                 if not chunk:
                     break
                 buffered += chunk
-                while b'\\0' in buffered:
-                    raw, buffered = buffered.split(b'\\0', 1)
+                while b'\0' in buffered:
+                    raw, buffered = buffered.split(b'\0', 1)
                     with self.condition:
                         if len(raw) > MAX_NAMESPACE_PATH_BYTES or len(self.events) >= MAX_NAMESPACE_EVENTS:
                             self.overflow = True
