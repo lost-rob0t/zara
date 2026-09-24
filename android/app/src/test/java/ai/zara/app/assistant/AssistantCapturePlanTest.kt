@@ -118,7 +118,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),
@@ -146,7 +146,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),
@@ -174,7 +174,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),
@@ -201,7 +201,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),
