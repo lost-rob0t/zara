@@ -25,23 +25,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Run runner, canonical expert registry, Prolog and OpenCode contracts
+        run: nix develop -c bash scripts/test-zara-verify.sh
       - name: Confirm verifier PR base identity
         if: github.event_name == 'pull_request'
         env:
           EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          snapshot="$(nix develop -c python verification/zara_verify_runner.py snapshot --root . --base "$EXPECTED_BASE_SHA")"
-          SNAPSHOT_JSON="$snapshot" python - <<'PY'
+          python verification/zara_verify_runner.py snapshot --root . --base "$EXPECTED_BASE_SHA" > .artifacts/zara-verify/base-identity.json
+          python - <<'PY'
           import json
           import os
+          from pathlib import Path
 
           expected = os.environ['EXPECTED_BASE_SHA']
-          observed = json.loads(os.environ['SNAPSHOT_JSON'])['source']['base']
+          observed = json.loads(Path('.artifacts/zara-verify/base-identity.json').read_text())['source']['base']
           if observed != expected:
               raise SystemExit(f'verifier base mismatch: {observed} != {expected}')
           PY
-      - name: Run runner, canonical expert registry, Prolog and OpenCode contracts
-        run: nix develop -c bash scripts/test-zara-verify.sh
       - name: Upload verifier evidence
         if: always()
         uses: actions/upload-artifact@v4
