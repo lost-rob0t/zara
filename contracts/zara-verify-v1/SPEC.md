@@ -114,12 +114,12 @@ The subagent has verification/read permissions, not mutation authority.
 
 Run OpenCode from the repository root in the Nix development environment, with
 Node and the normal OpenCode plugin SDK available. The fixed OpenCode base is
-`origin/master`; a missing or shallow base blocks instead of silently reducing
+`origin/release/0.3.x`; a missing or shallow base blocks instead of silently reducing
 coverage. Operator CLI usage:
 
 ```sh
-nix develop -c python verification/zara_verify_runner.py plan --base origin/master
-nix develop -c python verification/zara_verify_runner.py run --base origin/master
+nix develop -c python verification/zara_verify_runner.py plan --base origin/release/0.3.x
+nix develop -c python verification/zara_verify_runner.py run --base origin/release/0.3.x
 ```
 
 The plugin verifies evaluator bytes against its startup pin before/after runs and
@@ -140,11 +140,10 @@ trusted external-attestation collector.** Those gates stay missing/BLOCKED inste
 of accepting caller-authored JSON or treating emulator output as physical-device
 acceptance. Do not disable these gates to unblock completion.
 
-The catalog consumes the canonical `scripts/test-coverage.sh`. That path was absent
-from master `f7810b0cba602b1e00597d04dd419d30ac0ef949` at implementation time. A Python
-change therefore cannot be claimed completely verified until the owning coverage
-work is integrated and passes. This verifier does not create a competing metric or
-lower the +2 percentage-point minimum / +10 target described by the operator.
+The catalog consumes the canonical `scripts/test-coverage.sh` from the retained
+release coverage implementation. The coverage work is integrated on `release/0.3.x`;
+this verifier consumes that authority rather than creating a competing metric or
+lowering the +2 percentage-point minimum / +10 target described by the operator.
 
 The CLI uses a real standalone Core registry; embedding applications call
 `register_verifier_expert(existing_registry, host_observations, policy_root)`.
