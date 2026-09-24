@@ -355,3 +355,52 @@ def test_anr_action_lookup_rejects_wrong_package_without_system_action(
     monkeypatch.setattr(device, "nodes", lambda: iter((wrong_action,)))
 
     assert device.find(label) is None
+
+
+def test_dismiss_anr_scans_past_wrong_package_duplicate_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    dialog_text = "Pixel Launcher isn't responding"
+    wrong_package = module.ET.fromstring(
+        f'<node text="{dialog_text}" package="ai.zara.app" bounds="[10,10][90,90]" />'
+    )
+    real_dialog = module.ET.fromstring(
+        f'<node text="{dialog_text}" package="com.google.android.apps.nexuslauncher" '
+        'bounds="[100,10][190,90]" />'
+    )
+    close_app = module.ET.fromstring(
+        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
+        'bounds="[100,100][190,160]" />'
+    )
+    visible = {"real": True}
+    adb_calls: list[tuple[str, ...]] = []
+
+    def nodes():
+        current = [wrong_package]
+        if visible["real"]:
+            current.extend((real_dialog, close_app))
+        return iter(current)
+
+    def adb(*arguments: str, **_kwargs):
+        adb_calls.append(arguments)
+        if arguments[:3] == ("shell", "input", "tap"):
+            visible["real"] = False
+        return ""
+
+    monkeypatch.setattr(device, "nodes", nodes)
+    monkeypatch.setattr(device, "adb", adb)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert device.dismiss_pixel_launcher_anr() is True
+    assert adb_calls == [("shell", "input", "tap", "145", "130")]
+    assert device.system_anr_sanitation == [
+        {
+            "package": "com.google.android.apps.nexuslauncher",
+            "dialog": dialog_text,
+            "action": "Close app",
+            "cleared": True,
+        }
+    ]
