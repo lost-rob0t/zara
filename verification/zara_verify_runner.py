@@ -84,6 +84,52 @@ def safe_path(raw: bytes) -> str:
     return value
 
 
+def source_authority_paths(root: Path, policy_root: Path) -> list[Path]:
+    root = Path(root).resolve()
+    policy_root = Path(policy_root).resolve()
+    tracked = git_bytes(root, 'ls-files', '--cached', '-z')
+    untracked = git_bytes(root, 'ls-files', '--others', '--exclude-standard', '-z')
+    names = sorted({safe_path(raw) for raw in (tracked + untracked).split(b'\0') if raw})
+    if len(names) > MAX_FILES:
+        raise VerificationError('source_file_count_limit')
+    targets = {root / name for name in names}
+    targets.update(policy_root / name for name in PROTECTED)
+    return sorted(targets, key=lambda path: os.fsencode(str(path)))
+
+
+def mutation_epoch_entry(path: Path) -> tuple[Any, ...]:
+    try:
+        info = path.lstat()
+        return ('present', info.st_dev, info.st_ino, info.st_mode,
+                info.st_size, info.st_ctime_ns)
+    except FileNotFoundError:
+        anchor = path.parent
+        while True:
+            try:
+                info = anchor.lstat()
+                break
+            except FileNotFoundError:
+                parent = anchor.parent
+                if parent == anchor:
+                    raise VerificationError('mutation_epoch_anchor_missing')
+                anchor = parent
+        if not stat.S_ISDIR(info.st_mode):
+            raise VerificationError('mutation_epoch_anchor_invalid')
+        return ('missing', str(anchor), info.st_dev, info.st_ino,
+                info.st_mode, info.st_size, info.st_ctime_ns)
+
+
+def capture_mutation_epoch(root: Path, policy_root: Path) -> dict[str, tuple[Any, ...]]:
+    return {str(path): mutation_epoch_entry(path)
+            for path in source_authority_paths(root, policy_root)}
+
+
+def assert_mutation_epoch(epoch: dict[str, tuple[Any, ...]]) -> None:
+    for raw_path, expected in epoch.items():
+        if mutation_epoch_entry(Path(raw_path)) != expected:
+            raise VerificationError('source_mutated_during_verification')
+
+
 def collect_snapshot(root: Path, base_ref: str, policy_root: Path) -> dict[str, Any]:
     root = Path(root).resolve()
     if not base_ref or base_ref.startswith('-') or any(ord(c) < 33 for c in base_ref):
@@ -398,7 +444,9 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
         'reasons': [], 'evidence': [],
     }
     try:
+        epoch = capture_mutation_epoch(root, policy_root)
         source = collect_snapshot(root, base_ref, policy_root)
+        assert_mutation_epoch(epoch)
         report['source'] = source
         spec = load_spec(policy_root)
         plan = invoke_policy({'operation': 'plan', 'source': source}, policy_root)
@@ -452,12 +500,14 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
         after = collect_snapshot(root, base_ref, policy_root)
         if after != source:
             raise VerificationError('source_changed_during_verification')
+        assert_mutation_epoch(epoch)
         decision = invoke_policy({'operation': 'evaluate', 'source': source,
                                   'run_id': run_id, 'source_digest': canonical_digest(source),
                                   'evidence': report['evidence']}, policy_root)
         after_policy = collect_snapshot(root, base_ref, policy_root)
         if after_policy != source:
             raise VerificationError('source_changed_during_verification')
+        assert_mutation_epoch(epoch)
         if decision.get('verdict') not in {'verified', 'blocked', 'failed'} or decision.get('required') != required:
             raise VerificationError('invalid_policy_decision')
         if not isinstance(decision.get('reasons'), list):
