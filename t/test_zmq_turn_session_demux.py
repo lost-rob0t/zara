@@ -392,6 +392,142 @@ def test_reconnect_duplicate_inflight_submit_rebinds_session_without_second_chat
 
 
 
+
+def test_distinct_route_retry_becomes_only_inflight_turn_delivery_owner(
+    zmq_context,
+    transport_config,
+):
+    endpoint = _endpoint("turn-session-distinct-route-retry")
+    supervisor = InterleavingSupervisor(["started"], turn_ids=["turn-stable-distinct"])
+    gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
+    buffer_probe = BufferProbe(gateway)
+    gateway.start().result(timeout=1.0)
+    first = _dealer(zmq_context, endpoint, transport_config)
+    second = _dealer(zmq_context, endpoint, transport_config)
+    try:
+        first_session = _hello(first, "hello-first-route")
+        _submit(
+            first,
+            session_id=first_session,
+            request_id="submit-stable-distinct",
+            text="perform once",
+        )
+        assert supervisor.submitted[0].wait(1.0)
+        buffer_probe.wait_for(1)
+
+        second_session = _hello(second, "hello-second-route")
+        _submit(
+            second,
+            session_id=second_session,
+            request_id="submit-stable-distinct",
+            text="perform once",
+        )
+        assert len(supervisor.commands) == 1
+
+        supervisor.complete(0)
+        delivered = [_receive(second) for _ in range(2)]
+        assert [message.type for message in delivered] == ["turn.accepted", "turn.started"]
+        assert [message.session_id for message in delivered] == [second_session, second_session]
+        assert [message.turn_id for message in delivered] == [
+            "turn-stable-distinct",
+            "turn-stable-distinct",
+        ]
+        _assert_quiet(first, timeout_ms=100)
+        _assert_quiet(second)
+    finally:
+        first.close(0)
+        second.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_replay_before_accept_wire_transfers_barrier_to_retry_route(
+    zmq_context,
+    transport_config,
+):
+    endpoint = _endpoint("turn-session-prewire-replay-transfer")
+    supervisor = InterleavingSupervisor(["started"], turn_ids=["turn-prewire-retry"])
+    gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
+    release_drain = threading.Event()
+    original_drain = gateway._drain_outbound
+
+    def gated_drain(_gateway, socket):
+        with _gateway._lock:
+            pending = ("local-owner", "turn-prewire-retry") in _gateway._turns_awaiting_accept
+        if pending and not release_drain.is_set():
+            return
+        original_drain(socket)
+
+    gateway._drain_outbound = MethodType(gated_drain, gateway)
+    gateway.start().result(timeout=1.0)
+    first = _dealer(zmq_context, endpoint, transport_config)
+    second = _dealer(zmq_context, endpoint, transport_config)
+    try:
+        first_session = _hello(first, "hello-prewire-first")
+        _submit(
+            first,
+            session_id=first_session,
+            request_id="submit-prewire-retry",
+            text="perform once",
+        )
+        assert supervisor.submitted[0].wait(1.0)
+        supervisor.complete(0)
+
+        key = ("local-owner", "turn-prewire-retry")
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with gateway._lock:
+                first_route = gateway._turn_routes.get(key)
+                first_queue = gateway._route_outbound.get(first_route) if first_route else None
+                if (
+                    key in gateway._turns_awaiting_accept
+                    and first_queue
+                    and any(item.message.type == "turn.accepted" for item in first_queue)
+                ):
+                    break
+            time.sleep(0.005)
+        with gateway._lock:
+            assert key in gateway._turns_awaiting_accept
+            old_route = gateway._turn_routes[key]
+
+        second_session = _hello(second, "hello-prewire-second")
+        _submit(
+            second,
+            session_id=second_session,
+            request_id="submit-prewire-retry",
+            text="perform once",
+        )
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with gateway._lock:
+                new_route = gateway._turn_routes.get(key)
+                if new_route is not None and new_route != old_route:
+                    old_queue = gateway._route_outbound.get(old_route, ())
+                    if not any(item.message.type == "turn.accepted" for item in old_queue):
+                        break
+            time.sleep(0.005)
+
+        with gateway._lock:
+            assert gateway._turn_routes[key] != old_route
+            assert not any(
+                item.message.type == "turn.accepted"
+                for item in gateway._route_outbound.get(old_route, ())
+            )
+
+        release_drain.set()
+        delivered = [_receive(second) for _ in range(2)]
+        assert [message.type for message in delivered] == ["turn.accepted", "turn.started"]
+        assert [message.session_id for message in delivered] == [second_session, second_session]
+        _assert_quiet(first, timeout_ms=100)
+        _assert_quiet(second)
+        assert len(supervisor.commands) == 1
+    finally:
+        release_drain.set()
+        first.close(0)
+        second.close(0)
+        gateway.close(timeout=1.0)
+
+
 def test_old_generation_completion_cannot_erase_reused_request_inflight_owner(
     zmq_context,
     transport_config,

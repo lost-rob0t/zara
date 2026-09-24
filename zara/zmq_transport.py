@@ -1243,7 +1243,40 @@ class ZaraZmqGateway:
                     return
                 self._replay.move_to_end(replay_key)
                 if replay.response.turn_id:
-                    self._turn_routes[(state.principal_id, replay.response.turn_id)] = route
+                    turn_key = (state.principal_id, replay.response.turn_id)
+                    if (
+                        replay.response.type == "turn.accepted"
+                        and turn_key in self._turns_awaiting_accept
+                    ):
+                        previous_route = self._turn_routes.get(turn_key)
+                        if previous_route == route:
+                            return
+                        if previous_route is not None:
+                            previous_outbound = self._route_outbound.get(previous_route)
+                            if previous_outbound is not None:
+                                retained = [
+                                    item
+                                    for item in previous_outbound
+                                    if not (
+                                        item.message.type == "turn.accepted"
+                                        and item.message.turn_id == replay.response.turn_id
+                                    )
+                                ]
+                                previous_outbound.clear()
+                                previous_outbound.extend(retained)
+                                if not previous_outbound:
+                                    self._route_outbound.pop(previous_route, None)
+                        self._retired_turns.pop(turn_key, None)
+                        self._turn_routes[turn_key] = route
+                        self._turns_awaiting_accept.add(turn_key)
+                        self._enqueue_outbound(
+                            route,
+                            self._response_for_route(replay.response, route),
+                        )
+                        return
+                    if self._turn_routes.get(turn_key) is None:
+                        self._retired_turns.pop(turn_key, None)
+                        self._turn_routes[turn_key] = route
                 self._send(socket, route, self._response_for_route(replay.response, route))
                 return
 
@@ -1388,9 +1421,10 @@ class ZaraZmqGateway:
                         self._turns_awaiting_accept.add(turn_key)
                 self._remember_response(replay_key, command, response)
 
-            for candidate in routes:
-                if candidate not in live_routes:
-                    continue
+            delivery_routes = live_routes
+            if isinstance(command, SubmitTurn) and live_routes:
+                delivery_routes = [live_routes[-1]]
+            for candidate in delivery_routes:
                 self._enqueue_outbound(
                     candidate.route,
                     self._response_for_route(response, candidate.route),
