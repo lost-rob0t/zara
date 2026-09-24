@@ -183,8 +183,26 @@ def collect_snapshot(root: Path, base_ref: str, policy_root: Path) -> dict[str, 
                 if info.st_size > MAX_FILE_BYTES:
                     raise VerificationError('source_file_size_limit: ' + name)
                 fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
-                with os.fdopen(fd, 'rb') as stream:
-                    data = stream.read(MAX_FILE_BYTES + 1)
+                try:
+                    opened = os.fstat(fd)
+                    observed = (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+                                info.st_mtime_ns, info.st_ctime_ns)
+                    opened_id = (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size,
+                                 opened.st_mtime_ns, opened.st_ctime_ns)
+                    if opened_id != observed:
+                        raise VerificationError('source_changed_during_read')
+                    with os.fdopen(fd, 'rb', closefd=False) as stream:
+                        data = stream.read(MAX_FILE_BYTES + 1)
+                    after = os.fstat(fd)
+                    after_id = (after.st_dev, after.st_ino, after.st_mode, after.st_size,
+                                after.st_mtime_ns, after.st_ctime_ns)
+                    current = path.lstat()
+                    current_id = (current.st_dev, current.st_ino, current.st_mode, current.st_size,
+                                  current.st_mtime_ns, current.st_ctime_ns)
+                    if after_id != opened_id or current_id != opened_id:
+                        raise VerificationError('source_changed_during_read')
+                finally:
+                    os.close(fd)
                 if len(data) > MAX_FILE_BYTES:
                     raise VerificationError('source_file_size_limit: ' + name)
                 kind = 'executable' if info.st_mode & 0o111 else 'file'
