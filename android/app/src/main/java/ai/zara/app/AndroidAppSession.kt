@@ -345,12 +345,26 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setRuntimeMode(mode: RuntimeMode) {
         val previous = runtimeMode
+        if (previous == mode) return
+
         val enteringStrictLocal =
             mode in setOf(RuntimeMode.Symbolic, RuntimeMode.Local) &&
                 previous !in setOf(RuntimeMode.Symbolic, RuntimeMode.Local)
         if (enteringStrictLocal) {
             controller.suspendRemoteForLocalMode()
         }
+        if (previous == RuntimeMode.Remote && mode != RuntimeMode.Remote) {
+            cloudAi.cancelActive()
+        }
+        if (previous == RuntimeMode.Local && mode != RuntimeMode.Local) {
+            localAi.cancelGeneration()
+        }
+        if (enteringStrictLocal && voice.state() is ManualVoiceState.Capturing) {
+            runCatching { voice.cancel() }
+                .onFailure { diagnostics.record("runtime_mode.voice_cancel.failed", emptyMap(), it) }
+            assistantVoiceGuard.onCaptureStopped()
+        }
+
         runtimeMode = mode
         diagnostics.record(
             "runtime_mode.changed",
