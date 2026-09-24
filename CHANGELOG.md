@@ -4,6 +4,12 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+- Android adds an explicit Symbolic-only mode that keeps Prolog/tools/KB active while forbidding local-model and remote-provider inference; Local mode remains Prolog-first with optional on-device LLM fallback.
+
+- Android system-assistant invocation now requests the Assistant role through RoleManager and automatically starts on-device voice capture for Symbolic/Local routes; explicit Remote mode can use local STT/TTS around an enabled OpenRouter or OpenAI-compatible model profile when no Zara server session is active.
+
+- Runtime settings now configure OpenRouter or generic OpenAI-compatible HTTPS model APIs with explicit endpoint/model selection and Android-Keystore-wrapped credentials; remote model APIs are only used by explicit Remote routing.
+
 - CI now measures Python line, branch, and combined total coverage on every branch and pull request, publishes exact-head reports, and enforces the monotonic coverage ratchet through the same canonical evaluator used by the full repository gate.
 
 - Fixed a ZARA/1 wire-ordering race where runtime events for fast symbolically-resolved turns could overtake the `turn.accepted` reply, making every Android/Desktop remote turn fail with `protocol.unexpected_message` (expected turn.accepted). Turn events are now held per-route and flushed after the accepted reply, in order.
