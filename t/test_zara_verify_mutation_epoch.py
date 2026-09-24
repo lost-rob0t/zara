@@ -185,6 +185,36 @@ def test_ignored_generated_namespace_is_not_source_mutation(
     assert result['reasons'] == []
 
 
+def repository_exclude_path(repository: Path) -> Path:
+    raw = git(repository, 'rev-parse', '--git-path', 'info/exclude')
+    path = Path(raw)
+    return path if path.is_absolute() else repository / path
+
+
+def test_missing_repository_exclude_is_bound_by_mutation_epoch(repository, policy_root):
+    exclude = repository_exclude_path(repository)
+    exclude.unlink(missing_ok=True)
+    epoch = runner.capture_mutation_epoch(repository, policy_root)
+
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text('pkg/generated.py\n')
+
+    with pytest.raises(runner.VerificationError, match='source_mutated_during_verification'):
+        runner.assert_mutation_epoch(epoch)
+
+
+def test_repository_exclude_changes_worktree_identity(repository, policy_root):
+    exclude = repository_exclude_path(repository)
+    exclude.unlink(missing_ok=True)
+    before = runner.collect_snapshot(repository, 'HEAD', policy_root)
+
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    exclude.write_text('pkg/generated.py\n')
+    after = runner.collect_snapshot(repository, 'HEAD', policy_root)
+
+    assert before['worktree'] != after['worktree']
+
+
 def test_untouched_gate_preserves_verified_receipt(repository, policy_root, monkeypatch):
     result = run_fixture(
         repository,
