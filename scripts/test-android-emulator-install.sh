@@ -474,6 +474,8 @@ nix develop "$repo_root" -c env \
   python3 "$repo_root/android/integration/device_remote_recovery_acceptance.py" \
   --serial "$serial" \
   --fixture-file "$recovery_fixture" \
+  --source-sha "$source_sha" \
+  --apk-sha256 "$phone_apk_sha256" \
   --output "$repo_root/android/app/build/reports/device"
 
 recovery_manifest="$repo_root/android/app/build/reports/device/recovery-manifest.json"
