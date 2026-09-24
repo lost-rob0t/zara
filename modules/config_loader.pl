@@ -70,7 +70,8 @@ create_default_config(Path) :-
 write_default_config(Stream) :-
     writeln(Stream, '% Zarathushtra User Configuration'),
     writeln(Stream, '% ================================'),
-    writeln(Stream, '% Supported facts are validated and loaded into kb_config or kb_intents.'),
+    writeln(Stream, '% Supported facts are validated and loaded into kb_config, kb_intents,'),
+    writeln(Stream, '% kb_device_providers, or kb_notification_policy.'),
     writeln(Stream, '% config.pl is the provisioned/base layer and may be managed declaratively.'),
     writeln(Stream, '% Put mutable/private operator changes in config.local.pl beside this file.'),
     writeln(Stream, '% config.local.pl loads after config.pl and therefore overrides base values.'),
@@ -87,6 +88,14 @@ write_default_config(Stream) :-
     writeln(Stream, '% ---- Custom TODO Settings ----'),
     writeln(Stream, '% todo_destination("~/my-custom-org/tasks.org").'),
     writeln(Stream, '% todo_context_mode(llm_only).  % Options: infer, infer_with_llm, llm_only'),
+    writeln(Stream, ''),
+    writeln(Stream, '% ---- Notification Routing ----'),
+    writeln(Stream, '% Notification bodies stay private unless explicitly approved per app:'),
+    writeln(Stream, '% kb_notification_policy:notification_source_denied("com.example.noisy").'),
+    writeln(Stream, '% kb_notification_policy:notification_content_policy("com.example.chat", full_content).'),
+    writeln(Stream, '% kb_notification_policy:notification_route_policy(default, most_recently_active).'),
+    writeln(Stream, '% kb_notification_policy:notification_spam_policy(default, smart).'),
+    writeln(Stream, '% kb_notification_policy:notification_feedback("com.example.chat", always_allow).'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Custom App Mappings ----'),
     writeln(Stream, '% Override existing apps or add new ones:'),
@@ -170,10 +179,9 @@ reload_user_config :-
 
 %% load_server_config is det.
 %
-%  Server-scope user config load (issue #158): semantic and intent facts
-%  only. Device facts (app mappings, dictation, sounds) are
-%  server-inappropriate and fail the load with a typed domain error
-%  instead of being silently accepted. Never creates the user config file.
+%  Server-scope user config load (issue #158): semantic, intent, and closed
+%  notification policy facts only. Device facts (app mappings, dictation,
+%  sounds) are server-inappropriate and fail loudly.
 load_server_config :-
     user_config_path(BasePath),
     user_local_config_path(LocalPath),
@@ -267,7 +275,7 @@ replace_user_config(Facts) :-
            )).
 
 validate_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents, kb_device_providers]),
+    memberchk(Module, [kb_config, kb_intents, kb_device_providers, kb_notification_policy]),
     validate_user_fact(Term, Module, Fact).
 validate_user_fact(app_mapping(Name, Command), kb_device_providers, app_mapping(Name, Command)) :-
     atom(Name),
@@ -303,6 +311,8 @@ validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
     atom(Surface),
     valid_intent(Intent),
     ( Arity == rest ; integer(Arity), Arity >= 0 ).
+validate_user_fact(Term, kb_notification_policy, Term) :-
+    valid_notification_policy_fact(Term).
 
 text_value(Value) :-
     atom(Value) ; string(Value).
@@ -376,12 +386,75 @@ valid_intent(Intent) :-
 valid_intent(python(Skill)) :-
     atom(Skill).
 
-%% Server scope (issue #158): semantic + intent facts only. Device facts
-%% (app_mapping, direct_app, dictation_command, timer_sound, alarm_sound)
-%% intentionally have no clause here, so a server boot fails loudly on
-%% server-inappropriate mappings instead of accepting shell commands.
+valid_notification_policy_fact(notification_source_allowed(App)) :-
+    notification_key(App).
+valid_notification_policy_fact(notification_source_denied(App)) :-
+    notification_key(App).
+valid_notification_policy_fact(notification_content_policy(App, Mode)) :-
+    notification_key(App),
+    memberchk(Mode, [metadata_only, full_content]).
+valid_notification_policy_fact(notification_route_policy(App, Policy)) :-
+    notification_key(App),
+    memberchk(Policy, [most_recently_active, phone_only, watch_only, desktop_only, mirror, prefer_desktop]).
+valid_notification_policy_fact(notification_filter(FilterId, Match, Decision)) :-
+    notification_id(FilterId),
+    valid_notification_match(Match),
+    memberchk(Decision, [allow, suppress, group, digest, ask]).
+valid_notification_policy_fact(notification_hook(HookId, Match, Action)) :-
+    notification_id(HookId),
+    valid_notification_match(Match),
+    valid_notification_action(Action).
+valid_notification_policy_fact(notification_match_action(RuleId, Match, Actions)) :-
+    notification_id(RuleId),
+    valid_notification_match(Match),
+    is_list(Actions),
+    length(Actions, Count),
+    Count =< 16,
+    maplist(valid_notification_action, Actions).
+valid_notification_policy_fact(notification_ai_policy(App, Policy)) :-
+    notification_key(App),
+    memberchk(Policy, [disabled, classify_if_ambiguous]).
+valid_notification_policy_fact(notification_spam_policy(App, Policy)) :-
+    notification_key(App),
+    memberchk(Policy, [smart, allow, suppress, group, digest, ask]).
+valid_notification_policy_fact(notification_feedback(App, Decision)) :-
+    notification_key(App),
+    memberchk(Decision, [always_allow, mute, digest]).
+
+notification_key(default) :- !.
+notification_key(Value) :-
+    nonempty_text(Value),
+    text_string(Value, Text),
+    string_length(Text, Length),
+    Length =< 256.
+
+notification_id(Value) :-
+    notification_key(Value),
+    Value \== default.
+
+valid_notification_match(any).
+valid_notification_match(app(App)) :- notification_key(App).
+valid_notification_match(category(Category)) :- notification_key(Category).
+valid_notification_match(importance(Importance)) :- notification_key(Importance).
+valid_notification_match(app_category(App, Category)) :-
+    notification_key(App), notification_key(Category).
+valid_notification_match(app_importance(App, Importance)) :-
+    notification_key(App), notification_key(Importance).
+
+valid_notification_action(dismiss).
+valid_notification_action(open).
+valid_notification_action(inline_reply).
+valid_notification_action(create_todo).
+valid_notification_action(capture_note).
+valid_notification_action(invoke_action(ActionId)) :- notification_id(ActionId).
+valid_notification_action(start_workflow(WorkflowId)) :- notification_id(WorkflowId).
+valid_notification_action(open_link(LinkId)) :- notification_id(LinkId).
+valid_notification_action(route_peer(PeerId)) :- notification_id(PeerId).
+
+%% Server scope (issue #158): semantic + intent + closed notification policy
+%% facts only. Device facts intentionally have no clause here.
 validate_server_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents]),
+    memberchk(Module, [kb_config, kb_intents, kb_notification_policy]),
     validate_server_user_fact(Term, Module, Fact).
 validate_server_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
@@ -406,6 +479,8 @@ validate_server_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
     atom(Surface),
     valid_intent(Intent),
     ( Arity == rest ; integer(Arity), Arity >= 0 ).
+validate_server_user_fact(Term, kb_notification_policy, Term) :-
+    valid_notification_policy_fact(Term).
 
 search_url(Query, URL) :-
     % 1. Get search template from user config (with default fallback). The
