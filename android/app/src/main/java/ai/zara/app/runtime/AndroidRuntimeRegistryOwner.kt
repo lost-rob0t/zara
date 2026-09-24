@@ -20,10 +20,13 @@ class AndroidRuntimeRegistryOwner(
     private val optionalRuntimeSources: List<() -> RuntimeDescriptor?> = emptyList(),
 ) {
     fun refresh(localAiState: LocalAiState): RuntimeRegistrySnapshot {
+        val embedded = embeddedLocalRuntimeDescriptor(localAiState)
         val observed = buildList {
-            add(embeddedLocalRuntimeDescriptor(localAiState))
+            add(embedded)
             optionalRuntimeSources.forEach { source ->
-                discoverOptional(source)?.let(::add)
+                discoverOptional(source)
+                    ?.takeUnless { descriptor -> descriptor.id == embedded.id }
+                    ?.let(::add)
             }
         }
         return registry.refresh(observed)
