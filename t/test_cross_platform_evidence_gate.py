@@ -232,21 +232,29 @@ def test_android_acceptance_dismisses_only_pixel_launcher_anr(
 ) -> None:
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
-    launcher_anr = module.ET.fromstring(
-        '<node text="Pixel Launcher isn\'t responding" '
-        'package="com.google.android.apps.nexuslauncher" bounds="[10,10][90,90]" />'
-    )
-    close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
-        'bounds="[20,30][80,70]" />'
-    )
     visible = {"dialog": True}
     adb_calls: list[tuple[str, ...]] = []
 
     def nodes():
         if not visible["dialog"]:
             return iter(())
-        return iter((launcher_anr, close_app))
+        root = module.ET.fromstring(
+            """
+            <hierarchy>
+              <node package="android" bounds="[0,0][200,200]">
+                <node resource-id="pixel-anr-owner" bounds="[0,0][100,130]">
+                  <node text="Pixel Launcher isn't responding"
+                        package="com.google.android.apps.nexuslauncher"
+                        bounds="[10,10][90,90]" />
+                  <node text="Close app" package="android"
+                        resource-id="android:id/aerr_close"
+                        bounds="[20,30][80,70]" />
+                </node>
+              </node>
+            </hierarchy>
+            """
+        )
+        return iter(device.annotate_hierarchy(root))
 
     def adb(*arguments: str, **_kwargs):
         adb_calls.append(arguments)
