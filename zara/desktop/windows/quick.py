@@ -327,7 +327,10 @@ class QuickCopilotWindow(QWidget):
         self.runtime_status_label.setProperty("runtimeState", status.state.value)
         self.runtime_status_label.setText(status.state.value.replace("-", " ").title())
         self.runtime_detail_label.setText(status.detail or "Zara is ready.")
-        self.runtime_detail_label.setVisible(status.state.value in {"error", "disconnected"})
+        self.runtime_detail_label.setVisible(
+            status.state.value
+            in {"listening", "thinking", "tool-running", "needs-input", "error", "disconnected"}
+        )
         self.status_frame.setToolTip(status.detail or "Zara is ready.")
         refresh_dynamic_style(self.status_lamp)
         refresh_dynamic_style(self.runtime_status_label)
