@@ -244,6 +244,34 @@ def terminate_group(process: subprocess.Popen) -> None:
     process.wait(timeout=5)
 
 
+def retained_file_bytes(path: Path, max_bytes: int) -> bytes:
+    if max_bytes <= 0:
+        raise VerificationError('invalid_artifact_limit')
+    observed = path.lstat()
+    if stat.S_ISLNK(observed.st_mode) or not stat.S_ISREG(observed.st_mode):
+        raise VerificationError('unsafe_artifact_type')
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    try:
+        opened = os.fstat(fd)
+        if (not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino) != (observed.st_dev, observed.st_ino)):
+            raise VerificationError('unsafe_artifact_type')
+        chunks = []
+        remaining = max_bytes + 1
+        while remaining:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        data = b''.join(chunks)
+        if len(data) > max_bytes:
+            raise VerificationError('artifact_size_limit')
+        return data
+    finally:
+        os.close(fd)
+
+
 def execute_gate(gate_id: str, argv: list[str], root: Path, directory: Path,
                  timeout: float, max_output: int = MAX_JSON_BYTES) -> dict[str, Any]:
     if not argv or timeout <= 0 or max_output <= 0:
@@ -298,23 +326,35 @@ def execute_gate(gate_id: str, argv: list[str], root: Path, directory: Path,
                 if process.stdout is not None:
                     process.stdout.close()
                 code = process.returncode
+    retained_digest = ''
+    retained_bytes = 0
+    try:
+        retained = retained_file_bytes(log_path, max_output)
+        retained_digest = hashlib.sha256(retained).hexdigest()
+        retained_bytes = len(retained)
+        if retained_bytes != written or retained_digest != digest.hexdigest():
+            state, reason = 'error', 'artifact_tampered'
+    except (OSError, VerificationError):
+        state, reason = 'error', 'artifact_tampered'
     return {'gate': gate_id, 'state': state, 'reason': reason, 'exit_code': code,
             'duration_ms': int((time.monotonic() - started) * 1000),
-            'artifact': str(log_path), 'artifact_sha256': digest.hexdigest(), 'bytes': written}
+            'artifact': str(log_path), 'artifact_sha256': retained_digest, 'bytes': retained_bytes}
 
 
-def parse_junit(path: Path) -> dict[str, Any]:
+def parse_junit(path: Path, include_digest: bool = False) -> dict[str, Any]:
     try:
-        with path.open('rb') as stream:
-            data = stream.read(MAX_JSON_BYTES + 1)
-        if len(data) > MAX_JSON_BYTES or b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
+        data = retained_file_bytes(path, MAX_JSON_BYTES)
+        if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
             raise VerificationError('unsafe_junit')
         root = ET.fromstring(data)
         cases = list(root.iter('testcase'))
         failures = sum(case.find('failure') is not None or case.find('error') is not None for case in cases)
         skipped = sum(case.find('skipped') is not None for case in cases)
         state = 'passed' if len(cases) > skipped and failures == 0 else 'failed'
-        return {'state': state, 'tests': len(cases), 'failures': failures, 'skipped': skipped}
+        result = {'state': state, 'tests': len(cases), 'failures': failures, 'skipped': skipped}
+        if include_digest:
+            result['sha256'] = hashlib.sha256(data).hexdigest()
+        return result
     except (OSError, ET.ParseError, VerificationError):
         return {'state': 'missing', 'tests': 0, 'failures': 0, 'skipped': 0}
 
@@ -396,11 +436,12 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
                     item = execute_gate(gate_id, argv, root, evidence_dir / gate_id, timeout)
                     if gate.get('junit') and item['state'] == 'passed':
                         junit_path = evidence_dir / gate_id / gate['junit']
-                        item['junit'] = parse_junit(junit_path)
-                        if item['junit']['state'] != 'passed':
+                        item['junit'] = parse_junit(junit_path, include_digest=True)
+                        junit_sha256 = item['junit'].pop('sha256', None)
+                        if item['junit']['state'] != 'passed' or junit_sha256 is None:
                             item['state'], item['reason'] = 'failed', 'junit_not_passed'
                         else:
-                            item['junit_sha256'] = hashlib.sha256(junit_path.read_bytes()).hexdigest()
+                            item['junit_sha256'] = junit_sha256
                     if item['state'] == 'cancelled':
                         raise VerificationError('cancelled')
                 item.update({'run_id': run_id, 'source_digest': canonical_digest(source)})
