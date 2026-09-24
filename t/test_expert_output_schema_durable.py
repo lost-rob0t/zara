@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import json
+
 from zara.database import DatabaseManager
 from zara.experts import (
     ZARA_EXPERT_PROTOCOL,
@@ -156,4 +158,77 @@ def test_schema_invalid_success_becomes_terminal_unknown_and_never_redispatches(
     assert replay.usage == {"model_calls": 0}
     assert replay.effect_receipts == ({"effect_id": "effect:observed-output"},)
     assert replacement_handler.calls == 0
+    restarted_database.close()
+
+
+def test_legacy_schema_invalid_success_replay_is_downgraded_without_redispatch(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "legacy-output-schema-durable.db"
+    database = DatabaseManager(path)
+    seed_handler = OutputHandler(summary="valid")
+    registry, handle = _runtime(database, seed_handler)
+
+    seeded = _invoke(registry, handle)
+    assert seeded.verdict is ExpertVerdict.SUCCEEDED
+    assert seed_handler.calls == 1
+
+    row = database.fetch_one(
+        """
+        SELECT result_json
+        FROM expert_idempotency_v1
+        WHERE idempotency_key = ?
+        """,
+        (IDEMPOTENCY_KEY,),
+    )
+    assert row is not None
+    legacy = json.loads(row["result_json"])
+    legacy["data"] = {"summary": 7}
+    database.execute(
+        """
+        UPDATE expert_idempotency_v1
+        SET result_json = ?
+        WHERE idempotency_key = ?
+        """,
+        (
+            json.dumps(
+                legacy,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ),
+            IDEMPOTENCY_KEY,
+        ),
+    )
+    database.close()
+
+    restarted_database = DatabaseManager(path)
+    replacement_handler = OutputHandler(summary="replacement must never run")
+    restarted_registry, restarted_handle = _runtime(
+        restarted_database,
+        replacement_handler,
+    )
+
+    replay = _invoke(restarted_registry, restarted_handle)
+
+    assert replay.replayed is True
+    assert replay.verdict is ExpertVerdict.UNKNOWN
+    assert replay.error_code is ExpertErrorCode.INVALID_INPUT
+    assert "output schema violation" in replay.error_message
+    assert replay.data == {}
+    assert replay.evidence_refs == ()
+    assert replay.usage == {"model_calls": 0}
+    assert replay.effect_receipts == ({"effect_id": "effect:observed-output"},)
+    assert replacement_handler.calls == 0
+
+    persisted = restarted_database.fetch_one(
+        """
+        SELECT result_json
+        FROM expert_idempotency_v1
+        WHERE idempotency_key = ?
+        """,
+        (IDEMPOTENCY_KEY,),
+    )
+    assert persisted is not None
+    assert json.loads(persisted["result_json"])["verdict"] == "succeeded"
     restarted_database.close()
