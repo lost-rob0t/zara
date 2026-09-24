@@ -1090,6 +1090,11 @@ class ZaraZmqGateway:
 
         session_id = _message_id()
         with self._lock:
+            continuing_turn_keys = [
+                key
+                for key, candidate in self._turn_routes.items()
+                if candidate == route and key not in self._turns_awaiting_accept
+            ]
             previous_state = self._drop_route_locked(route)
             state = _RouteState(
                 session_id=session_id,
@@ -1098,6 +1103,9 @@ class ZaraZmqGateway:
                 audio_output=selected_audio_output is not None,
             )
             self._routes[route] = state
+            for key in continuing_turn_keys:
+                self._retired_turns.pop(key, None)
+                self._turn_routes[key] = route
         self._cancel_audio_inputs(previous_state)
         try:
             self._route_ready(route, state)
