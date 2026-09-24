@@ -21,6 +21,7 @@ class VoicePlaybackController(
     fun accept(event: VoiceStreamEvent) {
         check(!closed) { "voice playback is closed" }
         when (event) {
+            is VoiceStreamEvent.SpeechStarted, is VoiceStreamEvent.SpeechEnded -> Unit
             is VoiceStreamEvent.AudioStarted -> {
                 val next = reduceVoiceStream(state, event)
                 if (outputActive) {

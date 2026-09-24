@@ -95,6 +95,21 @@ def test_wheel_includes_modules_resources(wheel_names):
         assert matches, f"{rel} missing from wheel"
 
 
+def test_wheel_includes_browser_addon(wheel_names):
+    required = [
+        "browser-addon/manifest.json",
+        "browser-addon/manifest.firefox.json",
+        "browser-addon/background.js",
+        "browser-addon/content.js",
+        "browser-addon/options.html",
+        "browser-addon/options.js",
+    ]
+    for rel in required:
+        suffix = f"share/zarathushtra/{rel}"
+        matches = [n for n in wheel_names if n.endswith(suffix)]
+        assert matches, f"{rel} missing from wheel"
+
+
 def test_wheel_declares_all_console_scripts(wheel_entry_points):
     expected = {
         "zara = zara.__main__:main",
