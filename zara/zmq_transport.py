@@ -23,6 +23,14 @@ from typing import Optional, Sequence
 import zmq
 
 from zara.client import ZaraClient, ZaraClientState
+from zara.node import ZaraNode
+from zara.peer_protocol import (
+    PeerCallRemoteError,
+    PeerCallRequest,
+    PeerCancelRequest,
+    PeerRemoteError,
+    PeerResult,
+)
 from zara.protocol import (
     AUDIO_INPUT_CHANNELS,
     AUDIO_INPUT_CODEC,
@@ -790,7 +798,15 @@ class ZaraZmqGateway:
         }:
             self._handle_audio_input(socket, route, state, message, decoded.payloads)
             return
-        if message.type in {"turn.submit", "turn.cancel", "tool.approve", "tool.reject"}:
+        if message.type in {
+            "turn.submit",
+            "turn.cancel",
+            "tool.approve",
+            "tool.reject",
+            "node.ask",
+            "node.delegate",
+            "node.cancel",
+        }:
             self._dispatch_runtime(socket, route, state, message)
             return
         self._send(
@@ -1299,6 +1315,15 @@ class ZaraZmqGateway:
             principal_id=self._principal.principal_id,
         )
 
+    def _allow_runtime_event(
+        self,
+        principal_id: str,
+        envelope: bridge.EventEnvelope,
+        route: bytes,
+    ) -> bool:
+        del principal_id, envelope, route
+        return True
+
     def _drain_runtime_subscription(
         self,
         socket: zmq.Socket,
@@ -1322,6 +1347,8 @@ class ZaraZmqGateway:
                 if len(matches) == 1:
                     route = matches[0]
             if route is None:
+                continue
+            if not self._allow_runtime_event(principal_id, envelope, route):
                 continue
             try:
                 message = runtime_event_to_message(
@@ -1472,6 +1499,8 @@ class _PendingKind(str, enum.Enum):
     CONVERSATION = "conversation"
     COMMAND = "command"
     AUDIO = "audio"
+    PEER = "peer"
+    PEER_CANCEL = "peer_cancel"
 
 
 @dataclass
@@ -1499,6 +1528,7 @@ class ZmqZaraClient(ZaraClient):
         voice_output=None,
         audio_output_formats: Optional[list[dict[str, object]]] = None,
         curve_client: Optional[CurveClientConfig] = None,
+        peer_node: Optional[ZaraNode] = None,
     ) -> None:
         if not isinstance(endpoint, str) or not endpoint.strip():
             raise ValueError("endpoint must be a non-empty string")
@@ -1510,6 +1540,9 @@ class ZmqZaraClient(ZaraClient):
         if curve_client is not None and not isinstance(curve_client, CurveClientConfig):
             raise TypeError("curve_client must be CurveClientConfig")
         self._curve_client = curve_client
+        if peer_node is not None and not isinstance(peer_node, ZaraNode):
+            raise TypeError("peer_node must be ZaraNode")
+        self._peer_node = peer_node
         self._voice_output = voice_output
         self._audio_output_formats = _normalize_audio_output_formats(
             audio_output_formats or [_DEFAULT_AUDIO_OUTPUT_FORMAT]
@@ -1600,6 +1633,11 @@ class ZmqZaraClient(ZaraClient):
                             "audio_output_formats": [
                                 dict(format_spec) for format_spec in self._audio_output_formats
                             ],
+                            **(
+                                {"node": self._peer_node.to_mapping()}
+                                if self._peer_node is not None
+                                else {}
+                            ),
                         },
                     ),
                     limits=self._limits,
@@ -1806,6 +1844,42 @@ class ZmqZaraClient(ZaraClient):
                 "tool.reject.accepted",
             }:
                 pending.future.set_exception(ProtocolValidationError("invalid command response"))
+            else:
+                pending.future.set_result(
+                    CommandReceipt(request_id=message.reply_to or "", turn_id=message.turn_id)
+                )
+            return
+        if pending.kind is _PendingKind.PEER:
+            body = message.body or {}
+            if message.type == "node.result":
+                try:
+                    pending.future.set_result(PeerResult.from_wire(body))
+                except (TypeError, ValueError) as error:
+                    pending.future.set_exception(ProtocolValidationError(str(error)))
+            elif message.type == "node.error":
+                try:
+                    pending.future.set_exception(
+                        PeerCallRemoteError(PeerRemoteError.from_wire(body))
+                    )
+                except (TypeError, ValueError) as error:
+                    pending.future.set_exception(ProtocolValidationError(str(error)))
+            else:
+                pending.future.set_exception(
+                    ProtocolValidationError("invalid peer call response")
+                )
+            return
+        if pending.kind is _PendingKind.PEER_CANCEL:
+            if message.type == "node.error":
+                try:
+                    pending.future.set_exception(
+                        PeerCallRemoteError(PeerRemoteError.from_wire(message.body or {}))
+                    )
+                except (TypeError, ValueError) as error:
+                    pending.future.set_exception(ProtocolValidationError(str(error)))
+            elif message.type != "node.cancel.accepted" or not message.turn_id:
+                pending.future.set_exception(
+                    ProtocolValidationError("invalid peer cancel response")
+                )
             else:
                 pending.future.set_result(
                     CommandReceipt(request_id=message.reply_to or "", turn_id=message.turn_id)
@@ -2077,6 +2151,41 @@ class ZmqZaraClient(ZaraClient):
                 payload_count=0,
             ),
             _PendingKind.AUDIO,
+        )
+
+    def peer_call(self, request: PeerCallRequest) -> concurrent.futures.Future:
+        if not isinstance(request, PeerCallRequest):
+            raise TypeError("request must be PeerCallRequest")
+        return self._request(
+            ProtocolMessage(
+                type=request.operation,
+                id=request.request_id,
+                session_id=self._session_id,
+                conversation_id=self._conversation_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body=request.to_wire_body(),
+            ),
+            _PendingKind.PEER,
+        )
+
+    def cancel_peer_call(
+        self,
+        request: PeerCancelRequest,
+    ) -> concurrent.futures.Future:
+        if not isinstance(request, PeerCancelRequest):
+            raise TypeError("request must be PeerCancelRequest")
+        return self._request(
+            ProtocolMessage(
+                type="node.cancel",
+                id=request.request_id,
+                session_id=self._session_id,
+                conversation_id=self._conversation_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body=request.to_wire_body(),
+            ),
+            _PendingKind.PEER_CANCEL,
         )
 
     def submit(self, command: RuntimeCommand) -> concurrent.futures.Future:
