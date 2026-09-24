@@ -75,6 +75,29 @@ class InterleavingSupervisor:
             )
         if mode == "started":
             return (events.TurnStarted(**common),)
+        if mode == "failed":
+            return (
+                events.TurnStarted(**common),
+                events.AgentFailed(reason="backend failed", **common),
+            )
+        if mode == "audio":
+            return (
+                events.AudioOutputStarted(
+                    stream_id="tts-preaccept",
+                    sample_rate=24000,
+                    channels=1,
+                    **common,
+                ),
+                events.AudioOutputChunk(
+                    stream_id="tts-preaccept",
+                    pcm=b"\x01\x00" * 8,
+                    **common,
+                ),
+                events.AudioOutputFinished(
+                    stream_id="tts-preaccept",
+                    **common,
+                ),
+            )
         if mode == "approval":
             return (
                 events.ToolWaitingForUser(
@@ -174,11 +197,15 @@ def _dealer(context: zmq.Context, endpoint: str, config: TransportConfig) -> zmq
     return dealer
 
 
-def _receive(dealer: zmq.Socket, *, timeout_ms: int = 1500) -> ProtocolMessage:
+def _receive_decoded(dealer: zmq.Socket, *, timeout_ms: int = 1500):
     poller = zmq.Poller()
     poller.register(dealer, zmq.POLLIN)
     assert dict(poller.poll(timeout_ms)).get(dealer) == zmq.POLLIN, "no ZARA/1 frame arrived"
-    return decode_message(dealer.recv_multipart()).message
+    return decode_message(dealer.recv_multipart())
+
+
+def _receive(dealer: zmq.Socket, *, timeout_ms: int = 1500) -> ProtocolMessage:
+    return _receive_decoded(dealer, timeout_ms=timeout_ms).message
 
 
 def _assert_quiet(dealer: zmq.Socket, *, timeout_ms: int = 50) -> None:
@@ -203,6 +230,39 @@ def _hello(dealer: zmq.Socket, request_id: str) -> str:
     assert response.type == "hello.ok"
     assert response.reply_to == request_id
     assert response.session_id
+    return response.session_id
+
+
+def _hello_with_audio(dealer: zmq.Socket, request_id: str) -> str:
+    dealer.send_multipart(
+        encode_message(
+            ProtocolMessage(
+                type="hello",
+                id=request_id,
+                timestamp_ns=1,
+                payload_count=0,
+                body={
+                    "versions": [1],
+                    "audio_output_formats": [
+                        {
+                            "codec": "pcm_s16le",
+                            "sample_rate": 24000,
+                            "channels": 1,
+                        }
+                    ],
+                },
+            )
+        )
+    )
+    response = _receive(dealer)
+    assert response.type == "hello.ok"
+    assert response.reply_to == request_id
+    assert response.session_id
+    assert response.body["audio_output_format"] == {
+        "codec": "pcm_s16le",
+        "sample_rate": 24000,
+        "channels": 1,
+    }
     return response.session_id
 
 
@@ -749,3 +809,116 @@ def test_gateway_generation_restart_fences_late_old_completion_and_frames(
         for future in supervisor.futures:
             if not future.done():
                 future.cancel()
+
+def test_runtime_failure_before_acceptance_closes_turn_without_reason_leak(
+    zmq_context,
+    transport_config,
+):
+    endpoint = _endpoint("turn-session-failed")
+    supervisor = InterleavingSupervisor(["failed"], turn_ids=["turn-failed"])
+    gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
+    probe = BufferProbe(gateway)
+    gateway.start().result(timeout=1.0)
+    dealer = _dealer(zmq_context, endpoint, transport_config)
+    try:
+        session_id = _hello(dealer, "hello-failed")
+        _submit(dealer, session_id=session_id, request_id="submit-failed")
+        assert supervisor.submitted[0].wait(1.0)
+        probe.wait_for(2)
+
+        supervisor.complete(0)
+        delivered = [_receive(dealer) for _ in range(3)]
+        assert [message.type for message in delivered] == [
+            "turn.accepted",
+            "turn.started",
+            "turn.completed",
+        ]
+        assert delivered[-1].body == {"success": False}
+        assert "backend failed" not in repr(delivered[-1])
+
+        key = ("local-owner", "turn-failed")
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with gateway._lock:
+                if key not in gateway._turn_routes:
+                    break
+            time.sleep(0.005)
+        with gateway._lock:
+            assert key not in gateway._turn_routes
+            assert key in gateway._retired_turns
+        _assert_quiet(dealer)
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_early_audio_preserves_pcm_payload_after_acceptance_barrier(
+    zmq_context,
+    transport_config,
+):
+    endpoint = _endpoint("turn-session-early-audio")
+    supervisor = InterleavingSupervisor(["audio"], turn_ids=["turn-audio"])
+    gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
+    probe = BufferProbe(gateway)
+    gateway.start().result(timeout=1.0)
+    dealer = _dealer(zmq_context, endpoint, transport_config)
+    try:
+        session_id = _hello_with_audio(dealer, "hello-audio")
+        _submit(dealer, session_id=session_id, request_id="submit-audio")
+        assert supervisor.submitted[0].wait(1.0)
+        probe.wait_for(3)
+
+        supervisor.complete(0)
+        accepted = _receive_decoded(dealer)
+        started = _receive_decoded(dealer)
+        chunk = _receive_decoded(dealer)
+        finished = _receive_decoded(dealer)
+
+        assert [
+            accepted.message.type,
+            started.message.type,
+            chunk.message.type,
+            finished.message.type,
+        ] == [
+            "turn.accepted",
+            "audio.output.start",
+            "audio.output.chunk",
+            "audio.output.done",
+        ]
+        assert chunk.message.payload_count == 1
+        assert chunk.message.content_type == "audio/pcm;codec=pcm_s16le"
+        assert chunk.payloads == (b"\x01\x00" * 8,)
+        assert all(
+            decoded.message.session_id == session_id
+            for decoded in (accepted, started, chunk, finished)
+        )
+        _assert_quiet(dealer)
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_early_audio_is_dropped_when_route_did_not_negotiate_output(
+    zmq_context,
+    transport_config,
+):
+    endpoint = _endpoint("turn-session-early-audio-unnegotiated")
+    supervisor = InterleavingSupervisor(["audio"], turn_ids=["turn-audio-legacy"])
+    gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
+    gateway.start().result(timeout=1.0)
+    dealer = _dealer(zmq_context, endpoint, transport_config)
+    try:
+        session_id = _hello(dealer, "hello-audio-legacy")
+        _submit(dealer, session_id=session_id, request_id="submit-audio-legacy")
+        assert supervisor.submitted[0].wait(1.0)
+        supervisor.complete(0)
+
+        accepted = _receive(dealer)
+        assert accepted.type == "turn.accepted"
+        assert accepted.turn_id == "turn-audio-legacy"
+        _assert_quiet(dealer, timeout_ms=150)
+        assert gateway.is_alive
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+

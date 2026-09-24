@@ -1453,6 +1453,17 @@ class ZaraZmqGateway:
             event = envelope.event
             message = None
             route = None
+            audio_output_event = isinstance(
+                event,
+                (
+                    events.AudioOutputStarted,
+                    events.AudioOutputChunk,
+                    events.AudioOutputFinished,
+                ),
+            )
+            payloads: tuple[bytes, ...] = ()
+            if type(event) is events.AudioOutputChunk:
+                payloads = (event.pcm,)
             if event.turn_id:
                 try:
                     message = runtime_event_to_message(
@@ -1463,11 +1474,18 @@ class ZaraZmqGateway:
                 except RuntimeCodecError:
                     continue
                 with self._lock:
-                    if (principal_id, event.turn_id) in self._turns_awaiting_accept:
+                    turn_key = (principal_id, event.turn_id)
+                    if turn_key in self._turns_awaiting_accept:
+                        route = self._turn_routes.get(turn_key)
+                        state = self._routes.get(route) if route is not None else None
+                        if audio_output_event and (
+                            state is None or not state.ready or not state.audio_output
+                        ):
+                            continue
                         buffered = self._buffer_early_turn_event(
                             principal_id,
                             event.turn_id,
-                            (message, ()),
+                            (message, payloads),
                         )
                         if not buffered:
                             self._fail_queued_turn_accept_backpressure_locked(
@@ -1475,7 +1493,6 @@ class ZaraZmqGateway:
                                 event.turn_id,
                             )
                         continue
-                    turn_key = (principal_id, event.turn_id)
                     route = self._turn_routes.get(turn_key)
                     if route is None:
                         if turn_key in self._retired_turns:
@@ -1488,10 +1505,24 @@ class ZaraZmqGateway:
                             and inflight.command.conversation_id == event.conversation_id
                         ]
                         if pending_accepts:
+                            if audio_output_event:
+                                audio_capable = any(
+                                    (
+                                        (state := self._routes.get(candidate.route)) is not None
+                                        and state.ready
+                                        and state.principal_id == candidate.principal_id
+                                        and state.session_id == candidate.session_id
+                                        and state.audio_output
+                                    )
+                                    for inflight in pending_accepts
+                                    for candidate in inflight.routes
+                                )
+                                if not audio_capable:
+                                    continue
                             buffered = self._buffer_early_turn_event(
                                 principal_id,
                                 event.turn_id,
-                                (message, ()),
+                                (message, payloads),
                             )
                             if not buffered:
                                 for inflight in pending_accepts:
@@ -1532,21 +1563,8 @@ class ZaraZmqGateway:
             state = self._routes.get(route)
             if state is None or not state.ready:
                 continue
-            audio_output_event = isinstance(
-                event,
-                (
-                    events.AudioOutputStarted,
-                    events.AudioOutputChunk,
-                    events.AudioOutputFinished,
-                ),
-            )
             if audio_output_event and not state.audio_output:
                 continue
-            payloads: tuple[bytes, ...] = ()
-            if audio_output_event:
-                payloads = (
-                    (event.pcm,) if type(event) is events.AudioOutputChunk else ()
-                )
             tool_run_id = getattr(event, "tool_run_id", None)
             if isinstance(event, events.ToolWaitingForUser) and tool_run_id:
                 owner_key = (principal_id, tool_run_id)
@@ -1595,6 +1613,15 @@ class ZaraZmqGateway:
                     return
             for held_message, held_payloads in held_batch:
                 approval_key = None
+                if held_message.type in {
+                    "audio.output.start",
+                    "audio.output.chunk",
+                    "audio.output.done",
+                }:
+                    with self._lock:
+                        state = self._routes.get(route)
+                        if state is None or not state.ready or not state.audio_output:
+                            continue
                 if held_message.type == "tool.waiting":
                     tool_run_id = dict(held_message.body or {}).get("tool_run_id")
                     if isinstance(tool_run_id, str) and tool_run_id:
