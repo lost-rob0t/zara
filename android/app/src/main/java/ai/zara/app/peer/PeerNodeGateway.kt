@@ -33,6 +33,7 @@ class PeerNodeGateway(
     private val maxRoutes: Int = 32,
     private val rateMaxMessages: Int = 60,
     private val rateWindowMillis: Long = 1_000,
+    private val nanoTime: () -> Long = System::nanoTime,
 ) {
     private data class RouteState(
         val route: ByteArray,
@@ -282,7 +283,7 @@ class PeerNodeGateway(
             return
         }
 
-        if (rateExceeded(peer.deviceId)) {
+        if (!tryChargeRate(peer.deviceId)) {
             reply(
                 listener,
                 route,
@@ -296,7 +297,6 @@ class PeerNodeGateway(
             )
             return
         }
-        chargeRate(peer.deviceId)
 
         val sessionId = UUID.randomUUID().toString()
         routes[key] = RouteState(route.copyOf(), peer.deviceId, sessionId, node)
@@ -326,7 +326,7 @@ class PeerNodeGateway(
             )
             return
         }
-        if (rateExceeded(state.deviceId)) {
+        if (!tryChargeRate(state.deviceId)) {
             reply(
                 listener,
                 route,
@@ -340,22 +340,18 @@ class PeerNodeGateway(
             )
             return
         }
-        chargeRate(state.deviceId)
         respond(state.sessionId)
     }
 
-    private fun rateExceeded(deviceId: String): Boolean {
-        val window = rateWindows[deviceId] ?: return false
-        return window.size >= rateMaxMessages
-    }
-
-    private fun chargeRate(deviceId: String) {
-        val now = System.nanoTime()
+    private fun tryChargeRate(deviceId: String): Boolean {
+        val now = nanoTime()
         val window = rateWindows.getOrPut(deviceId) { ArrayDeque() }
         while (window.isNotEmpty() && (now - window.first()) / 1_000_000 >= rateWindowMillis) {
             window.removeFirst()
         }
+        if (window.size >= rateMaxMessages) return false
         window.addLast(now)
+        return true
     }
 
     private fun dropRoute(route: ByteArray) {
