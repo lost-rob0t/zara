@@ -1,0 +1,1211 @@
+#+title: The Zara Book
+#+subtitle: A practical guide to Zara, Zara Android, symbolic control, voice, plugins, and advanced operation
+#+author: Zara project
+#+options: toc:3 num:t
+
+* About this book
+
+This is the canonical end-user teaching guide for *Zara* and *Zara Android*.
+
+Zara changes quickly. This book therefore distinguishes three kinds of truth:
+
+- *IMPLEMENTED* — present in current code with repository build/test evidence.
+- *ACTIVE / EVOLVING* — real foundations exist, but the user-facing surface is still changing.
+- *GATED / PLANNED* — designed, researched, or partially implemented, but not something you should rely on as a finished daily-driver feature yet.
+
+When this book disagrees with current code or tests, the code and tests win. The book should then be fixed.
+
+The shortest way to understand Zara is:
+
+#+begin_quote
+One conversation, one runtime, many native surfaces.
+#+end_quote
+
+Zara is not meant to be a pile of separate chat programs. Desktop, CLI, Android, voice, tools, plugins, and future Wear surfaces are different ways to interact with one assistant architecture.
+
+* 1. What Zara is
+
+** 1.1 The product idea
+
+Zara combines:
+
+- durable conversations;
+- native desktop and Android clients;
+- voice input and speech output;
+- Prolog-based symbolic semantics and policy;
+- LLM conversation and reasoning;
+- tools and plugins;
+- authenticated client/server operation;
+- local and remote model/provider options.
+
+The core architectural rule is simple: *clients project runtime state; they do not become alternate assistant runtimes*.
+
+That matters because it keeps conversation identity, cancellation, permissions, tools, and policy coherent. A phone should not silently become a different Zara from the one on your Linux desktop.
+
+** 1.2 The major processes
+
+*IMPLEMENTED*
+
+The important executable boundaries are:
+
+| Command | What it is for |
+|---------+----------------|
+| =zara-server= | Long-lived Zara runtime/service. |
+| =zara-desktop= | Native Linux PySide6/Qt client. |
+| =zara= | Client-facing CLI. |
+| =zara-console= | Interactive console client. |
+| =zara-wake= | Wake/voice interaction path. |
+| =zara-dictate= | Standalone dictation/STT utility. |
+| =zara-agent= | Agent-oriented entry point. |
+| =zara-pets= | Optional desktop pet/event projection. |
+
+The Android project lives under =android/= and uses application id =ai.zara.app=.
+
+** 1.3 The runtime mental model
+
+Think in these layers:
+
+#+begin_example
+Desktop / CLI / Android / future Wear
+               |
+          ZaraClient
+               |
+       ZARA/1 or in-process
+               |
+          zara-server
+               |
+        RuntimeSupervisor
+               |
+           RuntimeHost
+               |
+   Prolog / Voice / Agent / Tools / Plugins
+               |
+      conversations / context / memory
+#+end_example
+
+You do not need to memorize every internal type, but four words are worth learning:
+
+- *conversation* — durable chat identity and message history;
+- *turn* — one user interaction and its resulting assistant/tool work;
+- *principal* — authenticated identity/owner for private runtime state;
+- *capability* — a typed action Zara is allowed to request or execute.
+
+* 2. Fast start on Linux
+
+** 2.1 Development-first installation
+
+*IMPLEMENTED*
+
+Nix is the authoritative development surface.
+
+#+begin_src sh
+git clone https://github.com/lost-rob0t/zara.git
+cd zara
+nix develop
+#+end_src
+
+Start the runtime:
+
+#+begin_src sh
+zara-server
+#+end_src
+
+Then, in another shell, launch the native desktop client:
+
+#+begin_src sh
+zara-desktop
+#+end_src
+
+You can also run the packaged desktop target:
+
+#+begin_src sh
+nix run .#zara-desktop
+#+end_src
+
+Useful standalone tools:
+
+#+begin_src sh
+zara-console
+zara-dictate
+zara-pets
+#+end_src
+
+** 2.2 What success looks like
+
+A healthy start should give you:
+
+1. a running Zara server/runtime;
+2. a client that can connect to it;
+3. a conversation surface that can submit a turn;
+4. structured runtime state rather than a frozen UI;
+5. explicit errors when providers, credentials, or optional services are unavailable.
+
+A client window appearing is not enough. Zara is designed to report degraded or disconnected states honestly instead of pretending the assistant is ready.
+
+** 2.3 If the desktop cannot connect
+
+Check, in this order:
+
+1. Is =zara-server= actually running?
+2. Is the client targeting the expected local endpoint/profile?
+3. Did the server start in a degraded state because a configured provider/plugin failed?
+4. Did authentication or a stale session fail?
+5. Did you restart the client but not the runtime, or vice versa?
+
+Do not solve connection problems by deleting security state unless you understand exactly what identity you are replacing.
+
+* 3. Conversations, turns, cancellation, and reconnect
+
+** 3.1 Durable conversations
+
+*IMPLEMENTED FOUNDATION*
+
+Zara has durable conversation/message state. The product direction is that typed chat and voice share conversation identity rather than creating disposable parallel histories.
+
+A conversation is broader than one model request. It can include:
+
+- user text;
+- assistant text;
+- streaming partial output;
+- tool activity;
+- voice transcript events;
+- metadata such as titles and summaries as those features mature.
+
+** 3.2 Turns
+
+A *turn* is the unit of active work. Each turn can be cancelled and correlated with runtime events.
+
+This is why Zara treats cancellation as architecture rather than a stop-button cosmetic feature: late text, audio, or tool results from an old turn must not overwrite a newer turn.
+
+** 3.3 Reconnect is not time travel
+
+Reconnect should preserve only what the runtime can prove still exists.
+
+Do not assume:
+
+- a request that was in flight before disconnect definitely completed;
+- a client process recreation means the server resumed the same operation;
+- an old audio stream may continue into a new turn;
+- the last visible desktop chat is automatically the target of background voice.
+
+Zara's stale-generation/session fencing exists to prevent those kinds of accidental crossovers.
+
+* 4. Daily desktop workflow
+
+** 4.1 Desktop status
+
+*IMPLEMENTED + ACTIVE / EVOLVING*
+
+The Linux client is native PySide6/Qt. It already has desktop/runtime foundations including persistent conversations, streaming updates, cancellation, status, settings/diagnostics, and daemon-client operation.
+
+The repository historically had separate Quick Copilot and Full Chat windows.
+
+*ACTIVE / EVOLVING:* the accepted product direction is one adaptive Copilot surface with compact and expanded modes, one conversation renderer, and one composer. Treat references to the older two-window split as implementation history, not the desired final UX.
+
+** 4.2 A good daily pattern
+
+Use Zara like this:
+
+1. Keep =zara-server= running as the long-lived runtime.
+2. Summon the desktop surface when you need it.
+3. Keep one conversation for one coherent stream of work when context matters.
+4. Start a new conversation when you want a clean context boundary.
+5. Cancel stale work rather than stacking contradictory follow-up requests.
+6. Use diagnostics when behavior differs from what the UI claims.
+7. Use Prolog/configuration for durable deterministic behavior instead of repeatedly re-prompting an LLM for the same rule.
+
+** 4.3 Compact vs deep work
+
+Use the compact Copilot style for:
+
+- one-shot questions;
+- quick commands;
+- short follow-ups;
+- checking assistant/runtime state.
+
+Use expanded/history-oriented UI for:
+
+- long-running work;
+- reviewing older conversations;
+- changing settings;
+- inspecting tools, diagnostics, or project context.
+
+The important part is not which window is visible; the important part is preserving the same conversation/runtime identity.
+
+* 5. Voice, wake, STT, TTS, and interruption
+
+** 5.1 Ownership
+
+*IMPLEMENTED FOUNDATION + ACTIVE HARDENING*
+
+The voice architecture deliberately separates device edges from runtime work:
+
+- the *client device* owns microphone capture and speaker playback;
+- Zara runtime/server owns VAD/STT routing, semantic/model/tool work, and TTS production;
+- turn and conversation identifiers correlate the path;
+- barge-in/cancel fences stale output.
+
+** 5.2 Useful voice modes
+
+Use =zara-wake= when you want wake-driven assistant interaction.
+
+Use =zara-dictate= when you primarily want speech-to-text dictation rather than a full assistant turn.
+
+** 5.3 Natural interruption
+
+When you interrupt Zara while it is speaking, the desired flow is:
+
+1. playback stops immediately on the client;
+2. the client sends cancellation for the old turn/stream;
+3. server-side model/tool/TTS work is cancelled or fenced;
+4. late old audio/text is ignored;
+5. the new utterance begins a new turn.
+
+This is more reliable than treating speech as one long blocking function call.
+
+** 5.4 Debugging voice problems
+
+Separate the pipeline into stages.
+
+For input problems ask:
+
+1. Is the microphone/capture source producing frames?
+2. Is VAD detecting speech?
+3. Is STT loading the expected model/runtime?
+4. Is the transcript reasonable?
+5. Did semantic routing or the model receive the transcript?
+
+For output problems ask:
+
+1. Did TTS synthesize audio?
+2. Did the daemon/client transport deliver it?
+3. Did the local playback sink open?
+4. Was playback cancelled by a newer turn?
+5. Did the audio route change?
+
+Zara has had real bugs where synthesis succeeded but local playback failed, and separate bugs where capture stalled. Treat input, recognition, synthesis, transport, and playback as independent failure boundaries.
+
+** 5.5 STT model choice
+
+Do not assume the smallest model is automatically the best daily choice. Small models reduce resource use but can garble short conversational follow-ups. Choose based on measured accuracy, latency, memory, and your hardware.
+
+* 6. Symbolic Zara: Prolog as behavior you can reason about
+
+** 6.1 Why Prolog exists here
+
+Prolog is not a decorative plugin. Zara uses symbolic logic for behavior that benefits from explicit rules, deterministic resolution, inspectability, and local/offline operation.
+
+Typical symbolic responsibilities include:
+
+- intent/alias resolution;
+- capability selection;
+- policy decisions;
+- deterministic commands;
+- user-configured facts and mappings;
+- Android portable semantic behavior.
+
+** 6.2 The right mental model
+
+Use an LLM when the problem is open-ended.
+
+Use Prolog when you want Zara to behave the same way every time for a defined case.
+
+Examples:
+
+- map a spoken alias to an application;
+- define a named timer template;
+- select a preferred provider;
+- encode a device/permission policy;
+- route a known intent to a typed capability.
+
+** 6.3 Safe configuration pattern
+
+Prefer facts and rules that resolve to registered capabilities.
+
+Conceptually:
+
+#+begin_src prolog
+app_alias("editor", emacs).
+
+timer_alias("ramen timer", ramen).
+timer_template(ramen, seconds(180), [
+    on_finish(speak("Ramen ready"))
+]).
+#+end_src
+
+Do not treat Prolog configuration as an excuse to inject arbitrary shell commands or model-generated executable goals. The architecture is intentionally moving toward closed typed capability boundaries.
+
+** 6.4 Source text vs loaded state
+
+One subtle but important idea: the Prolog source file you edited is not automatically proof of what the runtime successfully loaded.
+
+A strong UI should distinguish:
+
+- source text;
+- load generation;
+- parse/load errors;
+- effective runtime facts/rules;
+- provenance/origin.
+
+This distinction is central to Zara's Logic/Prolog UI direction on Android and desktop.
+
+* 7. LLM and model providers
+
+** 7.1 Provider role
+
+Zara uses LLMs for open-ended work, conversation, and model-assisted reasoning where deterministic symbolic logic is not enough.
+
+Provider integrations include OpenAI, Anthropic, and Ollama in the current project architecture.
+
+** 7.2 Local vs remote
+
+Use a local provider such as Ollama when:
+
+- privacy/locality is the main constraint;
+- you want to work offline;
+- your hardware can run the model you need;
+- you accept local resource/latency tradeoffs.
+
+Use a remote provider when:
+
+- model quality/capability matters more than locality;
+- the provider supports the features you need;
+- you accept sending relevant request content to that service.
+
+** 7.3 Failure semantics
+
+A provider error should not masquerade as normal assistant prose.
+
+When Zara says a provider is unavailable, treat that as runtime state, not as a creative answer from the model.
+
+** 7.4 Android local AI
+
+*IMPLEMENTED FOUNDATION + ACTIVE / EVOLVING*
+
+Current =master= includes the embedded Android local-AI service and provider path. Zara Android has an offline-only =Embedded Local= language-model provider backed by the app-owned =LocalAiService=. The provider surface supports model catalog/listing, verified install, model selection, streaming generation, cancellation, and unload. Language-model and speech providers are separate families; offline system TTS is not disguised as an LLM capability.
+
+Local model files are copied into app-private storage and accepted only with declared metadata and a matching SHA-256. The store records model id, version, format, quantization, context limit, backend, and hash, and re-verifies the model before activation. The embedded provider currently accepts the LiteRT-LM model format.
+
+This is an implemented runtime foundation, not proof that a useful model is bundled or fast on every phone. Do not assume every APK contains a model. Real-model quality, cold/warm latency, peak memory, thermal/battery behavior, and hardware acceptance still require model-specific evidence. A failed or absent local model must not be documented as successful offline inference or silently relabeled as a cloud result.
+
+* 8. Tools, approvals, and plugins
+
+** 8.1 Tools can have effects
+
+A tool is not just a function name. A tool may read data, mutate state, invoke a provider, or trigger a device capability.
+
+The important distinction is between:
+
+- asking Zara to reason;
+- asking Zara to perform an effect.
+
+Effects should pass through explicit capability/approval rules.
+
+** 8.2 Tool approvals
+
+Dangerous tool execution should be visible and approval-aware where required.
+
+Do not interpret an LLM saying "I did it" as proof. Good Zara integrations verify observable state when possible.
+
+** 8.3 Plugins
+
+*IMPLEMENTED FOUNDATION*
+
+User plugins are normally discovered beneath:
+
+#+begin_example
+~/.zarathushtra/plugins/
+#+end_example
+
+Long-running service plugins receive a bounded runtime facade rather than raw access to every internal object.
+
+The companion repository is:
+
+#+begin_example
+https://github.com/lost-rob0t/zara-plugins
+#+end_example
+
+*ACTIVE / EVOLVING:* a polished app-store-style =zara plugin install= registry workflow is tracked separately. Do not assume the future registry-install CLI is already the only or canonical install path.
+
+** 8.4 Plugin rule of thumb
+
+A good plugin:
+
+- owns one domain;
+- exposes typed capabilities;
+- reports unavailable/degraded state honestly;
+- keeps secrets out of logs;
+- shuts down cleanly;
+- does not create a second assistant runtime;
+- does not import another plugin's private implementation to bypass Core.
+
+* 9. Context, memory, projects, and scheduled work
+
+** 9.1 Context is not magic memory
+
+Context is the information Zara is intentionally given for a turn or task.
+
+Durable memory is state that survives and is retrieved later according to scope/ownership rules.
+
+Conversation history is the ordered record of messages for a conversation.
+
+Do not collapse these three ideas into one giant prompt history.
+
+** 9.2 Projects
+
+*ACTIVE / EVOLVING, especially on Android*
+
+Projects are intended to provide persistent user-facing work contexts with project-scoped chat/context and explicit sources.
+
+The Android product direction includes:
+
+- project list/open;
+- project-scoped chat;
+- project breadcrumb;
+- bounded source/runtime scope;
+- no implicit filesystem crawl.
+
+Until the specific project surfaces you want are present in your build, treat them as active product work rather than a guaranteed completed UI.
+
+** 9.3 Scheduled work
+
+*ACTIVE / EVOLVING*
+
+The Android design includes a Scheduled surface for viewing upcoming/active/completed/failed work and safe controls. The important architecture rule is that Android should project the canonical scheduler/task boundary rather than creating a second phone-only scheduler.
+
+* 10. Zara Android: what exists and how to think about it
+
+** 10.1 Status
+
+*ACTIVE / EVOLVING*
+
+Zara Android is a real native Gradle/Android project, not a web wrapper.
+
+Current foundations include:
+
+- application id =ai.zara.app=;
+- typed runtime/client state;
+- embedded portable Trealla Prolog through NDK/JNI;
+- shared semantic fixtures;
+- Android credential protection;
+- JeroMQ/CURVE authentication foundations;
+- server-key pinning;
+- embedded =LocalAiService= and offline-only =Embedded Local= provider;
+- verified app-private local model catalog/import/select state with model identity, format, quantization, and SHA-256 metadata;
+- separate local language-model and offline TTS provider families;
+- reproducible Nix/Gradle build tooling;
+- APK build/test paths.
+
+The complete daily-driver assistant surface is still being built. Real-model and physical-device evidence remains distinct from an implemented runtime foundation. Do not equate "APK builds" with "every Android assistant feature is complete."
+
+** 10.2 Android product model
+
+The Android product target makes Zara a *chat-first symbolic workspace*.
+
+Default theme: *Outrun*.
+
+The three-menu navigation hierarchy is *IMPLEMENTED* in current =master=. It groups the product into three primary left-side menus rather than treating every screen as a top-level destination:
+
+#+begin_example
+Chat
+  Chat | Voice
+Workspace
+  Logic | Projects | Scheduled
+Settings
+  Runtime | Connection | Permissions | Appearance
+  Plugins | Updates | Diagnostics | About
+#+end_example
+
+Compact windows use a left drawer; wide windows use the persistent left rail at the current breakpoint. The three-menu shell is merged and acceptance-tested; individual secondary screens and hardware-gated capabilities can still remain *ACTIVE / EVOLVING*.
+
+The shell still owns conversation/history selection, honest local/remote runtime state, the bottom composer, and lifecycle state that survives recreation where the runtime supports it. Some secondary routes remain implementation targets rather than uniformly complete in every build.
+
+** 10.3 Empty state vs active conversation
+
+The intended Android empty state may show the Zara sigil, symbolic/runtime status, and useful action tiles.
+
+Once real conversation content exists, decorative empty-state material should collapse and messages should own the screen.
+
+The composer remains the primary control and should stay reachable with the keyboard/IME open.
+
+* 11. Building and testing Zara Android
+
+** 11.1 Toolchain
+
+The Android toolchain is pinned/reproducible through Nix and Gradle.
+
+Current documented pins include:
+
+| Component | Pin |
+|-----------+-----|
+| Gradle | 9.5.1 |
+| Android Gradle Plugin | 9.2.0 |
+| JDK | 21 |
+| compileSdk | 37 |
+| targetSdk | 36 |
+| minSdk | 29 |
+
+** 11.2 Test/build command
+
+#+begin_src sh
+nix develop ./android -c bash scripts/test-android.sh
+#+end_src
+
+The normal debug APK location is:
+
+#+begin_example
+android/app/build/outputs/apk/debug/app-debug.apk
+#+end_example
+
+A successful debug build proves the build path, not every hardware/system-assistant scenario.
+
+** 11.3 Real-device truth
+
+Emulators are useful for deterministic tests, UI, lifecycle, and protocol behavior.
+
+They do not prove:
+
+- Samsung button integration;
+- real microphone/audio-route behavior;
+- OEM Assistant-role behavior;
+- Wear pairing behavior;
+- root/Shizuku/device-owner backends;
+- thermal/battery performance on your phone.
+
+Keep hardware acceptance separate and honest.
+
+* 12. Android pairing and authentication
+
+** 12.1 Why pairing exists
+
+Android is not supposed to trust any random Zara server it can reach.
+
+The current security model uses:
+
+- server identity pinning;
+- Android client identity;
+- CURVE/ZAP authentication;
+- explicit server-side enrollment;
+- principal/session ownership.
+
+** 12.2 Current manual pairing path
+
+*IMPLEMENTED FOUNDATION, UX ACTIVE / EVOLVING*
+
+The current documented expert/manual path is:
+
+1. Start Zara server with an authenticated TCP endpoint while preserving local IPC.
+2. Initialize the owner-private security directory.
+3. Obtain the server public key.
+4. Pin that key in Android.
+5. Obtain the Android client's public key/device identity.
+6. Enroll that client key on the server.
+7. Connect and complete authenticated =ZARA/1= hello/session setup.
+
+Example server-side shape:
+
+#+begin_src sh
+zara-server --remote-endpoint tcp://<LAN-IP>:6060 --security-dir <PRIVATE-DIR>
+#+end_src
+
+Security initialization while the service is stopped:
+
+#+begin_src sh
+zara-server --security-dir <PRIVATE-DIR> --security-init
+#+end_src
+
+Show the server public key:
+
+#+begin_src sh
+zara-server --security-dir <PRIVATE-DIR> --security-show-public-key
+#+end_src
+
+Enroll the Android client public key:
+
+#+begin_src sh
+zara-server \
+  --security-dir <PRIVATE-DIR> \
+  --security-enroll-key <Z85-CLIENT-PUBLIC-KEY> \
+  --security-device-id <DEVICE-ID>
+#+end_src
+
+** 12.3 "Ready" must mean what has actually been proven
+
+A local Android identity plus a pinned server key does *not* prove the server enrolled or authorized that client.
+
+The Android UI work explicitly tracks the distinction between states such as:
+
+- identity created;
+- server pinned;
+- awaiting server enrollment;
+- enrolled/authorized;
+- connecting;
+- connected;
+- rejected/degraded.
+
+If your build says local identity is prepared but server enrollment is still required, believe the detailed state, not a vague green label.
+
+** 12.4 One-step pairing direction
+
+*ACTIVE / EVOLVING*
+
+The project is moving toward a one-step =zara pair= style flow using short-lived QR/fallback codes while preserving the long-term CURVE trust model.
+
+Until that lands in your build, use the manual path above instead of assuming QR pairing exists.
+
+** 12.5 Server key changes
+
+A changed server public key must fail closed. Do not silently repin because "it is probably the same machine."
+
+An explicit server-key replacement should intentionally drop stale session assumptions and require reconnect.
+
+* 13. Android local/offline symbolic mode
+
+** 13.1 Trealla on device
+
+*IMPLEMENTED FOUNDATION*
+
+Android includes a portable Prolog subset running through Trealla via a thin NDK/JNI bridge.
+
+This is not intended to mirror every SWI-Prolog feature. The goal is semantic parity for the explicitly portable subset.
+
+** 13.2 Why this matters
+
+A useful phone assistant should not become a dead screen just because the server is offline.
+
+The Android architecture therefore supports a local symbolic direction where deterministic commands and policy can continue on-device when they are part of the portable subset.
+
+** 13.3 What offline mode should and should not do
+
+Offline/local mode is a good fit for:
+
+- deterministic aliases/intents;
+- local app/device capability selection;
+- local policy checks;
+- small symbolic workflows.
+
+Offline mode should not pretend it has:
+
+- remote server memory it cannot reach;
+- remote-only tools;
+- unavailable cloud providers;
+- a silently cloned server conversation database.
+
+Use explicit unavailable/connection-required results for remote-only work.
+
+* 14. Android voice, Assistant role, and device integration
+
+** 14.1 Status
+
+*ACTIVE / EVOLVING / HARDWARE-GATED*
+
+The goal is for Zara Android to operate as a practical Android/Samsung assistant while preserving the same Zara runtime semantics.
+
+The system integration work includes assistant invocation, notifications, IME, Accessibility, shares, Quick Settings, app launch/actions, device capabilities, and privilege-backend detection.
+
+Do not assume all of these are shipped merely because their design/issues are detailed.
+
+** 14.2 Assistant ownership
+
+Android owns:
+
+- microphone/speaker;
+- OS-level assistant entry points;
+- permissions;
+- local device mechanics.
+
+Zara runtime/server owns the shared assistant/runtime work when connected.
+
+Portable local Prolog can still decide local deterministic semantics without creating a second cloud/server stack.
+
+** 14.3 App launch and typed actions
+
+The safe pattern is:
+
+#+begin_example
+utterance / UI action
+    -> semantic resolution
+    -> typed device action
+    -> local policy/permission check
+    -> Android adapter
+    -> typed result
+#+end_example
+
+Avoid designing user/model data as a raw executable Intent string.
+
+* 15. Android automation authority and privilege backends
+
+** 15.1 The important distinction
+
+Zara policy can authorize an operation, but policy does not magically grant Android OS privilege.
+
+For example, a local policy may say an action is allowed, but execution is still constrained by the identity actually available:
+
+- normal application;
+- Accessibility service;
+- notification listener;
+- IME;
+- ADB/Shizuku identity;
+- root/Sui;
+- device-owner/DPC;
+- OEM/system app privileges where explicitly provisioned.
+
+** 15.2 Local Prolog policy
+
+*ACTIVE / EVOLVING*
+
+The deep Android integration design uses local Prolog as the authority source for which registered Android backends/operations may be used.
+
+A high-authority local profile may deliberately allow broad device operations, but remote/model text alone should not silently rewrite that authority profile.
+
+** 15.3 Truthful privilege reporting
+
+A backend should report what it actually has.
+
+Good result:
+
+#+begin_example
+backend: accessibility
+operation: global_back
+status: completed
+#+end_example
+
+Bad result:
+
+#+begin_example
+root operation complete
+#+end_example
+
+when Zara does not actually have root.
+
+Privilege discovery and failure must be explicit.
+
+* 16. Themes and visual system
+
+** 16.1 Android built-ins
+
+The Android design requires semantic-token themes with the same component hierarchy:
+
+1. Outrun — default;
+2. StarIntel — black/gold;
+3. Midnight — dark violet/blue;
+4. Terminal — black/green;
+5. Light — neutral light;
+6. System — follows Android.
+
+Reduced-glow mode should preserve the hierarchy without relying on bloom.
+
+** 16.2 Why semantic tokens matter
+
+Themes should not fork screen code. A Chat screen should still be the same Chat screen when you switch from Outrun to Terminal.
+
+That keeps behavior testable and prevents theme-specific bugs.
+
+* 17. Wear OS
+
+** 17.1 Status
+
+*ACTIVE / EVOLVING / HARDWARE-GATED*
+
+Wear work targets Samsung/Wear OS, including the Galaxy Watch5 Pro class of devices.
+
+The design direction includes:
+
+- a full Zara Wear client;
+- a dedicated low-latency Zara Voice entry point;
+- Tiles and complications;
+- shared auth/transport/theme foundations;
+- phone-nearby and watch-local runtime paths;
+- Wear Data Layer for paired phone transport.
+
+Do not treat this chapter as proof that every Wear surface is release-complete.
+
+** 17.2 Phone vs watch runtime
+
+The intended policy may choose among:
+
+- watch-local runtime when provisioned;
+- nearby phone over Wear Data Layer;
+- remote endpoint only when policy allows it.
+
+Strict-local mode should not silently fall through to cloud transport.
+
+** 17.3 Samsung button behavior
+
+A user can select Zara Voice as the Samsung double-press target where the platform exposes that setting. Zara should not claim it can silently rewrite the OEM button mapping.
+
+* 18. Security and privacy
+
+** 18.1 Principal ownership
+
+Private conversations, context, memory, and device actions must remain bound to authenticated/local principal identity.
+
+Display strings and payload fields must not override authenticated identity.
+
+** 18.2 Keys and secrets
+
+Never put long-lived secrets in:
+
+- APK assets;
+- source files;
+- issue text;
+- ordinary logs;
+- screenshots;
+- test fixtures committed to the repository.
+
+Android private identity should remain protected by the platform credential boundary.
+
+** 18.3 Local vs remote models
+
+A local model can reduce data sent to external providers, but local does not automatically mean safe:
+
+- local tools can still mutate state;
+- model output can still be wrong;
+- device capabilities still need policy;
+- logs still need redaction.
+
+** 18.4 Model output is not authority
+
+One of Zara's strongest design principles is that model output should be treated as proposal/data until it crosses a typed validation/authorization boundary.
+
+This applies to:
+
+- tools;
+- Prolog plans;
+- Android actions;
+- plugin operations;
+- coding workflows;
+- device automation.
+
+* 19. Troubleshooting cookbook
+
+** 19.1 Zara server starts but the client is useless
+
+Check:
+
+- runtime state;
+- provider availability;
+- plugin startup failures;
+- endpoint/profile mismatch;
+- auth/session state;
+- whether the UI is rendering stale client state after process recreation.
+
+Restarting repeatedly without reading the first failure often hides the useful error.
+
+** 19.2 Android cannot connect
+
+Check:
+
+1. Does the server have a remote TCP endpoint enabled?
+2. Is the phone using the correct host/IP and port?
+3. Does the pinned server key match the running server?
+4. Is the Android client public key actually enrolled server-side?
+5. Does the server reject the client principal/device?
+6. Did hello/session negotiation time out?
+7. Did you replace the server key without explicitly repinning?
+
+** 19.3 Android says enrollment is prepared but connection is rejected
+
+Local key creation/pinning and server enrollment are separate steps.
+
+Enroll the exact Android public key on the intended server and retry. Do not regenerate client identity blindly unless you intend to invalidate the old enrollment.
+
+** 19.4 Voice hears nothing
+
+Check capture before STT.
+
+- microphone permission/device;
+- capture process/thread still alive;
+- frames arriving;
+- VAD activity;
+- STT model loaded.
+
+A stalled capture path can make every downstream timeout look mysterious.
+
+** 19.5 Voice transcript is nonsense
+
+Check:
+
+- input level/noise;
+- wake/TTS echo bleeding into the next utterance;
+- model size;
+- decode settings;
+- whether short phrases are a weak case for the selected STT model.
+
+** 19.6 Zara generated TTS but you heard nothing
+
+Separate synthesis from playback.
+
+- confirm TTS completed;
+- confirm audio output chunks were delivered;
+- confirm client playback sink opened;
+- inspect PipeWire/Pulse/ALSA route behavior;
+- confirm no newer turn cancelled the stream.
+
+** 19.7 Plugin is installed but unavailable
+
+Check:
+
+- plugin API compatibility;
+- config/credentials;
+- startup diagnostics;
+- managed worker failure;
+- whether the plugin intentionally reports unavailable instead of ready;
+- stale handles after plugin reload.
+
+** 19.8 Prolog edit did not change behavior
+
+Check:
+
+- did the file save?
+- did parse/load succeed?
+- did runtime generation advance?
+- is another fact/rule taking precedence?
+- are you inspecting source text or effective loaded state?
+
+** 19.9 Android local model is unavailable or rejected
+
+First distinguish an embedded provider from an installed model. The provider can exist while no usable model is selected.
+
+Check:
+
+- the model file was imported into Zara's app-private model store;
+- the declared model format is supported by the selected provider;
+- model id/version metadata is valid;
+- declared SHA-256 matches the copied file;
+- the selected model still exists and passes hash verification at activation;
+- diagnostics identify the expected provider/model/quantization instead of a substituted remote provider.
+
+A catalog entry or provider capability is not proof that inference ran. Keep real-model execution and resource evidence separate.
+
+* 20. Advanced operator guide
+
+** 20.1 Remote server operation
+
+Use remote TCP only when you actually need remote clients, and keep the authenticated security path enabled.
+
+A normal desktop-only install does not need to expose a public listener merely because Android support exists in the codebase.
+
+** 20.2 Container/server distribution
+
+*ACTIVE / EVOLVING*
+
+The project has a reproducible =zara-server= container/GHCR direction built from Nix. Server/container work should keep mutable state, credentials, conversations, and security identity out of immutable image layers.
+
+Do not give the container host-device privileges such as Docker socket, root mounts, desktop sockets, microphone, or speaker unless a specific design explicitly requires and secures them.
+
+** 20.3 Health and diagnostics
+
+Good health/status interfaces should expose enough to answer:
+
+- is runtime ready/degraded/failed?
+- which provider/plugin/backend is unavailable?
+- what generation/session is active?
+- which capability is local vs remote?
+
+They should *not* expose transcripts, audio, secret keys, or provider credentials by default.
+
+* 21. Extending Zara correctly
+
+** 21.1 Add behavior at the right layer
+
+Before adding code, ask what kind of extension you are making.
+
+Use:
+
+- Prolog fact/rule for deterministic semantic policy;
+- plugin for an external integration/domain capability;
+- Core runtime change for shared lifecycle/authority semantics;
+- Android adapter for Android-only mechanics;
+- UI code only for presentation/projection;
+- =ZARA/1= protocol changes only for cross-process/client semantics that need a versioned contract.
+
+** 21.2 Do not create parallel authorities
+
+Avoid:
+
+- a second conversation database;
+- a plugin-private auth system;
+- a second Android scheduler;
+- a second assistant runtime inside Compose;
+- raw model-to-shell execution;
+- model-generated Prolog goals executed without validation;
+- UI widgets invoking tools directly.
+
+** 21.3 Typed capability mindset
+
+A powerful extension can still be explicit.
+
+Instead of:
+
+#+begin_example
+run arbitrary command string
+#+end_example
+
+prefer:
+
+#+begin_example
+capability: git_status
+project: current
+#+end_example
+
+Instead of:
+
+#+begin_example
+send raw Android intent extras from model text
+#+end_example
+
+prefer:
+
+#+begin_example
+capability: open_app
+app: youtube
+#+end_example
+
+then let policy and the platform adapter decide how that capability is realized.
+
+* 22. Development and verification
+
+** 22.1 Core repository gate
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+** 22.2 Android gate
+
+#+begin_src sh
+nix develop ./android -c bash scripts/test-android.sh
+#+end_src
+
+** 22.3 Evidence levels
+
+Match evidence to the claim.
+
+- unit test -> local logic correctness;
+- integration test -> boundary composition;
+- emulator -> Android behavior in a controlled virtual device;
+- real tiny model -> actual runtime/model compatibility;
+- real microphone -> hardware/audio behavior;
+- real Samsung phone/watch -> OEM/platform acceptance.
+
+Do not label one level as another.
+
+** 22.4 False greens to avoid
+
+Do not count these as completion:
+
+- skipped/xfail tests replacing acceptance;
+- timeout treated as success;
+- model assertion treated as proof of side effect;
+- provider HTTP 200 treated as proof of final state when read-back exists;
+- emulator result called real-device acceptance;
+- mock model called live-model coverage;
+- "build succeeded" called full Android assistant acceptance.
+
+* 23. A practical learning path
+
+If you are new to Zara, follow this order.
+
+** Stage 1 — operate Zara
+
+1. Start =zara-server=.
+2. Use =zara-desktop= or =zara-console=.
+3. Create and continue conversations.
+4. Learn cancellation and diagnostics.
+5. Try =zara-dictate= separately from full assistant voice.
+
+** Stage 2 — understand symbolic control
+
+1. Read the Logic/Prolog docs.
+2. Add a harmless alias/fact.
+3. Reload and verify effective behavior.
+4. Learn the difference between source state and runtime state.
+
+** Stage 3 — connect Android
+
+1. Build/install the current APK.
+2. Configure a remote authenticated server endpoint.
+3. Pin the exact server public key.
+4. Enroll the Android client identity.
+5. Confirm authenticated connection instead of relying on a vague readiness label.
+6. Explore local portable Prolog and Remote/Diagnostics state.
+
+** Stage 4 — add capabilities
+
+1. Install or develop one plugin.
+2. Understand its capability/approval boundary.
+3. Verify state after effects.
+4. Avoid building duplicate runtime/auth/state systems.
+
+** Stage 5 — advanced operator
+
+1. Harden remote deployment.
+2. Measure voice/model resource behavior.
+3. Use local providers where they fit.
+4. Contribute tests that prove failure modes, not only happy paths.
+
+* 24. Feature status map
+
+This table is intentionally conservative.
+
+| Area | Status |
+|------+--------|
+| Long-lived =zara-server= runtime | IMPLEMENTED |
+| =ZARA/1= client/server protocol | IMPLEMENTED foundation; release hardening continues |
+| Native Linux desktop | IMPLEMENTED + evolving toward one adaptive Copilot |
+| Durable conversations | IMPLEMENTED foundation |
+| Voice/STT/TTS | IMPLEMENTED foundation + active hardening |
+| Prolog symbolic core | IMPLEMENTED |
+| Plugins/service runtime | IMPLEMENTED foundation |
+| Android Gradle application | IMPLEMENTED foundation |
+| Android Trealla portable Prolog | IMPLEMENTED foundation |
+| Android CURVE/server pin/auth pieces | IMPLEMENTED foundation |
+| Android one-step pairing UX | ACTIVE / EVOLVING |
+| Complete Android daily-driver UI | ACTIVE / EVOLVING |
+| Android local AI service/provider + verified model store | IMPLEMENTED foundation; real-model/device evidence ACTIVE / EVOLVING |
+| Android three-menu navigation hierarchy | IMPLEMENTED in current =master=; individual secondary screens/capabilities may still be ACTIVE / EVOLVING |
+| Android capability APKs (Companion / Screen Vision / Notes) | GATED / PLANNED under fleet architecture vote and implementation handoffs |
+| Deep Android automation bus | ACTIVE / EVOLVING |
+| Android Assistant/Samsung system integration | ACTIVE / EVOLVING / hardware-gated |
+| Wear full client/Voice/Tiles/complications | ACTIVE / EVOLVING / hardware-gated |
+| Polished plugin registry install UX | ACTIVE / EVOLVING |
+| Reproducible server container release path | ACTIVE / EVOLVING |
+
+* 25. Where to read next
+
+Use these as supporting references:
+
+- [[file:../README.org][README.org]] — project overview and current status.
+- [[file:architecture.org][architecture.org]] — runtime/client/server architecture.
+- [[file:server.org][server.org]] — server, =ZARA/1=, auth, principals, voice transport.
+- [[file:development.org][development.org]] — build/test workflow.
+- [[file:STT.md][STT.md]] — speech-to-text details.
+- [[file:intentframe-contract.md][intentframe-contract.md]] — symbolic intent representation.
+- [[file:../wiki/android.org][wiki/android.org]] — Android architecture/status/toolchain.
+- [[file:../android/DESIGN.md][android/DESIGN.md]] — canonical Android product/visual target.
+- [[file:../wiki/plugins.org][wiki/plugins.org]] — plugin lifecycle/API.
+- [[file:../wiki/tool-approvals.org][wiki/tool-approvals.org]] — approval model.
+- [[file:../wiki/capability-plans.org][wiki/capability-plans.org]] — capability planning/symbolic control.
+
+* 26. The rule for getting the most out of Zara
+
+Zara becomes more useful when you move repeated behavior out of vague prompting and into explicit structure.
+
+Use conversation for exploration.
+
+Use Prolog for deterministic meaning and policy.
+
+Use typed capabilities for effects.
+
+Use plugins for real integrations.
+
+Use durable conversations/context deliberately instead of feeding everything everywhere.
+
+Use local models when locality is worth the tradeoff.
+
+Use remote models when capability is worth the privacy/network tradeoff.
+
+Use Android as a native device edge, not as a second disconnected assistant.
+
+And when Zara says something is unavailable or unverified, keep that honesty: explicit degraded state is more valuable than fake readiness.
