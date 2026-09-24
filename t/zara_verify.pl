@@ -19,7 +19,8 @@ blocked(Request) :- zara_verify:evaluate(Request, Decision), Decision.verdict \=
 test(no_vacuous_pass) :-
     request(R), blocked(R.put(evidence, [])).
 test(valid_observations) :-
-    request(R), zara_verify:evaluate(R, D), D.verdict == verified, D.merge_authorized == false.
+    request(R), zara_verify:evaluate(R, D), D.verdict == verified,
+    D.merge_authorized == false, D.model_calls == 0, D.provider_calls == 0.
 test(python_adds_ratchet_and_adversarial_seeds) :-
     source(['zara/runtime.py'], S), zara_verify:plan(S, Gates),
     forall(member(G, [coverage,deep_seed_1,deep_seed_31337]), memberchk(G,Gates)).
