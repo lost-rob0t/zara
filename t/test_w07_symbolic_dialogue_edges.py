@@ -70,7 +70,8 @@ def test_dialogue_parsers_cover_numeric_typed_and_size_boundaries():
     assert template.arg_order_names() == ("number", "flag", "when", "ref", "text")
     with pytest.raises(KeyError):
         template.spec("missing")
-    assert parse_number("12.5") == NumberValue(12.5)
+    assert parse_number("12") == NumberValue(12)
+    assert parse_number("12.5") is None
     assert parse_number("two hundred") == NumberValue(200)
     assert parse_number("twenty one") == NumberValue(21)
     assert parse_number("one two") is None
@@ -90,7 +91,7 @@ def test_dialogue_parsers_cover_numeric_typed_and_size_boundaries():
     number, flag, when, ref, text = template.specs
     assert parse_slot_value(number, "", max_chars=10) is None
     assert parse_slot_value(number, "123456", max_chars=3) is None
-    assert parse_slot_value(number, "4.5", max_chars=10) == NumberValue(4.5)
+    assert parse_slot_value(number, "45", max_chars=10) == NumberValue(45)
     assert parse_slot_value(flag, "true", max_chars=10) == BoolValue(True)
     assert parse_slot_value(when, "2026-09-24 17:04:59", max_chars=32) == DateTimeValue(2026, 9, 24, 17, 4, 59)
     assert parse_slot_value(ref, "alpha beta", max_chars=32) == RefValue("thing", "alpha beta")
