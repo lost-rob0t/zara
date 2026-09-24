@@ -1,6 +1,7 @@
 package ai.zara.app
 
 import ai.zara.app.assistant.AssistantLifecycleFence
+import ai.zara.app.plugins.PluginApkInstaller
 import ai.zara.app.prolog.PrologWorkspace
 import ai.zara.app.samsunghealth.SamsungHealthAndroidPlugin
 import ai.zara.app.samsunghealth.SamsungHealthPrologPlugin
@@ -23,6 +24,10 @@ class ZaraApplication : Application() {
             context = this,
             queryProlog = appSession::queryLocalProlog,
         )
+    }
+
+    internal val pluginInstaller: PluginApkInstaller by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        PluginApkInstaller(this)
     }
 
     val updateManager: AndroidUpdateManager by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
