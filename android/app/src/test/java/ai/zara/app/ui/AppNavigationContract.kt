@@ -9,8 +9,8 @@ object AppNavigationContract {
         check(routesFor(AppMenu.Chat) == listOf(AppRoute.Chat, AppRoute.Voice))
         check(routesFor(AppMenu.Workspace) == listOf(AppRoute.Logic, AppRoute.Projects, AppRoute.Scheduled))
         check(routesFor(AppMenu.Settings) == listOf(
-            AppRoute.Runtime, AppRoute.Connection, AppRoute.Permissions, AppRoute.Appearance,
-            AppRoute.Plugins, AppRoute.Updates, AppRoute.Diagnostics, AppRoute.About,
+            AppRoute.Settings, AppRoute.Runtime, AppRoute.Connection, AppRoute.Permissions,
+            AppRoute.Appearance, AppRoute.Plugins, AppRoute.Updates, AppRoute.Diagnostics, AppRoute.About,
         ))
         check(AppMenu.entries.flatMap(::routesFor).toSet() == AppRoute.entries.toSet())
         check(AppMenu.entries.flatMap(::routesFor).size == AppRoute.entries.size)
@@ -55,7 +55,7 @@ object AppNavigationContract {
         check(restored.menu == AppMenu.Settings)
         check(restored.chat == AppRoute.Chat)
         check(restored.workspace == AppRoute.Logic)
-        check(restored.settings == AppRoute.Runtime)
+        check(restored.settings == AppRoute.Settings)
         check(AppNavigation.restore(listOf("Settings", "Voice", "Scheduled", "Updates")).route == AppRoute.Updates)
     }
 
@@ -68,7 +68,7 @@ object AppNavigationContract {
     fun backReturnsThroughMenuRootThenChat() {
         check(AppNavigation().back() == null)
         check(AppNavigation().selectRoute(AppRoute.Voice).back()?.route == AppRoute.Chat)
-        check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Runtime)
+        check(AppNavigation().selectRoute(AppRoute.Updates).back()?.route == AppRoute.Settings)
         check(AppNavigation().selectRoute(AppRoute.Scheduled).back()?.route == AppRoute.Logic)
         for (route in AppRoute.entries) {
             var state: AppNavigation? = AppNavigation().selectRoute(route)
@@ -108,6 +108,6 @@ object AppNavigationContract {
         backReturnsThroughMenuRootThenChat()
         railBreakpointUsesAvailableWindowWidth()
         savedKeysAreStableNames()
-        println("PASS: 10 navigation contracts; 169 route transitions and 144 saved-state combinations")
+        println("PASS: 10 navigation contracts; 196 route transitions and 162 saved-state combinations")
     }
 }

@@ -4,6 +4,10 @@ import ai.zara.app.BuildConfig
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelBackend
+import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalModelSpec
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -25,7 +29,6 @@ import ai.zara.ui.theme.ZaraTheme
 import ai.zara.ui.theme.themeTokens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,7 +57,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
@@ -67,8 +69,10 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -97,6 +101,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AssistChip
 
 enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
     Chat("Chat", "⌂"),
@@ -154,10 +160,16 @@ fun ZaraApp(
     showChangelog: Boolean,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    localAiState: LocalAiState,
+    localModels: List<LocalModelSpec>,
+    localModelBusy: Boolean,
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
+    onSelectLocalModel: (String, String) -> Unit,
+    onUnloadLocalModel: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -376,6 +388,10 @@ fun ZaraApp(
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
+                                                localAiState = localAiState,
+                                                localModels = localModels,
+                                                localModelBusy = localModelBusy,
+                                                selectedTheme = selectedTheme,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
                                                 operationError = operationError,
@@ -390,6 +406,10 @@ fun ZaraApp(
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                                                onImportLocalModel = onImportLocalModel,
+                                                onSelectLocalModel = onSelectLocalModel,
+                                                onUnloadLocalModel = onUnloadLocalModel,
+                                                onNavigateSettings = { route -> navigation = navigation.selectRoute(route) },
                                                 padding = padding,
                                             )
                                             AppSurface.About -> AboutSurface(sourceSha, padding)
@@ -416,7 +436,7 @@ internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Plugins -> AppSurface.Plugins
     AppRoute.Diagnostics -> AppSurface.Diagnostics
     AppRoute.About -> AppSurface.About
-    AppRoute.Runtime, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
+    AppRoute.Settings, AppRoute.Runtime, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
 }
 
 @Composable
@@ -967,65 +987,6 @@ private fun ChatSurface(
 }
 
 @Composable
-private fun TurnFailureCard(
-    failure: TurnFailure,
-    userText: String,
-    onRetry: (String) -> Unit,
-    onReconnect: () -> Unit,
-    onOpenDiagnostics: () -> Unit,
-) {
-    val tokens = LocalZaraTokens.current
-    Surface(
-        color = tokens.surface,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, tokens.error),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                failure.title,
-                color = tokens.error,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp,
-                letterSpacing = 1.sp,
-            )
-            Text(
-                failure.explanation,
-                color = tokens.text,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-            )
-            Text(
-                "Code: ${failure.code}",
-                color = tokens.textMuted,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-            )
-            Text(
-                "Connection: ${failure.connectionState}  •  Recovery: ${failure.recovery}" +
-                    (failure.incidentId?.let { "  •  $it" } ?: ""),
-                color = tokens.textMuted,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (failure.retryPossible) {
-                    AssistChip(onClick = { onRetry(userText) }, label = { Text("Retry") })
-                }
-                if (failure.reconnectPossible) {
-                    AssistChip(onClick = onReconnect, label = { Text("Reconnect") })
-                }
-                AssistChip(onClick = onOpenDiagnostics, label = { Text("Diagnostics") })
-            }
-        }
-    }
-}
-
-@Composable
 private fun AssistantPendingMessage() {
     val tokens = LocalZaraTokens.current
     Surface(
@@ -1229,6 +1190,10 @@ private fun SettingsSurface(
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    localAiState: LocalAiState,
+    localModels: List<LocalModelSpec>,
+    localModelBusy: Boolean,
+    selectedTheme: ZaraTheme,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     operationError: String?,
@@ -1243,6 +1208,10 @@ private fun SettingsSurface(
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
+    onSelectLocalModel: (String, String) -> Unit,
+    onUnloadLocalModel: () -> Unit,
+    onNavigateSettings: (AppRoute) -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
@@ -1252,16 +1221,37 @@ private fun SettingsSurface(
     val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
-        ScreenTitle(section.label, "Settings")
+        if (section != AppRoute.Settings) {
+            TextButton(onClick = { onNavigateSettings(AppRoute.Settings) }) {
+                Text("‹ Settings")
+            }
+        }
+        ScreenTitle(
+            if (section == AppRoute.Settings) "Settings" else section.label,
+            if (section == AppRoute.Settings) "Private, explicit, device-first controls" else "Settings",
+        )
         when (section) {
+            AppRoute.Settings -> {
+                SettingsOverviewContent(
+                    runtimeMode = runtimeMode,
+                    localAiState = localAiState,
+                    localModels = localModels,
+                    runtimeState = state,
+                    microphonePermissionGranted = microphonePermissionGranted,
+                    selectedTheme = selectedTheme,
+                    updateState = updateState,
+                    onNavigate = onNavigateSettings,
+                )
+            }
             AppRoute.Runtime -> {
-                SectionCard("LOCAL ZARA SERVER") {
+                SectionCard("LOCAL RUNTIME") {
                     KeyValueRow("state", localServerState.phase.name.lowercase())
                     KeyValueRow("generation", localServerState.generation.toString())
                     KeyValueRow("knowledge sources", localServerState.loadedSources.size.toString())
-                    MutedNotice("Runs inside Zara with no account or network. The Logic workspace is app-private and never syncs to a remote server implicitly.")
+                    MutedNotice("The symbolic runtime is app-private and works with no account or network.")
                     localServerState.failure?.let { ErrorBanner(it) }
-                    Text("CHAT BACKEND", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                }
+                SectionCard("CHAT ROUTING") {
                     RuntimeMode.entries.forEach { mode ->
                         Row(
                             modifier = Modifier
@@ -1270,39 +1260,60 @@ private fun SettingsSurface(
                                     selected = mode == runtimeMode,
                                     onClick = { onSelectRuntimeMode(mode) },
                                 )
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            StatusDot(if (mode == runtimeMode) tokens.success else tokens.border)
-                            Text(
-                                mode.name,
-                                modifier = Modifier.padding(start = 10.dp),
-                                color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
+                            RadioButton(
+                                selected = mode == runtimeMode,
+                                onClick = { onSelectRuntimeMode(mode) },
                             )
+                            Column(modifier = Modifier.padding(start = 8.dp)) {
+                                Text(
+                                    mode.name,
+                                    color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
+                                )
+                                Text(
+                                    when (mode) {
+                                        RuntimeMode.Auto -> "Prefer authenticated remote; fall back to local"
+                                        RuntimeMode.Local -> "Never send this turn to the network"
+                                        RuntimeMode.Remote -> "Require an authenticated remote session"
+                                    },
+                                    color = tokens.textMuted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                         }
                     }
-                    MutedNotice("Auto prefers an authenticated remote session and falls back to local. Local never sends the turn to the network. Remote fails closed when disconnected.")
-                    Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                }
+                LocalModelSettingsCard(
+                    state = localAiState,
+                    models = localModels,
+                    busy = localModelBusy,
+                    onImport = onImportLocalModel,
+                    onSelect = onSelectLocalModel,
+                    onUnload = onUnloadLocalModel,
+                )
+                SectionCard("LOCAL EMBEDDINGS") {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = localEmbedding.enabled,
-                                onClick = { onSetLocalEmbeddingEnabled(!localEmbedding.enabled) },
-                            )
-                            .padding(vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        StatusDot(if (localEmbedding.enabled) tokens.success else tokens.border)
-                        Text(
-                            if (localEmbedding.enabled) "Enabled" else "Disabled",
-                            modifier = Modifier.padding(start = 10.dp),
-                            color = tokens.text,
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Semantic indexing", color = tokens.text)
+                            Text(
+                                "On-device only",
+                                color = tokens.textMuted,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Switch(
+                            checked = localEmbedding.enabled,
+                            onCheckedChange = onSetLocalEmbeddingEnabled,
                         )
                     }
                     KeyValueRow("model", localEmbedding.modelVersion)
                     KeyValueRow("dimensions", localEmbedding.dimensions.toString())
-                    MutedNotice("Runs fully on-device. Disabling it returns no vectors and prevents local semantic indexing.")
+                    MutedNotice("Turning this off returns no vectors and prevents local semantic indexing.")
                 }
             }
             AppRoute.Permissions -> {
