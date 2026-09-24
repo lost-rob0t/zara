@@ -432,4 +432,3 @@ def test_primary_android_gate_accepts_noncolliding_supplemental_namespaces(
     )
 
     assert validator.validate_android(primary, source_sha) == 3
-

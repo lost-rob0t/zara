@@ -241,7 +241,15 @@ def validate_android(
     source_sha: str,
     *,
     include_supplemental: bool = True,
+    _namespace: dict[str, set[str]] | None = None,
 ) -> int:
+    if _namespace is None:
+        _namespace = {
+            "scenario_ids": set(),
+            "scenario_states": set(),
+            "evidence_files": set(),
+        }
+
     manifest = _load_manifest(manifest_path)
     if manifest.get("source_sha") != source_sha:
         raise EvidenceError(
@@ -275,6 +283,9 @@ def validate_android(
         if file_value in seen_files:
             raise EvidenceError(f"android screenshot filename is duplicated: {file_value}")
         seen_files.add(file_value)
+        if file_value in _namespace["evidence_files"]:
+            raise EvidenceError(f"android evidence filename is duplicated: {file_value}")
+        _namespace["evidence_files"].add(file_value)
         expected_hash = _require_sha256(expected_hash, label=f"android screenshot {state}")
         data = _require_png(_safe_child(manifest_path.parent, file_value))
         actual_hash = hashlib.sha256(data).hexdigest()
@@ -289,7 +300,8 @@ def validate_android(
         raise EvidenceError("android manifest omitted per-scenario evidence")
 
     manifest_device_api = manifest.get("device", {}).get("api")
-    seen_scenario_ids: set[str] = set()
+    seen_scenario_ids = _namespace["scenario_ids"]
+    seen_global_scenario_states = _namespace["scenario_states"]
     seen_scenario_states: set[str] = set()
     for scenario in scenarios:
         if not isinstance(scenario, dict):
@@ -304,9 +316,10 @@ def validate_android(
             raise EvidenceError(f"duplicate scenario id: {scenario_id}")
         seen_scenario_ids.add(scenario_id)
         state = match.group(1)
-        if state in seen_scenario_states:
+        if state in seen_scenario_states or state in seen_global_scenario_states:
             raise EvidenceError(f"duplicate scenario state: {state}")
         seen_scenario_states.add(state)
+        seen_global_scenario_states.add(state)
 
         if scenario.get("source_sha") != source_sha:
             raise EvidenceError(f"android scenario source SHA mismatch: {scenario_id}")
@@ -381,6 +394,12 @@ def validate_android(
             scenario.get("assertion_evidence"),
             label=f"android scenario assertions {scenario_id}",
         )
+        for evidence_file in (text_file, assertion_file):
+            if evidence_file in _namespace["evidence_files"]:
+                raise EvidenceError(
+                    f"android evidence filename is duplicated: {evidence_file}"
+                )
+            _namespace["evidence_files"].add(evidence_file)
 
         text = _require_text(
             _safe_child(manifest_path.parent, text_file),
@@ -443,7 +462,13 @@ def validate_android(
                 f"scenario screenshot differs from screenshot manifest: {scenario_id}"
             )
 
-        scenario_path = _safe_child(manifest_path.parent, f"{state}.json")
+        scenario_record_file = f"{state}.json"
+        if scenario_record_file in _namespace["evidence_files"]:
+            raise EvidenceError(
+                f"android evidence filename is duplicated: {scenario_record_file}"
+            )
+        _namespace["evidence_files"].add(scenario_record_file)
+        scenario_path = _safe_child(manifest_path.parent, scenario_record_file)
         persisted_scenario = _load_manifest(scenario_path)
         if persisted_scenario != scenario:
             raise EvidenceError(f"persisted scenario record differs from manifest: {scenario_id}")
@@ -487,6 +512,7 @@ def validate_android(
                     supplemental_path,
                     source_sha,
                     include_supplemental=False,
+                    _namespace=_namespace,
                 )
     return count
 
