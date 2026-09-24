@@ -122,6 +122,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._audit_log = audit_log or SecurityAuditLog()
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
+        self._route_device_ids: dict[bytes, str] = {}
         self._route_nodes: dict[bytes, ZaraNode] = {}
         self._pending_hello_nodes: dict[bytes, Optional[ZaraNode]] = {}
         self._runtime_quota_holds: set[tuple[str, str]] = set()
@@ -353,6 +354,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             self._runtime_quota_holds.clear()
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
+            self._route_device_ids.clear()
             self._route_nodes.clear()
             self._pending_hello_nodes.clear()
             self._hello_route_resets.clear()
@@ -369,6 +371,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         if not resetting:
             principal_id = self._route_principal_ids.pop(route, None)
             self._route_user_ids.pop(route, None)
+            self._route_device_ids.pop(route, None)
             if principal_id is not None:
                 self._quotas.release_connection(principal_id)
         state = super()._drop_route_locked(route)
@@ -397,17 +400,22 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         finally:
             self._hello_route_resets.discard(route)
 
-    def _replace_prior_credential_routes(self, route: bytes, user_id: str) -> None:
+    def _replace_prior_credential_routes(self, route: bytes, enrolled) -> None:
         # ROUTER does not provide a portable routing-id-aware disconnect event.
-        # A restarted device may therefore arrive with a new route while its old
-        # route is still present in application bookkeeping. The cryptographic
-        # ZAP User-Id is the stronger identity: one enrolled credential may own
-        # only one current route. A fresh authenticated hello supersedes stale
-        # routes for that same credential before connection quota is charged.
+        # A restarted or rotated device may therefore arrive with a new route
+        # while its old route is still present in application bookkeeping.
+        # Identity comes only from the live SecurityRegistry enrollment resolved
+        # from ZAP User-Id: the same credential or the same enrolled device may
+        # own only one current route. This releases the superseded connection
+        # quota before the successor is charged.
         stale_routes = [
             candidate
             for candidate, bound_user_id in tuple(self._route_user_ids.items())
-            if candidate != route and bound_user_id == user_id
+            if candidate != route
+            and (
+                bound_user_id == enrolled.user_id
+                or self._route_device_ids.get(candidate) == enrolled.device_id
+            )
         ]
         for candidate in stale_routes:
             self._drop_route(candidate)
@@ -568,7 +576,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 return
 
         if message.type == "hello" and route not in self._route_principal_ids:
-            self._replace_prior_credential_routes(route, enrolled.user_id)
+            self._replace_prior_credential_routes(route, enrolled)
             try:
                 self._quotas.acquire_connection(principal_id)
             except QuotaExceeded:
@@ -593,6 +601,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 return
             self._route_user_ids[route] = enrolled.user_id
             self._route_principal_ids[route] = principal_id
+            self._route_device_ids[route] = enrolled.device_id
         else:
             bound_user_id = self._route_user_ids.get(route)
             if bound_user_id is not None and bound_user_id != enrolled.user_id:

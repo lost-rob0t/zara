@@ -887,3 +887,91 @@ def test_secure_gateway_enqueue_outbound_forwards_payloads(
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
+
+
+def test_key_rotation_supersedes_old_route_before_connection_quota(
+    zmq_context,
+    transport_config,
+):
+    endpoint = tcp_endpoint()
+    server_public, server_secret = keypair()
+    old_public, old_secret = keypair()
+    new_public, new_secret = keypair()
+    principal = PrincipalContext("user:alice", kind="authenticated")
+    registry = SecurityRegistry()
+    old = registry.enroll(
+        old_public,
+        principal=principal,
+        device_id="alice-phone",
+        capabilities={Capability.SESSION_BASIC},
+    )
+    gateway = make_secure_gateway(
+        zmq_context,
+        endpoint,
+        transport_config,
+        supervisor=FakeSupervisor(),
+        registry=registry,
+        server_public=server_public,
+        server_secret=server_secret,
+        limits=SecurityLimits(max_connections=1),
+    )
+    gateway.start().result(timeout=1.0)
+    old_dealer = secure_dealer(
+        zmq_context,
+        endpoint,
+        transport_config,
+        client_public=old_public,
+        client_secret=old_secret,
+        server_public=server_public,
+    )
+    new_dealer = None
+    try:
+        first = send_hello(old_dealer, "hello-before-rotation")
+        assert first.type == "hello.ok"
+
+        rotated = registry.rotate("alice-phone", new_public)
+        assert rotated.generation == old.generation + 1
+        assert rotated.user_id != old.user_id
+
+        new_dealer = secure_dealer(
+            zmq_context,
+            endpoint,
+            transport_config,
+            client_public=new_public,
+            client_secret=new_secret,
+            server_public=server_public,
+        )
+        successor = send_hello(new_dealer, "hello-after-rotation")
+        assert successor.type == "hello.ok", (
+            "a rotated key for the same registry-owned device must supersede "
+            "the revoked route before max_connections is charged"
+        )
+
+        with gateway._lock:
+            assert tuple(gateway._route_user_ids.values()) == (rotated.user_id,)
+            assert tuple(gateway._route_device_ids.values()) == ("alice-phone",)
+            assert tuple(gateway._route_principal_ids.values()) == (principal.principal_id,)
+
+        old_dealer.send_multipart(
+            encode_message(
+                ProtocolMessage(
+                    type="ping",
+                    id="old-key-after-rotation",
+                    session_id=first.session_id,
+                    timestamp_ns=2,
+                    payload_count=0,
+                )
+            )
+        )
+        denied = receive_message(old_dealer)
+        assert denied.type == "protocol.error"
+        assert denied.body["code"] == "authentication_required"
+
+        pong = send_ping(new_dealer, successor.session_id, "new-key-still-live")
+        assert pong.type == "pong"
+    finally:
+        old_dealer.close(0)
+        if new_dealer is not None:
+            new_dealer.close(0)
+        gateway.close(timeout=1.0)
+
