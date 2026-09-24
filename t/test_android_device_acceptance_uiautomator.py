@@ -150,6 +150,52 @@ def test_capture_rejects_split_rendered_action_ownership(
         device.capture("settings-plugins", required_actions=("Choose APK",))
 
 
+
+def test_tap_scrolls_clipped_action_inside_scroll_view_before_tapping(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    scroll_view = ET.fromstring(
+        '<node class="android.widget.ScrollView" bounds="[0,487][840,1611]" '
+        'clickable="false" enabled="true" />'
+    )
+    clipped_action = ET.fromstring(
+        '<node text="Choose APK" class="android.widget.Button" '
+        'bounds="[89,1600][751,1674]" clickable="true" enabled="true" />'
+    )
+    visible_action = ET.fromstring(
+        '<node text="Choose APK" class="android.widget.Button" '
+        'bounds="[89,905][751,1067]" clickable="true" enabled="true" />'
+    )
+    swipes = 0
+    taps: list[tuple[str, ...]] = []
+
+    def fake_nodes():
+        action = visible_action if swipes else clipped_action
+        return iter((scroll_view, action))
+
+    def fake_adb(*arguments: str, **_kwargs):
+        nonlocal swipes
+        if arguments == ("shell", "wm", "size"):
+            return "Physical size: 840x1867"
+        if arguments[:3] == ("shell", "input", "swipe"):
+            swipes += 1
+            return ""
+        if arguments[:3] == ("shell", "input", "tap"):
+            taps.append(arguments[3:])
+            return ""
+        raise AssertionError(f"unexpected adb call: {arguments!r}")
+
+    monkeypatch.setattr(device, "nodes", fake_nodes)
+    monkeypatch.setattr(device, "adb", fake_adb)
+
+    device.tap("Choose APK")
+
+    assert swipes == 1
+    assert taps == [("420", "986")]
+
 def test_await_label_dismisses_release_notes_that_appear_after_launch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
