@@ -709,6 +709,8 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
     }
     namespace_watch = None
     try:
+        if shutil.which('swipl') is None:
+            raise VerificationError('prolog_unavailable')
         epoch = capture_mutation_epoch(root, policy_root)
         namespace_watch = NamespaceMutationWatch(root, policy_root)
         namespace_watch.start()

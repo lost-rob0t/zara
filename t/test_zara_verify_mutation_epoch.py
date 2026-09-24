@@ -180,7 +180,7 @@ def test_ignored_generated_namespace_is_not_source_mutation(
     )
 
     assert not target.exists()
-    assert result['verdict'] == 'verified'
+    assert result['verdict'] == 'verified', result
     assert result['reasons'] == []
 
 
