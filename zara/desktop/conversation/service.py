@@ -129,11 +129,20 @@ class ConversationService:
             changed_ids: list[str] = []
             active_changed = False
             if message is not None and receipt.turn_id:
-                message.turn_id = receipt.turn_id
-                self.store.save_message(message)
-                changed_ids.append(message.id)
-                state.active_turn_id = receipt.turn_id
-                active_changed = True
+                if message.turn_id is None:
+                    message.turn_id = receipt.turn_id
+                    self.store.save_message(message)
+                    changed_ids.append(message.id)
+                    state.active_turn_id = receipt.turn_id
+                    active_changed = True
+                elif message.turn_id != receipt.turn_id:
+                    raise RuntimeError(
+                        "command receipt turn does not match the already-bound user message"
+                    )
+                # TurnStarted can beat the command receipt through the event bridge.
+                # In that ordering it already owns active-turn lifecycle. A late
+                # receipt is only the request acknowledgement and must not resurrect
+                # a turn that AgentCompleted/OutputReady has already terminalized.
             return ConversationUpdate(
                 conversation_id=conversation_id,
                 message_ids=tuple(changed_ids),
