@@ -165,3 +165,26 @@ failures in the existing ZARA/1 gateway and SecurityRegistry boundaries:
   fabricate coverage, lower floors, or duplicate the separately owned coverage
   infrastructure.
 
+** Retained blocker closure after first freeze
+- Consumed W05 terminal-failure evidence comment =5810555707=:
+  =AgentFailed= was previously unsupported by the ZARA/1 runtime-event codec,
+  so an accepted turn could become terminally silent. The existing wire
+  vocabulary now maps it to =turn.completed {success:false}= without leaking
+  the server-side failure reason.
+- Consumed W05 early-audio evidence comment =5813094228=:
+  pre-accept audio now computes and retains PCM payload frames before buffering,
+  checks negotiated output capability for known/pending owners, and revalidates
+  the actual route before releasing held audio. A non-negotiated route cannot
+  receive or consume hidden audio-output buffer capacity.
+- Implementation :: =979470af83f57683978d80a56fdb1cb68392c45c=
+  =fix(protocol): preserve terminal failure and early audio=
+- RED/GREEN contract is pinned by:
+  - =t/test_protocol_runtime.py= AgentFailed -> existing terminal failure wire
+    representation with no internal reason leakage;
+  - =t/test_zmq_turn_session_demux.py= accepted-before-AgentFailed actual socket
+    terminal closure + retired owner;
+  - negotiated early PCM exact payload survival across acceptance;
+  - non-negotiated early audio quiet + gateway remains alive.
+- No alternate protocol type, audio runtime, provider route, session owner, or
+  transport registry was introduced.
+
