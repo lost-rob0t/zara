@@ -126,4 +126,3 @@ def test_nested_generic_containers_are_not_a_dialog_owner_boundary(
         </hierarchy>
         """,
     )
-
