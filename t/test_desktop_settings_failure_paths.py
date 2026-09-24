@@ -382,12 +382,22 @@ def test_fact_dialog_invalid_values_are_reported_without_mutation(tmp_path, monk
         dispose(window)
 
 
-def test_source_selection_read_only_state_and_window_close_policy(tmp_path):
+def test_source_selection_read_only_state_and_window_close_policy(tmp_path, monkeypatch):
     window = make_window(tmp_path)
     try:
-        read_only_index = window.source_combo.findData("main")
-        assert read_only_index >= 0
-        window.source_combo.setCurrentIndex(read_only_index)
+        source_id = "main.pl"
+        source_path = window.repo_root / source_id
+        read_only = SimpleNamespace(
+            id=source_id,
+            label=source_id,
+            path=source_path,
+            writable=False,
+        )
+        monkeypatch.setattr(window.source_repository, "list", lambda: [read_only])
+        monkeypatch.setattr(window.source_repository, "read", lambda _source_id: "main :- true.\n")
+        index = window.source_combo.findData(source_id)
+        assert index >= 0
+        window.source_combo.setCurrentIndex(index)
         window._load_selected_source()
         assert window.prolog_editor.isReadOnly() is True
         assert window.save_prolog_button.isEnabled() is False
