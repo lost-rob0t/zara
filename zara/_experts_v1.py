@@ -1728,6 +1728,20 @@ class ExpertRegistry:
             error_code = ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
             error_message = "handler returned an unparseable outcome"
 
+        if verdict is ExpertVerdict.SUCCEEDED:
+            try:
+                output_contract = replace(
+                    operation,
+                    input_fields=operation.output_fields,
+                )
+                self._validate_input_against_operation(output_contract, data)
+            except ExpertInvalidInputError as error:
+                verdict = ExpertVerdict.UNKNOWN
+                data = {}
+                evidence_refs = ()
+                error_code = ExpertErrorCode.INVALID_INPUT
+                error_message = f"output schema violation: {error}"
+
         error_message = _bounded_error_message(error_message)
         result = ExpertResult(
             protocol=ZARA_EXPERT_PROTOCOL,

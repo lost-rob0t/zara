@@ -117,7 +117,8 @@ def test_schema_invalid_success_becomes_terminal_unknown_and_never_redispatches(
 
     assert first.verdict is ExpertVerdict.UNKNOWN
     assert first.error_code is ExpertErrorCode.INVALID_INPUT
-    assert "output field 'summary' must be a string" in first.error_message
+    assert "output schema violation" in first.error_message
+    assert "summary" in first.error_message
     assert first.data == {}
     assert first.evidence_refs == ()
     assert first.usage == {"model_calls": 0}
