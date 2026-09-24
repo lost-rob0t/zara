@@ -24,7 +24,14 @@
 
         llm_provider/1,             % anthropic | openai | openrouter | ollama
         llm_model/1,                % model name/ID
-        llm_endpoint/1              % API endpoint URL
+        llm_endpoint/1,             % API endpoint URL
+
+        commerce_provider/1,        % default commerce provider
+        commerce_confirmation/1,    % always
+        preference_learning/1,      % enabled | disabled
+        preference_min_observations/1,
+        preference_max_patterns/1,
+        preference_min_confidence/1
     ]).
 
 :- discontiguous kb_config:todo_destination/1.
@@ -45,6 +52,12 @@
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
+:- dynamic commerce_provider/1.
+:- dynamic commerce_confirmation/1.
+:- dynamic preference_learning/1.
+:- dynamic preference_min_observations/1.
+:- dynamic preference_max_patterns/1.
+:- dynamic preference_min_confidence/1.
 
 % ============================================================
 % ZARATHUSTRA DEFAULT CONFIGURATION
@@ -126,6 +139,23 @@ search_engine("https://search.brave.com/search?q=~w").
 %   wake_word("hey computer").
 %
 % With no explicit facts, wake words are derived from project_name/1.
+
+% ---- Commerce + Preference Learning ----
+%
+% Commerce is provider-neutral at the policy layer. Provider plugins own
+% operational details; the semantic policy here is safe on desktop/server.
+commerce_provider(doordash).
+
+% External purchases always require Zara Core's canonical interactive approval.
+% There is intentionally no "never confirm" mode.
+commerce_confirmation(always).
+
+% The Mega Brain can persist bounded low-authority observations and derive
+% deterministic preference patterns. These facts never grant action authority.
+preference_learning(enabled).
+preference_min_observations(2).
+preference_max_patterns(10).
+preference_min_confidence(0.5).
 
 % ---- LLM Provider Configuration ----
 

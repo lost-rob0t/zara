@@ -452,6 +452,62 @@ class PrologEngine:
         result = self.query_once(goal)
         return result.get("Cmd") if result else None
 
+    def get_commerce_policy(self) -> Dict[str, Any]:
+        """Read and validate the host-owned commerce/preference policy facts."""
+        goals = {
+            "provider": "kb_config:commerce_provider(Value)",
+            "confirmation": "kb_config:commerce_confirmation(Value)",
+            "preference_learning": "kb_config:preference_learning(Value)",
+            "preference_min_observations": "kb_config:preference_min_observations(Value)",
+            "preference_max_patterns": "kb_config:preference_max_patterns(Value)",
+            "preference_min_confidence": "kb_config:preference_min_confidence(Value)",
+        }
+        values: Dict[str, Any] = {}
+        for key, goal in goals.items():
+            row = self.query_once(goal)
+            if not isinstance(row, dict) or "Value" not in row:
+                raise PrologQueryError(
+                    goal,
+                    LookupError(f"missing commerce policy fact: {key}"),
+                )
+            values[key] = _normalize_value(row["Value"])
+
+        provider = str(values["provider"])
+        confirmation = str(values["confirmation"])
+        learning = str(values["preference_learning"])
+        minimum = values["preference_min_observations"]
+        maximum = values["preference_max_patterns"]
+        confidence = values["preference_min_confidence"]
+
+        if provider != "doordash":
+            raise PrologSerializationError("unsupported commerce provider")
+        if confirmation != "always":
+            raise PrologSerializationError(
+                "commerce confirmation must remain 'always'"
+            )
+        if learning not in {"enabled", "disabled"}:
+            raise PrologSerializationError("invalid preference_learning fact")
+        if isinstance(minimum, bool) or not isinstance(minimum, int) or not 1 <= minimum <= 1000:
+            raise PrologSerializationError("invalid preference_min_observations fact")
+        if isinstance(maximum, bool) or not isinstance(maximum, int) or not 1 <= maximum <= 100:
+            raise PrologSerializationError("invalid preference_max_patterns fact")
+        if (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not math.isfinite(float(confidence))
+            or not 0.0 <= float(confidence) <= 1.0
+        ):
+            raise PrologSerializationError("invalid preference_min_confidence fact")
+
+        return {
+            "provider": provider,
+            "confirmation": confirmation,
+            "preference_learning": learning == "enabled",
+            "preference_min_observations": minimum,
+            "preference_max_patterns": maximum,
+            "preference_min_confidence": float(confidence),
+        }
+
     def get_wake_words(self) -> List[str]:
         """Query wake words from ``kb_config:wake_word/1``."""
         results = self.query_all("kb_config:wake_word(W)", max_solutions=64)

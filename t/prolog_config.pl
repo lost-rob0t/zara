@@ -190,4 +190,43 @@ test(server_rejects_device_fact_from_local_overlay,
     write_config(LocalPath, 'app_mapping(browser, ["xdg-open"]).\n'),
     config_loader:load_server_config.
 
+
+test(commerce_and_preference_defaults_are_safe) :-
+    once(kb_config:commerce_provider(doordash)),
+    once(kb_config:commerce_confirmation(always)),
+    once(kb_config:preference_learning(enabled)),
+    once(kb_config:preference_min_observations(2)),
+    once(kb_config:preference_max_patterns(10)),
+    once(kb_config:preference_min_confidence(0.5)).
+
+test(commerce_and_preference_overrides_are_supported) :-
+    config_loader:user_config_path(Path),
+    write_config(Path,
+        'commerce_provider(doordash).\ncommerce_confirmation(always).\npreference_learning(disabled).\npreference_min_observations(4).\npreference_max_patterns(7).\npreference_min_confidence(0.75).\n'),
+    config_loader:reload_user_config,
+    once(kb_config:commerce_provider(doordash)),
+    once(kb_config:commerce_confirmation(always)),
+    once(kb_config:preference_learning(disabled)),
+    once(kb_config:preference_min_observations(4)),
+    once(kb_config:preference_max_patterns(7)),
+    once(kb_config:preference_min_confidence(0.75)).
+
+test(unsafe_commerce_confirmation_mode_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'commerce_confirmation(never).\n'),
+    config_loader:reload_user_config.
+
+test(invalid_preference_thresholds_are_rejected,
+     [ forall(member(Config, [
+           'preference_min_observations(0).\n',
+           'preference_max_patterns(101).\n',
+           'preference_min_confidence(1.5).\n'
+       ])),
+       throws(error(domain_error(zarathushtra_user_config_fact, _), _))
+     ]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, Config),
+    config_loader:reload_user_config.
+
 :- end_tests(prolog_config).

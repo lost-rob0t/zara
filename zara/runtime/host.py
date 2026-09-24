@@ -601,9 +601,16 @@ class RuntimeHost:
                         request,
                     ),
                 }
+            def plugin_configuration(name: str):
+                base = config.get_plugin_config(name)
+                try:
+                    return backend.plugin_configuration(name, base)
+                except UnsupportedRuntimeCommand:
+                    return base
+
             manager = PluginManager(
                 paths,
-                configuration_provider=config.get_plugin_config,
+                configuration_provider=plugin_configuration,
                 status_provider=self._plugin_runtime_status,
                 dispatcher=self.submit,
                 subscriber=self._subscriber,

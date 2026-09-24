@@ -118,6 +118,15 @@ write_default_config(Stream) :-
     writeln(Stream, '% timer_sound("/path/to/timer.wav").'),
     writeln(Stream, '% alarm_sound("/path/to/alarm.wav").'),
     writeln(Stream, ''),
+    writeln(Stream, '% ---- Commerce + Preference Learning ----'),
+    writeln(Stream, '% External purchases always require Core approval:'),
+    writeln(Stream, '% commerce_provider(doordash).'),
+    writeln(Stream, '% commerce_confirmation(always).'),
+    writeln(Stream, '% preference_learning(enabled).'),
+    writeln(Stream, '% preference_min_observations(2).'),
+    writeln(Stream, '% preference_max_patterns(10).'),
+    writeln(Stream, '% preference_min_confidence(0.5).'),
+    writeln(Stream, ''),
     writeln(Stream, '% ---- LLM Provider (for conversational queries) ----'),
     writeln(Stream, '% Choose provider: ollama (default, local) | openai | openrouter | anthropic'),
     writeln(Stream, '% llm_provider(ollama).'),
@@ -294,6 +303,21 @@ validate_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
     text_value(Model).
 validate_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
+validate_user_fact(commerce_provider(Provider), kb_config, commerce_provider(Provider)) :-
+    memberchk(Provider, [doordash]).
+validate_user_fact(commerce_confirmation(Mode), kb_config, commerce_confirmation(Mode)) :-
+    memberchk(Mode, [always]).
+validate_user_fact(preference_learning(Mode), kb_config, preference_learning(Mode)) :-
+    memberchk(Mode, [enabled, disabled]).
+validate_user_fact(preference_min_observations(Count), kb_config,
+                   preference_min_observations(Count)) :-
+    bounded_integer(Count, 1, 1000).
+validate_user_fact(preference_max_patterns(Count), kb_config,
+                   preference_max_patterns(Count)) :-
+    bounded_integer(Count, 1, 100).
+validate_user_fact(preference_min_confidence(Confidence), kb_config,
+                   preference_min_confidence(Confidence)) :-
+    bounded_number(Confidence, 0.0, 1.0).
 validate_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
@@ -306,6 +330,16 @@ validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
 
 text_value(Value) :-
     atom(Value) ; string(Value).
+
+bounded_integer(Value, Minimum, Maximum) :-
+    integer(Value),
+    Value >= Minimum,
+    Value =< Maximum.
+
+bounded_number(Value, Minimum, Maximum) :-
+    number(Value),
+    Value >= Minimum,
+    Value =< Maximum.
 
 nonempty_text(Value) :-
     text_value(Value),
@@ -397,6 +431,21 @@ validate_server_user_fact(llm_model(Model), kb_config, llm_model(Model)) :-
     text_value(Model).
 validate_server_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
+validate_server_user_fact(commerce_provider(Provider), kb_config, commerce_provider(Provider)) :-
+    memberchk(Provider, [doordash]).
+validate_server_user_fact(commerce_confirmation(Mode), kb_config, commerce_confirmation(Mode)) :-
+    memberchk(Mode, [always]).
+validate_server_user_fact(preference_learning(Mode), kb_config, preference_learning(Mode)) :-
+    memberchk(Mode, [enabled, disabled]).
+validate_server_user_fact(preference_min_observations(Count), kb_config,
+                          preference_min_observations(Count)) :-
+    bounded_integer(Count, 1, 1000).
+validate_server_user_fact(preference_max_patterns(Count), kb_config,
+                          preference_max_patterns(Count)) :-
+    bounded_integer(Count, 1, 100).
+validate_server_user_fact(preference_min_confidence(Confidence), kb_config,
+                          preference_min_confidence(Confidence)) :-
+    bounded_number(Confidence, 0.0, 1.0).
 validate_server_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_server_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
