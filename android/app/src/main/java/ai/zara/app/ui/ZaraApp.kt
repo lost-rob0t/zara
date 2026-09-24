@@ -149,7 +149,7 @@ fun ZaraApp(
     selectedTheme: ZaraTheme,
     localServerState: LocalServerState,
     localAiState: LocalAiState?,
-    prologSources: List<PrologSource>
+    prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
     changelogVersion: String,
