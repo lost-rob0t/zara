@@ -106,7 +106,11 @@ class MainActivity : ComponentActivity() {
             appSession,
             localVoiceFence,
         ) { status ->
-            runOnUiThread { localVoiceStatus = status }
+            runOnUiThread {
+                localVoiceStatus = status
+                localVoiceActive =
+                    status.startsWith("Listening") || status.startsWith("Heard:")
+            }
         }
         pairingCoordinator = AndroidPairingCoordinator(applicationContext, appSession)
         val updateManager = (application as ZaraApplication).updateManager
