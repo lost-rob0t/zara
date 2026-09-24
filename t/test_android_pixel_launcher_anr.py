@@ -59,6 +59,80 @@ def test_pixel_launcher_anr_closes_hung_launcher_instead_of_waiting(
     assert adb_calls == [("shell", "input", "tap", "50", "50")]
 
 
+def test_google_sdk_setup_anr_is_closed_and_recorded(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    dialog_text = "com.google.android.googlesdksetup isn't responding"
+    setup_anr = module.ET.fromstring(
+        f'<node text="{dialog_text}" bounds="[10,10][90,90]" />'
+    )
+    close_app = module.ET.fromstring(
+        '<node text="Close app" bounds="[20,30][80,70]" />'
+    )
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        device,
+        "find_contains",
+        lambda fragment: setup_anr if fragment == dialog_text else None,
+    )
+    monkeypatch.setattr(
+        device,
+        "find",
+        lambda label: close_app if label == "Close app" else None,
+    )
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    assert device.dismiss_pixel_launcher_anr() is True
+    assert adb_calls == [("shell", "input", "tap", "50", "50")]
+    assert device.system_anr_sanitation == [
+        {
+            "package": "com.google.android.googlesdksetup",
+            "dialog": dialog_text,
+            "action": "Close app",
+            "cleared": True,
+        }
+    ]
+
+
+def test_unknown_anr_fails_closed_instead_of_accepting_background_zara(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    unknown_text = "ai.zara.app isn't responding"
+    unknown_anr = module.ET.fromstring(
+        f'<node text="{unknown_text}" bounds="[10,10][90,90]" />'
+    )
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        device,
+        "find_contains",
+        lambda fragment: unknown_anr if fragment == "isn't responding" else None,
+    )
+    monkeypatch.setattr(device, "find", lambda _label: None)
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
+    )
+
+    with pytest.raises(AssertionError, match="Unexpected ANR dialog blocks acceptance"):
+        device.dismiss_pixel_launcher_anr()
+
+    assert adb_calls == []
+
+
 def test_non_launcher_anr_is_never_dismissed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
