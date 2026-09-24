@@ -14,8 +14,9 @@ mkdir -p -- "$ARTIFACT_DIR"
 
 python -m pytest -q -o faulthandler_timeout=15 \
   --junit-xml="$ARTIFACT_DIR/python-junit.xml" \
-  t/test_zara_verify_runner.py t/test_zara_verify_provider_accounting.py \
-  t/test_zara_verifier_expert.py t/test_zara_verifier_registry.py t/test_zara_verify_schema.py \
+  t/test_zara_verify_runner.py t/test_zara_verify_mutation_epoch.py \
+  t/test_zara_verify_provider_accounting.py t/test_zara_verifier_expert.py \
+  t/test_zara_verifier_registry.py t/test_zara_verify_schema.py \
   2>&1 | tee "$ARTIFACT_DIR/python.log"
 swipl -q -f none -s t/zara_verify.pl -g '(run_tests -> halt(0); halt(1))' -t 'halt(1)' \
   2>&1 | tee "$ARTIFACT_DIR/prolog.log"
