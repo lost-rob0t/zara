@@ -169,6 +169,7 @@ class Device:
         *,
         assertion_name: str,
         detail: str,
+        passed: bool = True,
     ) -> None:
         scenario_id = self._scenario_id(name)
         record = next(
@@ -183,7 +184,7 @@ class Device:
             raise AssertionError(f"Rendered-state scenario record is missing: {scenario_id}")
         assertion = {
             "name": _bounded_evidence_text(assertion_name),
-            "passed": True,
+            "passed": bool(passed),
             "detail": _bounded_evidence_text(detail),
         }
         record["assertions"].append(assertion)
@@ -530,6 +531,16 @@ class Device:
             action_nodes.append((label, node))
 
         path = self.capture(screenshot_name)
+
+        def fail_visual_assertion(detail: str) -> None:
+            self._append_scenario_assertion(
+                screenshot_name,
+                assertion_name="transient-surface-visible",
+                detail=detail,
+                passed=False,
+            )
+            raise AssertionError(detail)
+
         screenshot_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         with Image.open(path) as opened:
             image = opened.convert("RGB")
@@ -544,7 +555,7 @@ class Device:
         for label, node in action_nodes:
             left, top, right, bottom = self.bounds(node)
             if not (0 <= left < right <= viewport_width and 0 <= top < bottom <= viewport_height):
-                raise AssertionError(
+                fail_visual_assertion(
                     f"Transient-surface action escaped viewport: {label} {node.attrib.get('bounds')}"
                 )
             lefts.append(left)
@@ -556,7 +567,7 @@ class Device:
             crop_width, crop_height = crop.size
             edge_inset = max(1, min(6, crop_width // 10, crop_height // 10))
             if crop_width <= edge_inset * 2 or crop_height <= edge_inset * 2:
-                raise AssertionError(
+                fail_visual_assertion(
                     "Transient-surface action is too small for interior visual evidence: "
                     f"{label} size={crop_width}x{crop_height} inset={edge_inset}"
                 )
@@ -567,7 +578,7 @@ class Device:
             occupied_bins = sum(1 for count in content_crop.histogram() if count)
             luma_span = int(high) - int(low)
             if luma_span < 18 or occupied_bins < 4:
-                raise AssertionError(
+                fail_visual_assertion(
                     "Transient-surface action is semantically present but visually blank: "
                     f"{label} luma_span={luma_span} occupied_bins={occupied_bins}"
                 )
@@ -590,7 +601,7 @@ class Device:
         union_width = union[2] - union[0]
         union_height = union[3] - union[1]
         if union_width > viewport_width * 0.65 or union_height > viewport_height * 0.45:
-            raise AssertionError(
+            fail_visual_assertion(
                 "Transient menu occupies implausibly large viewport area: "
                 f"union={union} viewport={viewport_width}x{viewport_height}"
             )
@@ -603,7 +614,7 @@ class Device:
         nearest_y = min(max(trigger_center[1], union[1]), union[3])
         distance = abs(trigger_center[0] - nearest_x) + abs(trigger_center[1] - nearest_y)
         if distance > max(viewport_width, viewport_height) * 0.35:
-            raise AssertionError(
+            fail_visual_assertion(
                 "Transient menu is not anchored near its trigger: "
                 f"trigger={trigger_bounds} union={union} distance={distance}"
             )
