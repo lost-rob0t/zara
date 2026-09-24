@@ -308,6 +308,7 @@ class ZaraZmqGateway:
         self._route_outbound: OrderedDict[bytes, deque[_GatewayOutbound]] = OrderedDict()
         self._routes: dict[bytes, _RouteState] = {}
         self._turn_routes: dict[tuple[str, str], bytes] = {}
+        self._retired_turns: OrderedDict[tuple[str, str], None] = OrderedDict()
         self._early_turn_events: OrderedDict[tuple[str, str], deque] = OrderedDict()
         self._turns_awaiting_accept: set[tuple[str, str]] = set()
         self._approval_owners: dict[tuple[str, str], _ApprovalOwner] = {}
@@ -332,6 +333,7 @@ class ZaraZmqGateway:
             self._generation += 1
             self._routes.clear()
             self._turn_routes.clear()
+            self._retired_turns.clear()
             self._early_turn_events.clear()
             self._turns_awaiting_accept.clear()
             self._approval_owners.clear()
@@ -442,6 +444,7 @@ class ZaraZmqGateway:
         self._route_outbound.pop(route, None)
         for turn_key, candidate in tuple(self._turn_routes.items()):
             if candidate == route:
+                self._mark_turn_retired_locked(turn_key)
                 self._turn_routes.pop(turn_key, None)
                 self._early_turn_events.pop(turn_key, None)
                 self._turns_awaiting_accept.discard(turn_key)
@@ -463,6 +466,12 @@ class ZaraZmqGateway:
         with self._lock:
             state = self._drop_route_locked(route)
         self._cancel_audio_inputs(state)
+
+    def _mark_turn_retired_locked(self, key: tuple[str, str]) -> None:
+        self._retired_turns[key] = None
+        self._retired_turns.move_to_end(key)
+        while len(self._retired_turns) > self._config.idempotency_cache_size:
+            self._retired_turns.popitem(last=False)
 
     def _enqueue_outbound(
         self,
@@ -1372,9 +1381,11 @@ class ZaraZmqGateway:
                     )
                 if response.turn_id and live_routes:
                     latest = live_routes[-1]
-                    self._turn_routes[(latest.principal_id, response.turn_id)] = latest.route
+                    turn_key = (latest.principal_id, response.turn_id)
+                    self._retired_turns.pop(turn_key, None)
+                    self._turn_routes[turn_key] = latest.route
                     if response.type == "turn.accepted":
-                        self._turns_awaiting_accept.add((latest.principal_id, response.turn_id))
+                        self._turns_awaiting_accept.add(turn_key)
                 self._remember_response(replay_key, command, response)
 
             for candidate in routes:
@@ -1430,8 +1441,11 @@ class ZaraZmqGateway:
                                 event.turn_id,
                             )
                         continue
-                    route = self._turn_routes.get((principal_id, event.turn_id))
+                    turn_key = (principal_id, event.turn_id)
+                    route = self._turn_routes.get(turn_key)
                     if route is None:
+                        if turn_key in self._retired_turns:
+                            continue
                         pending_accepts = [
                             inflight
                             for (inflight_principal, _request_id), inflight in self._inflight.items()
@@ -1449,7 +1463,16 @@ class ZaraZmqGateway:
                                 for inflight in pending_accepts:
                                     inflight.backpressured_turn_ids.add(event.turn_id)
                             continue
-                        continue
+                        if event.conversation_id:
+                            matches = [
+                                candidate
+                                for candidate, state in self._routes.items()
+                                if state.ready
+                                and state.principal_id == principal_id
+                                and state.conversation_id == event.conversation_id
+                            ]
+                            if len(matches) == 1:
+                                route = matches[0]
             if route is None and event.turn_id is None and event.conversation_id:
                 with self._lock:
                     matches = [
@@ -1602,6 +1625,7 @@ class ZaraZmqGateway:
                     outbound[index] = _GatewayOutbound(message=response)
                     replaced = True
                     break
+        self._mark_turn_retired_locked(key)
         self._early_turn_events.pop(key, None)
         self._turns_awaiting_accept.discard(key)
         self._turn_routes.pop(key, None)
@@ -1620,6 +1644,7 @@ class ZaraZmqGateway:
         key = (state.principal_id, turn_id)
         if self._turn_routes.get(key) != route:
             return
+        self._mark_turn_retired_locked(key)
         self._turn_routes.pop(key, None)
         self._early_turn_events.pop(key, None)
         self._turns_awaiting_accept.discard(key)
