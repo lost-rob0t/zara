@@ -165,6 +165,25 @@ def test_transient_new_policy_path_invalidates_verified_receipt(
     assert 'source_mutated_during_verification' in result['reasons']
 
 
+def test_ignored_generated_namespace_is_not_source_mutation(
+        repository, policy_root, monkeypatch):
+    (repository / '.gitignore').write_text('pkg/*.tmp\\n')
+    git(repository, 'add', '.gitignore')
+    git(repository, 'commit', '-qm', 'ignore generated fixture')
+    target = repository / 'pkg' / 'generated.tmp'
+
+    result = run_fixture(
+        repository,
+        policy_root,
+        monkeypatch,
+        [sys.executable, '-c', TRANSIENT_NEW_PATH, str(target), 'generated\\n'],
+    )
+
+    assert not target.exists()
+    assert result['verdict'] == 'verified'
+    assert result['reasons'] == []
+
+
 def test_untouched_gate_preserves_verified_receipt(repository, policy_root, monkeypatch):
     result = run_fixture(
         repository,
