@@ -250,12 +250,18 @@ async def test_qwen_register_voice_posts_registry_payload(monkeypatch, tmp_path)
     class Response:
         status = 200
 
-        async def json(self):
-            return {"ok": True}
+        def __init__(self, payload):
+            self.payload = payload
+
+        async def json(self, **kwargs):
+            return self.payload
 
     class RequestContext:
+        def __init__(self, payload):
+            self.payload = payload
+
         async def __aenter__(self):
-            return Response()
+            return Response(self.payload)
 
         async def __aexit__(self, exc_type, exc, traceback):
             return False
@@ -265,10 +271,16 @@ async def test_qwen_register_voice_posts_registry_payload(monkeypatch, tmp_path)
 
         def __init__(self):
             self.calls = []
+            self.voice_reads = [[], ["zara"]]
+
+        def get(self, url, **kwargs):
+            voices = self.voice_reads.pop(0)
+            self.calls.append((url, None))
+            return RequestContext({"voices": [{"name": name} for name in voices]})
 
         def post(self, url, json=None, **kwargs):
             self.calls.append((url, json))
-            return RequestContext()
+            return RequestContext({"ok": True})
 
         async def close(self):
             self.closed = True
@@ -278,7 +290,7 @@ async def test_qwen_register_voice_posts_registry_payload(monkeypatch, tmp_path)
 
     await client.register_voice("zara", str(audio_path), "words spoken")
 
-    url, body = session.calls[0]
+    url, body = next((url, body) for url, body in session.calls if body is not None)
     assert url.endswith("/v1/audio/voices")
     assert body["name"] == "zara"
     assert body["ref_text"] == "words spoken"

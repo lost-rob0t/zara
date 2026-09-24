@@ -110,6 +110,7 @@ setup(
         "sentence-transformers>=2.5",
         "pykka>=3.1",
         "pysilero-vad>=3.0",
+        "sherpa-onnx>=1.10.28",
         "pyside6>=6.5",
         "pillow>=10.0",
         "pyzmq>=25.0",
@@ -117,10 +118,12 @@ setup(
         "httpx2>=2.5",
         "pytest>=7.0",
         "pytest-asyncio>=0.23",
+        "yt-dlp>=2024.1.1",
     ],
     extras_require={
         "dev": ["pytest", "pytest-asyncio"],
     },
+    scripts=["scripts/zara-ytdlp"],
     entry_points={
         "console_scripts": [
             "zara=zara.__main__:main",

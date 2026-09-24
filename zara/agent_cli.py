@@ -9,6 +9,7 @@ import sys
 import asyncio
 from .agent import AgentManager
 from .config import get_config
+from .prolog_engine import PrologEngine, locate_main_pl
 
 
 async def chat_loop():
@@ -19,8 +20,10 @@ async def chat_loop():
     # Get configuration
     config = get_config()
 
-    # Initialize agent with config
-    agent = AgentManager(config=config)
+    # The Python agent runtime is still Prolog-backed. Voice selection and
+    # multi-speaker policy must never degrade to Python-only decisions.
+    prolog_engine = PrologEngine(main_file=locate_main_pl())
+    agent = AgentManager(config=config, prolog_engine=prolog_engine)
     agent.conversation_manager.enter_conversation()  # Start in conversation mode
 
     try:

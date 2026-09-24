@@ -216,7 +216,7 @@ def test_flake_packages_and_exposes_zara_server():
         'pname = "zara-server";',
         'binaryName = "zara-server";',
         'addFlags = "-m zara.server";',
-        'paths = [ zara-cli zara-server zara-desktop zara-prolog zara-wake zara-dictate ];',
+        'paths = [ zara-cli zara-server zara-desktop zara-prolog zara-wake zara-dictate zaraYtdlp ];',
         'zara-server = zara-server;',
         'program = "${zara-server}/bin/zara-server";',
     ]

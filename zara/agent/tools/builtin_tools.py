@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .file_tools import build_file_tools
 from .todo_tools import build_todo_tools
 from ...noaa import build_noaa_weather_tool
+from ...voice_expert import build_voice_tools
 
 
 TASK_GOAL_MAX_CHARS = 2000
@@ -451,6 +452,7 @@ def get_builtin_tools(
     memory_manager=None,
     file_tool_config: Optional[Dict[str, Any]] = None,
     task_service=None,
+    config=None,
 ) -> List[StructuredTool]:
     tools: List[StructuredTool] = [calculator, get_current_time]
 
@@ -479,6 +481,8 @@ def get_builtin_tools(
 
     if prolog_engine is not None:
         tools.append(build_prolog_tool(prolog_engine))
+        if config is not None:
+            tools.extend(build_voice_tools(prolog_engine, config))
 
     noaa_tool = build_noaa_weather_tool()
     if noaa_tool is not None:

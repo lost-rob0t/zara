@@ -63,7 +63,9 @@ class FakeRequestContext:
 class FakeSession:
     def __init__(self):
         self.requests: list[dict] = []
-        self.responses: dict[tuple[str, str], FakeResponse] = {}
+        self.responses: dict[
+            tuple[str, str], FakeResponse | list[FakeResponse]
+        ] = {}
         self.closed = False
 
     def _respond(self, method: str, url: str):
@@ -71,9 +73,14 @@ class FakeSession:
         return FakeRequestContext(self._next_response(method, url))
 
     def _next_response(self, method: str, url: str) -> FakeResponse:
-        for (rmethod, rurl), response in self.responses.items():
-            if rmethod == method and rurl in url:
-                return response
+        for (rmethod, rurl), configured in self.responses.items():
+            if rmethod != method or rurl not in url:
+                continue
+            if isinstance(configured, list):
+                if configured:
+                    return configured.pop(0)
+                return FakeResponse(status=500, body=b"response sequence exhausted")
+            return configured
         return FakeResponse(status=404, body=b"not found")
 
     def get(self, url, **kwargs):
@@ -93,7 +100,7 @@ class FakeSession:
 
 
 def client_with(session: FakeSession) -> Qwen3TTSClient:
-    client = Qwen3TTSClient("http://tts.test")
+    client = Qwen3TTSClient("http://localhost:7860")
     client.session = session
     return client
 
@@ -112,7 +119,7 @@ async def test_speech_posts_openai_json_body_and_returns_wav():
 
     assert audio == wav_bytes()
     request = session.requests[0]
-    assert request["url"] == "http://tts.test/v1/audio/speech"
+    assert request["url"] == "http://localhost:7860/v1/audio/speech"
     assert request["kwargs"]["json"] == {
         "input": "Hello world.",
         "voice": "zara",
@@ -169,12 +176,16 @@ async def test_list_voices_parses_the_registry():
     voices = await client.list_voices()
 
     assert voices == ["zara", "vivian"]
-    assert session.requests[0]["url"] == "http://tts.test/v1/audio/voices"
+    assert session.requests[0]["url"] == "http://localhost:7860/v1/audio/voices"
 
 
 @pytest.mark.asyncio
 async def test_register_voice_posts_base64_wav_and_transcript(tmp_path: Path):
     session = FakeSession()
+    session.responses[("GET", "/v1/audio/voices")] = [
+        FakeResponse(payload={"voices": []}),
+        FakeResponse(payload={"voices": [{"name": "zara"}]}),
+    ]
     session.responses[("POST", "/v1/audio/voices")] = FakeResponse(payload={"ok": True})
     audio = tmp_path / "zara.wav"
     audio.write_bytes(wav_bytes())
@@ -183,7 +194,8 @@ async def test_register_voice_posts_base64_wav_and_transcript(tmp_path: Path):
     result = await client.register_voice("zara", str(audio), "Exact words spoken.")
 
     assert result == {"ok": True}
-    body = session.requests[0]["kwargs"]["json"]
+    request = next(row for row in session.requests if row["method"] == "POST")
+    body = request["kwargs"]["json"]
     assert body["name"] == "zara"
     assert body["ref_text"] == "Exact words spoken."
     assert base64.b64decode(body["wav_b64"]) == wav_bytes()
@@ -200,13 +212,17 @@ async def test_register_voice_missing_file_raises():
 @pytest.mark.asyncio
 async def test_delete_voice_uses_the_named_route():
     session = FakeSession()
+    session.responses[("GET", "/v1/audio/voices")] = [
+        FakeResponse(payload={"voices": [{"name": "zara"}]}),
+        FakeResponse(payload={"voices": []}),
+    ]
     session.responses[("DELETE", "/v1/audio/voices/zara")] = FakeResponse(payload={"ok": True})
     client = client_with(session)
 
     await client.delete_voice("zara")
 
-    assert session.requests[0]["method"] == "DELETE"
-    assert session.requests[0]["url"].endswith("/v1/audio/voices/zara")
+    request = next(row for row in session.requests if row["method"] == "DELETE")
+    assert request["url"].endswith("/v1/audio/voices/zara")
 
 
 @pytest.mark.asyncio
@@ -304,3 +320,120 @@ async def test_pcm_chunks_pass_through_the_output_bridge_decoder():
 
     pcm = b"\x00\x01\x02\x03"
     assert await asyncio.to_thread(bridge._decode_to_pcm, pcm, "pcm") == pcm
+
+
+@pytest.mark.asyncio
+async def test_same_target_voice_registration_has_one_verified_winner(tmp_path: Path):
+    audio = tmp_path / "voice.wav"
+    audio.write_bytes(wav_bytes())
+    inventory: set[str] = set()
+    register_calls = 0
+
+    class DynamicContext:
+        def __init__(self, method: str, payload: dict | None = None):
+            self.method = method
+            self.payload = payload or {}
+
+        async def __aenter__(self):
+            nonlocal register_calls
+            if self.method == "GET":
+                return FakeResponse(
+                    payload={"voices": [{"name": name} for name in sorted(inventory)]}
+                )
+            if self.method == "POST":
+                register_calls += 1
+                await asyncio.sleep(0.05)
+                inventory.add(str(self.payload["name"]))
+                return FakeResponse(payload={"ok": True})
+            raise AssertionError(self.method)
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class DynamicSession:
+        closed = False
+
+        def get(self, url, **kwargs):
+            return DynamicContext("GET")
+
+        def post(self, url, json=None, **kwargs):
+            return DynamicContext("POST", json)
+
+        async def close(self):
+            self.closed = True
+
+    first = Qwen3TTSClient("http://localhost:7860")
+    second = Qwen3TTSClient("http://127.0.0.1:7860")
+    first.session = DynamicSession()
+    second.session = DynamicSession()
+
+    results = await asyncio.gather(
+        first.register_voice("same-target", str(audio)),
+        second.register_voice("same-target", str(audio)),
+        return_exceptions=True,
+    )
+
+    successes = [result for result in results if isinstance(result, dict)]
+    failures = [result for result in results if isinstance(result, RuntimeError)]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert "already exists" in str(failures[0])
+    assert register_calls == 1
+    assert inventory == {"same-target"}
+
+
+@pytest.mark.asyncio
+async def test_same_target_voice_delete_has_one_verified_winner():
+    inventory = {"same-target"}
+    delete_calls = 0
+
+    class DynamicContext:
+        def __init__(self, method: str):
+            self.method = method
+
+        async def __aenter__(self):
+            nonlocal delete_calls
+            if self.method == "GET":
+                return FakeResponse(
+                    payload={"voices": [{"name": name} for name in sorted(inventory)]}
+                )
+            if self.method == "DELETE":
+                delete_calls += 1
+                await asyncio.sleep(0.05)
+                inventory.discard("same-target")
+                return FakeResponse(payload={"ok": True})
+            raise AssertionError(self.method)
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class DynamicSession:
+        closed = False
+
+        def get(self, url, **kwargs):
+            return DynamicContext("GET")
+
+        def delete(self, url, **kwargs):
+            return DynamicContext("DELETE")
+
+        async def close(self):
+            self.closed = True
+
+    first = Qwen3TTSClient("http://localhost:7860")
+    second = Qwen3TTSClient("http://127.0.0.1:7860")
+    first.session = DynamicSession()
+    second.session = DynamicSession()
+
+    results = await asyncio.gather(
+        first.delete_voice("same-target"),
+        second.delete_voice("same-target"),
+        return_exceptions=True,
+    )
+
+    successes = [result for result in results if isinstance(result, dict)]
+    failures = [result for result in results if isinstance(result, RuntimeError)]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert "does not exist" in str(failures[0])
+    assert delete_calls == 1
+    assert inventory == set()

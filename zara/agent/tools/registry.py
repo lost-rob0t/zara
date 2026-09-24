@@ -193,6 +193,7 @@ class ToolRegistry:
             self.prolog_engine,
             memory_manager=memory_manager,
             file_tool_config=file_tool_config,
+            config=self.config,
         )
         if not todos_enabled:
             all_tools = [tool for tool in all_tools if tool.name not in TODO_TOOL_NAMES]

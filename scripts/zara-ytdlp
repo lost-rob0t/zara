@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Zara's bounded yt-dlp entrypoint.
+#
+# Keep provider-friendly request/download pacing in one reusable place so
+# individual tools do not silently bypass the delay policy.
+set -euo pipefail
+
+exec yt-dlp \
+  --sleep-requests 1 \
+  --sleep-interval 1 \
+  --max-sleep-interval 3 \
+  "$@"

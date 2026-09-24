@@ -13,6 +13,7 @@ recursive-include contracts *
 recursive-include assets *
 recursive-include scripts *.sh
 recursive-include scripts *.py
+include scripts/zara-ytdlp
 recursive-include t *.py *.pl
 recursive-include wiki *.org
 recursive-include zara *.py *.pl *.toml

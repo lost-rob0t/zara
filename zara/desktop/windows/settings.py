@@ -81,6 +81,10 @@ _FACT_LABELS = {
     "llm_endpoint": "LLM endpoint",
     "todo_destination": "TODO destination",
     "todo_context_mode": "TODO context mode",
+    "voice_default": "Default voice",
+    "voice_role": "Role → voice",
+    "voice_speaker": "Speaker → voice",
+    "voice_policy": "Voice policy",
     "verb_intent": "Intent mapping",
 }
 
@@ -224,6 +228,24 @@ class FactEditorDialog(QDialog):
                     ("Infer", "infer"),
                     ("Infer with LLM", "infer_with_llm"),
                     ("LLM only", "llm_only"),
+                ],
+            )
+        elif kind == "voice_default":
+            self._line("value", "Voice", "zara")
+        elif kind == "voice_role":
+            self._line("role", "Role", "character")
+            self._line("voice", "Voice", "reader_alice")
+        elif kind == "voice_speaker":
+            self._line("speaker", "Speaker label", "speaker_00")
+            self._line("voice", "Voice", "reader_alice")
+        elif kind == "voice_policy":
+            self._line("role", "Role", "dialogue")
+            self._choice(
+                "policy",
+                "Policy",
+                [
+                    ("Prefer default", "prefer_default"),
+                    ("Distinct if available", "distinct_if_available"),
                 ],
             )
         else:
@@ -571,6 +593,29 @@ class SettingsWindow(QWidget):
         self._line_setting(form, "stt.model", "Speech model", "small")
         self._combo_setting(form, "stt.device", "Speech device", [("CPU", "cpu"), ("CUDA", "cuda"), ("Vulkan", "vulkan")], "cpu")
         self._combo_setting(form, "tts.provider", "Voice provider", [("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")], "qwen3")
+        self._line_setting(form, "tts.endpoint", "Voice endpoint", "http://localhost:7860")
+        self._line_setting(form, "tts.voice", "Default voice", "zara")
+        self._line_setting(
+            form,
+            "voice_expert.diarization_segmentation_model",
+            "Speaker segmentation model",
+            "",
+        )
+        self._line_setting(
+            form,
+            "voice_expert.diarization_embedding_model",
+            "Speaker embedding model",
+            "",
+        )
+        self._double_setting(
+            form,
+            "voice_expert.diarization_cluster_threshold",
+            "Speaker clustering threshold",
+            0.5,
+            0.01,
+            2.0,
+            0.05,
+        )
         self._check_setting(form, "wake.acknowledgement.enabled", "Immediate acknowledgement", True)
         self._line_setting(form, "wake.acknowledgement.voice", "Acknowledgement voice", "en-US-AriaNeural")
         return page
@@ -583,6 +628,14 @@ class SettingsWindow(QWidget):
             ("tools.query_prolog", "Query Prolog", True),
             ("tools.remember", "Remember", True),
             ("tools.recall", "Recall", True),
+            ("tools.youtube_search", "YouTube search", True),
+            ("tools.voice_list", "Voice inventory", True),
+            ("tools.voice_plan", "Voice planning", True),
+            ("tools.voice_speak", "Voice speak", True),
+            ("tools.voice_narrate", "Multi-voice narration", True),
+            ("tools.voice_analyze_youtube", "YouTube speaker analysis", True),
+            ("tools.voice_clone_from_youtube", "Authorized voice cloning", True),
+            ("tools.voice_delete", "Voice deletion", True),
             ("tools.file_tools", "File tools", False),
             ("memory.enabled", "Long-term memory", True),
             ("latency.enabled", "Latency metrics", True),

@@ -107,11 +107,27 @@ partial_transcript_ms = 1000  # partial transcription interval
 [tts]
 # Text-to-Speech settings
 provider = "qwen3"  # "local", "11labs", "edge", or "qwen3"
+# Qwen3-TTS OpenAI-compatible endpoint and configured default voice.
+endpoint = "http://localhost:7860"
+voice = "zara"
 model_path = ""
 sample_rate = 16000
 connect_timeout = 5.0
 read_timeout = 20.0
 total_timeout = 30.0
+
+[voice_expert]
+# Voice-source analysis. Models are operator-installed; Zara never downloads
+# large diarization models implicitly. The official sherpa-onnx pyannote
+# segmentation + speaker-embedding ONNX models work here.
+max_source_seconds = 1800.0
+diarization_segmentation_model = ""
+diarization_embedding_model = ""
+# -1 asks sherpa-onnx to infer speaker count using the clustering threshold.
+diarization_num_speakers = -1
+diarization_cluster_threshold = 0.5
+diarization_min_duration_on = 0.3
+diarization_min_duration_off = 0.5
 
 [llm]
 # LLM provider for agent mode
@@ -171,6 +187,14 @@ remember = true
 recall = true
 memory_list = true
 forget = true
+youtube_search = true
+voice_list = true
+voice_plan = true
+voice_speak = true
+voice_narrate = true
+voice_analyze_youtube = true
+voice_clone_from_youtube = true
+voice_delete = true
 file_tools = false
 
 [tool_approval]
@@ -357,12 +381,78 @@ class ZaraConfig:
             choices = ", ".join(sorted(supported_providers))
             raise ConfigError(f"Unsupported TTS provider {provider!r}; choose one of: {choices}")
 
+        voice = tts_config.get("voice", "zara")
+        if not isinstance(voice, str) or not voice.strip():
+            raise ConfigError("tts.voice must be a non-empty string")
+
         if provider == "11labs":
             required = ("elevenlabs_api_key", "elevenlabs_voice_id")
             missing = [key for key in required if not tts_config.get(key)]
             if missing:
                 fields = ", ".join(f"tts.{key}" for key in missing)
                 raise ConfigError(f"11labs TTS requires {fields}")
+
+        voice_expert_config = config.get("voice_expert", {})
+        if not isinstance(voice_expert_config, dict):
+            raise ConfigError(
+                "Invalid [voice_expert] configuration: expected a TOML table"
+            )
+        for key in (
+            "diarization_segmentation_model",
+            "diarization_embedding_model",
+        ):
+            if not isinstance(voice_expert_config.get(key, ""), str):
+                raise ConfigError(f"voice_expert.{key} must be a string")
+        max_source_seconds = voice_expert_config.get("max_source_seconds", 1800.0)
+        if (
+            isinstance(max_source_seconds, bool)
+            or not isinstance(max_source_seconds, (int, float))
+            or not math.isfinite(float(max_source_seconds))
+            or not 5.0 <= float(max_source_seconds) <= 14400.0
+        ):
+            raise ConfigError(
+                "voice_expert.max_source_seconds must be between 5 and 14400"
+            )
+        diarization_num_speakers = voice_expert_config.get(
+            "diarization_num_speakers", -1
+        )
+        if (
+            isinstance(diarization_num_speakers, bool)
+            or not isinstance(diarization_num_speakers, int)
+            or (
+                diarization_num_speakers != -1
+                and not 1 <= diarization_num_speakers <= 64
+            )
+        ):
+            raise ConfigError(
+                "voice_expert.diarization_num_speakers must be -1 or 1..64"
+            )
+        cluster_threshold = voice_expert_config.get(
+            "diarization_cluster_threshold", 0.5
+        )
+        if (
+            isinstance(cluster_threshold, bool)
+            or not isinstance(cluster_threshold, (int, float))
+            or not math.isfinite(float(cluster_threshold))
+            or not 0.01 <= float(cluster_threshold) <= 2.0
+        ):
+            raise ConfigError(
+                "voice_expert.diarization_cluster_threshold must be between 0.01 and 2"
+            )
+        for key, default in (
+            ("diarization_min_duration_on", 0.3),
+            ("diarization_min_duration_off", 0.5),
+        ):
+            value = voice_expert_config.get(key, default)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or not 0.05 <= float(value) <= 5.0
+            ):
+                raise ConfigError(
+                    f"voice_expert.{key} must be between 0.05 and 5 seconds"
+                )
 
         llm_config = config.get("llm", {})
         if not isinstance(llm_config, dict):
@@ -389,8 +479,19 @@ class ZaraConfig:
         tools_config = config.get("tools", {})
         if not isinstance(tools_config, dict):
             raise ConfigError("Invalid [tools] configuration: expected a TOML table")
-        if not isinstance(tools_config.get("file_tools", False), bool):
-            raise ConfigError("tools.file_tools must be true or false")
+        for key in (
+            "file_tools",
+            "youtube_search",
+            "voice_list",
+            "voice_plan",
+            "voice_speak",
+            "voice_narrate",
+            "voice_analyze_youtube",
+            "voice_clone_from_youtube",
+            "voice_delete",
+        ):
+            if not isinstance(tools_config.get(key, key != "file_tools"), bool):
+                raise ConfigError(f"tools.{key} must be true or false")
 
         approval_config = config.get("tool_approval", {})
         if not isinstance(approval_config, dict):
