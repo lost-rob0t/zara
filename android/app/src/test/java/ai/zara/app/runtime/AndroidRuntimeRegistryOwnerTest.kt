@@ -135,20 +135,25 @@ class AndroidRuntimeRegistryOwnerTest {
     }
 
     @Test
-    fun duplicateOptionalRuntimeIdsFailClosedAsAmbiguous() {
+    fun duplicateOptionalRuntimeIdsFailClosedAndPreserveUniqueRuntime() {
         val first = descriptor("sidecar-x", RuntimeHealth.READY)
+        val unique = descriptor("sidecar-y", RuntimeHealth.READY)
         val second = descriptor("sidecar-x", RuntimeHealth.FAILED)
         val third = descriptor("sidecar-x", RuntimeHealth.READY)
         val owner = AndroidRuntimeRegistryOwner(
             runtimeVersion = "0.2.2-alpha",
             implementationVersion = "abc123",
-            optionalRuntimeSources = listOf({ first }, { second }, { third }),
+            optionalRuntimeSources = listOf({ first }, { unique }, { second }, { third }),
         )
 
         val snapshot = owner.refresh(LocalAiState(phase = LocalAiPhase.STOPPED))
 
-        assertEquals(listOf(EMBEDDED_LOCAL_RUNTIME_ID), snapshot.descriptors.map { it.id })
+        assertEquals(listOf(EMBEDDED_LOCAL_RUNTIME_ID, "sidecar-y"), snapshot.descriptors.map { it.id })
         assertFalse(snapshot.descriptors.any { it.id == "sidecar-x" })
+        val sidecar = snapshot.descriptors.single { it.id == "sidecar-y" }
+        assertEquals(RuntimeHealth.READY, sidecar.health)
+        assertTrue(sidecar.available)
+        assertTrue(sidecar.selectable)
     }
 
     private fun owner(): AndroidRuntimeRegistryOwner = AndroidRuntimeRegistryOwner(
