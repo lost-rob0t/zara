@@ -76,6 +76,9 @@ class LocalNaturalLanguageFallbackTest {
             "switching between Symbolic and Local must not churn the remote generation",
             setter.contains("previous !in setOf(RuntimeMode.Symbolic, RuntimeMode.Local)"),
         )
+        assertTrue(setter.contains("cloudAi.cancelActive()"))
+        assertTrue(setter.contains("localAi.cancelGeneration()"))
+        assertTrue(setter.contains("voice.state() is ManualVoiceState.Capturing"))
     }
 
     @Test
