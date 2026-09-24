@@ -376,6 +376,13 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 raise ExpertBudgetExceededError(
                     "durable replay usage.model_calls exceeds admitted max_model_calls"
                 )
+            if (
+                _impl._result_output_size_bytes(durable_replay)
+                > admitted_limits.max_output_bytes
+            ):
+                raise ExpertBudgetExceededError(
+                    "durable replay output exceeds admitted max_output_bytes"
+                )
             if not self._charge_delegation_usage(delegation_parent, replay_model_calls):
                 raise ExpertBudgetExceededError(
                     "delegated expert aggregate usage exceeds parent model-call budget"
