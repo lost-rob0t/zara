@@ -52,3 +52,26 @@ def test_rendered_desktop_evidence_round_trips_through_canonical_validator(tmp_p
     error_entry = next(entry for entry in manifest["fixtures"] if entry["state"] == "error")
     error_text = (output_dir / error_entry["text_evidence"]["file"]).read_text(encoding="utf-8")
     assert "The runtime rejected this turn. Nothing was executed." in error_text
+
+
+def test_voice_partial_evidence_is_distinct_and_contains_partial_transcript(tmp_path: Path) -> None:
+    source_sha = "0123456789abcdef0123456789abcdef01234567"
+    output_dir = tmp_path / "desktop-ui"
+    renderer = _load_module(RENDERER, "zara_desktop_ui_evidence_voice_distinction_test")
+
+    manifest = renderer.render_desktop_ui_evidence(output_dir, source_commit=source_sha)
+    entries = {entry["state"]: entry for entry in manifest["fixtures"]}
+    listening = entries["voice-listening"]
+    partial = entries["voice-partial"]
+
+    listening_png = (output_dir / listening["path"]).read_bytes()
+    partial_png = (output_dir / partial["path"]).read_bytes()
+    listening_text = (output_dir / listening["text_evidence"]["file"]).read_text(encoding="utf-8")
+    partial_text = (output_dir / partial["text_evidence"]["file"]).read_text(encoding="utf-8")
+    listening_semantics = tuple(
+        line for line in listening_text.splitlines() if line.startswith("widget=")
+    )
+    partial_semantics = tuple(line for line in partial_text.splitlines() if line.startswith("widget="))
+
+    assert listening_png != partial_png or listening_semantics != partial_semantics
+    assert "Partial transcript: open roam daily…" in partial_text
