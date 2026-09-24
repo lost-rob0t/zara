@@ -21,31 +21,44 @@ def _load_module():
     return module
 
 
+def _annotated_nodes(device, module, hierarchy: str):
+    root = module.ET.fromstring(hierarchy)
+    return iter(device.annotate_hierarchy(root))
+
+
 def test_pixel_launcher_anr_closes_hung_launcher_instead_of_waiting(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     module = _load_module()
     device = module.Device("emulator-5554", tmp_path)
-    launcher_anr = module.ET.fromstring(
-        '<node text="Pixel Launcher isn\'t responding" '
-        'package="com.google.android.apps.nexuslauncher" bounds="[10,10][90,90]" />'
-    )
-    close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
-        'bounds="[20,30][80,70]" />'
-    )
-    wait = module.ET.fromstring(
-        '<node text="Wait" package="android" resource-id="android:id/aerr_wait" '
-        'bounds="[20,80][80,120]" />'
-    )
     visible = {"dialog": True}
     adb_calls: list[tuple[str, ...]] = []
 
     def nodes():
         if not visible["dialog"]:
             return iter(())
-        return iter((launcher_anr, close_app, wait))
+        return _annotated_nodes(
+            device,
+            module,
+            """
+            <hierarchy>
+              <node package="android" bounds="[0,0][200,200]">
+                <node resource-id="pixel-anr-owner" bounds="[0,0][100,130]">
+                  <node text="Pixel Launcher isn't responding"
+                        package="com.google.android.apps.nexuslauncher"
+                        bounds="[10,10][90,90]" />
+                  <node text="Close app" package="android"
+                        resource-id="android:id/aerr_close"
+                        bounds="[20,30][80,70]" />
+                  <node text="Wait" package="android"
+                        resource-id="android:id/aerr_wait"
+                        bounds="[20,80][80,120]" />
+                </node>
+              </node>
+            </hierarchy>
+            """,
+        )
 
     def adb(*arguments: str, **_kwargs):
         adb_calls.append(arguments)
@@ -76,21 +89,30 @@ def test_google_sdk_setup_anr_is_closed_and_recorded(
     module = _load_module()
     device = module.Device("emulator-5554", tmp_path)
     dialog_text = "com.google.android.googlesdksetup isn't responding"
-    setup_anr = module.ET.fromstring(
-        f'<node text="{dialog_text}" package="com.google.android.googlesdksetup" '
-        'bounds="[10,10][90,90]" />'
-    )
-    close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
-        'bounds="[20,30][80,70]" />'
-    )
     visible = {"dialog": True}
     adb_calls: list[tuple[str, ...]] = []
 
     def nodes():
         if not visible["dialog"]:
             return iter(())
-        return iter((setup_anr, close_app))
+        return _annotated_nodes(
+            device,
+            module,
+            f"""
+            <hierarchy>
+              <node package="android" bounds="[0,0][200,200]">
+                <node resource-id="sdk-anr-owner" bounds="[0,0][100,130]">
+                  <node text="{dialog_text}"
+                        package="com.google.android.googlesdksetup"
+                        bounds="[10,10][90,90]" />
+                  <node text="Close app" package="android"
+                        resource-id="android:id/aerr_close"
+                        bounds="[20,30][80,70]" />
+                </node>
+              </node>
+            </hierarchy>
+            """,
+        )
 
     def adb(*arguments: str, **_kwargs):
         adb_calls.append(arguments)
@@ -158,17 +180,29 @@ def test_known_anr_tap_must_prove_dialog_disappeared(
     module = _load_module()
     device = module.Device("emulator-5554", tmp_path)
     dialog_text = "Pixel Launcher isn't responding"
-    launcher_anr = module.ET.fromstring(
-        f'<node text="{dialog_text}" package="com.google.android.apps.nexuslauncher" '
-        'bounds="[10,10][90,90]" />'
-    )
-    close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
-        'bounds="[20,30][80,70]" />'
-    )
     adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(device, "nodes", lambda: iter((launcher_anr, close_app)))
+    def nodes():
+        return _annotated_nodes(
+            device,
+            module,
+            f"""
+            <hierarchy>
+              <node package="android" bounds="[0,0][200,200]">
+                <node resource-id="pixel-anr-owner" bounds="[0,0][100,130]">
+                  <node text="{dialog_text}"
+                        package="com.google.android.apps.nexuslauncher"
+                        bounds="[10,10][90,90]" />
+                  <node text="Close app" package="android"
+                        resource-id="android:id/aerr_close"
+                        bounds="[20,30][80,70]" />
+                </node>
+              </node>
+            </hierarchy>
+            """,
+        )
+
+    monkeypatch.setattr(device, "nodes", nodes)
     monkeypatch.setattr(
         device,
         "adb",
