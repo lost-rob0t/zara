@@ -355,58 +355,63 @@ def test_anr_action_lookup_rejects_wrong_package_without_system_action(
     assert device.find(label) is None
 
 
-def test_dismiss_anr_scans_past_wrong_package_duplicate_end_to_end(
+@pytest.mark.parametrize("unexpected_first", (True, False))
+def test_dismiss_anr_mixed_unexpected_and_allowlisted_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    unexpected_first: bool,
 ) -> None:
     module = _load_module()
     device = module.Device("emulator-5554", tmp_path)
     dialog_text = "Pixel Launcher isn't responding"
-    visible = {"real": True}
     adb_calls: list[tuple[str, ...]] = []
 
+    spoof_dialog = """
+    <node resource-id="spoof-dialog" bounds="[0,0][100,180]">
+      <node text="Pixel Launcher isn't responding"
+            package="ai.zara.app" bounds="[10,10][90,90]" />
+    </node>
+    """
+    real_dialog = """
+    <node resource-id="real-dialog" bounds="[100,0][200,180]">
+      <node text="Pixel Launcher isn't responding"
+            package="com.google.android.apps.nexuslauncher"
+            bounds="[100,10][190,90]" />
+      <node text="Close app" package="android"
+            resource-id="android:id/aerr_close"
+            bounds="[100,100][190,160]" />
+    </node>
+    """
+    dialogs = spoof_dialog + real_dialog if unexpected_first else real_dialog + spoof_dialog
+
     def nodes():
-        real_dialog = """
-        <node resource-id="real-dialog" bounds="[100,0][200,180]">
-          <node text="Pixel Launcher isn't responding"
-                package="com.google.android.apps.nexuslauncher"
-                bounds="[100,10][190,90]" />
-          <node text="Close app" package="android"
-                resource-id="android:id/aerr_close"
-                bounds="[100,100][190,160]" />
-        </node>
-        """ if visible["real"] else ""
         hierarchy = f"""
         <hierarchy>
           <node package="android" bounds="[0,0][500,500]">
-            <node resource-id="spoof-dialog" bounds="[0,0][100,180]">
-              <node text="Pixel Launcher isn't responding"
-                    package="ai.zara.app" bounds="[10,10][90,90]" />
-            </node>
-            {real_dialog}
+            {dialogs}
           </node>
         </hierarchy>
         """
         root = module.ET.fromstring(hierarchy)
         return iter(device.annotate_hierarchy(root))
 
-    def adb(*arguments: str, **_kwargs):
-        adb_calls.append(arguments)
-        if arguments[:3] == ("shell", "input", "tap"):
-            visible["real"] = False
-        return ""
-
     monkeypatch.setattr(device, "nodes", nodes)
-    monkeypatch.setattr(device, "adb", adb)
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **_kwargs: adb_calls.append(arguments) or "",
+    )
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
-    assert device.dismiss_pixel_launcher_anr() is True
-    assert adb_calls == [("shell", "input", "tap", "145", "130")]
+    with pytest.raises(AssertionError, match="Unexpected ANR dialog blocks acceptance"):
+        device.dismiss_pixel_launcher_anr()
+
+    assert adb_calls == []
     assert device.system_anr_sanitation == [
         {
-            "package": "com.google.android.apps.nexuslauncher",
+            "package": "ai.zara.app",
             "dialog": dialog_text,
-            "action": "Close app",
-            "cleared": True,
+            "action": None,
+            "cleared": False,
         }
     ]
