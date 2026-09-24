@@ -29,6 +29,8 @@ SYSTEM_ANR_DIALOGS = (
     ),
 )
 SYSTEM_ANR_DISMISSAL_LIMIT = 2
+SYSTEM_ANR_CLEAR_ATTEMPTS = 3
+SYSTEM_ANR_CLEAR_RETRY_DELAY_SECONDS = 0.1
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -130,6 +132,20 @@ class Device:
             raise AssertionError(f"Malformed bounds: {node.attrib.get('bounds')}")
         return tuple(values)
 
+    @staticmethod
+    def node_label(node) -> str:
+        return (
+            node.get("text")
+            or node.get("content-desc")
+            or "<unknown ANR dialog>"
+        )
+
+    def exact_anr_is_present(self, package: str, dialog_text: str) -> bool:
+        node = self.find_contains(dialog_text)
+        if node is None:
+            return False
+        return self.node_label(node) == dialog_text and node.get("package") == package
+
     def reveal(self, label: str) -> None:
         width, height = self.size()
         for direction in (1, -1):
@@ -202,26 +218,30 @@ class Device:
         time.sleep(0.4)
 
     def dismiss_pixel_launcher_anr(self) -> bool:
-        for package, dialog_text in SYSTEM_ANR_DIALOGS:
-            if self.find_contains(dialog_text) is None:
-                continue
-            prior_clears = sum(
-                1
-                for receipt in self.system_anr_sanitation
-                if receipt["dialog"] == dialog_text and receipt["cleared"]
+        anr = self.find_contains("isn't responding")
+        if anr is None:
+            return False
+        dialog_text = self.node_label(anr)
+        package = anr.get("package")
+        if (package, dialog_text) not in SYSTEM_ANR_DIALOGS:
+            self.system_anr_sanitation.append(
+                {
+                    "package": package,
+                    "dialog": dialog_text,
+                    "action": None,
+                    "cleared": False,
+                }
             )
-            if prior_clears >= SYSTEM_ANR_DISMISSAL_LIMIT:
-                self.system_anr_sanitation.append(
-                    {
-                        "package": package,
-                        "dialog": dialog_text,
-                        "action": None,
-                        "cleared": False,
-                    }
-                )
-                raise AssertionError(
-                    f"System ANR sanitation limit exceeded for {dialog_text}"
-                )
+            raise AssertionError(f"Unexpected ANR dialog blocks acceptance: {dialog_text}")
+
+        prior_attempts = sum(
+            1
+            for receipt in self.system_anr_sanitation
+            if receipt["package"] == package
+            and receipt["dialog"] == dialog_text
+            and receipt["action"] is not None
+        )
+        while prior_attempts < SYSTEM_ANR_DISMISSAL_LIMIT:
             action_label = "Close app"
             action = self.find(action_label)
             if action is None:
@@ -246,26 +266,17 @@ class Device:
                 str((left + right) // 2),
                 str((top + bottom) // 2),
             )
-            receipt["cleared"] = True
-            time.sleep(0.2)
-            return True
-        unexpected = self.find_contains("isn't responding")
-        if unexpected is None:
-            return False
-        dialog_text = (
-            unexpected.get("text")
-            or unexpected.get("content-desc")
-            or "<unknown ANR dialog>"
+            for clear_attempt in range(SYSTEM_ANR_CLEAR_ATTEMPTS):
+                if not self.exact_anr_is_present(package, dialog_text):
+                    receipt["cleared"] = True
+                    return True
+                if clear_attempt + 1 < SYSTEM_ANR_CLEAR_ATTEMPTS:
+                    time.sleep(SYSTEM_ANR_CLEAR_RETRY_DELAY_SECONDS)
+            prior_attempts += 1
+
+        raise AssertionError(
+            f"System ANR sanitation limit exceeded for {dialog_text}"
         )
-        self.system_anr_sanitation.append(
-            {
-                "package": None,
-                "dialog": dialog_text,
-                "action": None,
-                "cleared": False,
-            }
-        )
-        raise AssertionError(f"Unexpected ANR dialog blocks acceptance: {dialog_text}")
 
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
