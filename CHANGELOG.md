@@ -18,6 +18,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- Zara now includes a Prolog-native philosophy expert KB and addressable agent profiles such as `@Mara` and `@ci-worker`, with validated Prolog profile configuration, transient profile context, per-profile tool allowlists, and a read-only `philosophy_query` tool.
 - Android emits typed, correlation-aware telemetry events (`remote.*`, `protocol.*`, `voice.*`, `session.restore.*`) with monotonic sequences, generation fencing, and metadata-only protocol message records, so no connected-to-disconnected transition is unexplained.
 - `ZARA-LOCAL-DIAGNOSTICS/2` incident bundle (text + canonical JSON) with a retained primary-failure block, remote/protocol context, voice pipeline stage states with explicit `not_applicable` semantics, and a correlated ordered timeline; pasting it into a bug report or AI chat identifies the failed subsystem, operation, typed code, last-good step, and correlation ids.
 - CI now reproduces the reported remote voice → protocol failure → recovery class end to end: a deterministic failure-injecting ZARA/1 fixture drives the real Android client (JVM matrix: malformed frame, version mismatch, out-of-order, close mid-stream, stale generation after reconnect) and the installed APK on the emulator (text + real voice turn, injected failures, typed UI error, Diagnostics v2, reconnect, second turn, recreation fencing), with evidence retained on success and failure.

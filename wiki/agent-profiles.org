@@ -1,0 +1,79 @@
+#+title: Zara addressable agent profiles and philosophy expert
+
+* Addressable profiles
+
+A turn may start with one agent profile mention:
+
+#+begin_example
+@Mara compare Kant and Mill on morality
+@ci-worker inspect the failing CI evidence
+#+end_example
+
+The leading mention is resolved by the canonical Prolog runtime before the
+LangGraph turn starts. The resolved profile contributes transient system context
+and may narrow the tool registry for that turn. Profile context is removed from
+stored conversation history after the turn.
+
+Exactly one leading profile is selected. Multiple leading mentions do not fan
+out into pretend parallel agents; Zara leaves that input unselected until a
+real multi-agent coordinator owns that behavior.
+
+Built-in profiles:
+
+- =@Mara= — broad profile with the philosophy KB available.
+- =@ci-worker= — CI-focused profile with an explicit tool allowlist.
+
+Tool allowlists are enforced by a scoped view of the canonical ToolRegistry.
+They do not bypass normal tool approval rules.
+
+* Prolog configuration
+
+Profiles live in the existing XDG Prolog configuration layers:
+=$XDG_CONFIG_HOME/zarathushtra/config.pl= and =config.local.pl=.
+
+#+begin_src prolog
+agent_profile(reviewer, "Reviewer").
+agent_profile_alias(reviewer, "review").
+agent_profile_prompt(reviewer, "Inspect evidence and challenge weak assumptions.").
+agent_profile_tools(reviewer, [query_prolog, philosophy_query, read_file]).
+agent_profile_kbs(reviewer, [philosophy]).
+agent_profile_memory_scope(reviewer, session).
+#+end_src
+
+=agent_profile_tools(Profile, all).= keeps the full currently registered tool
+surface. A list restricts the profile to those tools. Memory scopes are:
+
+- =shared= — normal persistent memory retrieval is available.
+- =session= — persistent recall is suppressed; the live conversation still
+  carries its ordinary in-session history.
+- =none= — persistent recall is suppressed.
+
+User config facts are validated by =modules/config_loader.pl= and are installed
+with the same base/local precedence as Zara's other Prolog configuration.
+
+* Philosophy knowledge base
+
+=kb/philosophy.pl= contains philosophers, traditions, concepts, positions,
+arguments, objections, fallacies, and aliases. =modules/philosophy_expert.pl=
+owns inference and normalized lookup.
+
+The read-only =philosophy_query= LangChain tool exposes these modes:
+
+- =concept=
+- =philosopher=
+- =position=
+- =compare=
+- =argument=
+- =objection=
+- =fallacy=
+- =framework=
+
+The raw Prolog KB remains queryable through the existing =query_prolog= tool.
+Examples:
+
+#+begin_src prolog
+philosophy_expert:concept_summary("virtue ethics", Concept, Summary).
+philosophy_expert:compare_positions("morality", "kant", "mill", Kant, Mill).
+philosophy_expert:argument_summary("categorical imperative", Name, Tradition, Premises, Conclusion).
+philosophy_expert:recommend_framework("consequences", Framework, Why).
+#+end_src

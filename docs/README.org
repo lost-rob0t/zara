@@ -39,6 +39,7 @@ Important entry points:
 - [[file:../wiki/plugins.org][plugins.org]] — plugin lifecycle and API.
 - [[file:../wiki/mcp.org][mcp.org]] — MCP integration.
 - [[file:../wiki/agent-mode.org][agent-mode.org]] — long-running agent mode.
+- [[file:../wiki/agent-profiles.org][agent-profiles.org]] — =@profile= addressing, Prolog profile config, and philosophy expert KB.
 - [[file:../wiki/tool-approvals.org][tool-approvals.org]] — explicit tool approval behavior.
 - [[file:../wiki/capability-plans.org][capability-plans.org]] — capability planning and symbolic control.
 

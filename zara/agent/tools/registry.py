@@ -45,6 +45,40 @@ def _tool_requires_approval(tool: LangChainTool) -> bool:
     return marker
 
 
+class ScopedToolRegistry:
+    def __init__(self, parent: "ToolRegistry", allowed_names):
+        self._parent = parent
+        self._allowed = frozenset(allowed_names)
+
+    def list_tools(self) -> List[str]:
+        return [
+            name for name in self._parent.list_tools()
+            if name in self._allowed
+        ]
+
+    def to_langchain_tools(self) -> List[LangChainTool]:
+        return [
+            tool for tool in self._parent.to_langchain_tools()
+            if tool.name in self._allowed
+        ]
+
+    def get_tool(self, name: str) -> Optional[LangChainTool]:
+        if name not in self._allowed:
+            return None
+        return self._parent.get_tool(name)
+
+    def requires_approval(self, name: str) -> bool:
+        if name not in self._allowed:
+            return False
+        return self._parent.requires_approval(name)
+
+    async def prepare_async(self) -> None:
+        await self._parent.prepare_async()
+
+    def dynamic_system_context(self) -> Optional[str]:
+        return None
+
+
 class ToolRegistry:
     """Central registry for all agent tools."""
 
@@ -106,6 +140,9 @@ class ToolRegistry:
 
     def to_langchain_tools(self) -> List[LangChainTool]:
         return list(self._tools.values())
+
+    def scoped(self, allowed_names) -> ScopedToolRegistry:
+        return ScopedToolRegistry(self, tuple(allowed_names))
 
     def requires_approval(self, name: str) -> bool:
         if (

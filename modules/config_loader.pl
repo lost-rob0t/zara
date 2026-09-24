@@ -11,6 +11,7 @@
     ]).
 
 :- use_module(library(filesex)).
+:- use_module('../kb/agent_profiles').
 
 :- dynamic loaded_clause/1.
 :- dynamic loaded_server_clause/1.
@@ -83,6 +84,15 @@ write_default_config(Stream) :-
     writeln(Stream, '% project_name("Mara").'),
     writeln(Stream, '% Optional separate identity presented to LLM providers:'),
     writeln(Stream, '% llm_app_name("Mara Android").'),
+    writeln(Stream, ''),
+    writeln(Stream, '% ---- Agent Profiles ----'),
+    writeln(Stream, '% Profiles are addressed as @Name at the start of a turn:'),
+    writeln(Stream, '% agent_profile(my_worker, "My Worker").'),
+    writeln(Stream, '% agent_profile_alias(my_worker, "worker").'),
+    writeln(Stream, '% agent_profile_prompt(my_worker, "Focus on this role.").'),
+    writeln(Stream, '% agent_profile_tools(my_worker, [query_prolog, calculator]).'),
+    writeln(Stream, '% agent_profile_kbs(my_worker, [philosophy]).'),
+    writeln(Stream, '% agent_profile_memory_scope(my_worker, session).  % shared | session | none'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Custom TODO Settings ----'),
     writeln(Stream, '% todo_destination("~/my-custom-org/tasks.org").'),
@@ -267,7 +277,7 @@ replace_user_config(Facts) :-
            )).
 
 validate_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents, kb_device_providers]),
+    memberchk(Module, [kb_config, kb_intents, kb_device_providers, kb_agent_profiles]),
     validate_user_fact(Term, Module, Fact).
 validate_user_fact(app_mapping(Name, Command), kb_device_providers, app_mapping(Name, Command)) :-
     atom(Name),
@@ -298,6 +308,31 @@ validate_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
 validate_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
     memberchk(Mode, [infer, infer_with_llm, llm_only]).
+validate_user_fact(agent_profile(Id, Display), kb_agent_profiles,
+                   agent_profile(Id, Display)) :-
+    valid_profile_id(Id),
+    nonempty_text(Display).
+validate_user_fact(agent_profile_alias(Id, Alias), kb_agent_profiles,
+                   agent_profile_alias(Id, Alias)) :-
+    valid_profile_id(Id),
+    nonempty_text(Alias).
+validate_user_fact(agent_profile_prompt(Id, Prompt), kb_agent_profiles,
+                   agent_profile_prompt(Id, Prompt)) :-
+    valid_profile_id(Id),
+    text_value(Prompt).
+validate_user_fact(agent_profile_tools(Id, Tools), kb_agent_profiles,
+                   agent_profile_tools(Id, Tools)) :-
+    valid_profile_id(Id),
+    valid_profile_tools(Tools).
+validate_user_fact(agent_profile_kbs(Id, KBs), kb_agent_profiles,
+                   agent_profile_kbs(Id, KBs)) :-
+    valid_profile_id(Id),
+    is_list(KBs),
+    maplist(atom, KBs).
+validate_user_fact(agent_profile_memory_scope(Id, Scope), kb_agent_profiles,
+                   agent_profile_memory_scope(Id, Scope)) :-
+    valid_profile_id(Id),
+    memberchk(Scope, [shared, session, none]).
 validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
                    verb_intent(Surface, Intent, Arity)) :-
     atom(Surface),
@@ -371,6 +406,17 @@ expand_command_arg(Value, Arg) :-
 expand_command_arg(Value, Arg) :-
     text_string(Value, Arg).
 
+valid_profile_id(Id) :-
+    atom(Id),
+    atom_length(Id, Length),
+    Length > 0.
+
+valid_profile_tools(all).
+valid_profile_tools(Tools) :-
+    is_list(Tools),
+    Tools \= [],
+    maplist(atom, Tools).
+
 valid_intent(Intent) :-
     atom(Intent), !.
 valid_intent(python(Skill)) :-
@@ -381,7 +427,7 @@ valid_intent(python(Skill)) :-
 %% intentionally have no clause here, so a server boot fails loudly on
 %% server-inappropriate mappings instead of accepting shell commands.
 validate_server_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents]),
+    memberchk(Module, [kb_config, kb_intents, kb_agent_profiles]),
     validate_server_user_fact(Term, Module, Fact).
 validate_server_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
@@ -401,6 +447,31 @@ validate_server_user_fact(todo_destination(Path), kb_config, todo_destination(Pa
     text_value(Path).
 validate_server_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
     memberchk(Mode, [infer, infer_with_llm, llm_only]).
+validate_server_user_fact(agent_profile(Id, Display), kb_agent_profiles,
+                          agent_profile(Id, Display)) :-
+    valid_profile_id(Id),
+    nonempty_text(Display).
+validate_server_user_fact(agent_profile_alias(Id, Alias), kb_agent_profiles,
+                          agent_profile_alias(Id, Alias)) :-
+    valid_profile_id(Id),
+    nonempty_text(Alias).
+validate_server_user_fact(agent_profile_prompt(Id, Prompt), kb_agent_profiles,
+                          agent_profile_prompt(Id, Prompt)) :-
+    valid_profile_id(Id),
+    text_value(Prompt).
+validate_server_user_fact(agent_profile_tools(Id, Tools), kb_agent_profiles,
+                          agent_profile_tools(Id, Tools)) :-
+    valid_profile_id(Id),
+    valid_profile_tools(Tools).
+validate_server_user_fact(agent_profile_kbs(Id, KBs), kb_agent_profiles,
+                          agent_profile_kbs(Id, KBs)) :-
+    valid_profile_id(Id),
+    is_list(KBs),
+    maplist(atom, KBs).
+validate_server_user_fact(agent_profile_memory_scope(Id, Scope), kb_agent_profiles,
+                          agent_profile_memory_scope(Id, Scope)) :-
+    valid_profile_id(Id),
+    memberchk(Scope, [shared, session, none]).
 validate_server_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
                           verb_intent(Surface, Intent, Arity)) :-
     atom(Surface),
