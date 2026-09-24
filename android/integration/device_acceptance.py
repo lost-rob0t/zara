@@ -154,15 +154,40 @@ class Device:
         )
 
     def exact_anr_is_present(self, package: str, dialog_text: str) -> bool:
-        first_match = self.find_contains(dialog_text)
-        if first_match is None:
-            return False
-        if self.node_label(first_match) == dialog_text and first_match.get("package") == package:
-            return True
         return any(
             self.node_label(node) == dialog_text and node.get("package") == package
             for node in self.nodes()
         )
+
+    def anr_snapshot(self):
+        nodes = list(self.nodes())
+        candidates = [
+            node
+            for node in nodes
+            if "isn't responding" in self.node_label(node)
+        ]
+        if not candidates:
+            return None, nodes
+        allowlisted = [
+            node
+            for node in candidates
+            if (node.get("package"), self.node_label(node)) in SYSTEM_ANR_DIALOGS
+        ]
+        return (allowlisted[0] if allowlisted else candidates[0]), nodes
+
+    @staticmethod
+    def bound_anr_action(nodes, label: str):
+        expected_resource_id = SYSTEM_ANR_ACTIONS[label]
+        matches = [
+            node
+            for node in nodes
+            if label in (node.get("text"), node.get("content-desc"))
+            and node.get("package") == "android"
+            and node.get("resource-id") == expected_resource_id
+        ]
+        if len(matches) > 1:
+            raise AssertionError(f"Ambiguous system ANR action: {label}")
+        return matches[0] if matches else None
 
     def reveal(self, label: str) -> None:
         width, height = self.size()
@@ -236,7 +261,7 @@ class Device:
         time.sleep(0.4)
 
     def dismiss_pixel_launcher_anr(self) -> bool:
-        anr = self.find_contains("isn't responding")
+        anr, snapshot = self.anr_snapshot()
         if anr is None:
             return False
         dialog_text = self.node_label(anr)
@@ -261,10 +286,10 @@ class Device:
         )
         while prior_attempts < SYSTEM_ANR_DISMISSAL_LIMIT:
             action_label = "Close app"
-            action = self.find(action_label)
+            action = self.bound_anr_action(snapshot, action_label)
             if action is None:
                 action_label = "Wait"
-                action = self.find(action_label)
+                action = self.bound_anr_action(snapshot, action_label)
             receipt = {
                 "package": package,
                 "dialog": dialog_text,
@@ -291,6 +316,18 @@ class Device:
                 if clear_attempt + 1 < SYSTEM_ANR_CLEAR_ATTEMPTS:
                     time.sleep(SYSTEM_ANR_CLEAR_RETRY_DELAY_SECONDS)
             prior_attempts += 1
+            if prior_attempts < SYSTEM_ANR_DISMISSAL_LIMIT:
+                next_anr, snapshot = self.anr_snapshot()
+                if next_anr is None:
+                    receipt["cleared"] = True
+                    return True
+                if (
+                    next_anr.get("package") != package
+                    or self.node_label(next_anr) != dialog_text
+                ):
+                    raise AssertionError(
+                        f"System ANR changed during sanitation: {dialog_text}"
+                    )
 
         raise AssertionError(
             f"System ANR sanitation limit exceeded for {dialog_text}"

@@ -32,20 +32,20 @@ def test_pixel_launcher_anr_closes_hung_launcher_instead_of_waiting(
         'package="com.google.android.apps.nexuslauncher" bounds="[10,10][90,90]" />'
     )
     close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" bounds="[20,30][80,70]" />'
+        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
+        'bounds="[20,30][80,70]" />'
     )
     wait = module.ET.fromstring(
-        '<node text="Wait" package="android" bounds="[20,80][80,120]" />'
+        '<node text="Wait" package="android" resource-id="android:id/aerr_wait" '
+        'bounds="[20,80][80,120]" />'
     )
     visible = {"dialog": True}
     adb_calls: list[tuple[str, ...]] = []
 
-    def find_contains(fragment: str):
-        if fragment == "Pixel Launcher isn't responding" and visible["dialog"]:
-            return launcher_anr
-        if fragment == "isn't responding" and visible["dialog"]:
-            return launcher_anr
-        return None
+    def nodes():
+        if not visible["dialog"]:
+            return iter(())
+        return iter((launcher_anr, close_app, wait))
 
     def adb(*arguments: str, **_kwargs):
         adb_calls.append(arguments)
@@ -53,12 +53,7 @@ def test_pixel_launcher_anr_closes_hung_launcher_instead_of_waiting(
             visible["dialog"] = False
         return ""
 
-    monkeypatch.setattr(device, "find_contains", find_contains)
-    monkeypatch.setattr(
-        device,
-        "find",
-        lambda label: close_app if label == "Close app" else wait if label == "Wait" else None,
-    )
+    monkeypatch.setattr(device, "nodes", nodes)
     monkeypatch.setattr(device, "adb", adb)
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
@@ -86,15 +81,16 @@ def test_google_sdk_setup_anr_is_closed_and_recorded(
         'bounds="[10,10][90,90]" />'
     )
     close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" bounds="[20,30][80,70]" />'
+        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
+        'bounds="[20,30][80,70]" />'
     )
     visible = {"dialog": True}
     adb_calls: list[tuple[str, ...]] = []
 
-    def find_contains(fragment: str):
-        if fragment in (dialog_text, "isn't responding") and visible["dialog"]:
-            return setup_anr
-        return None
+    def nodes():
+        if not visible["dialog"]:
+            return iter(())
+        return iter((setup_anr, close_app))
 
     def adb(*arguments: str, **_kwargs):
         adb_calls.append(arguments)
@@ -102,12 +98,7 @@ def test_google_sdk_setup_anr_is_closed_and_recorded(
             visible["dialog"] = False
         return ""
 
-    monkeypatch.setattr(device, "find_contains", find_contains)
-    monkeypatch.setattr(
-        device,
-        "find",
-        lambda label: close_app if label == "Close app" else None,
-    )
+    monkeypatch.setattr(device, "nodes", nodes)
     monkeypatch.setattr(device, "adb", adb)
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
@@ -134,22 +125,12 @@ def test_known_anr_text_from_wrong_package_fails_closed(
         f'<node text="{dialog_text}" package="ai.zara.app" bounds="[10,10][90,90]" />'
     )
     close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" bounds="[20,30][80,70]" />'
+        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
+        'bounds="[20,30][80,70]" />'
     )
     adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(
-        device,
-        "find_contains",
-        lambda fragment: spoofed_anr
-        if fragment in (dialog_text, "isn't responding")
-        else None,
-    )
-    monkeypatch.setattr(
-        device,
-        "find",
-        lambda label: close_app if label == "Close app" else None,
-    )
+    monkeypatch.setattr(device, "nodes", lambda: iter((spoofed_anr, close_app)))
     monkeypatch.setattr(
         device,
         "adb",
@@ -182,22 +163,12 @@ def test_known_anr_tap_must_prove_dialog_disappeared(
         'bounds="[10,10][90,90]" />'
     )
     close_app = module.ET.fromstring(
-        '<node text="Close app" package="android" bounds="[20,30][80,70]" />'
+        '<node text="Close app" package="android" resource-id="android:id/aerr_close" '
+        'bounds="[20,30][80,70]" />'
     )
     adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(
-        device,
-        "find_contains",
-        lambda fragment: launcher_anr
-        if fragment in (dialog_text, "isn't responding")
-        else None,
-    )
-    monkeypatch.setattr(
-        device,
-        "find",
-        lambda label: close_app if label == "Close app" else None,
-    )
+    monkeypatch.setattr(device, "nodes", lambda: iter((launcher_anr, close_app)))
     monkeypatch.setattr(
         device,
         "adb",
@@ -240,12 +211,7 @@ def test_unknown_anr_fails_closed_instead_of_accepting_background_zara(
     )
     adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(
-        device,
-        "find_contains",
-        lambda fragment: unknown_anr if fragment == "isn't responding" else None,
-    )
-    monkeypatch.setattr(device, "find", lambda _label: None)
+    monkeypatch.setattr(device, "nodes", lambda: iter((unknown_anr,)))
     monkeypatch.setattr(
         device,
         "adb",
@@ -274,8 +240,7 @@ def test_non_launcher_anr_is_never_dismissed(
     device = module.Device("emulator-5554", tmp_path)
     adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(device, "find_contains", lambda _fragment: None)
-    monkeypatch.setattr(device, "find", lambda _label: None)
+    monkeypatch.setattr(device, "nodes", lambda: iter(()))
     monkeypatch.setattr(
         device,
         "adb",
@@ -301,7 +266,6 @@ def test_exact_anr_presence_searches_past_wrong_package_duplicate(
         'bounds="[100,10][190,90]" />'
     )
 
-    monkeypatch.setattr(device, "find_contains", lambda _fragment: wrong_package)
     monkeypatch.setattr(device, "nodes", lambda: iter((wrong_package, real_dialog)))
 
     assert device.exact_anr_is_present(
