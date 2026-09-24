@@ -38,6 +38,9 @@ test(evaluator_harness_requires_independent_review,
                            'scripts/test-expert-contract.sh',
                            'scripts/test-runtime-tool-approvals.sh',
                            'scripts/test-android.sh',
+                           'scripts/check-coverage-ratchet.py',
+                           'coverage-baseline.json',
+                           '.coveragerc',
                            'flake.nix',
                            'flake.lock']))]) :-
     source([Path],S), zara_verify:plan(S,G), memberchk(independent_review,G).
