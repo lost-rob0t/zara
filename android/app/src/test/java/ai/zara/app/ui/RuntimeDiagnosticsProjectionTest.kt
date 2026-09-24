@@ -248,6 +248,16 @@ class RuntimeDiagnosticsProjectionTest {
     }
 
     @Test
+    fun `local ai refresh fences stale callbacks across recreation and newer reads`() {
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        assertTrue(activity.contains("private var localAiRefreshGeneration = 0L"))
+        assertTrue(activity.contains("val refreshGeneration = ++localAiRefreshGeneration"))
+        assertTrue(activity.contains("refreshGeneration != localAiRefreshGeneration"))
+        assertTrue(activity.contains("localAiRefreshGeneration += 1"))
+        assertTrue(activity.contains("isFinishing || isDestroyed"))
+    }
+
+    @Test
     fun `chat status distinguishes symbolic local model remote and degraded states`() {
         val source = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
         val chat = source.substringAfter("private fun ChatSurface(")
