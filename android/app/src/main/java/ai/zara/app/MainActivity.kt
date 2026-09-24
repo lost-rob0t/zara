@@ -112,6 +112,8 @@ class MainActivity : ComponentActivity() {
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
         var localServerState by mutableStateOf(appSession.localServerState())
+        var cloudModelState by mutableStateOf(appSession.cloudModelState())
+        var cloudModelBusy by mutableStateOf(false)
         var prologSources by mutableStateOf(appSession.prologSources())
         var prologQueryResult by mutableStateOf<ai.zara.app.runtime.LocalQueryResult?>(null)
         var updateState by mutableStateOf(updateManager.state())
@@ -346,6 +348,8 @@ class MainActivity : ComponentActivity() {
                 localAiState = localAiState,
                 localModels = localModels,
                 localModelBusy = localModelBusy,
+                cloudModelState = cloudModelState,
+                cloudModelBusy = cloudModelBusy,
                 projectState = projectState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
@@ -389,6 +393,32 @@ class MainActivity : ComponentActivity() {
                             localModelBusy = false
                             operationError = error?.let(UiOperationFailure::summarize)
                             refreshLocalModels()
+                        }
+                    }
+                },
+                onConfigureCloudModel = { config, apiKey ->
+                    operationError = null
+                    cloudModelBusy = true
+                    CompletableFuture.supplyAsync {
+                        appSession.configureCloudModel(config, apiKey)
+                    }.whenComplete { state, error ->
+                        runOnUiThread {
+                            cloudModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (state != null) cloudModelState = state
+                        }
+                    }
+                },
+                onClearCloudModelApiKey = {
+                    operationError = null
+                    cloudModelBusy = true
+                    CompletableFuture.supplyAsync {
+                        appSession.clearCloudModelApiKey()
+                    }.whenComplete { state, error ->
+                        runOnUiThread {
+                            cloudModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (state != null) cloudModelState = state
                         }
                     }
                 },
