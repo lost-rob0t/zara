@@ -97,7 +97,7 @@ class HardenedSecureZaraZmqGateway(SecureZaraZmqGateway):
             ),
         )
 
-    def _enqueue_outbound(self, route: bytes, message) -> bool:
+    def _enqueue_outbound(self, route: bytes, message, payloads=()) -> bool:
         with self._lock:
             outbound = self._route_outbound.get(route)
             overflow = (
@@ -106,7 +106,7 @@ class HardenedSecureZaraZmqGateway(SecureZaraZmqGateway):
                 and len(outbound) >= self._config.event_queue_size
             )
             if not overflow:
-                return super()._enqueue_outbound(route, message)
+                return super()._enqueue_outbound(route, message, payloads)
 
         # Secure gateway completion paths normally release the request hold in
         # _remember_response. Keep its fallback release before failing the route.
