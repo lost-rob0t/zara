@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 import uuid
 from types import SimpleNamespace
@@ -10,6 +11,8 @@ import zmq
 from zara.client import ZaraClientState
 from zara.protocol import ProtocolLimits, ProtocolMessage, decode_message
 from zara.server import PrincipalContext
+from zara.security_gateway import SecureZaraZmqGateway
+from zara.secure_zmq_hardening import HardenedSecureZaraZmqGateway
 from zara.zmq_hardening import (
     ClientRequestTimeout,
     HardenedZaraZmqGateway,
@@ -337,3 +340,31 @@ def test_client_late_reply_cannot_resolve_a_cancelled_future():
     assert request_id not in client._request_deadlines
     client.close(timeout=0.0)
 
+
+
+def test_secure_gateway_backpressure_retry_preserves_payload_frames(monkeypatch):
+    gateway = object.__new__(HardenedSecureZaraZmqGateway)
+    gateway._lock = threading.RLock()
+    gateway._routes = {b"route": object()}
+    gateway._route_outbound = {}
+    gateway._config = TransportConfig(event_queue_size=4)
+    forwarded = []
+
+    def record_enqueue(_gateway, route, message, payloads=()):
+        forwarded.append((route, message, tuple(payloads)))
+        return True
+
+    monkeypatch.setattr(SecureZaraZmqGateway, "_enqueue_outbound", record_enqueue)
+    payload = bytes((1, 0, 2, 0))
+    message = ProtocolMessage(
+        type="audio.output.chunk",
+        id="chunk-retry",
+        timestamp_ns=1,
+        payload_count=1,
+        stream_id="stream-retry",
+        seq=0,
+        content_type="audio/pcm;codec=pcm_s16le",
+    )
+
+    assert gateway._enqueue_outbound(b"route", message, (payload,)) is True
+    assert forwarded == [(b"route", message, (payload,))]
