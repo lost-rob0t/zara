@@ -12,6 +12,26 @@ import org.junit.Test
 
 class AssistantCapturePlanTest {
     @Test
+    fun `remote provider can use local STT and TTS when Zara server is absent`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Remote,
+                localState = readyLocalState(),
+                runtimeState = state,
+                remoteModelReady = true,
+            ),
+        )
+    }
+
+    @Test
     fun `symbolic mode uses embedded runtime without model or remote requirements`() {
         val state = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Unenrolled,
