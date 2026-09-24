@@ -21,15 +21,14 @@ class AndroidRuntimeRegistryOwner(
 ) {
     fun refresh(localAiState: LocalAiState): RuntimeRegistrySnapshot {
         val embedded = embeddedLocalRuntimeDescriptor(localAiState)
-        val observed = buildList {
-            add(embedded)
-            optionalRuntimeSources.forEach { source ->
-                discoverOptional(source)
-                    ?.takeUnless { descriptor -> descriptor.id == embedded.id }
-                    ?.let(::add)
+        val observed = LinkedHashMap<String, RuntimeDescriptor>()
+        observed[embedded.id] = embedded
+        optionalRuntimeSources.forEach { source ->
+            discoverOptional(source)?.let { descriptor ->
+                observed.putIfAbsent(descriptor.id, descriptor)
             }
         }
-        return registry.refresh(observed)
+        return registry.refresh(observed.values.toList())
     }
 
     fun snapshot(): RuntimeRegistrySnapshot = registry.snapshot()
