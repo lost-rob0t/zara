@@ -79,3 +79,79 @@ def test_nodes_fail_closed_after_missing_hierarchy_retry_budget(
         list(device.nodes())
 
     assert cat_attempts == module.UI_DUMP_ATTEMPTS
+
+
+def test_tap_recovers_once_from_unrelated_pixel_launcher_anr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_ipc_acceptance_module()
+    device = module.Device("emulator-5554")
+    launcher_dialog = list(
+        module.ET.fromstring(
+            '<hierarchy>'
+            '<node text="Pixel Launcher isn\'t responding" resource-id="android:id/alertTitle" '
+            'package="android" bounds="[100,100][900,200]" />'
+            '<node text="Wait" resource-id="android:id/aerr_wait" package="android" '
+            'clickable="true" enabled="true" bounds="[70,1296][1010,1422]" />'
+            '</hierarchy>'
+        ).iter("node")
+    )
+    app_hierarchy = list(
+        module.ET.fromstring(
+            '<hierarchy><node text="Start server" package="ai.zara.llmserve.adversary" '
+            'clickable="true" enabled="true" bounds="[200,240][600,360]" /></hierarchy>'
+        ).iter("node")
+    )
+    snapshots = iter((launcher_dialog, app_hierarchy))
+    taps: list[tuple[str, ...]] = []
+    sleeps: list[float] = []
+
+    monkeypatch.setattr(device, "nodes", lambda: iter(next(snapshots)))
+
+    def fake_adb(*arguments: str) -> str:
+        if arguments[:3] == ("shell", "input", "tap"):
+            taps.append(arguments)
+        return ""
+
+    monkeypatch.setattr(device, "adb", fake_adb)
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+
+    device.tap("Start server")
+
+    assert taps == [
+        ("shell", "input", "tap", "540", "1359"),
+        ("shell", "input", "tap", "400", "300"),
+    ]
+    assert sleeps == [module.SYSTEM_DIALOG_RETRY_DELAY_SECONDS]
+
+
+def test_tap_does_not_hide_app_under_test_anr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_ipc_acceptance_module()
+    device = module.Device("emulator-5554")
+    app_anr = list(
+        module.ET.fromstring(
+            '<hierarchy>'
+            '<node text="LLM Serve isn\'t responding" resource-id="android:id/alertTitle" '
+            'package="android" bounds="[100,100][900,200]" />'
+            '<node text="Wait" resource-id="android:id/aerr_wait" package="android" '
+            'clickable="true" enabled="true" bounds="[70,1296][1010,1422]" />'
+            '</hierarchy>'
+        ).iter("node")
+    )
+    taps: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(device, "nodes", lambda: iter(app_anr))
+
+    def fake_adb(*arguments: str) -> str:
+        if arguments[:3] == ("shell", "input", "tap"):
+            taps.append(arguments)
+        return ""
+
+    monkeypatch.setattr(device, "adb", fake_adb)
+
+    with pytest.raises(AssertionError, match="Missing control: Start server"):
+        device.tap("Start server")
+
+    assert taps == []
