@@ -114,7 +114,7 @@ object PrologUiTermParser {
                     't' -> '\t'
                     '\\' -> '\\'
                     quote -> quote
-                    else -> character
+                    else -> throw IllegalArgumentException("unsupported Prolog UI escape: \\$character")
                 },
             )
             escaped = false
