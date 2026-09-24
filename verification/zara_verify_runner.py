@@ -670,6 +670,8 @@ def parse_junit(path: Path, include_digest: bool = False) -> dict[str, Any]:
         if b'<!DOCTYPE' in data.upper() or b'<!ENTITY' in data.upper():
             raise VerificationError('unsafe_junit')
         root = ET.fromstring(data)
+        if root.tag not in {'testsuite', 'testsuites'}:
+            raise VerificationError('invalid_junit_root')
         summary_failed = junit_summary_failed(root)
         cases = list(root.iter('testcase'))
         failures = sum(case.find('failure') is not None or case.find('error') is not None for case in cases)
