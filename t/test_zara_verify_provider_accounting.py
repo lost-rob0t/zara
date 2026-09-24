@@ -7,7 +7,6 @@ from pathlib import Path
 import sys
 
 from jsonschema import Draft202012Validator
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -85,3 +84,10 @@ def test_cli_default_base_is_release_lane(monkeypatch, tmp_path, capsys):
     assert seen == ['origin/release/0.3.x']
     payload = json.loads(capsys.readouterr().out)
     assert payload['protocol'] == 'ZARA-VERIFY/1'
+
+
+def test_contract_docs_do_not_revive_master_or_absent_coverage_authority():
+    spec = (ROOT / 'contracts/zara-verify-v1/SPEC.md').read_text()
+    assert 'origin/master' not in spec
+    assert 'coverage work is integrated' in spec
+    assert 'scripts/test-coverage.sh' in spec
