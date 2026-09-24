@@ -107,6 +107,11 @@ python android/integration/device_acceptance.py \
   --source-sha "$source_sha" \
   --output android/app/build/reports/device
 
+python android/integration/widget_device_acceptance.py \
+  --serial "$serial" \
+  --source-sha "$source_sha" \
+  --output "$evidence_dir/widgets"
+
 # The visual acceptance above is intentionally broad. This second gate proves
 # the installed APK's real Android Keystore -> CURVE -> JeroMQ -> ZARA/1 path
 # against the stock Python Zara server and completes an actual remote text turn.

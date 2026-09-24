@@ -75,6 +75,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -194,9 +195,17 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    widgetRouteIngress: AppRoute? = null,
+    onWidgetRouteConsumed: () -> Unit = {},
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
         mutableStateOf(AppNavigation())
+    }
+    LaunchedEffect(widgetRouteIngress) {
+        widgetRouteIngress?.let { requested ->
+            navigation = navigation.selectRoute(requested)
+            onWidgetRouteConsumed()
+        }
     }
     val selected = navigation.route.surface()
     val savedContent = rememberSaveableStateHolder()
@@ -1559,6 +1568,7 @@ private fun ThemesSurface(
                 )
             }
         }
+        WidgetAppearanceControls(selected)
     }
 }
 

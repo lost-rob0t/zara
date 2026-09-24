@@ -14,10 +14,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <uses-permission
-        android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" />
-
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" tools:node="remove" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
@@ -30,9 +27,7 @@
         <package android:name="com.google.android.youtube" />
         <package android:name="app.revanced.android.youtube" />
         <package android:name="app.rvx.android.youtube" />
-        <intent>
-            <action android:name="android.speech.RecognitionService" />
-        </intent>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
     </queries>
 
     <application
@@ -42,17 +37,9 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:allowBackup="false">
-
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="barcode_ui" />
-
-        <uses-native-library
-            android:name="libvndksupport.so"
-            android:required="false" />
-        <uses-native-library
-            android:name="libOpenCL.so"
-            android:required="false" />
+        <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="barcode_ui" />
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
 
         <activity
             android:name=".MainActivity"
@@ -68,93 +55,45 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="zara"
-                    android:host="pair"
-                    android:pathPrefix="/v1" />
+                <data android:scheme="zara" android:host="pair" android:pathPrefix="/v1" />
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".automation.AutomationActivity"
-            android:exported="true"
-            android:label="Zara Automation"
-            android:process=":voice"
-            android:taskAffinity="ai.zara.app.task.automation">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+        <activity android:name=".automation.AutomationActivity" android:exported="true" android:label="Zara Automation" android:process=":voice" android:taskAffinity="ai.zara.app.task.automation">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity>
+        <activity android:name=".watch.WatchSetupActivity" android:exported="true" android:label="Zara Watch Setup" android:taskAffinity="ai.zara.app.task.watchsetup">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
 
-        <activity
-            android:name=".watch.WatchSetupActivity"
-            android:exported="true"
-            android:label="Zara Watch Setup"
-            android:taskAffinity="ai.zara.app.task.watchsetup">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <service
-            android:name=".localai.LocalAiService"
-            android:exported="false"
-            android:process=":voice" />
-
-        <service
-            android:name=".assistant.ZaraVoiceInteractionService"
-            android:exported="true"
-            android:label="Zara"
-            android:permission="android.permission.BIND_VOICE_INTERACTION"
-            android:process=":voice">
-            <intent-filter>
-                <action android:name="android.service.voice.VoiceInteractionService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.voice_interaction"
-                android:resource="@xml/voice_interaction_service" />
+        <service android:name=".localai.LocalAiService" android:exported="false" android:process=":voice" />
+        <service android:name=".assistant.ZaraVoiceInteractionService" android:exported="true" android:label="Zara" android:permission="android.permission.BIND_VOICE_INTERACTION" android:process=":voice">
+            <intent-filter><action android:name="android.service.voice.VoiceInteractionService" /></intent-filter>
+            <meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction_service" />
+        </service>
+        <service android:name=".assistant.ZaraVoiceInteractionSessionService" android:exported="false" android:permission="android.permission.BIND_VOICE_INTERACTION" android:process=":voice" />
+        <service android:name=".assistant.ZaraRecognitionService" android:exported="true" android:label="Zara speech recognition" android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE" android:process=":voice">
+            <intent-filter><action android:name="android.speech.RecognitionService" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>
+            <meta-data android:name="android.speech" android:resource="@xml/recognition_service" />
+        </service>
+        <service android:name=".accessibility.ZaraAccessibilityService" android:exported="true" android:label="Zara automation" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:process=":voice">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/zara_accessibility_service" />
         </service>
 
-        <service
-            android:name=".assistant.ZaraVoiceInteractionSessionService"
-            android:exported="false"
-            android:permission="android.permission.BIND_VOICE_INTERACTION"
-            android:process=":voice" />
-
-        <service
-            android:name=".assistant.ZaraRecognitionService"
-            android:exported="true"
-            android:label="Zara speech recognition"
-            android:permission="android.permission.BIND_SPEECH_RECOGNITION_SERVICE"
-            android:process=":voice">
-            <intent-filter>
-                <action android:name="android.speech.RecognitionService" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-            <meta-data
-                android:name="android.speech"
-                android:resource="@xml/recognition_service" />
-        </service>
-
-        <service
-            android:name=".accessibility.ZaraAccessibilityService"
-            android:exported="true"
-            android:label="Zara automation"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:process=":voice">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/zara_accessibility_service" />
-        </service>
-
-        <receiver
-            android:name=".update.UpdateInstallReceiver"
-            android:exported="false" />
+        <receiver android:name=".update.UpdateInstallReceiver" android:exported="false" />
+        <receiver android:name=".widget.WidgetRouteReceiver" android:exported="false" />
+        <receiver android:name=".widget.ZaraAssistantWidgetProvider" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/zara_assistant_widget_info" />
+        </receiver>
+        <receiver android:name=".widget.ZaraRuntimeWidgetProvider" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/zara_runtime_widget_info" />
+        </receiver>
+        <receiver android:name=".widget.ZaraActionsWidgetProvider" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/zara_actions_widget_info" />
+        </receiver>
     </application>
-
 </manifest>

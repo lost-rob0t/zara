@@ -6,6 +6,7 @@ import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStore
 import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
 import ai.zara.app.projects.ProjectContextStore
+import ai.zara.app.ui.AppRoute
 import ai.zara.app.ui.ConversationExecutionPolicy
 import ai.zara.app.ui.ConversationExecutionPolicyController
 import ai.zara.app.ui.ConversationExecutionPolicyStore
@@ -24,6 +25,11 @@ import ai.zara.app.ui.ZaraApp
 import ai.zara.app.update.Changelog
 import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
+import ai.zara.app.widget.WidgetRouteReceiver
+import ai.zara.app.widget.WidgetRuntimeSnapshot
+import ai.zara.app.widget.WidgetRuntimeSnapshotStore
+import ai.zara.app.widget.ZaraWidgetUpdater
+import ai.zara.app.widget.consumeWidgetRoute
 import ai.zara.ui.theme.ZaraTheme
 import android.Manifest
 import android.content.ClipData
@@ -70,10 +76,12 @@ class MainActivity : ComponentActivity() {
     private var enrollmentPublicKey by mutableStateOf<String?>(null)
     private var pinnedServerPublicKey by mutableStateOf<String?>(null)
     private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
+    private var widgetRouteIngress by mutableStateOf<AppRoute?>(null)
     private var pairingUiGeneration = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        widgetRouteIngress = consumeWidgetRoute(intent)
         appSession = (application as ZaraApplication).appSession
         pairingCoordinator = AndroidPairingCoordinator(applicationContext, appSession)
         val updateManager = (application as ZaraApplication).updateManager
@@ -99,6 +107,24 @@ class MainActivity : ComponentActivity() {
         var selectedTheme by mutableStateOf(themePreferenceStore.load())
         val runtimeModeStore = RuntimeModePreferenceStore(File(filesDir, "runtime-mode.bin"))
         var runtimeMode by mutableStateOf(runtimeModeStore.load())
+        val widgetRuntimeStore = WidgetRuntimeSnapshotStore(
+            File(noBackupFilesDir, "zara/widget-runtime.bin"),
+        )
+        fun persistWidgetRuntimeSnapshot() {
+            try {
+                widgetRuntimeStore.save(
+                    WidgetRuntimeSnapshot.from(
+                        server = runtimeState.server,
+                        local = localServerState.phase,
+                        mode = runtimeMode,
+                        capturedAtEpochMillis = System.currentTimeMillis(),
+                    ),
+                )
+                ZaraWidgetUpdater.refreshAll(applicationContext)
+            } catch (error: Exception) {
+                operationError = UiOperationFailure.summarize(error)
+            }
+        }
         val embeddingPreferenceStore = LocalEmbeddingPreferenceStore.create(applicationContext)
         val embeddingPreferenceLoad = embeddingPreferenceStore.load()
         var localEmbedding by mutableStateOf(embeddingPreferenceLoad.configuration)
@@ -122,6 +148,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         appSession.setRuntimeMode(runtimeMode)
+        persistWidgetRuntimeSnapshot()
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -141,7 +168,10 @@ class MainActivity : ComponentActivity() {
         }
 
         appSession.setStateObserver { state ->
-            runOnUiThread { runtimeState = state }
+            runOnUiThread {
+                runtimeState = state
+                persistWidgetRuntimeSnapshot()
+            }
         }
         appSession.setVoiceStreamObserver { streamState, failure ->
             runOnUiThread {
@@ -150,7 +180,10 @@ class MainActivity : ComponentActivity() {
             }
         }
         appSession.setLocalServerObserver { state ->
-            runOnUiThread { localServerState = state }
+            runOnUiThread {
+                localServerState = state
+                persistWidgetRuntimeSnapshot()
+            }
         }
         updateManager.setObserver { state ->
             runOnUiThread { updateState = state }
@@ -280,6 +313,11 @@ class MainActivity : ComponentActivity() {
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
+                widgetRouteIngress = widgetRouteIngress,
+                onWidgetRouteConsumed = {
+                    widgetRouteIngress = null
+                    intent?.removeExtra(WidgetRouteReceiver.EXTRA_ROUTE)
+                },
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -288,6 +326,7 @@ class MainActivity : ComponentActivity() {
                     runtimeMode = mode
                     runtimeModeStore.save(mode)
                     appSession.setRuntimeMode(mode)
+                    persistWidgetRuntimeSnapshot()
                 },
                 onSetLocalEmbeddingEnabled = { enabled ->
                     operationError = null
@@ -620,6 +659,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        widgetRouteIngress = consumeWidgetRoute(intent)
         handlePairingIntent(intent)
     }
 
