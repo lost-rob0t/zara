@@ -33,7 +33,9 @@ class WidgetEvidenceActivity : Activity() {
             failClosed("PIN_REJECTED")
             return
         }
-        finish()
+        if (shouldFinishAfterPin(kind)) {
+            finish()
+        }
     }
 
     private fun projectSnapshot(state: String?) {
@@ -80,5 +82,7 @@ class WidgetEvidenceActivity : Activity() {
         const val EXTRA_STATE = "state"
         private const val COMMAND_PIN = "pin"
         private const val COMMAND_SNAPSHOT = "snapshot"
+
+        internal fun shouldFinishAfterPin(kind: String?): Boolean = kind != "assistant"
     }
 }
