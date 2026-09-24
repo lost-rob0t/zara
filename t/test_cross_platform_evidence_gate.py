@@ -233,24 +233,29 @@ def test_android_acceptance_dismisses_only_pixel_launcher_anr(
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
     launcher_anr = module.ET.fromstring(
-        '<node text="Pixel Launcher isn\'t responding" bounds="[10,10][90,90]" />'
+        '<node text="Pixel Launcher isn\'t responding" '
+        'package="com.google.android.apps.nexuslauncher" bounds="[10,10][90,90]" />'
     )
-    wait = module.ET.fromstring('<node text="Wait" bounds="[20,30][80,70]" />')
+    wait = module.ET.fromstring(
+        '<node text="Wait" package="android" bounds="[20,30][80,70]" />'
+    )
+    visible = {"dialog": True}
     adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(
-        device,
-        "find_contains",
-        lambda fragment: launcher_anr
-        if fragment == "Pixel Launcher isn't responding"
-        else None,
-    )
+    def find_contains(fragment: str):
+        if fragment in ("Pixel Launcher isn't responding", "isn't responding") and visible["dialog"]:
+            return launcher_anr
+        return None
+
+    def adb(*arguments: str, **_kwargs):
+        adb_calls.append(arguments)
+        if arguments[:3] == ("shell", "input", "tap"):
+            visible["dialog"] = False
+        return ""
+
+    monkeypatch.setattr(device, "find_contains", find_contains)
     monkeypatch.setattr(device, "find", lambda label: wait if label == "Wait" else None)
-    monkeypatch.setattr(
-        device,
-        "adb",
-        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
-    )
+    monkeypatch.setattr(device, "adb", adb)
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
     assert device.dismiss_pixel_launcher_anr() is True
