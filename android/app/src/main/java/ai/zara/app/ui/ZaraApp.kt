@@ -150,6 +150,8 @@ fun ZaraApp(
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    localVoiceActive: Boolean,
+    localVoiceStatus: String?,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
@@ -346,6 +348,11 @@ fun ZaraApp(
                                                 state = runtimeState,
                                                 microphonePermissionGranted = microphonePermissionGranted,
                                                 voiceState = voiceState,
+                                                localVoiceActive = localVoiceActive,
+                                                localVoiceStatus = localVoiceStatus,
+                                                runtimeMode = runtimeMode,
+                                                localServerReady = localServerState.phase == LocalServerPhase.READY,
+                                                cloudModelReady = cloudModelState.config.enabled && cloudModelState.apiKeyConfigured,
                                                 voiceStreamState = voiceStreamState,
                                                 voiceStreamFailure = voiceStreamFailure,
                                                 operationError = operationError,
@@ -1101,6 +1108,11 @@ private fun VoiceSurface(
     state: RuntimeState,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    localVoiceActive: Boolean,
+    localVoiceStatus: String?,
+    runtimeMode: RuntimeMode,
+    localServerReady: Boolean,
+    cloudModelReady: Boolean,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
@@ -1111,14 +1123,16 @@ private fun VoiceSurface(
     onCancelVoice: () -> Unit,
     padding: PaddingValues,
 ) {
-    val capturing = voiceState is ManualVoiceState.Capturing
+    val capturing = localVoiceActive || voiceState is ManualVoiceState.Capturing
     val tokens = LocalZaraTokens.current
     ScreenBody(padding) {
-        ScreenTitle("Voice", "Authenticated capture and playback")
+        ScreenTitle("Voice", "Local-first capture and playback")
         SectionCard("RUNTIME") {
+            KeyValueRow("mode", runtimeMode.name.lowercase())
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("microphone", if (capturing) "capturing" else "idle")
             KeyValueRow("permission", if (microphonePermissionGranted) "granted" else "required")
+            localVoiceStatus?.let { KeyValueRow("voice", it) }
         }
         voiceStreamState?.let { stream ->
             SectionCard("STREAM") {
@@ -1139,8 +1153,14 @@ private fun VoiceSurface(
                 !operationBusy && !capturing,
                 onRequestMicrophonePermission,
             )
-            !canStartManualVoice(state, microphonePermissionGranted) && !capturing ->
-                MutedNotice("Voice becomes available after an authenticated session connects in Settings → Connection.")
+            !canStartManualVoice(
+                state = state,
+                microphonePermissionGranted = microphonePermissionGranted,
+                mode = runtimeMode,
+                localServerReady = localServerReady,
+                cloudModelReady = cloudModelReady,
+            ) && !capturing ->
+                MutedNotice("Voice needs a ready local symbolic runtime, an authenticated Zara server, or an enabled Remote model provider for the selected mode.")
             capturing -> {
                 PrimaryAction("Stop & send", !operationBusy, onStopVoice)
                 SecondaryAction("Cancel", !operationBusy, onCancelVoice)
@@ -1896,11 +1916,21 @@ internal fun canRequestAssistantRole(role: AssistantRole): Boolean = role is Ass
 internal fun canStartManualVoice(
     state: RuntimeState,
     microphonePermissionGranted: Boolean,
-): Boolean =
-    microphonePermissionGranted &&
+    mode: RuntimeMode,
+    localServerReady: Boolean,
+    cloudModelReady: Boolean,
+): Boolean {
+    if (!microphonePermissionGranted) return false
+    val remoteReady =
         state.enrollment == EnrollmentReadiness.Ready &&
-        state.server is ServerConnection.Connected &&
-        state.sessionId != null
+            state.server is ServerConnection.Connected &&
+            state.sessionId != null
+    return when (mode) {
+        RuntimeMode.Symbolic, RuntimeMode.Local -> localServerReady
+        RuntimeMode.Remote -> remoteReady || (localServerReady && cloudModelReady)
+        RuntimeMode.Auto -> remoteReady || localServerReady
+    }
+}
 
 internal fun connectionLabel(connection: ServerConnection): String = when (connection) {
     ServerConnection.Disconnected -> "disconnected"
