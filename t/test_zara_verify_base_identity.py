@@ -100,3 +100,12 @@ def test_partial_source_base_interpolation_fails_closed(repository, monkeypatch)
     assert result['evidence'] == []
     assert 'invalid_gate_base_placeholder' in result['reasons']
     assert captured == []
+
+
+def test_snapshot_ignores_inherited_git_index_file(repository, monkeypatch):
+    expected = runner.collect_snapshot(repository, 'HEAD', ROOT)
+    monkeypatch.setenv('GIT_INDEX_FILE', str(repository.parent / 'alternate.index'))
+
+    observed = runner.collect_snapshot(repository, 'HEAD', ROOT)
+
+    assert observed == expected
