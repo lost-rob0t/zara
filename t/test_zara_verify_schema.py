@@ -39,6 +39,21 @@ def test_coverage_gate_uses_release_relative_ratchet():
         'bash', 'scripts/test-coverage.sh', '--base-ref', 'origin/release/0.3.x']
 
 
+def test_verifier_workflow_retains_machine_readable_evidence_on_failure():
+    script = (ROOT / 'scripts/test-zara-verify.sh').read_text()
+    workflow = (ROOT / '.github/workflows/zara-verify.yml').read_text()
+
+    assert 'ZARA_VERIFY_ARTIFACT_DIR' in script
+    assert '--junit-xml="$ARTIFACT_DIR/python-junit.xml"' in script
+    assert 'tee "$ARTIFACT_DIR/prolog.log"' in script
+    assert 'tee "$ARTIFACT_DIR/node.tap"' in script
+
+    assert 'actions/upload-artifact@v4' in workflow
+    assert 'if: always()' in workflow
+    assert 'path: .artifacts/zara-verify' in workflow
+    assert 'if-no-files-found: error' in workflow
+
+
 @pytest.mark.parametrize('mutation', ['expert', 'plan', 'boolean', 'merge', 'unknown', 'reason', 'provider'])
 def test_invalid_verification_claims_are_rejected(mutation):
     report = copy.deepcopy(valid_report())
