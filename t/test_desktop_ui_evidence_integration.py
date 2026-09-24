@@ -7,18 +7,14 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from zara.desktop.ui_fixtures import render_copilot_fixtures
-
 
 ROOT = Path(__file__).resolve().parents[1]
+RENDERER = ROOT / "scripts" / "desktop_ui_evidence.py"
 VALIDATOR = ROOT / "scripts" / "validate-ui-evidence.py"
 
 
-def _load_validator_module():
-    spec = importlib.util.spec_from_file_location(
-        "zara_validate_ui_evidence_desktop_integration_test",
-        VALIDATOR,
-    )
+def _load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -29,8 +25,10 @@ def _load_validator_module():
 def test_rendered_desktop_evidence_round_trips_through_canonical_validator(tmp_path: Path) -> None:
     source_sha = "0123456789abcdef0123456789abcdef01234567"
     output_dir = tmp_path / "desktop-ui"
-    manifest = render_copilot_fixtures(output_dir, source_commit=source_sha)
-    validator = _load_validator_module()
+    renderer = _load_module(RENDERER, "zara_desktop_ui_evidence_integration_test")
+    validator = _load_module(VALIDATOR, "zara_validate_ui_evidence_desktop_integration_test")
+
+    manifest = renderer.render_desktop_ui_evidence(output_dir, source_commit=source_sha)
 
     assert manifest["schema"] == 2
     assert validator.validate_desktop(output_dir / "manifest.json", source_sha) == len(
