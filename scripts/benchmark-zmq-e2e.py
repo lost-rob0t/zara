@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Deterministic local end-to-end benchmark for the ZARA/1 ZMQ transport."""
+"""Deterministic local protocol benchmark for the ZARA/1 ZMQ transport."""
 
 from __future__ import annotations
 
 import argparse
 import concurrent.futures
 import json
+import os
+import re
 import statistics
 import time
 from dataclasses import asdict, dataclass
@@ -29,6 +31,29 @@ class Sample:
     p95_us: float
     p99_us: float
     max_us: float
+
+
+_SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _metric_provenance(*, source_sha: str, iterations: int) -> dict[str, object]:
+    if not _SOURCE_SHA_RE.fullmatch(source_sha):
+        raise ValueError("source_sha must be a lowercase 40-character Git SHA")
+    if type(iterations) is not int or iterations <= 0:
+        raise ValueError("iterations must be a positive integer")
+    return {
+        "source_sha": source_sha,
+        "endpoint": "inproc",
+        "workload": "audio_input_chunk_ack",
+        "payload_bytes": AUDIO_INPUT_FRAME_BYTES,
+        "warmup_iterations": 50,
+        "measured_iterations": iterations,
+        "voice_ingress": False,
+        "classification": "local_loopback_protocol_rtt",
+        "device_result": False,
+        "wan_result": False,
+        "audio_end_to_end_result": False,
+    }
 
 
 class _Supervisor:
@@ -77,7 +102,16 @@ def _measure(call, count: int) -> Sample:
     return _sample(latencies, elapsed)
 
 
-def _run_stack(name, gateway_type, client_type, config, iterations, *, audio=False):
+def _run_stack(
+    name,
+    gateway_type,
+    client_type,
+    config,
+    iterations,
+    *,
+    audio=False,
+    source_sha: str,
+):
     context = zmq.Context()
     endpoint = f"inproc://zara-zmq-bench-{name}-{time.time_ns()}"
     supervisor = _Supervisor()
@@ -112,7 +146,13 @@ def _run_stack(name, gateway_type, client_type, config, iterations, *, audio=Fal
 
             audio_sample = _measure(chunk, iterations)
             client.commit_audio_input(stream_id).result(timeout=5.0)
-            result["audio_1k"] = asdict(audio_sample)
+            result["audio_input_chunk_ack_1k"] = {
+                "sample": asdict(audio_sample),
+                "provenance": _metric_provenance(
+                    source_sha=source_sha,
+                    iterations=iterations,
+                ),
+            }
         return result
     finally:
         client.close(timeout=5.0)
@@ -123,7 +163,7 @@ def _run_stack(name, gateway_type, client_type, config, iterations, *, audio=Fal
 def _gate(report: dict) -> None:
     baseline = report["baseline"]["ping"]
     hardened = report["hardened"]["ping"]
-    audio = report["hardened"]["audio_1k"]
+    audio = report["hardened"]["audio_input_chunk_ack_1k"]["sample"]
     failures = []
 
     if hardened["p50_us"] >= baseline["p50_us"]:
@@ -133,7 +173,10 @@ def _gate(report: dict) -> None:
     if hardened["p95_us"] > 10_000:
         failures.append(f"hardened ping p95 exceeds 10 ms: {hardened['p95_us']:.1f} us")
     if audio["p95_us"] > 10_000:
-        failures.append(f"1 KiB audio p95 exceeds 10 ms: {audio['p95_us']:.1f} us")
+        failures.append(
+            "local 1 KiB audio-input ACK p95 exceeds 10 ms: "
+            f"{audio['p95_us']:.1f} us"
+        )
     if hardened["ops_per_second"] < 100:
         failures.append(
             f"hardened ping throughput below 100 ops/s: {hardened['ops_per_second']:.1f}"
@@ -146,10 +189,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--iterations", type=int, default=300)
     parser.add_argument("--output")
+    parser.add_argument("--source-sha", default=os.environ.get("GITHUB_SHA"))
     parser.add_argument("--gate", action="store_true")
     args = parser.parse_args()
     if args.iterations < 50:
         parser.error("--iterations must be at least 50")
+    source_sha = (args.source_sha or "").strip().lower()
+    if not _SOURCE_SHA_RE.fullmatch(source_sha):
+        parser.error("--source-sha or GITHUB_SHA must be an exact 40-character Git SHA")
 
     baseline_config = TransportConfig()
     hardened_config = TransportConfig(
@@ -166,8 +213,10 @@ def main() -> int:
         idempotency_cache_size=512,
     )
     report = {
-        "schema": 1,
+        "schema": 2,
         "transport": "ZARA/1 over pyzmq",
+        "measurement_scope": "local_inproc_protocol_rtt",
+        "source_sha": source_sha,
         "audio_frame_bytes": AUDIO_INPUT_FRAME_BYTES,
         "baseline": _run_stack(
             "baseline",
@@ -175,6 +224,7 @@ def main() -> int:
             ZmqZaraClient,
             baseline_config,
             args.iterations,
+            source_sha=source_sha,
         ),
         "hardened": _run_stack(
             "hardened",
@@ -183,6 +233,7 @@ def main() -> int:
             hardened_config,
             args.iterations,
             audio=True,
+            source_sha=source_sha,
         ),
     }
     baseline_p50 = report["baseline"]["ping"]["p50_us"]
