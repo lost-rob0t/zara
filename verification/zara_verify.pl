@@ -53,6 +53,15 @@ security_path(Path) :-
 verifier_path(Path) :-
     member(Prefix, ['verification/', 'contracts/zara-verify', '.opencode/', '.github/']),
     prefix(Prefix, Path).
+evaluator_path(Path) :-
+    memberchk(Path, ['scripts/test-all.sh',
+                     'scripts/test-coverage.sh',
+                     'scripts/test-zara-verify.sh',
+                     'scripts/test-expert-contract.sh',
+                     'scripts/test-runtime-tool-approvals.sh',
+                     'scripts/test-android.sh',
+                     'flake.nix',
+                     'flake.lock']).
 release_path('version.properties').
 release_path(Path) :- prefix('.github/workflows/release', Path).
 
@@ -78,6 +87,7 @@ required_gate(Source, desktop_ui) :- changed(Source, Path), prefix('zara/desktop
 required_gate(Source, Gate) :-
     changed(Source, Path), security_path(Path), member(Gate, [security, independent_review]).
 required_gate(Source, independent_review) :- changed(Source, Path), verifier_path(Path).
+required_gate(Source, independent_review) :- changed(Source, Path), evaluator_path(Path).
 required_gate(Source, release_provenance) :- changed(Source, Path), release_path(Path).
 required_gate(Source, scope_review) :- changed(Source, Path), \+ known_path(Path).
 
