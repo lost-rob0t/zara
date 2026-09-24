@@ -58,6 +58,7 @@ def test_settings_has_complete_navigation_and_many_real_controls(tmp_path):
         assert [window.category_list.item(index).text() for index in range(window.category_list.count())] == [
             "Appearance",
             "Assistant",
+            "Connections",
             "Voice & Speech",
             "Tools & Privacy",
             "Prolog",
@@ -187,5 +188,21 @@ def test_config_source_editor_validates_and_saves_actual_toml(tmp_path):
         window.save_config_source()
         assert 'theme = "nord"' in config_path.read_text(encoding="utf-8")
         assert window.feedback_label.text() == "config.toml saved. Restart Zara to apply runtime changes."
+    finally:
+        dispose(window)
+
+
+
+def test_connections_page_exposes_pairing_flow_without_raw_key_fields(tmp_path):
+    window, _, _, _ = make_window(tmp_path)
+    try:
+        assert window.pairing_button.text() == "Pair this desktop"
+        assert window.pairing_uri_input.placeholderText().startswith("zara://pair/v1")
+        assert "Not paired" in window.pairing_status.text()
+        source = __import__("pathlib").Path(
+            __import__("zara.desktop.windows.settings", fromlist=["__file__"]).__file__
+        ).read_text(encoding="utf-8")
+        assert "pair_client(" in source
+        assert "curve_secret_key" not in source
     finally:
         dispose(window)

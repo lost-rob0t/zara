@@ -19,9 +19,12 @@ from zara.desktop.control import (
     send_desktop_control,
 )
 from zara.desktop.controller import DesktopController
+from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.conversation.symbolic_runtime import PureSymbolicProjectionAdapter
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.theme import apply_desktop_theme
 from zara.runtime.host import RuntimeHost
+from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
 from zara.server import ServerLease
 
 _CONTROLLER_ATTR = "_zara_desktop_controller"
@@ -60,8 +63,38 @@ def _desktop_control_runtime_dir() -> Path:
     return ServerLease()._runtime_dir()
 
 
-def _default_desktop_client(config: Optional[ZaraConfig] = None) -> ZaraClient:
-    """Construct the canonical configured daemon-backed desktop client."""
+def _configured_conversation_policy(config: Optional[ZaraConfig]) -> str:
+    """Read Desktop's conversation execution policy without hijacking agent loops."""
+    active_config = config or get_config()
+    getter = getattr(active_config, "get", None)
+    if not callable(getter):
+        return "standard"
+    return str(
+        getter("conversation", "execution_policy", "standard")
+    ).strip().lower()
+
+
+def _default_desktop_client(
+    config: Optional[ZaraConfig] = None,
+    *,
+    conversation_store: Optional[ConversationStore] = None,
+) -> ZaraClient:
+    """Construct the configured canonical Desktop client boundary.
+
+    Standard mode remains daemon-backed. A conversation execution policy of
+    ``pure_symbolic`` runs the same RuntimeHost boundary in-process so no
+    daemon/provider runtime has to initialize before the hard-zero symbolic
+    contract is active. This policy is deliberately separate from
+    ``[agent].backend``, which remains the canonical AgentLoopRegistry selector.
+    """
+    if _configured_conversation_policy(config) == "pure_symbolic":
+        store = conversation_store or ConversationStore()
+        return InProcessZaraClient(
+            backend_factory=lambda: PureSymbolicRuntimeBackend(
+                projection_adapter=PureSymbolicProjectionAdapter(store),
+            ),
+            config=config,
+        )
     return create_daemon_client(_default_daemon_endpoint(config), config=config)
 
 
@@ -98,10 +131,31 @@ def create_application(
     # standalone tests/embedders. Normal desktop construction always owns a
     # ZaraClient, so transport selection remains outside Qt surfaces.
     service = client if client is not None else host
+    conversation_service = None
     if service is None:
-        service = _default_desktop_client(active_config)
+        if _configured_conversation_policy(active_config) == "pure_symbolic":
+            # Pure-symbolic dialogue state and the visible transcript must be two
+            # views of one canonical ConversationStore. Do not let the runtime
+            # adapter and UI independently construct owners for the same SQLite
+            # history/projection ABI.
+            conversation_store = ConversationStore()
+            service = _default_desktop_client(
+                active_config,
+                conversation_store=conversation_store,
+            )
+            conversation_service = ConversationService(conversation_store)
+        else:
+            service = _default_desktop_client(active_config)
     bridge = QtRuntimeBridge(service, parent=app)
-    controller = DesktopController(app, service, bridge)
+    if conversation_service is None:
+        controller = DesktopController(app, service, bridge)
+    else:
+        controller = DesktopController(
+            app,
+            service,
+            bridge,
+            conversation_service=conversation_service,
+        )
     setattr(app, _CONTROLLER_ATTR, controller)
     return app, controller
 

@@ -42,14 +42,17 @@ from zara.zmq_transport import TransportConfig, ZaraZmqGateway, apply_socket_opt
 class _PreloadedSocket:
     """Pass one already-received message through the base gateway parser."""
 
-    def __init__(self, socket: zmq.Socket, frames: list[bytes]) -> None:
+    def __init__(self, socket: zmq.Socket, frames: list[bytes], *, before_send=None) -> None:
         self._socket = socket
         self._frames = frames
+        self._before_send = before_send
 
     def recv_multipart(self):
         return self._frames
 
     def send_multipart(self, *args, **kwargs):
+        if self._before_send is not None:
+            self._before_send()
         return self._socket.send_multipart(*args, **kwargs)
 
 
@@ -112,6 +115,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         self._route_user_ids: dict[bytes, str] = {}
         self._route_principal_ids: dict[bytes, str] = {}
         self._route_nodes: dict[bytes, ZaraNode] = {}
+        self._pending_hello_nodes: dict[bytes, Optional[ZaraNode]] = {}
         self._runtime_quota_holds: set[tuple[str, str]] = set()
         self._hello_route_resets: set[bytes] = set()
         self._principal_subscriptions = {}
@@ -160,8 +164,16 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             )
         self._principal_subscriptions[principal_id] = subscription
 
-    def _route_ready(self, _route, _state) -> None:
+    def _route_ready(self, route, _state) -> None:
         self._ensure_principal_subscription(self._principal)
+        with self._lock:
+            if route not in self._pending_hello_nodes:
+                return
+            node = self._pending_hello_nodes[route]
+            if node is None:
+                self._route_nodes.pop(route, None)
+            else:
+                self._route_nodes[route] = node
 
     def node_for_session(self, principal_id: str, session_id: str) -> Optional[ZaraNode]:
         """Return peer metadata only for one live authenticated principal/session."""
@@ -285,6 +297,7 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             self._route_user_ids.clear()
             self._route_principal_ids.clear()
             self._route_nodes.clear()
+            self._pending_hello_nodes.clear()
             self._hello_route_resets.clear()
             for subscription in tuple(self._principal_subscriptions.values()):
                 subscription.close()
@@ -554,25 +567,41 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
                 if previous_state is not None:
                     previous_session_id = previous_state.session_id
 
-        previous_principal = self._principal
-        self._principal = enrolled.principal
-        try:
-            super()._receive(_PreloadedSocket(socket, frames))
-        finally:
-            self._principal = previous_principal
-
         if message.type == "hello":
+            with self._lock:
+                self._pending_hello_nodes[route] = peer_node
+
+        def commit_peer_node() -> None:
+            if message.type != "hello":
+                return
             with self._lock:
                 current = self._routes.get(route)
                 if (
-                    current is not None
-                    and current.ready
-                    and current.session_id != previous_session_id
+                    current is None
+                    or not current.ready
+                    or current.session_id == previous_session_id
                 ):
-                    if peer_node is None:
-                        self._route_nodes.pop(route, None)
-                    else:
-                        self._route_nodes[route] = peer_node
+                    return
+                if peer_node is None:
+                    self._route_nodes.pop(route, None)
+                else:
+                    self._route_nodes[route] = peer_node
+
+        previous_principal = self._principal
+        self._principal = enrolled.principal
+        try:
+            super()._receive(
+                _PreloadedSocket(
+                    socket,
+                    frames,
+                    before_send=commit_peer_node if message.type == "hello" else None,
+                )
+            )
+        finally:
+            if message.type == "hello":
+                with self._lock:
+                    self._pending_hello_nodes.pop(route, None)
+            self._principal = previous_principal
 
         replay_key = (principal_id, message.id)
         with self._lock:

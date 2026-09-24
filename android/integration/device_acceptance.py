@@ -254,10 +254,13 @@ class Device:
     def await_label(self, label: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.find(label) is not None:
-                return
+            # UIAutomator includes nodes from the activity behind a system ANR
+            # dialog. Never accept those background labels as proof that Zara is
+            # interactive; clear only the known Pixel Launcher dialog first.
             if self.dismiss_pixel_launcher_anr():
                 continue
+            if self.find(label) is not None:
+                return
             if self.dismiss_release_notes():
                 continue
             time.sleep(0.2)
@@ -266,10 +269,10 @@ class Device:
     def await_contains(self, fragment: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self.find_contains(fragment) is not None:
-                return
             if self.dismiss_pixel_launcher_anr():
                 continue
+            if self.find_contains(fragment) is not None:
+                return
             time.sleep(0.2)
         raise AssertionError(f"Screen did not retain text containing {fragment}")
 

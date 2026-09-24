@@ -12,10 +12,11 @@
 Routes Prolog command fallback rewrites through the pinned Prolog-RLM
 native direct runtime (`rlm_direct/4`) over OpenRouter. The RLM runtime is
 loaded lazily from the directory named by ZARA_PROLOG_RLM_ROOT (injected by
-the Nix wrappers). Every failure path is closed: missing root, missing
-contract, missing credential, and direct-runtime errors surface as typed
-`rlm_rewrite_error/1` exceptions that the command resolution gate converts
-into a failed resolution result.
+the Nix wrappers). Every failure path is closed: a caller budget with
+`max_model_calls=0` is rejected before runtime/provider initialization;
+missing root, missing contract, missing credential, and direct-runtime
+errors surface as typed `rlm_rewrite_error/1` exceptions that the command
+resolution gate converts into a failed resolution result.
 
 The pinned Prolog-RLM revision is
 b654831a0150a593821179da1d3886dfd64deb5c.
@@ -29,6 +30,7 @@ rewrite_with_rlm(UserInput, Intent, Args) :-
     rewrite_with_rlm(UserInput, Intent, Args, []).
 
 rewrite_with_rlm(UserInput, Intent, Args, ExtraOptions) :-
+    reject_zero_model_budget(ExtraOptions),
     ensure_runtime_loaded,
     require_api_key,
     rewrite_prompt(UserInput, Query),
@@ -36,6 +38,20 @@ rewrite_with_rlm(UserInput, Intent, Args, ExtraOptions) :-
     rlm_direct:rlm_direct(Query, text(""), Options, Outcome),
     require_direct_success(Outcome, Value),
     extract_json_intent(Value, Intent, Args).
+
+reject_zero_model_budget(Options) :-
+    (   zero_model_budget(Options)
+    ->  throw(error(rlm_rewrite_error(model_calls_disabled), _))
+    ;   true
+    ).
+
+zero_model_budget(Options) :-
+    member(budget(Budget), Options),
+    is_dict(Budget),
+    get_dict(max_model_calls, Budget, MaxModelCalls),
+    number(MaxModelCalls),
+    MaxModelCalls =:= 0,
+    !.
 
 rewrite_prompt(UserInput, Prompt) :-
     canonical_intent_list(Intents),
