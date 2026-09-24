@@ -1,0 +1,18 @@
+[run]
+branch = True
+source = zara
+relative_files = True
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+
+[html]
+directory = artifacts/coverage-html
+
+[xml]
+output = artifacts/coverage.xml
+
+[json]
+output = artifacts/coverage.json
