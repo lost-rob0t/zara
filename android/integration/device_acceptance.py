@@ -18,6 +18,17 @@ SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
 UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
 UI_DUMP_ATTEMPTS = 3
 UI_DUMP_RETRY_DELAY_SECONDS = 0.2
+SYSTEM_ANR_DIALOGS = (
+    (
+        "com.google.android.apps.nexuslauncher",
+        "Pixel Launcher isn't responding",
+    ),
+    (
+        "com.google.android.googlesdksetup",
+        "com.google.android.googlesdksetup isn't responding",
+    ),
+)
+SYSTEM_ANR_DISMISSAL_LIMIT = 2
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -47,6 +58,7 @@ class Device:
         self.screenshots: list[dict] = []
         self.profiles: list[dict] = []
         self.accessibility_semantics: list[dict] = []
+        self.system_anr_sanitation: list[dict] = []
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
 
@@ -190,28 +202,70 @@ class Device:
         time.sleep(0.4)
 
     def dismiss_pixel_launcher_anr(self) -> bool:
-        # The hosted Pixel emulator can surface a launcher ANR over an otherwise
-        # healthy Zara activity. Prefer closing only that OS-owned launcher process
-        # so the same hung launcher cannot immediately re-present the dialog. Keep
-        # Wait only as a compatibility fallback for platform variants that do not
-        # expose Close app. Never hide a Zara crash/ANR or weaken app assertions.
-        if self.find_contains("Pixel Launcher isn't responding") is None:
+        for package, dialog_text in SYSTEM_ANR_DIALOGS:
+            if self.find_contains(dialog_text) is None:
+                continue
+            prior_clears = sum(
+                1
+                for receipt in self.system_anr_sanitation
+                if receipt["dialog"] == dialog_text and receipt["cleared"]
+            )
+            if prior_clears >= SYSTEM_ANR_DISMISSAL_LIMIT:
+                self.system_anr_sanitation.append(
+                    {
+                        "package": package,
+                        "dialog": dialog_text,
+                        "action": None,
+                        "cleared": False,
+                    }
+                )
+                raise AssertionError(
+                    f"System ANR sanitation limit exceeded for {dialog_text}"
+                )
+            action_label = "Close app"
+            action = self.find(action_label)
+            if action is None:
+                action_label = "Wait"
+                action = self.find(action_label)
+            receipt = {
+                "package": package,
+                "dialog": dialog_text,
+                "action": action_label if action is not None else None,
+                "cleared": False,
+            }
+            self.system_anr_sanitation.append(receipt)
+            if action is None:
+                raise AssertionError(
+                    f"Known system ANR did not expose a dismissal action: {dialog_text}"
+                )
+            left, top, right, bottom = self.bounds(action)
+            self.adb(
+                "shell",
+                "input",
+                "tap",
+                str((left + right) // 2),
+                str((top + bottom) // 2),
+            )
+            receipt["cleared"] = True
+            time.sleep(0.2)
+            return True
+        unexpected = self.find_contains("isn't responding")
+        if unexpected is None:
             return False
-        action = self.find("Close app")
-        if action is None:
-            action = self.find("Wait")
-        if action is None:
-            raise AssertionError("Pixel Launcher ANR did not expose a dismissal action")
-        left, top, right, bottom = self.bounds(action)
-        self.adb(
-            "shell",
-            "input",
-            "tap",
-            str((left + right) // 2),
-            str((top + bottom) // 2),
+        dialog_text = (
+            unexpected.get("text")
+            or unexpected.get("content-desc")
+            or "<unknown ANR dialog>"
         )
-        time.sleep(0.2)
-        return True
+        self.system_anr_sanitation.append(
+            {
+                "package": None,
+                "dialog": dialog_text,
+                "action": None,
+                "cleared": False,
+            }
+        )
+        raise AssertionError(f"Unexpected ANR dialog blocks acceptance: {dialog_text}")
 
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
@@ -256,7 +310,7 @@ class Device:
         while time.monotonic() < deadline:
             # UIAutomator includes nodes from the activity behind a system ANR
             # dialog. Never accept those background labels as proof that Zara is
-            # interactive; clear only the known Pixel Launcher dialog first.
+            # interactive; clear only explicitly allowlisted system dialogs first.
             if self.dismiss_pixel_launcher_anr():
                 continue
             if self.find(label) is not None:
@@ -543,6 +597,7 @@ def main() -> None:
         "screenshots": device.screenshots,
         "profiles": device.profiles,
         "accessibility_semantics": device.accessibility_semantics,
+        "system_anr_sanitation": device.system_anr_sanitation,
         # UIAutomator semantics are useful accessibility evidence, but they are not
         # proof of real TalkBack spoken traversal. Keep that hardware/service claim false.
         "talkback_spoken_traversal": False,
