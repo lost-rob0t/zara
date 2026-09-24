@@ -33,10 +33,10 @@ def test_wire_schema_is_valid_but_not_an_authentication_mechanism():
     assert not list(validator().iter_errors(valid_report()))
 
 
-def test_coverage_gate_uses_release_relative_ratchet():
+def test_coverage_gate_uses_resolved_source_base_sentinel():
     spec = json.loads((ROOT / 'contracts/zara-verify-v1/spec.json').read_text())
     assert spec['gates']['coverage']['argv'] == [
-        'bash', 'scripts/test-coverage.sh', '--base-ref', 'origin/release/0.3.x']
+        'bash', 'scripts/test-coverage.sh', '--base-ref', '@SOURCE_BASE@']
 
 
 def test_verifier_workflow_retains_machine_readable_evidence_on_failure():
@@ -52,6 +52,8 @@ def test_verifier_workflow_retains_machine_readable_evidence_on_failure():
     assert 'if: always()' in workflow
     assert 'path: .artifacts/zara-verify' in workflow
     assert 'if-no-files-found: error' in workflow
+    assert "github.event.pull_request.base.sha" in workflow
+    assert 'snapshot --root . --base "$EXPECTED_BASE_SHA"' in workflow
 
 
 @pytest.mark.parametrize('mutation', ['expert', 'plan', 'boolean', 'merge', 'unknown', 'reason', 'provider'])
