@@ -396,6 +396,9 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
         decision = invoke_policy({'operation': 'evaluate', 'source': source,
                                   'run_id': run_id, 'source_digest': canonical_digest(source),
                                   'evidence': report['evidence']}, policy_root)
+        after_policy = collect_snapshot(root, base_ref, policy_root)
+        if after_policy != source:
+            raise VerificationError('source_changed_during_verification')
         if decision.get('verdict') not in {'verified', 'blocked', 'failed'} or decision.get('required') != required:
             raise VerificationError('invalid_policy_decision')
         if not isinstance(decision.get('reasons'), list):
