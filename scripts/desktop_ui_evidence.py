@@ -36,6 +36,15 @@ def verified_source_sha(claimed_source_sha: str) -> str:
             "Claimed source SHA does not match the checked-out repository: "
             f"claimed={claimed_source_sha} actual={actual_source_sha}"
         )
+    tracked_changes = subprocess.check_output(
+        ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+        cwd=REPO_ROOT,
+        text=True,
+    ).strip()
+    if tracked_changes:
+        raise RuntimeError(
+            "Repository has tracked or index changes; refusing evidence capture"
+        )
     return actual_source_sha
 
 
