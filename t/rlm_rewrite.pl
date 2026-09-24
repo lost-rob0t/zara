@@ -86,6 +86,26 @@ test(rewrite_fails_closed_without_root,
     unsetenv('ZARA_PROLOG_RLM_ROOT'),
     rlm_rewrite:rewrite_with_rlm("open firefox", _, _).
 
+test(zero_model_budget_blocks_before_runtime_or_credentials,
+     [cleanup((restore_root, restore_openrouter_key))]) :-
+    reset_rlm_state,
+    unsetenv('ZARA_PROLOG_RLM_ROOT'),
+    unsetenv('OPENROUTER_API_KEY'),
+    catch(
+        rlm_rewrite:rewrite_with_rlm(
+            "unsupported symbolic request",
+            _,
+            _,
+            [budget(_{max_model_calls:0}),
+             model_handler(user:scripted_rewrite_model)]
+        ),
+        error(rlm_rewrite_error(model_calls_disabled), _),
+        Blocked = true
+    ),
+    assertion(Blocked == true),
+    assertion(\+ rlm_rewrite:runtime_loaded(_)),
+    assertion(\+ captured_request(_)).
+
 test(rewrite_fails_closed_with_invalid_root,
      [throws(error(rlm_rewrite_error(root_invalid(_)), _)),
       cleanup(restore_root)]) :-

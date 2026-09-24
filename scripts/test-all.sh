@@ -184,6 +184,7 @@ phase_security_scripts() {
     scripts/test-prolog-engine.sh
     scripts/test-prolog-config.sh
     scripts/test-prolog-command-advice.sh
+    scripts/test-expert-contract.sh
     scripts/test-alert-sounds.sh
     scripts/test-dictation-lifecycle.sh
     scripts/test-dictation.sh

@@ -196,6 +196,72 @@ class ZaraTextCodecTest {
         }
     }
 
+    @Test fun `server lifecycle messages decode with typed payloads`() {
+        val cancelled = ZaraTextCodec.decode(
+            frames("{\"body\":{\"reason\":\"user\"},\"id\":\"cancel-1\",\"payload_count\":0,\"seq\":7,\"session_id\":\"session-1\",\"timestamp_ns\":10,\"turn_id\":\"turn-1\",\"type\":\"turn.cancelled\"}")
+        )
+        assertEquals(
+            TextServerMessage.TurnCancelled(
+                id = "cancel-1",
+                sessionId = "session-1",
+                conversationId = null,
+                turnId = "turn-1",
+                sequence = 7,
+                reason = "user",
+            ),
+            cancelled,
+        )
+
+        val runtimeError = ZaraTextCodec.decode(
+            frames("{\"body\":{\"fatal\":true,\"reason\":\"boom\"},\"id\":\"rerr-1\",\"payload_count\":0,\"session_id\":\"session-1\",\"timestamp_ns\":11,\"type\":\"runtime.error\"}")
+        )
+        assertEquals(
+            TextServerMessage.RuntimeError(
+                id = "rerr-1",
+                sessionId = "session-1",
+                conversationId = null,
+                turnId = null,
+                sequence = null,
+                reason = "boom",
+                fatal = true,
+            ),
+            runtimeError,
+        )
+
+        val stopped = ZaraTextCodec.decode(
+            frames("{\"body\":{\"reason\":\"shutdown\"},\"id\":\"rstop-1\",\"payload_count\":0,\"session_id\":\"session-1\",\"timestamp_ns\":12,\"type\":\"runtime.stopped\"}")
+        )
+        assertEquals(
+            TextServerMessage.RuntimeStopped(
+                id = "rstop-1",
+                sessionId = "session-1",
+                conversationId = null,
+                turnId = null,
+                sequence = null,
+                reason = "shutdown",
+            ),
+            stopped,
+        )
+    }
+
+    @Test fun `server lifecycle messages reject malformed bodies fail closed`() {
+        assertThrows(ZaraWireException::class.java) {
+            ZaraTextCodec.decode(
+                frames("{\"body\":{\"reason\":\"user\",\"extra\":1},\"id\":\"cancel-1\",\"payload_count\":0,\"seq\":7,\"session_id\":\"session-1\",\"timestamp_ns\":10,\"turn_id\":\"turn-1\",\"type\":\"turn.cancelled\"}")
+            )
+        }
+        assertThrows(ZaraWireException::class.java) {
+            ZaraTextCodec.decode(
+                frames("{\"body\":{\"fatal\":\"yes\",\"reason\":\"boom\"},\"id\":\"rerr-1\",\"payload_count\":0,\"session_id\":\"session-1\",\"timestamp_ns\":11,\"type\":\"runtime.error\"}")
+            )
+        }
+        assertThrows(ZaraWireException::class.java) {
+            ZaraTextCodec.decode(
+                frames("{\"body\":{\"reason\":\"shutdown\"},\"id\":\"rstop-1\",\"payload_count\":0,\"seq\":1,\"session_id\":\"session-1\",\"timestamp_ns\":12,\"type\":\"runtime.stopped\"}")
+            )
+        }
+    }
+
     private fun frames(json: String): List<ByteArray> =
         listOf("ZARA/1".encodeToByteArray(), json.encodeToByteArray())
 }

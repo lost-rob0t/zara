@@ -14,12 +14,44 @@ export PULSE_RUNTIME_PATH="$runtime_dir/pulse"
 
 tone_pid=""
 cleanup() {
+  local original_status=$?
+  local cleanup_status=0
+  local removed=0
+  trap - EXIT
+
   if [[ -n "$tone_pid" ]]; then
     kill "$tone_pid" >/dev/null 2>&1 || true
     wait "$tone_pid" >/dev/null 2>&1 || true
   fi
+
   pulseaudio --kill >/dev/null 2>&1 || true
-  rm -rf "$runtime_dir"
+  for _ in $(seq 1 100); do
+    if ! pulseaudio --check >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.05
+  done
+  if pulseaudio --check >/dev/null 2>&1; then
+    echo "PulseAudio test server did not stop during cleanup" >&2
+    cleanup_status=1
+  fi
+
+  for _ in $(seq 1 20); do
+    if rm -rf "$runtime_dir" 2>/dev/null; then
+      removed=1
+      break
+    fi
+    sleep 0.05
+  done
+  if [[ "$removed" -ne 1 || -e "$runtime_dir" ]]; then
+    echo "PulseAudio runtime directory did not quiesce during cleanup: $runtime_dir" >&2
+    cleanup_status=1
+  fi
+
+  if [[ "$original_status" -ne 0 ]]; then
+    exit "$original_status"
+  fi
+  exit "$cleanup_status"
 }
 trap cleanup EXIT
 
@@ -48,9 +80,12 @@ pactl set-default-source zara_ci.monitor
 
 python - <<'PY' | pacat --playback --raw --format=s16le --rate=48000 --channels=1 --device=zara_ci &
 import math
+import signal
 import struct
 import sys
 import time
+
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 rate = 48000
 frequency = 440.0
@@ -58,17 +93,14 @@ amplitude = 0.2
 chunk = 4800
 end = time.monotonic() + 8.0
 phase = 0
-try:
-    while time.monotonic() < end:
-        frames = bytearray()
-        for _ in range(chunk):
-            sample = int(32767 * amplitude * math.sin(2 * math.pi * frequency * phase / rate))
-            frames.extend(struct.pack("<h", sample))
-            phase += 1
-        sys.stdout.buffer.write(frames)
-        sys.stdout.buffer.flush()
-except BrokenPipeError:
-    pass
+while time.monotonic() < end:
+    frames = bytearray()
+    for _ in range(chunk):
+        sample = int(32767 * amplitude * math.sin(2 * math.pi * frequency * phase / rate))
+        frames.extend(struct.pack("<h", sample))
+        phase += 1
+    sys.stdout.buffer.write(frames)
+    sys.stdout.buffer.flush()
 PY
 tone_pid=$!
 
