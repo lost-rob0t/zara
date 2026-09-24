@@ -59,7 +59,6 @@ export function createVerifyGate({execute, snapshot, policyDigest, now=Date.now}
   const sessions = new Map();
   let epoch = 0;
   let busy = false;
-  // Captured once: editing the evaluator requires an explicit trusted reload.
   const pin = policyDigest();
   async function checkPolicy() {
     if (await pin !== await policyDigest()) throw new Error('verifier_changed_restart_required');
@@ -71,7 +70,7 @@ export function createVerifyGate({execute, snapshot, policyDigest, now=Date.now}
     if (record.epoch !== epoch) throw new Error('stale_generation');
     const report = record.report;
     if (!report || report.protocol !== protocol || report.scope !== 'local' ||
-        report.verdict !== 'verified' || report.model_calls !== 0 ||
+        report.verdict !== 'verified' || report.model_calls !== 0 || report.provider_calls !== 0 ||
         report.merge_authorized !== false || !Array.isArray(report.reasons) || report.reasons.length ||
         !Number.isSafeInteger(report.created_ms) || !Number.isSafeInteger(report.ttl_ms) ||
         report.ttl_ms <= 0 || report.ttl_ms > 600000 ||
