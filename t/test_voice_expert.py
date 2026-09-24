@@ -37,6 +37,32 @@ def expert(prolog=None):
     return value
 
 
+def test_qwen_voice_inventory_never_fabricates_configured_voice(monkeypatch):
+    value = VoiceExpert(FakeProlog(), FakeConfig())
+
+    async def provider_inventory():
+        return ["alice", "", "bob"]
+
+    monkeypatch.setattr(value, "_qwen_list_voices", provider_inventory)
+
+    listed = json.loads(value.list_voices())
+    assert listed == {"provider": "qwen3", "voices": ["alice", "bob"]}
+    assert "zara" not in listed["voices"]
+
+
+def test_qwen_empty_provider_inventory_blocks_voice_plan(monkeypatch):
+    value = VoiceExpert(FakeProlog(), FakeConfig())
+
+    async def provider_inventory():
+        return []
+
+    monkeypatch.setattr(value, "_qwen_list_voices", provider_inventory)
+
+    assert json.loads(value.list_voices()) == {"provider": "qwen3", "voices": []}
+    with pytest.raises(RuntimeError, match="no available voices"):
+        value.plan([VoiceSegment(text="hello")])
+
+
 def prepare_clone_fixture(
     monkeypatch,
     value,
