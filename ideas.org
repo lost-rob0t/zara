@@ -34,3 +34,10 @@
 - Why deferred: XR should consume the shared Geo protocol after the server/map contracts exist.
 - Next proof: Sideloadable fixture build that selects a geo anchor and resolves its canonical StarIntel document.
 - Promoted issue: lost-rob0t/zara#1205
+
+** IDEA Unified Zara budget manager
+- Captured: 2026-09-19 00:20 America/New_York
+- Source: chat request "Add budgets to zara"; lost-rob0t/zara#1195
+- Why deferred: Promoted immediately into a dedicated implementation epic; this inbox entry preserves the originating idea.
+- Next proof: Land the typed budget envelope plus atomic reserve/commit/refund ledger with deterministic concurrency tests.
+- Promoted issue: lost-rob0t/zara#1195
