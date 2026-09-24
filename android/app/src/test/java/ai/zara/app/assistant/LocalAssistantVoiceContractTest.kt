@@ -47,8 +47,8 @@ class LocalAssistantVoiceContractTest {
             "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
         ).readText()
 
-        assertTrue(source.contains("appSession.submitLocalText(transcript)"))
-        assertFalse(source.contains("appSession.submitText(transcript)"))
+        assertTrue(source.contains("appSession.submitText(transcript)"))
+        assertFalse(source.contains("appSession.submitLocalText(transcript)"))
     }
 
     @Test
