@@ -89,3 +89,25 @@ def test_formal_binding_rejects_stale_revoked_and_route_selected_identity() -> N
 
     route = _swipl("\\+ peer_node_verify:authority_source(route_identity)")
     assert route.returncode == 0
+
+
+def test_formal_security_authority_requires_same_active_zap_registry_identity() -> None:
+    valid = _swipl(
+        "peer_node_verify:authenticated_security_capability(user_alice,user_alice,true,'turn.submit')"
+    )
+    assert valid.returncode == 0, valid.stderr or valid.stdout
+
+    mismatch = _swipl(
+        "\\+ peer_node_verify:authenticated_security_capability(user_alice,user_mallory,true,'turn.submit')"
+    )
+    assert mismatch.returncode == 0
+
+    revoked = _swipl(
+        "\\+ peer_node_verify:authenticated_security_capability(user_alice,user_alice,false,'turn.submit')"
+    )
+    assert revoked.returncode == 0
+
+    missing_zap_identity = _swipl(
+        "\\+ peer_node_verify:authenticated_security_capability('',user_alice,true,'turn.submit')"
+    )
+    assert missing_zap_identity.returncode == 0
