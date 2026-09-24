@@ -24,6 +24,7 @@ import xml.etree.ElementTree as ET
 from typing import Any
 
 PROTOCOL = 'ZARA-VERIFY/1'
+SOURCE_BASE_SENTINEL = '@SOURCE_BASE@'
 MAX_FILE_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_BYTES = 256 * 1024 * 1024
 MAX_FILES = 20000
@@ -183,6 +184,8 @@ def load_spec(policy_root: Path) -> dict[str, Any]:
             raise VerificationError('invalid_gate_command')
         if any(not isinstance(x, str) or not x or len(x) > 4096 or '\0' in x for x in command):
             raise VerificationError('invalid_gate_argument')
+        if any(SOURCE_BASE_SENTINEL in x and x != SOURCE_BASE_SENTINEL for x in command):
+            raise VerificationError('invalid_gate_base_placeholder')
         if gate.get('collector') not in {'local', 'external'}:
             raise VerificationError('invalid_collector')
         if gate['collector'] == 'local' and not command:
@@ -202,6 +205,20 @@ def load_spec(policy_root: Path) -> dict[str, Any]:
         if any(item not in spec['gates'] for item in dependencies):
             raise VerificationError('unknown_gate_dependency')
     return spec
+
+
+def materialize_gate_argv(argv: list[str], source_base: str) -> list[str]:
+    if not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', source_base):
+        raise VerificationError('invalid_source_base')
+    materialized = []
+    for argument in argv:
+        if SOURCE_BASE_SENTINEL in argument:
+            if argument != SOURCE_BASE_SENTINEL:
+                raise VerificationError('invalid_gate_base_placeholder')
+            materialized.append(source_base)
+        else:
+            materialized.append(argument)
+    return materialized
 
 
 def gate_environment(directory: Path) -> dict[str, str]:
@@ -375,7 +392,8 @@ def run_verification(root: Path, base_ref: str, policy_root: Path,
                             'exit_code': None, 'artifact_sha256': '', 'bytes': 0}
                 else:
                     timeout = min(gate['timeout_seconds'], deadline - time.monotonic())
-                    item = execute_gate(gate_id, gate['argv'], root, evidence_dir / gate_id, timeout)
+                    argv = materialize_gate_argv(gate['argv'], source['base'])
+                    item = execute_gate(gate_id, argv, root, evidence_dir / gate_id, timeout)
                     if gate.get('junit') and item['state'] == 'passed':
                         junit_path = evidence_dir / gate_id / gate['junit']
                         item['junit'] = parse_junit(junit_path)
