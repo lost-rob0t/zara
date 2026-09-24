@@ -205,12 +205,12 @@ class Device:
         ]
         if not candidates:
             return None, nodes
-        allowlisted = [
+        unexpected = [
             node
             for node in candidates
-            if (node.get("package"), self.node_label(node)) in SYSTEM_ANR_DIALOGS
+            if (node.get("package"), self.node_label(node)) not in SYSTEM_ANR_DIALOGS
         ]
-        return (allowlisted[0] if allowlisted else candidates[0]), nodes
+        return (unexpected[0] if unexpected else candidates[0]), nodes
 
     def bound_anr_action(self, nodes, selected_anr, label: str):
         expected_resource_id = SYSTEM_ANR_ACTIONS[label]
