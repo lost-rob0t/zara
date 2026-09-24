@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -58,3 +59,64 @@ def test_desktop_cli_verifies_claimed_source_before_render(
     assert module.main() == 0
     assert verified_claims == [CLAIMED_SHA]
     assert rendered_sources == [SOURCE_SHA]
+
+
+def _git(repo: Path, *arguments: str) -> str:
+    return subprocess.check_output(
+        ["git", *arguments],
+        cwd=repo,
+        text=True,
+    ).strip()
+
+
+def _init_git_repo(repo: Path) -> str:
+    _git(repo, "init", "-q")
+    (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+    _git(repo, "add", "tracked.txt")
+    subprocess.check_call(
+        [
+            "git",
+            "-c",
+            "user.name=W10",
+            "-c",
+            "user.email=w10@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+        cwd=repo,
+    )
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.mark.parametrize(
+    "staged",
+    (False, True),
+    ids=("unstaged", "staged"),
+)
+def test_desktop_source_identity_rejects_tracked_or_index_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    staged: bool,
+) -> None:
+    module = _load()
+    source_sha = _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    if staged:
+        _git(tmp_path, "add", "tracked.txt")
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+
+    with pytest.raises(RuntimeError, match="tracked or index changes"):
+        module.verified_source_sha(source_sha)
+
+
+def test_desktop_source_identity_ignores_untracked_evidence_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load()
+    source_sha = _init_git_repo(tmp_path)
+    (tmp_path / "evidence-output.png").write_bytes(b"synthetic output")
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+
+    assert module.verified_source_sha(source_sha) == source_sha
