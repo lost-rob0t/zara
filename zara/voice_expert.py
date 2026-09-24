@@ -555,14 +555,10 @@ class VoiceExpert:
 
     def _available_voices(self) -> list[str]:
         provider = self._provider()
-        tts = self._tts_config()
         if provider == "qwen3":
             voices = asyncio.run(self._qwen_list_voices())
-            configured = str(tts.get("voice") or os.getenv("QWEN3_VOICE", "zara"))
-            normalized = [str(voice) for voice in voices if str(voice)]
-            if configured and configured not in normalized:
-                normalized.insert(0, configured)
-            return normalized
+            return [str(voice) for voice in voices if str(voice)]
+        tts = self._tts_config()
         if provider == "edge":
             return [str(tts.get("edge_voice", "en-US-GuyNeural"))]
         if provider == "11labs":
