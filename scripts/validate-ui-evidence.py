@@ -457,13 +457,14 @@ def validate_android(
 
     count = len(screenshots)
     if include_supplemental:
-        supplemental_path = manifest_path.with_name("remote-manifest.json")
-        if supplemental_path != manifest_path and supplemental_path.is_file():
-            count += validate_android(
-                supplemental_path,
-                source_sha,
-                include_supplemental=False,
-            )
+        for supplemental_name in ("remote-manifest.json", "recovery-manifest.json"):
+            supplemental_path = manifest_path.with_name(supplemental_name)
+            if supplemental_path != manifest_path and supplemental_path.is_file():
+                count += validate_android(
+                    supplemental_path,
+                    source_sha,
+                    include_supplemental=False,
+                )
     return count
 
 
