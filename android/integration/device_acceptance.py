@@ -232,7 +232,6 @@ class Device:
         selected_path = self.hierarchy_path(selected_anr)
         if selected_path is None or not selected_path:
             raise AssertionError(f"ANR action ownership is not provable: {label}")
-        selected_owner_path = selected_path[:-1]
         candidate_paths = {
             id(candidate): self.hierarchy_path(candidate)
             for candidate in anr_candidates
@@ -243,11 +242,25 @@ class Device:
         scored: list[tuple[int, object]] = []
         for action in matches:
             action_path = self.hierarchy_path(action)
-            if action_path is None:
+            if action_path is None or not action_path:
                 raise AssertionError(f"ANR action ownership is not provable: {label}")
-            if action_path[: len(selected_owner_path)] != selected_owner_path:
+
+            # The hierarchy root and its top-level window are not dialog ownership
+            # evidence. Require a deeper structural boundary that uniquely contains
+            # both the selected ANR and the candidate Android system action.
+            owner_depth = self.common_path_depth(selected_path, action_path)
+            if owner_depth < 2:
                 continue
-            selected_depth = self.common_path_depth(selected_path, action_path)
+            owner_path = selected_path[:owner_depth]
+            owned_anrs = [
+                candidate
+                for candidate in anr_candidates
+                for path in (candidate_paths[id(candidate)],)
+                if path is not None and path[:owner_depth] == owner_path
+            ]
+            if len(owned_anrs) != 1 or owned_anrs[0] is not selected_anr:
+                continue
+
             competing_depth = max(
                 (
                     self.common_path_depth(path, action_path)
@@ -258,8 +271,8 @@ class Device:
                 ),
                 default=-1,
             )
-            if selected_depth > competing_depth:
-                scored.append((selected_depth, action))
+            if owner_depth > competing_depth:
+                scored.append((owner_depth, action))
 
         if not scored:
             return None
