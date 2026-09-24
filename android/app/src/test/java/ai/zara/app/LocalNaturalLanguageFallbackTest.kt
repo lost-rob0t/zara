@@ -19,6 +19,8 @@ class LocalNaturalLanguageFallbackTest {
         val submit = source.substringAfter("fun submitText(")
             .substringBefore("private fun submitLocalText")
 
+        assertTrue(submit.contains("RuntimeMode.Symbolic -> return submitLocalText("))
+        assertTrue(submit.contains("allowModelFallback = false"))
         assertTrue(submit.contains("RuntimeMode.Local -> return submitLocalText(text, localConversationId)"))
         assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoRemoteFirst("))
         assertTrue(submit.contains("remoteConnected = remoteConnected"))
@@ -67,8 +69,12 @@ class LocalNaturalLanguageFallbackTest {
             publishIndex >= 0 && suspendIndex < publishIndex,
         )
         assertTrue(
-            "re-selecting Local must not churn the remote generation",
-            setter.contains("mode == RuntimeMode.Local && previous != RuntimeMode.Local"),
+            "strict local modes must fence remote transport",
+            setter.contains("mode in setOf(RuntimeMode.Symbolic, RuntimeMode.Local)"),
+        )
+        assertTrue(
+            "switching between Symbolic and Local must not churn the remote generation",
+            setter.contains("previous !in setOf(RuntimeMode.Symbolic, RuntimeMode.Local)"),
         )
     }
 
