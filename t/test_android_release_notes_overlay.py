@@ -31,9 +31,12 @@ def test_release_notes_survive_pixel_launcher_anr_overlay(
         '<node text="What\'s new in Zara 0.2.2-alpha" bounds="[10,10][500,90]" />'
     )
     launcher_anr = module.ET.fromstring(
-        '<node text="Pixel Launcher isn\'t responding" bounds="[10,10][90,90]" />'
+        '<node text="Pixel Launcher isn\'t responding" '
+        'package="com.google.android.apps.nexuslauncher" bounds="[10,10][90,90]" />'
     )
-    wait = module.ET.fromstring('<node text="Wait" bounds="[20,30][80,70]" />')
+    wait = module.ET.fromstring(
+        '<node text="Wait" package="android" bounds="[20,30][80,70]" />'
+    )
     continue_button = module.ET.fromstring(
         '<node text="Continue" bounds="[500,1500][700,1600]" />'
     )
@@ -45,6 +48,8 @@ def test_release_notes_survive_pixel_launcher_anr_overlay(
         if fragment == "What's new in Zara ":
             return release_notes
         if fragment == "Pixel Launcher isn't responding" and state["launcher_anr"]:
+            return launcher_anr
+        if fragment == "isn't responding" and state["launcher_anr"]:
             return launcher_anr
         return None
 
@@ -82,14 +87,17 @@ def test_await_label_dismisses_pixel_launcher_anr_before_accepting_background_la
     device = module.Device("emulator-5554", tmp_path)
     chat = module.ET.fromstring('<node text="Chat" bounds="[10,10][100,80]" />')
     launcher_anr = module.ET.fromstring(
-        '<node text="Pixel Launcher isn\'t responding" bounds="[10,10][90,90]" />'
+        '<node text="Pixel Launcher isn\'t responding" '
+        'package="com.google.android.apps.nexuslauncher" bounds="[10,10][90,90]" />'
     )
-    wait = module.ET.fromstring('<node text="Wait" bounds="[20,30][80,70]" />')
+    wait = module.ET.fromstring(
+        '<node text="Wait" package="android" bounds="[20,30][80,70]" />'
+    )
     state = {"launcher_anr": True}
     adb_calls: list[tuple[str, ...]] = []
 
     def find_contains(fragment: str):
-        if fragment == "Pixel Launcher isn't responding" and state["launcher_anr"]:
+        if fragment in ("Pixel Launcher isn't responding", "isn't responding") and state["launcher_anr"]:
             return launcher_anr
         return None
 
