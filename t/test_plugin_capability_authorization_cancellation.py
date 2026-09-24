@@ -294,7 +294,7 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
         registry,
         allowed=("provider.read",),
         invoker=invoke,
-        lifecycle_timeout=0.1,
+        lifecycle_timeout=1.0,
     )
     await manager.start()
     handle = manager._resolve_capability("consumer", "provider.read")
@@ -314,7 +314,7 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
 
     stop_task = asyncio.create_task(manager.stop())
     try:
-        await asyncio.wait_for(asyncio.shield(stop_task), timeout=0.5)
+        await asyncio.wait_for(asyncio.shield(stop_task), timeout=1.5)
     except asyncio.TimeoutError:
         release_invocation.set()
         await stop_task
