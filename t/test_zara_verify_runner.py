@@ -200,6 +200,12 @@ def test_junit_cannot_pass_empty_skipped_failed_or_hostile_xml(tmp_path, xml):
     assert parse_junit(path)['state'] != 'passed'
 
 
+def test_junit_rejects_non_junit_root(tmp_path):
+    path = tmp_path / 'junit.xml'
+    path.write_text('<report><testcase name="looks-clean"/></report>')
+    assert parse_junit(path)['state'] != 'passed'
+
+
 def test_junit_requires_real_test_cases_not_summary_attributes(tmp_path):
     path = tmp_path / 'junit.xml'
     path.write_text('<testsuite tests="999"><testcase name="real"/></testsuite>')
