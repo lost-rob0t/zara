@@ -116,4 +116,30 @@ class UiExtensionAbiCoreTest {
             }
         }
     }
+
+    @Test
+    fun prologUiParserRejectsUnknownEscapesAndPreservesLastGoodRegistryState() {
+        val registry = UiExtensionRegistry()
+        val accepted = PrologUiTermParser.parse(
+            "ui(last_good, drawer, text, 'Last good', '', 1, [android]).",
+        )
+        registry.replaceOwner("plugin:notes", listOf(accepted))
+
+        listOf(
+            """ui(bad_action, drawer, button, 'Bad action', 'route:plug\qins', 1, [android]).""",
+            """ui(bad_label, drawer, text, 'Bad\qlabel', '', 1, [android]).""",
+        ).forEach { malformed ->
+            assertThrows(IllegalArgumentException::class.java) {
+                registry.replaceOwner(
+                    "plugin:notes",
+                    listOf(PrologUiTermParser.parse(malformed)),
+                )
+            }
+
+            val retained = registry.forPlatform(UiPlatform.ANDROID)
+            assertEquals(listOf("last_good"), retained.map { it.id })
+            assertEquals(listOf("Last good"), retained.map { it.label })
+            assertEquals(listOf("plugin:notes"), retained.map { it.owner })
+        }
+    }
 }
