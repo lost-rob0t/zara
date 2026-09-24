@@ -338,7 +338,10 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setRuntimeMode(mode: RuntimeMode) {
         val previous = runtimeMode
-        if (mode == RuntimeMode.Local && previous != RuntimeMode.Local) {
+        val enteringStrictLocal =
+            mode in setOf(RuntimeMode.Symbolic, RuntimeMode.Local) &&
+                previous !in setOf(RuntimeMode.Symbolic, RuntimeMode.Local)
+        if (enteringStrictLocal) {
             controller.suspendRemoteForLocalMode()
         }
         runtimeMode = mode
@@ -391,14 +394,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
         val runtimeState = state()
         val localAiPhase = when {
-            runtimeMode == RuntimeMode.Remote -> "not_applicable"
+            runtimeMode == RuntimeMode.Remote || runtimeMode == RuntimeMode.Symbolic -> "not_applicable"
             aiState != null -> aiState.phase.name.lowercase()
             else -> "unknown"
         }
-        val localAiNote = if (runtimeMode == RuntimeMode.Remote) {
-            "remote-only mode never starts the local model"
-        } else {
-            null
+        val localAiNote = when (runtimeMode) {
+            RuntimeMode.Remote -> "remote-only mode never starts the local model"
+            RuntimeMode.Symbolic -> "symbolic-only mode forbids all model inference"
+            else -> null
         }
         val snapshot = DiagnosticsSnapshot(
             version = BuildConfig.VERSION_NAME,
@@ -414,7 +417,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             voiceStages = telemetry.voiceStages().values.toList(),
             localAiPhase = localAiPhase,
             localAiNote = localAiNote,
-            localAiGeneration = if (runtimeMode == RuntimeMode.Remote) null else (aiState?.generation ?: -1),
+            localAiGeneration = if (
+                runtimeMode == RuntimeMode.Remote || runtimeMode == RuntimeMode.Symbolic
+            ) null else (aiState?.generation ?: -1),
             localAiModel = aiState?.model?.let { "${it.id}@${it.version}" },
             localServerPhase = server.phase.name.lowercase(),
             localServerGeneration = server.generation,
@@ -637,6 +642,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             ),
         )
         when (runtimeMode) {
+            RuntimeMode.Symbolic -> return submitLocalText(
+                text,
+                localConversationId,
+                allowModelFallback = false,
+            )
             RuntimeMode.Local -> return submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> {
                 if (!remoteConnected) {
@@ -731,6 +741,11 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         require(normalizedProjectId.none(Char::isISOControl)) { "Project id contains control characters" }
         val remoteConnected = state().server is ServerConnection.Connected
         return when (runtimeMode) {
+            RuntimeMode.Symbolic -> submitLocalText(
+                text,
+                localConversationId,
+                allowModelFallback = false,
+            )
             RuntimeMode.Local -> submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> {
                 if (!remoteConnected) {
@@ -753,6 +768,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     internal fun submitLocalText(
         text: String,
         conversationId: String = "local-device",
+        allowModelFallback: Boolean = true,
     ): CompletableFuture<TextTurnResult> {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
@@ -835,11 +851,33 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                         mapOf("route" to route),
                     )
                 }
-                generateLocalModelTurn(
-                    query = query,
-                    symbolicFailure = error,
-                    conversationId = conversationId,
-                )
+                if (!allowModelFallback) {
+                    diagnostics.record(
+                        "local_symbolic.model_fallback_forbidden",
+                        mapOf(
+                            "route" to route,
+                            "symbolic_failure" to (error != null),
+                        ),
+                    )
+                    CompletableFuture.completedFuture(
+                        TextTurnResult(
+                            conversationId = conversationId,
+                            turnId = UUID.randomUUID().toString(),
+                            text = if (error != null) {
+                                "The local symbolic runtime failed in Symbolic mode. No model fallback was attempted."
+                            } else {
+                                "No deterministic local rule matched in Symbolic mode. No model fallback was attempted."
+                            },
+                            success = false,
+                        )
+                    )
+                } else {
+                    generateLocalModelTurn(
+                        query = query,
+                        symbolicFailure = error,
+                        conversationId = conversationId,
+                    )
+                }
             },
         )
     }
