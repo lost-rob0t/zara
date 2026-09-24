@@ -91,3 +91,77 @@ background task - and the defect is purely wire serialization:
 
 ** Outcome
 - Pending: push iteration-2 commits, exact-head CI green, merge.
+
+* Iteration 3 — autonomous end-to-end transport ownership (2026-09-24)
+
+** Immutable takeover / ownership
+- Operator requested end-to-end autonomous implementation instead of review-only
+  blocker reporting.
+- Retained PR :: #1463 / issue #1396
+- Takeover head :: =015205e2ac2b7b8eef86e172b90371412e6b8c29=
+- Live master consumed :: =7649e375453b35c9dc079792305449c35e73e72a=
+- Because R03 authored production/test changes in this iteration, R03 is
+  recused from serving as the required independent final reviewer for this
+  candidate. Final authority review must come from an unconflicted reviewer.
+
+** Research / defect composition
+The retained blocker set was re-read against the exact source instead of
+opening replacement PRs. The implementation closes these owner/lifecycle
+failures in the existing ZARA/1 gateway and SecurityRegistry boundaries:
+1. per-turn event 129 must fail closed rather than silently evict event 1;
+2. a generation-N completion may not delete generation N+1 inflight state for
+   the same stable request id;
+3. post-future/pre-wire overflow must replace unsent turn.accepted with bounded
+   server_backpressure and clear turn ownership;
+4. completed/disconnected turn ids must not resurrect through conversation
+   fallback, while previously unseen legitimate conversation events must still
+   route normally;
+5. turn ownership retires only after turn.completed is successfully written;
+6. approval ownership is created only for a deliverable tool.waiting prompt
+   and removed when the bounded FIFO evicts that prompt;
+7. distinct-route stable-request retry owns one acceptance/event stream, and a
+   pre-wire replay transfers rather than duplicates the acceptance barrier;
+8. CURVE key rotation for the same registry-owned device supersedes the stale
+   revoked route before per-principal connection quota is charged.
+
+** Implementation commits
+- =8e6d0cec3d9a3afff48636119a29d1590a7b88f8=
+  fix(protocol): close transport lifecycle ownership races
+- =2bf2c43d9dcd12726b13883d963557f64c32a78b=
+  non-force merge of live master into retained protocol branch
+- =dcf0bf3d6372ce8e49817564ab4ee62c8f1b95e5=
+  fix(protocol): fence retired turns without breaking conversation routing
+- =9ab682aa2f617e008be2ed36e0e1956944a2b6ba=
+  fix(security): supersede rotated device routes before quota
+- =cbb6e353acb43e1ce06887aa4e26bf209d5a8864=
+  fix(protocol): transfer pre-wire acceptance on reconnect
+- =5246417b62d5ca7998a9c5a4658320a784951b0d=
+  test(security): satisfy whitespace gate
+
+** RED / repair evidence
+- Exact run =36030906682= on =2bf2c43...= reached the full repository
+  transport phase and failed
+  =t/test_zmq_transport.py::test_two_routes_do_not_receive_each_others_runtime_events=.
+  The first orphan fence was too broad and removed the legitimate
+  unique-conversation route for a previously unseen turn.
+- Repair =dcf0bf3...= introduced a bounded retired-turn cache owned by the
+  existing gateway lifecycle: explicit terminal/disconnect keys are fenced,
+  but unknown live turn events may still use the existing unique-conversation
+  projection when no submit is awaiting acceptance.
+- Superseded run =36031447511= exposed only a whitespace-gate failure
+  (=t/test_daemon_security_gateway.py: new blank line at EOF=) before tests;
+  =5246417...= removes that blank line without changing assertions.
+
+** Current verification state
+- Current candidate at this log append descends from
+  =5246417b62d5ca7998a9c5a4658320a784951b0d= and live master, with no
+  force update.
+- The newest exact-head CI matrix is required to rerun repository tests,
+  formal verification, flake/package, adversarial hash seeds, Android/Wear,
+  installed evidence, and shared-mic lanes after this documentation commit.
+- Canonical #999 coverage remains a repository dependency: live master returns
+  404 for =coverage-baseline.json= even though #999 requires that file plus
+  =scripts/test-coverage.sh= and the Coverage workflow. This iteration does not
+  fabricate coverage, lower floors, or duplicate the separately owned coverage
+  infrastructure.
+
