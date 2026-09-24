@@ -107,3 +107,30 @@ def test_rejected_config_reload_is_atomic():
             unregister_theme(config_key)
         if external_key in THEME_REGISTRY:
             unregister_theme(external_key)
+
+def test_config_reload_cannot_claim_identical_external_theme():
+    external_key = "test-external-identical"
+    spec = {
+        "base": "nord",
+        "label": "External Identical",
+        "primary": "#1C71D8",
+    }
+
+    try:
+        external_theme = theme_from_mapping(external_key, spec)
+        register_theme(external_theme)
+        before_registry = dict(THEME_REGISTRY)
+
+        with pytest.raises(ValueError, match="already registered"):
+            configure_theme_registry(
+                {external_key: spec},
+                load_packages=False,
+            )
+
+        assert dict(THEME_REGISTRY) == before_registry
+        configure_theme_registry({}, load_packages=False)
+        assert external_key in THEME_REGISTRY
+    finally:
+        if external_key in THEME_REGISTRY:
+            unregister_theme(external_key)
+

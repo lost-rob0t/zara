@@ -371,6 +371,13 @@ def configure_theme_registry(
             raise ValueError("[themes] must be a TOML table")
         definitions = _build_config_themes(config)
         incoming_keys = set(definitions)
+        conflicting_keys = sorted(
+            key
+            for key in incoming_keys
+            if key in _THEME_REGISTRY and key not in _CONFIG_THEME_KEYS
+        )
+        if conflicting_keys:
+            raise ValueError(f"theme {conflicting_keys[0]!r} is already registered")
         removed_keys = _CONFIG_THEME_KEYS - incoming_keys
         for key in removed_keys:
             _THEME_REGISTRY.pop(key, None)
