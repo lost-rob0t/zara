@@ -131,3 +131,48 @@ def test_selected_anr_uses_only_its_structurally_bound_action(
             "cleared": True,
         }
     ]
+
+
+def test_single_anr_does_not_claim_unrelated_system_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    device = module.Device("emulator-5554", tmp_path)
+    hierarchy = """
+    <hierarchy>
+      <node package="android" bounds="[0,0][500,500]">
+        <node resource-id="dialog-a" bounds="[0,0][220,220]">
+          <node text="Pixel Launcher isn't responding"
+                package="com.google.android.apps.nexuslauncher"
+                bounds="[20,20][200,80]" />
+        </node>
+        <node resource-id="background-controls" bounds="[250,0][500,220]">
+          <node text="Close app" package="android"
+                resource-id="android:id/aerr_close"
+                bounds="[280,100][400,160]" />
+        </node>
+      </node>
+    </hierarchy>
+    """
+    adb_calls: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(device, "nodes", lambda: _snapshot(device, module, hierarchy))
+    monkeypatch.setattr(
+        device,
+        "adb",
+        lambda *arguments, **_kwargs: adb_calls.append(arguments) or "",
+    )
+
+    with pytest.raises(AssertionError, match="did not expose a dismissal action"):
+        device.dismiss_pixel_launcher_anr()
+
+    assert adb_calls == []
+    assert device.system_anr_sanitation == [
+        {
+            "package": "com.google.android.apps.nexuslauncher",
+            "dialog": "Pixel Launcher isn't responding",
+            "action": None,
+            "cleared": False,
+        }
+    ]
