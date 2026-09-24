@@ -1,8 +1,16 @@
 package ai.zara.app.history
 
+import ai.zara.app.prolog.AndroidPortableSemanticAssetSource
+import ai.zara.app.prolog.NativeTreallaBridge
+import ai.zara.app.prolog.PortableSemanticAssetStager
+import ai.zara.app.prolog.PrologWorkspace
+import ai.zara.app.runtime.LocalServerPhase
+import ai.zara.app.runtime.LocalZaraServer
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -88,6 +96,36 @@ class PortableConversationMigrationInstrumentedTest {
             assertEquals(0L, projection.modelCalls)
         } finally {
             reopened.close()
+        }
+    }
+
+    @Test
+    fun packagedPortableSemanticAssetsResolveNaturalLanguageThroughNativeTrealla() {
+        val root = File(context.cacheDir, "portable-semantic-native-${System.nanoTime()}")
+        check(root.mkdirs() || root.isDirectory) { "failed to create portable semantic test root" }
+        val staged = PortableSemanticAssetStager(File(root, "runtime")).stageAll(
+            AndroidPortableSemanticAssetSource(context.assets),
+        )
+        val server = LocalZaraServer(
+            bridge = NativeTreallaBridge(),
+            corePath = staged.coreFile.absolutePath,
+            workspace = PrologWorkspace(File(root, "workspace")),
+        )
+
+        try {
+            val ready = server.start().get(10, TimeUnit.SECONDS)
+            assertEquals(LocalServerPhase.READY, ready.phase)
+
+            val result = server.resolve("set a timer for 2 hours").get(10, TimeUnit.SECONDS)
+
+            assertEquals(ready.generation, result.generation)
+            assertEquals(1, result.terms.size)
+            val frame = result.terms.single()
+            assertTrue(frame.contains("timer.set"))
+            assertTrue(frame.contains("duration(7200)"))
+        } finally {
+            server.close()
+            root.deleteRecursively()
         }
     }
 
