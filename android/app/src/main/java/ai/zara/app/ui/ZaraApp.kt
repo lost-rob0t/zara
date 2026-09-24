@@ -8,6 +8,8 @@ import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelQuantization
 import ai.zara.app.localai.LocalModelSpec
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -163,6 +165,8 @@ fun ZaraApp(
     localAiState: LocalAiState,
     localModels: List<LocalModelSpec>,
     localModelBusy: Boolean,
+    cloudModelState: CloudModelState,
+    cloudModelBusy: Boolean,
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
@@ -170,6 +174,8 @@ fun ZaraApp(
     onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
     onSelectLocalModel: (String, String) -> Unit,
     onUnloadLocalModel: () -> Unit,
+    onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
+    onClearCloudModelApiKey: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -391,6 +397,8 @@ fun ZaraApp(
                                                 localAiState = localAiState,
                                                 localModels = localModels,
                                                 localModelBusy = localModelBusy,
+                                                cloudModelState = cloudModelState,
+                                                cloudModelBusy = cloudModelBusy,
                                                 selectedTheme = selectedTheme,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
@@ -409,6 +417,8 @@ fun ZaraApp(
                                                 onImportLocalModel = onImportLocalModel,
                                                 onSelectLocalModel = onSelectLocalModel,
                                                 onUnloadLocalModel = onUnloadLocalModel,
+                                                onConfigureCloudModel = onConfigureCloudModel,
+                                                onClearCloudModelApiKey = onClearCloudModelApiKey,
                                                 onNavigateSettings = { route -> navigation = navigation.selectRoute(route) },
                                                 padding = padding,
                                             )
@@ -1193,6 +1203,8 @@ private fun SettingsSurface(
     localAiState: LocalAiState,
     localModels: List<LocalModelSpec>,
     localModelBusy: Boolean,
+    cloudModelState: CloudModelState,
+    cloudModelBusy: Boolean,
     selectedTheme: ZaraTheme,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
@@ -1211,6 +1223,8 @@ private fun SettingsSurface(
     onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
     onSelectLocalModel: (String, String) -> Unit,
     onUnloadLocalModel: () -> Unit,
+    onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
+    onClearCloudModelApiKey: () -> Unit,
     onNavigateSettings: (AppRoute) -> Unit,
     padding: PaddingValues,
 ) {
@@ -1293,6 +1307,12 @@ private fun SettingsSurface(
                     onImport = onImportLocalModel,
                     onSelect = onSelectLocalModel,
                     onUnload = onUnloadLocalModel,
+                )
+                RemoteModelSettingsCard(
+                    state = cloudModelState,
+                    busy = cloudModelBusy,
+                    onConfigure = onConfigureCloudModel,
+                    onClearApiKey = onClearCloudModelApiKey,
                 )
                 SectionCard("LOCAL EMBEDDINGS") {
                     Row(
