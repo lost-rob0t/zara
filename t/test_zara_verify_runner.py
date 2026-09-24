@@ -93,6 +93,26 @@ def test_snapshot_does_not_follow_symlinks(repository, tmp_path):
     assert snapshot(repository)['worktree'] == first['worktree']
 
 
+def test_snapshot_rejects_source_replacement_during_read(repository, monkeypatch):
+    target = repository / 'rules.pl'
+    replacement = repository / 'replacement.pl'
+    real_open = os.open
+    swapped = False
+
+    def racing_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and os.fspath(path) == os.fspath(target):
+            swapped = True
+            replacement.write_text('fact(raced).\n')
+            os.replace(replacement, target)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, 'open', racing_open)
+
+    with pytest.raises(VerificationError, match='source_changed_during_read'):
+        snapshot(repository)
+
+
 def test_deleted_and_renamed_paths_remain_in_impact(repository):
     base = git(repository, 'rev-parse', 'HEAD')
     git(repository, 'mv', 'rules.pl', 'rules.txt')
