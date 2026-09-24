@@ -4,6 +4,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+- CI now measures Python line, branch, and combined total coverage on every branch and pull request, publishes exact-head reports, and enforces the monotonic coverage ratchet through the same canonical evaluator used by the full repository gate.
+
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
 
 ### Fixed
