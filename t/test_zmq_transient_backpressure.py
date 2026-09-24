@@ -46,6 +46,7 @@ def _live_gateway(route: bytes) -> ZaraZmqGateway:
     gateway._turn_routes = {}
     gateway._early_turn_events = OrderedDict()
     gateway._turns_awaiting_accept = set()
+    gateway._approval_owners = {}
     return gateway
 
 
@@ -130,3 +131,43 @@ def test_transient_again_preserves_payload_and_fifo_order():
     assert first.payloads == (pcm,)
     assert second.message.id == "accepted-2"
     assert route not in gateway._route_outbound
+
+
+def test_evicted_tool_waiting_frame_cannot_leave_invisible_approval_owner():
+    route = b"approval-live-route"
+    gateway = _live_gateway(route)
+    gateway._config = TransportConfig(event_queue_size=1)
+    owner = type("Owner", (), {"route": route, "session_id": "session-1"})()
+    gateway._approval_owners[("owner", "tool-1")] = owner
+
+    waiting = ProtocolMessage(
+        type="tool.waiting",
+        id="waiting-1",
+        session_id="session-1",
+        turn_id="turn-1",
+        timestamp_ns=1,
+        payload_count=0,
+        body={
+            "tool_run_id": "tool-1",
+            "tool_name": "reviewed_effect",
+            "kind": "approval",
+            "prompt": "Approve reviewed_effect?",
+        },
+    )
+    following = ProtocolMessage(
+        type="assistant.delta",
+        id="delta-1",
+        session_id="session-1",
+        turn_id="turn-1",
+        seq=2,
+        timestamp_ns=2,
+        payload_count=0,
+        body={"text": "after waiting"},
+    )
+
+    assert gateway._enqueue_outbound(route, waiting)
+    assert gateway._enqueue_outbound(route, following)
+
+    assert ("owner", "tool-1") not in gateway._approval_owners
+    queued = list(gateway._route_outbound[route])
+    assert [item.message.type for item in queued] == ["assistant.delta"]

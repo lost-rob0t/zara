@@ -4,7 +4,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
-- Fixed a ZARA/1 wire-ordering race where runtime events for fast symbolically-resolved turns could overtake the `turn.accepted` reply, making every Android/Desktop remote turn fail with `protocol.unexpected_message` (expected turn.accepted). Turn events are now held per-route and flushed after the accepted reply, in order.
+- Fixed ZARA/1 turn ownership under fast symbolic/runtime interleavings: runtime events cannot overtake `turn.accepted`, bounded pre-accept overflow fails closed without silent event loss, stale gateway generations cannot erase a current stable-request owner, terminal turns retire only after `turn.completed` is written, late terminal traffic is fenced, and approval ownership cannot outlive an evicted prompt.
 
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
 

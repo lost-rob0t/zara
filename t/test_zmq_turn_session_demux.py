@@ -75,6 +75,17 @@ class InterleavingSupervisor:
             )
         if mode == "started":
             return (events.TurnStarted(**common),)
+        if mode == "approval":
+            return (
+                events.ToolWaitingForUser(
+                    tool_run_id="tool-preaccept",
+                    tool_name="reviewed_effect",
+                    prompt="Approve reviewed_effect?",
+                    **common,
+                ),
+            )
+        if mode == "none":
+            return ()
         raise AssertionError(f"unsupported fixture mode: {mode}")
 
 
@@ -268,7 +279,32 @@ def test_acceptance_owns_burst_until_started_delta_result_and_completion_are_ord
         assert all(message.session_id == session_id for message in delivered)
         assert all(message.turn_id == "turn-wire" for message in delivered)
         assert [message.seq for message in delivered[1:]] == [1, 2, 3, 4, 5]
-        _assert_quiet(dealer)
+
+        key = ("local-owner", "turn-wire")
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            with gateway._lock:
+                if (
+                    key not in gateway._turn_routes
+                    and key not in gateway._early_turn_events
+                    and key not in gateway._turns_awaiting_accept
+                ):
+                    break
+            time.sleep(0.005)
+        with gateway._lock:
+            assert key not in gateway._turn_routes
+            assert key not in gateway._early_turn_events
+            assert key not in gateway._turns_awaiting_accept
+
+        supervisor.bus.publish(
+            events.AssistantDelta(
+                turn_id="turn-wire",
+                conversation_id="conversation-wire",
+                label="runtime-host",
+                text="late-after-terminal",
+            )
+        )
+        _assert_quiet(dealer, timeout_ms=100)
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
@@ -350,6 +386,177 @@ def test_reconnect_duplicate_inflight_submit_rebinds_session_without_second_chat
         assert [message.session_id for message in delivered] == [second_session, second_session]
         assert [message.turn_id for message in delivered] == ["turn-stable", "turn-stable"]
         _assert_quiet(dealer)
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+
+def test_old_generation_completion_cannot_erase_reused_request_inflight_owner(
+    zmq_context,
+    transport_config,
+):
+    endpoint = _endpoint("turn-session-generation-aba")
+    supervisor = InterleavingSupervisor(
+        ["started", "started", "started"],
+        turn_ids=["turn-old", "turn-current", "turn-duplicate"],
+    )
+    gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
+    gateway.start().result(timeout=1.0)
+    first = _dealer(zmq_context, endpoint, transport_config)
+    try:
+        first_session = _hello(first, "hello-old-aba")
+        _submit(
+            first,
+            session_id=first_session,
+            request_id="submit-stable-aba",
+            text="same stable command",
+        )
+        assert supervisor.submitted[0].wait(1.0)
+
+        first.close(0)
+        gateway.close(timeout=1.0)
+        gateway.start().result(timeout=1.0)
+
+        second = _dealer(zmq_context, endpoint, transport_config)
+        try:
+            second_session = _hello(second, "hello-current-aba")
+            _submit(
+                second,
+                session_id=second_session,
+                request_id="submit-stable-aba",
+                text="same stable command",
+            )
+            assert supervisor.submitted[1].wait(1.0)
+            assert len(supervisor.commands) == 2
+
+            supervisor.complete(0)
+            _submit(
+                second,
+                session_id=second_session,
+                request_id="submit-stable-aba",
+                text="same stable command",
+            )
+            assert not supervisor.submitted[2].wait(0.1), (
+                "a stale generation completion must not remove the current "
+                "generation's stable-request inflight owner"
+            )
+            assert len(supervisor.commands) == 2
+
+            supervisor.complete(1)
+            delivered = [_receive(second) for _ in range(2)]
+            assert [message.type for message in delivered] == ["turn.accepted", "turn.started"]
+            assert [message.turn_id for message in delivered] == ["turn-current", "turn-current"]
+            _assert_quiet(second)
+        finally:
+            second.close(0)
+    finally:
+        if gateway.is_alive:
+            gateway.close(timeout=1.0)
+        for future in supervisor.futures:
+            if not future.done():
+                future.cancel()
+
+
+def test_preaccept_tool_waiting_installs_owner_only_when_prompt_becomes_deliverable(
+    zmq_context,
+    transport_config,
+):
+    endpoint = _endpoint("turn-session-preaccept-approval")
+    supervisor = InterleavingSupervisor(["approval"], turn_ids=["turn-approval"])
+    gateway = _gateway(endpoint, supervisor, zmq_context, transport_config)
+    probe = BufferProbe(gateway)
+    gateway.start().result(timeout=1.0)
+    dealer = _dealer(zmq_context, endpoint, transport_config)
+    try:
+        session_id = _hello(dealer, "hello-approval")
+        _submit(dealer, session_id=session_id, request_id="submit-approval")
+        assert supervisor.submitted[0].wait(1.0)
+        probe.wait_for(1)
+        with gateway._lock:
+            assert ("local-owner", "tool-preaccept") not in gateway._approval_owners
+
+        supervisor.complete(0)
+        delivered = [_receive(dealer) for _ in range(2)]
+        assert [message.type for message in delivered] == ["turn.accepted", "tool.waiting"]
+        assert delivered[1].body["tool_run_id"] == "tool-preaccept"
+        with gateway._lock:
+            owner = gateway._approval_owners[("local-owner", "tool-preaccept")]
+            assert owner.session_id == session_id
+    finally:
+        dealer.close(0)
+        gateway.close(timeout=1.0)
+
+
+def test_post_future_pre_wire_overflow_replaces_acceptance_with_backpressure(
+    zmq_context,
+):
+    endpoint = _endpoint("turn-session-post-future-overflow")
+    config = TransportConfig(
+        sndhwm=256,
+        rcvhwm=256,
+        max_message_bytes=1024 * 1024,
+        heartbeat_interval_ms=100,
+        heartbeat_timeout_ms=500,
+        linger_ms=0,
+        request_timeout=1.0,
+        poll_interval_ms=1,
+        event_queue_size=256,
+        pending_request_limit=8,
+    )
+    supervisor = InterleavingSupervisor(["none"], turn_ids=["turn-post-future"])
+    gateway = _gateway(endpoint, supervisor, zmq_context, config)
+    original_drain = gateway._drain_outbound
+
+    def gated_drain(_gateway, socket):
+        with _gateway._lock:
+            awaiting = ("local-owner", "turn-post-future") in _gateway._turns_awaiting_accept
+        if awaiting:
+            return
+        original_drain(socket)
+
+    gateway._drain_outbound = MethodType(gated_drain, gateway)
+    gateway.start().result(timeout=1.0)
+    dealer = _dealer(zmq_context, endpoint, config)
+    try:
+        session_id = _hello(dealer, "hello-post-future")
+        _submit(dealer, session_id=session_id, request_id="submit-post-future")
+        assert supervisor.submitted[0].wait(1.0)
+        supervisor.complete(0)
+
+        deadline = time.monotonic() + 1.0
+        key = ("local-owner", "turn-post-future")
+        while time.monotonic() < deadline:
+            with gateway._lock:
+                if key in gateway._turns_awaiting_accept:
+                    break
+            time.sleep(0.005)
+        with gateway._lock:
+            assert key in gateway._turns_awaiting_accept
+
+        for index in range(129):
+            supervisor.bus.publish(
+                events.AssistantDelta(
+                    turn_id="turn-post-future",
+                    conversation_id="conversation-wire",
+                    label="runtime-host",
+                    text=f"late-{index:03d}",
+                )
+            )
+
+        response = _receive(dealer)
+        assert response.type == "protocol.error"
+        assert response.reply_to == "submit-post-future"
+        assert response.body == {
+            "code": "server_backpressure",
+            "message": "too many turn events are awaiting acceptance",
+            "retryable": True,
+        }
+        with gateway._lock:
+            assert key not in gateway._turn_routes
+            assert key not in gateway._early_turn_events
+            assert key not in gateway._turns_awaiting_accept
+        _assert_quiet(dealer, timeout_ms=100)
     finally:
         dealer.close(0)
         gateway.close(timeout=1.0)
