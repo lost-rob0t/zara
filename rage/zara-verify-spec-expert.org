@@ -1,0 +1,29 @@
+#+title: ZARA-VERIFY/1 implementation evidence
+
+* Request and base
+- Operator request :: Implement the Zara verify spec and advanced verifier expert that OpenCode must use for Zara code.
+- Starting master :: f7810b0cba602b1e00597d04dd419d30ac0ef949
+- Related authority :: ZARA-EXPERT/1; #662; existing full repository, formal and Android gates.
+- Scope :: Dedicated code-verifier implementation; do not duplicate editor PR #1266.
+
+* Design
+Prolog selects mandatory gates; a bounded host collects actual source/process/JUnit
+observations; Core's existing registry dispatches the verifier expert; OpenCode
+rejects completed todos without current session-bound evidence. Local receipts are
+not a hostile same-UID security boundary and never grant merge/release authority.
+
+* Red/green evidence
+- Initial Python RED :: missing verification.zara_verify_runner module, collection exit 2.
+- Initial Node RED :: missing verifier hook helper module.
+- Boundary RED :: four tests rejected duplicate dependencies, JUnit traversal/absolute paths and oversized arguments before validation was repaired.
+- Aliasing RED :: expert plan result formed a circular reference when the CLI attached it to host observations; deepcopy at the expert boundary fixes it.
+- Latest local Python subset :: 57 passed; real source/process tests, adapter tests, wire-schema tests. Host scheduler unit tests substitute policy decisions to isolate the adapter; they do not prove Prolog execution.
+- Latest Node :: 12 passed, zero skipped; hooks, source/session/epoch fencing, cancellation and returned-object isolation.
+- Required local gate :: BLOCKED, exit 2, missing swipl. Nix and the real repository/Core dependency environment are also unavailable in this container. No full-repository, plunit, real Core integration or live OpenCode pass is claimed.
+
+* Required remaining gates
+Exact-head dedicated verifier workflow plus existing repository/Nix/Android CI.
+The real Core registry test and plunit tests deliberately have no skip fallback.
+External screenshot/review/release attestations remain fail-closed missing gates;
+the canonical coverage runner must be integrated from its owning work. This slice
+is draft and is not permission to merge, release, or claim the entire Zara IDE verified.

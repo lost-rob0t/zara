@@ -1,0 +1,72 @@
+"""The wire schema cannot turn a caller assertion into verifier provenance."""
+import copy
+import json
+from pathlib import Path
+
+import pytest
+from jsonschema import Draft202012Validator
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def valid_report():
+    return {'protocol': 'ZARA-VERIFY/1', 'scope': 'local', 'verdict': 'verified',
+            'run_id': 'a' * 32, 'session_id': 'fixture', 'created_ms': 1, 'ttl_ms': 100,
+            'merge_authorized': False, 'model_calls': 0, 'provider_calls': 0,
+            'reasons': [], 'evidence': [],
+            'required': ['repository'], 'source': {
+                'workspace': '/repo', 'head': 'a' * 40, 'base': 'a' * 40,
+                'merge_base': 'a' * 40, 'worktree': 'b' * 64, 'policy': 'c' * 64,
+                'changed_paths': [], 'clean': True},
+            'expert': {'expert_id': 'zara:verifier', 'operation': 'verify.assert',
+                       'verdict': 'succeeded', 'data': {'verified': True},
+                       'usage': {'model_calls': 0, 'provider_calls': 0}, 'invocation_id': 'inv:fixture'}}
+
+
+def validator():
+    schema = json.loads((ROOT / 'contracts/zara-verify-v1/report.schema.json').read_text())
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema)
+
+
+def test_wire_schema_is_valid_but_not_an_authentication_mechanism():
+    assert not list(validator().iter_errors(valid_report()))
+
+
+def test_coverage_gate_uses_resolved_source_base_sentinel():
+    spec = json.loads((ROOT / 'contracts/zara-verify-v1/spec.json').read_text())
+    assert spec['gates']['coverage']['argv'] == [
+        'bash', 'scripts/test-coverage.sh', '--base-ref', '@SOURCE_BASE@']
+
+
+def test_verifier_workflow_retains_machine_readable_evidence_on_failure():
+    script = (ROOT / 'scripts/test-zara-verify.sh').read_text()
+    workflow = (ROOT / '.github/workflows/zara-verify.yml').read_text()
+
+    assert 'ZARA_VERIFY_ARTIFACT_DIR' in script
+    assert '--junit-xml="$ARTIFACT_DIR/python-junit.xml"' in script
+    assert 'tee "$ARTIFACT_DIR/prolog.log"' in script
+    assert 'tee "$ARTIFACT_DIR/node.tap"' in script
+
+    assert 'actions/upload-artifact@v4' in workflow
+    assert 'if: always()' in workflow
+    assert 'path: .artifacts/zara-verify' in workflow
+    assert 'if-no-files-found: error' in workflow
+    assert "github.event.pull_request.base.sha" in workflow
+    assert 'python verification/zara_verify_runner.py snapshot --root . --base "$EXPECTED_BASE_SHA"' in workflow
+    assert '> .artifacts/zara-verify/base-identity.json' in workflow
+    assert "json.loads(Path('.artifacts/zara-verify/base-identity.json').read_text())" in workflow
+    assert 'nix develop -c python verification/zara_verify_runner.py snapshot' not in workflow
+
+
+@pytest.mark.parametrize('mutation', ['expert', 'plan', 'boolean', 'merge', 'unknown', 'reason', 'provider'])
+def test_invalid_verification_claims_are_rejected(mutation):
+    report = copy.deepcopy(valid_report())
+    if mutation == 'expert': del report['expert']
+    if mutation == 'plan': report['expert']['operation'] = 'verify.plan'
+    if mutation == 'boolean': report['model_calls'] = False
+    if mutation == 'merge': report['merge_authorized'] = True
+    if mutation == 'unknown': report['self_approved'] = True
+    if mutation == 'reason': report['reasons'] = ['failed']
+    if mutation == 'provider': report['expert']['usage']['provider_calls'] = 1
+    assert list(validator().iter_errors(report))
