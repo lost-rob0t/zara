@@ -11,7 +11,11 @@ def test_android_gate_emits_stock_server_log_before_failing_gradle_gate():
     guarded_gradle = "if ! gradle --no-daemon \\\n"
     assert guarded_gradle in script
 
-    failure_path = script.split(guarded_gradle, 1)[1].split("fi", 1)[0]
+    failure_path = script.split(guarded_gradle, 1)[1].split("\nfi\n", 1)[0]
     assert 'cat "$interop_log" >&2' in failure_path
-    assert 'echo "stock ZaraServer Android/Wear/Code interop gate failed" >&2' in failure_path
+    assert (
+        'echo "stock ZaraServer Android/Wear/Code/Termux interop gate failed" >&2'
+        in failure_path
+    )
+    assert 'cp "$recovery_log" "$diagnostics_dir/remote-recovery-fixture.log"' in failure_path
     assert "exit 1" in failure_path

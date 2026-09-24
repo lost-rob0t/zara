@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 import zmq
 from zmq.utils import z85
@@ -61,6 +63,47 @@ def test_registry_credentials_provider_denies_unknown_key_without_oracle_details
     assert provider.callback("zara", raw_public) is False
     with pytest.raises(KeyNotActive):
         provider.user_id(raw_public)
+
+
+def test_registry_credentials_provider_logs_denied_unknown_key_for_operators(caplog):
+    public, _ = keypair()
+    provider = RegistryCredentialsProvider(SecurityRegistry())
+    raw_public = z85.decode(public.encode("ascii"))
+
+    with caplog.at_level(logging.WARNING, logger="zara.security_transport"):
+        assert provider.callback("zara", raw_public) is False
+
+    assert public in caplog.text
+    assert "ZAP denial" in caplog.text
+
+
+def test_registry_credentials_provider_logs_denied_revoked_key_for_operators(caplog):
+    public, _ = keypair()
+    registry = SecurityRegistry()
+    registry.enroll(
+        public,
+        principal=PrincipalContext("user:alice", kind="authenticated"),
+        device_id="alice-phone",
+        capabilities={Capability.SESSION_BASIC},
+    )
+    registry.revoke("alice-phone")
+    provider = RegistryCredentialsProvider(registry)
+    raw_public = z85.decode(public.encode("ascii"))
+
+    with caplog.at_level(logging.WARNING, logger="zara.security_transport"):
+        assert provider.callback("zara", raw_public) is False
+
+    assert public in caplog.text
+
+
+def test_registry_credentials_provider_logs_denied_malformed_key_for_operators(caplog):
+    provider = RegistryCredentialsProvider(SecurityRegistry())
+
+    with caplog.at_level(logging.WARNING, logger="zara.security_transport"):
+        assert provider.callback("zara", b"\x01\x02\x03") is False
+        assert provider.callback("zara", None) is False
+
+    assert caplog.text.count("ZAP denial: malformed client public key") == 2
 
 
 def test_registry_authenticator_maps_curve_key_to_server_selected_user_id(zmq_context):

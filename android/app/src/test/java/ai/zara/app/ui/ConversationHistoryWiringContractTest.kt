@@ -66,6 +66,7 @@ class ConversationHistoryWiringContractTest {
         assertTrue(source.contains("conversationStore.moveToProject(conversationId, projectId)"))
         assertTrue(source.contains("conversationStore.beginTurn(conversationId, text)"))
         assertTrue(source.contains("conversationStore.completeTurn("))
-        assertTrue(source.contains("conversationStore.failTurn(conversationId, failure)"))
+        assertTrue(source.contains("conversationStore.failTurn(conversationId, summary)"))
+        assertTrue(source.contains("TurnFailures.renderSummary("))
     }
 }

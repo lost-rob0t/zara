@@ -6,6 +6,7 @@ principal-scoped persistence remain separate boundaries.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -14,6 +15,9 @@ from zmq.auth.thread import ThreadAuthenticator
 from zmq.utils import z85
 
 from zara.security import KeyNotActive, SecurityRegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 _MIN_SECURE_CURVE_LIBZMQ = (4, 3, 3)
@@ -145,8 +149,17 @@ class RegistryCredentialsProvider:
 
     def callback(self, _domain, public_key: bytes) -> bool:
         try:
-            self._registry.resolve_public_key(self._z85_public_key(public_key))
-        except (KeyNotActive, ValueError, TypeError):
+            encoded = self._z85_public_key(public_key)
+        except KeyNotActive:
+            length = len(public_key) if isinstance(public_key, bytes) else -1
+            logger.warning("ZAP denial: malformed client public key (%d bytes)", length)
+            return False
+        try:
+            self._registry.resolve_public_key(encoded)
+        except (KeyNotActive, ValueError, TypeError) as error:
+            logger.warning(
+                "ZAP denial: client public key %s is not active (%s)", encoded, error
+            )
             return False
         return True
 
@@ -170,7 +183,7 @@ class RegistryAuthenticator(ThreadAuthenticator):
         domain: str = "zara",
     ) -> None:
         normalized_domain = _zap_string("domain", domain)
-        super().__init__(context=context)
+        super().__init__(context=context, log=logger)
         self._provider = RegistryCredentialsProvider(registry)
         self.configure_curve_callback(domain=normalized_domain, credentials_provider=self._provider)
 
