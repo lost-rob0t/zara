@@ -259,6 +259,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 resolved_input,
                 sort_keys=True,
                 separators=(",", ":"),
+                allow_nan=False,
             )
         except (TypeError, ValueError) as error:
             raise ExpertInvalidInputError(
