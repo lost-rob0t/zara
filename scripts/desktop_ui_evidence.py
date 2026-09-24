@@ -7,12 +7,36 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
+import subprocess
 from typing import Any, Callable
 
 from PySide6.QtCore import QPoint
 from PySide6.QtWidgets import QWidget
 
 from zara.desktop import ui_fixtures as fixtures
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def verified_source_sha(claimed_source_sha: str) -> str:
+    actual_source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=REPO_ROOT,
+        text=True,
+    ).strip()
+    if SOURCE_SHA_RE.fullmatch(actual_source_sha) is None:
+        raise RuntimeError(f"Repository HEAD is not an immutable source SHA: {actual_source_sha!r}")
+    if SOURCE_SHA_RE.fullmatch(claimed_source_sha) is None:
+        raise ValueError(f"Claimed source SHA is invalid: {claimed_source_sha!r}")
+    if claimed_source_sha != actual_source_sha:
+        raise RuntimeError(
+            "Claimed source SHA does not match the checked-out repository: "
+            f"claimed={claimed_source_sha} actual={actual_source_sha}"
+        )
+    return actual_source_sha
 
 
 def _widget_text(widget: QWidget, method_name: str) -> str:
@@ -264,7 +288,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-sha", required=True)
     args = parser.parse_args()
-    render_desktop_ui_evidence(args.output, source_commit=args.source_sha)
+    source_sha = verified_source_sha(args.source_sha)
+    render_desktop_ui_evidence(args.output, source_commit=source_sha)
     return 0
 
 
