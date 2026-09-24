@@ -31,6 +31,14 @@ class WidgetEvidenceHarnessContractTest {
     }
 
     @Test
+    fun `assistant pin keeps debug process alive until cold route fence`() {
+        assertFalse(WidgetEvidenceActivity.shouldFinishAfterPin("assistant"))
+        assertTrue(WidgetEvidenceActivity.shouldFinishAfterPin("runtime"))
+        assertTrue(WidgetEvidenceActivity.shouldFinishAfterPin("actions"))
+        assertTrue(WidgetEvidenceActivity.shouldFinishAfterPin(null))
+    }
+
+    @Test
     fun `debug evidence harness can project bounded fresh stale and corrupt runtime states`() {
         val activitySource = File(
             "src/debug/java/ai/zara/app/widget/WidgetEvidenceActivity.kt",
