@@ -34,3 +34,59 @@
 - Why deferred: XR should consume the shared Geo protocol after the server/map contracts exist.
 - Next proof: Sideloadable fixture build that selects a geo anchor and resolves its canonical StarIntel document.
 - Promoted issue: lost-rob0t/zara#1205
+
+** IDEA Zara KB router plugin + KB Minister dataset-expert catalog
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: implementation is separate from the Org-only swarm.
+- Next proof: publish plugin issues and deterministic Prolog-first routing fixtures.
+- Promoted issue: none
+
+** IDEA Issue-CI for machine-readable Org implementation metadata with backfill
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: active implementation is delegated to the dedicated Org worker.
+- Next proof: CI rejects malformed metadata and validates the current Org issue set.
+- Promoted issue: lost-rob0t/zara#1168
+
+** IDEA Versioned custom Org metadata protocol
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: active implementation is delegated to the dedicated Org worker.
+- Next proof: source-preserving round-trip fixtures shared by Android, desktop, and Prolog.
+- Promoted issue: lost-rob0t/zara#1168
+
+** IDEA Logseq import into canonical Org
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: active implementation is delegated to the dedicated Org worker.
+- Next proof: import fixture preserving pages, journals, block refs, properties, links, and provenance.
+- Promoted issue: lost-rob0t/zara#1169
+
+** IDEA Continuous scrolling daily journal with one canonical page per day
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: active implementation is delegated to the dedicated Org worker.
+- Next proof: adjacent days lazy-load while edits touch only the selected day's Org file.
+- Promoted issue: lost-rob0t/zara#1169
+
+** IDEA Out-of-box Org capture templates
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: active implementation is delegated to the dedicated Org worker.
+- Next proof: note/todo/idea/journal/link templates work without LLM or network access.
+- Promoted issue: lost-rob0t/zara#1170
+
+** IDEA Android share sheet routes through Org capture templates
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: active implementation is delegated to the dedicated Org worker.
+- Next proof: ACTION_SEND/ACTION_SEND_MULTIPLE text, URLs, files, and images capture idempotently.
+- Promoted issue: lost-rob0t/zara#1170
+
+** IDEA Dedicated ten-worker Org implementation swarm
+- Captured: 2026-09-18 23:55 America/New_York
+- Source: operator chat
+- Why deferred: promoted immediately into ten implementation-only worker issues.
+- Next proof: each lane lands code/tests/artifacts without report-only runs.
+- Promoted issue: lost-rob0t/zara#1168..#1177
