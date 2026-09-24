@@ -675,6 +675,22 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 )
             raise ExpertBudgetExceededError(budget_message)
 
+        if _impl._result_output_size_bytes(result) > admitted_limits.max_output_bytes:
+            budget_message = "expert result exceeds admitted max_output_bytes"
+            if not self._commit_durable_rejection(
+                durable_claim,
+                result,
+                error_code=ExpertErrorCode.BUDGET_EXCEEDED,
+                error_message=budget_message,
+            ):
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertBudgetExceededError(budget_message)
+
         if raw_outcome.get("stale"):
             stale_message = (
                 "expert completion crossed a registry/runtime generation change"
