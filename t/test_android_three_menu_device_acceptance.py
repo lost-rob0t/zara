@@ -21,6 +21,7 @@ def test_acceptance_captures_settings_overview_children_and_two_theme_states():
     text = source()
     assert '"settings-overview"' in text
     assert '"Private, explicit, device-first controls"' in text
+    assert 'device.reveal("Private, explicit, device-first controls")' in text
     for route in (
         "Runtime & local AI",
         "Connection",
