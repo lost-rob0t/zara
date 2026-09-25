@@ -898,21 +898,32 @@ class MainActivity : ComponentActivity() {
             incidentId = appSession.diagnosticsIncidentId(),
         )
         val specific = TurnFailures.mostSpecific(turnFailure, candidate)
-        val visible = TurnRetryPolicy.decorate(specific, attempt = attempt)
-        turnFailure = visible
-        val summary = TurnFailures.renderSummary(visible)
-        if (expectedTurnId == null) return visible
-        try {
-            val selected = conversationStore.state().conversation(conversationId)
-            if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
-                conversationState = conversationStore.failTurn(
-                    conversationId = conversationId,
-                    message = summary,
-                    expectedTurnId = expectedTurnId,
-                )
+        var terminalPersisted = false
+        val summary = TurnFailures.renderSummary(
+            TurnRetryPolicy.decorate(
+                specific.copy(terminalPersisted = false),
+                attempt = attempt,
+            )
+        )
+        if (expectedTurnId != null) {
+            try {
+                val selected = conversationStore.state().conversation(conversationId)
+                if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
+                    conversationState = conversationStore.failTurn(
+                        conversationId = conversationId,
+                        message = summary,
+                        expectedTurnId = expectedTurnId,
+                    )
+                    terminalPersisted = true
+                }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
         }
+        val visible = TurnRetryPolicy.decorate(
+            specific.copy(terminalPersisted = terminalPersisted),
+            attempt = attempt,
+        )
+        turnFailure = visible
         return visible
     }
 
