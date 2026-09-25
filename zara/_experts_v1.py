@@ -1728,7 +1728,7 @@ class ExpertRegistry:
             error_code = ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
             error_message = "handler returned an unparseable outcome"
 
-        if verdict is ExpertVerdict.SUCCEEDED:
+        if verdict is ExpertVerdict.SUCCEEDED and operation.output_fields:
             try:
                 output_contract = replace(
                     operation,
