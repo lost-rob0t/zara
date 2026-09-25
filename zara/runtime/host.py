@@ -777,71 +777,97 @@ class RuntimeHost:
         )
         latency_trace = self._build_turn_latency_trace(command)
         try:
-            with bind_turn_capability_lease(lease):
-                result = await backend.submit_turn(
-                    command.text,
+            try:
+                with bind_turn_capability_lease(lease):
+                    result = await backend.submit_turn(
+                        command.text,
+                        turn_id=turn_id,
+                        conversation_id=command.conversation_id,
+                        context_ids=command.context_ids,
+                        latency_trace=latency_trace,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                if await self._turn_is_active(turn_id):
+                    self._publisher(
+                        events.AgentFailed(
+                            turn_id=turn_id,
+                            conversation_id=command.conversation_id,
+                            label="agent",
+                            reason=str(error),
+                        )
+                    )
+                return
+            finally:
+                if latency_trace is not None:
+                    latency_trace.flush()
+
+            if not isinstance(result, RuntimeTurnResult):
+                if await self._turn_is_active(turn_id):
+                    self._publisher(
+                        events.AgentFailed(
+                            turn_id=turn_id,
+                            conversation_id=command.conversation_id,
+                            label="agent",
+                            reason="runtime backend returned an invalid turn result",
+                        )
+                    )
+                return
+            if not await self._turn_is_active(turn_id):
+                logger.debug("Suppressing stale result for cancelled turn %s", turn_id)
+                return
+
+            try:
+                # Linearize any backend-owned durable metadata with the same
+                # Core turn lease used for capability composition. Cancellation
+                # that wins first invalidates the lease, while an accepted
+                # bounded commit completes before terminal presentation.
+                with lease.registration():
+                    backend.commit_turn_result(
+                        result,
+                        turn_id=turn_id,
+                        conversation_id=command.conversation_id,
+                    )
+            except Exception as error:
+                if await self._turn_is_active(turn_id):
+                    self._publisher(
+                        events.AgentFailed(
+                            turn_id=turn_id,
+                            conversation_id=command.conversation_id,
+                            label="agent",
+                            reason=f"turn result commit failed: {error}",
+                        )
+                    )
+                return
+
+            if result.response:
+                self._publisher(
+                    events.ResponseText(
+                        turn_id=turn_id,
+                        conversation_id=command.conversation_id,
+                        label="Zara",
+                        text=result.response,
+                        truncated=False,
+                    )
+                )
+            self._publisher(
+                events.AgentCompleted(
                     turn_id=turn_id,
                     conversation_id=command.conversation_id,
-                    context_ids=command.context_ids,
-                    latency_trace=latency_trace,
+                    label="agent",
+                    success=True,
                 )
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:
-            if await self._turn_is_active(turn_id):
-                self._publisher(
-                    events.AgentFailed(
-                        turn_id=turn_id,
-                        conversation_id=command.conversation_id,
-                        label="agent",
-                        reason=str(error),
-                    )
-                )
-            return
-        finally:
-            self._release_turn_capability_lease(turn_id, lease)
-            if latency_trace is not None:
-                latency_trace.flush()
-
-        if not isinstance(result, RuntimeTurnResult):
-            if await self._turn_is_active(turn_id):
-                self._publisher(
-                    events.AgentFailed(
-                        turn_id=turn_id,
-                        conversation_id=command.conversation_id,
-                        label="agent",
-                        reason="runtime backend returned an invalid turn result",
-                    )
-                )
-            return
-        if not await self._turn_is_active(turn_id):
-            logger.debug("Suppressing stale result for cancelled turn %s", turn_id)
-            return
-        if result.response:
+            )
             self._publisher(
-                events.ResponseText(
+                events.OutputReady(
                     turn_id=turn_id,
                     conversation_id=command.conversation_id,
                     label="Zara",
-                    text=result.response,
-                    truncated=False,
                 )
             )
-        self._publisher(
-            events.AgentCompleted(
-                turn_id=turn_id,
-                conversation_id=command.conversation_id,
-                label="agent",
-                success=True,
-            )
-        )
-        self._publisher(
-            events.OutputReady(
-                turn_id=turn_id,
-                conversation_id=command.conversation_id,
-                label="Zara",
-            )
-        )
+        finally:
+            self._release_turn_capability_lease(turn_id, lease)
 
     async def _cancel_turn(self, command: CancelTurn) -> CommandReceipt:
         reply = await self._coordinator_ask(ActorCancelTurn(turn_id=command.turn_id))
