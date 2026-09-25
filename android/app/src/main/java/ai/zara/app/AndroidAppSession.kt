@@ -14,6 +14,7 @@ import ai.zara.app.device.DeviceCapabilityRegistry
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
+import ai.zara.app.expert.CanonicalExpertInvocationPort
 import ai.zara.app.diagnostics.DiagnosticsSnapshot
 import ai.zara.app.diagnostics.DiagnosticsV2
 import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
@@ -91,7 +92,10 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-class AndroidAppSession(context: Context) : AutoCloseable {
+class AndroidAppSession(
+    context: Context,
+    private val canonicalExpertInvocationPortProvider: () -> CanonicalExpertInvocationPort? = { null },
+) : AutoCloseable {
     private val enrollment: EnrollmentRepository = AndroidEnrollmentRepository.create(context)
     private val stateStore = ClientStateStore(File(context.noBackupFilesDir, "zara/client-state.bin"))
     private val actor: ZaraTextClientActor
@@ -505,6 +509,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun queryLocalProlog(query: String): CompletableFuture<LocalQueryResult> =
         localServer.query(query)
+
+    /**
+     * Consumer-only dependency seam for the Core-owned canonical expert invocation port.
+     *
+     * Android never constructs, activates, registers, or executes expert authority here. Until
+     * Core supplies the owner, this remains absent and natural expert turns fail closed.
+     */
+    internal fun canonicalExpertInvocationPort(): CanonicalExpertInvocationPort? =
+        canonicalExpertInvocationPortProvider()
 
     private fun mutatePrologWorkspace(mutation: () -> Unit): CompletableFuture<List<PrologSource>> {
         val before = prologWorkspace.listSources()
