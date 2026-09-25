@@ -53,8 +53,19 @@ object TurnFailures {
 
     fun mostSpecific(existing: TurnFailure?, candidate: TurnFailure): TurnFailure {
         if (existing == null) return candidate
+        if (candidate.code == ZaraFailureCodes.PROTOCOL_TURN_CANCELLED ||
+            candidate.code == ZaraFailureCodes.PROTOCOL_STALE_GENERATION
+        ) {
+            return candidate
+        }
+        if (candidate.code == ZaraFailureCodes.UNKNOWN && existing.code != ZaraFailureCodes.UNKNOWN) {
+            return if (existing.incidentId != null && candidate.incidentId == existing.incidentId) {
+                existing
+            } else {
+                candidate
+            }
+        }
         if (existing.incidentId != null && candidate.incidentId == existing.incidentId) return existing
-        if (candidate.code == ZaraFailureCodes.UNKNOWN && existing.code != ZaraFailureCodes.UNKNOWN) return existing
         return candidate
     }
 
