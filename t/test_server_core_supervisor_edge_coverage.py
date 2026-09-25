@@ -75,7 +75,7 @@ def test_ipc_endpoint_validation_and_long_path_fallback_are_fail_closed(monkeypa
     with pytest.raises(ValueError, match="too long"):
         core._validate_ipc_endpoint("ipc:///this/path/is/definitely/too/long")
 
-    fallback = tmp_path / "fallback.sock"
+    fallback = Path("/tmp/z.sock")
     seen: list[Path] = []
     monkeypatch.setattr(
         core,
@@ -205,8 +205,8 @@ def test_default_host_composition_keeps_one_runtime_and_optional_router(monkeypa
     assert kwargs["plugin_paths"] == ("/plugins/a", "/plugins/b")
 
     backend = kwargs["backend_factory"]()
-    assert backend._router.engine is engine
-    assert backend._router.principal_id == "owner"
+    assert backend._delegate._router.engine is engine
+    assert backend._delegate._router.principal_id == "owner"
 
 
 def test_server_lease_runtime_directory_selection_is_owner_scoped(monkeypatch, tmp_path):
