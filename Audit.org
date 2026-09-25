@@ -1,0 +1,11 @@
+#+TITLE: Zara Audit Actions
+
+#+NAME: zara-audit-forge
+#+begin_src shell :async :results output replace :session main
+export forge="github"
+#+end_src
+
+#+NAME: zara-audit-pr-backlog-flag-for-removal
+#+begin_src shell :async :results output replace :session main
+opencode --prompt "Audit the issues on $forge. Mark issues for closure by stale outdated designs, not unique ideas. Make an Org-compatible table for pasting into an Org buffer table; place it in .audit/issues.psv." --auto
+#+end_src

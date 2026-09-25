@@ -18,6 +18,12 @@ fun PortableConversationStore.loadSymbolicEdgeSnapshot(
     projection.toSymbolicEdgeSnapshot(ConversationHistoryContract.localPrincipalId)
 }
 
+/** Newest canonical conversation projected for the paired watch, or null when none exists yet. */
+fun PortableConversationStore.latestSymbolicEdgeSnapshot(): SymbolicConversationEdgeSnapshot? {
+    val newest = listConversations(limit = 1).firstOrNull() ?: return null
+    return loadSymbolicEdgeSnapshot(newest.id)
+}
+
 internal fun SymbolicConversationProjection.toSymbolicEdgeSnapshot(
     principalId: String,
 ): SymbolicConversationEdgeSnapshot {
