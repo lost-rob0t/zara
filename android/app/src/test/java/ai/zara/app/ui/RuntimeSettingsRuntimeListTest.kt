@@ -54,6 +54,7 @@ class RuntimeSettingsRuntimeListTest {
     @Test
     fun liveRuntimeRouteMustConsumeCanonicalRegistryOwner() {
         val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val pairingShell = File("src/main/java/ai/zara/app/ui/PairingZaraApp.kt").readText()
         val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
 
         assertTrue(shell.contains("runtimeSnapshot: RuntimeRegistrySnapshot"))
@@ -61,6 +62,11 @@ class RuntimeSettingsRuntimeListTest {
         assertTrue(shell.contains("RuntimeSettingsRuntimeList("))
         assertTrue(shell.contains("snapshot = runtimeSnapshot"))
         assertTrue(shell.contains("onSelectRuntime = onSelectRuntime"))
+
+        assertTrue(pairingShell.contains("runtimeSnapshot: RuntimeRegistrySnapshot"))
+        assertTrue(pairingShell.contains("onSelectRuntime: (String) -> Unit"))
+        assertTrue(pairingShell.contains("runtimeSnapshot = runtimeSnapshot"))
+        assertTrue(pairingShell.contains("onSelectRuntime = onSelectRuntime"))
 
         assertTrue(activity.contains("AndroidRuntimeRegistryOwner("))
         assertTrue(activity.contains("appSession.localAiState()"))
