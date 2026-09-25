@@ -4,6 +4,12 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+## 0.3.0-alpha
+
+### Fixed
+
+- CI Android builds now give the Gradle daemon a larger heap, so building the full 13-APK fleet gate no longer dies mid dex-merge with an out-of-memory error.
+
 ### Added
 
 - CI now measures Python line, branch, and combined total coverage on every branch and pull request, publishes exact-head reports, and enforces the monotonic coverage ratchet through the same canonical evaluator used by the full repository gate.
