@@ -46,3 +46,18 @@
 3. Tag v0.3.0-alpha at the approved SHA; release.yml publishes full release with phone + code editor + 8 org APKs, checksums, manifests.
 4. Verify release assets (sha256, manifest source_sha, signer) via downloaded assets; confirm /releases/latest points at the new release.
 5. Comment delivery evidence on #1000/#1056/#1177/#972.
+
+** Publication (2026-09-25)
+- PR #972 merged at 6033bf1a (all 9 exact-head checks SUCCESS; first attempt failed in the emulator evidence step with the same devices.xml/adb infra flake already failing master CI at 2ed3bb26/94b9c9b2 — rerun passed).
+- Changelog reconciliation: direct master push rejected by ruleset 19153430 (requires `test` check) → PR #1483 merged at 77c5a018. First android+wear gate run failed with D8 OutOfMemoryError in :org-todo:mergeExtDexDebug (2g daemon heap vs 13-APK fleet build) → fixed with org.gradle.jvmargs -Xmx4g; rerun green.
+- Release workflow master-push promotion published v0.3.0-alpha at 6033bf1a (30 assets, full release) before the changelog chore landed, so the 0.3.0 APKs baked no `## 0.3.0-alpha` section for the What's-new overlay (named release regression). Fixed forward: PR #1485 promoted 0.3.1-alpha/versionCode 6, merged at 370834cc, tag v0.3.1-alpha pushed; the tag-push workflow run failed by design ("refusing to overwrite" existing promoted release — fail-closed duplicate refusal).
+- t/test_org_app_fleet.py initially pinned the exact 0.3.0-alpha version and failed the 0.3.1 promotion; rewritten to assert SemVer + promotion consistency (zara.version == release.target, versionCode == target code, code >= 5).
+
+** Distributed-asset verification (downloaded from GitHub, not local rebuilds)
+- v0.3.1-alpha (/releases/latest, full release, 30 assets): all 10 APK SHA-256 match adjacent checksums; all 10 manifests bind source_sha=370834ccbdacc6be4c63e8396f88b27e09216c82, version_name=0.3.1-alpha, version_code=6, application_id per fleet app; all 10 pass scripts/check-android-apk-signer.sh; all 8 org APKs pass check-android-apk-installable.sh under their own applicationId; phone APK embeds assets/CHANGELOG.md with the matching `## 0.3.1-alpha` section (org APKs intentionally have no changelog overlay feature).
+- v0.3.0-alpha remains published with 30 verified assets (checksums + manifests bound to 6033bf1a + signer checks run on all 10 APKs).
+- prolog-verify: init(org-fleet-apks), observations recorded (fleet pytest 11 passed, overlay+org pytest 15 passed, release payload script, 10x signer, 8x installable); `prolog-verify check` -> verification passed.
+
+** Outcome
+- Delivered: one installable, standalone APK per Org app system (Org flagship + Editor/Todo/Reminder/Timer/Roam/Graph/Home) on the Zara latest release page, each working without any other fleet app, the Org Sync provider, or the Zara phone app.
+- Remaining follow-ups (not in this delivery): typed IPC/deep-link integration and full share->capture->index->sync->desktop flow (#1177 leftovers), per-app plugin systems (#1056 leftovers), Org Sync provider APK (SHARED workspace mode still optional), zara-store (#1018).
