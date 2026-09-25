@@ -6,9 +6,12 @@ import ai.zara.org.storage.OrgRepository
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -29,22 +32,6 @@ import androidx.compose.ui.unit.dp
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgWorkspaceProjection
 import ai.zara.org.core.OrgWorkspaceProjector
-
-val OrgColorScheme = androidx.compose.material3.darkColorScheme(
-    primary = Color(0xFFFF4FD8),
-    secondary = Color(0xFF45E6FF),
-    background = Color(0xFF050510),
-    surface = Color(0xFF0B0B1D),
-    surfaceVariant = Color(0xFF15152B),
-    onBackground = Color(0xFFF4EEFF),
-    onSurface = Color(0xFFF4EEFF),
-    onSurfaceVariant = Color(0xFFB8B2D6),
-)
-
-@Composable
-fun OrgTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = OrgColorScheme, content = content)
-}
 
 class OrgWorkspaceModel(
     val context: Context,
@@ -121,6 +108,8 @@ fun OrgWorkspaceScreen(title: String, tabs: List<OrgSurfaceTab>) {
     val model = rememberOrgWorkspaceModel()
     var selected by rememberSaveable { mutableIntStateOf(0) }
     val activeTab = tabs[selected.coerceAtLeast(0).coerceAtMost(tabs.lastIndex)]
+    val tokens = LocalOrgTokens.current
+    val connected = model.repository != null
 
     Column(
         modifier = Modifier
@@ -129,36 +118,50 @@ fun OrgWorkspaceScreen(title: String, tabs: List<OrgSurfaceTab>) {
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall)
-        Text(
+        Row {
+            OrgStatusDot(color = if (connected) tokens.success else tokens.warning)
+            Text(
+                title,
+                modifier = Modifier.padding(start = 8.dp),
+                style = MaterialTheme.typography.headlineSmall,
+            )
+        }
+        OrgMutedText(
             model.status.ifBlank {
                 when (model.home.mode) {
                     ai.zara.org.storage.OrgHomeMode.SHARED -> "Shared canonical Org workspace"
                     ai.zara.org.storage.OrgHomeMode.CUSTOM_SAF -> "Custom canonical Org workspace"
                 }
             },
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelMedium,
         )
 
         Row {
             if (tabs.size > 1) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     tabs.forEachIndexed { index, tab ->
-                        TextButton(onClick = { selected = index }) {
-                            Text(
-                                tab.name,
-                                color = if (index == selected) {
-                                    MaterialTheme.colorScheme.secondary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
+                        val active = index == selected
+                        Column {
+                            TextButton(onClick = { selected = index }) {
+                                Text(
+                                    tab.name,
+                                    color = if (active) {
+                                        MaterialTheme.colorScheme.secondary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(1.dp)
+                                    .background(if (active) tokens.borderActive else Color.Transparent),
                             )
                         }
                     }
                 }
             }
-            TextButton(onClick = { model.refresh() }, enabled = model.repository != null) {
+            TextButton(onClick = { model.refresh() }, enabled = connected) {
                 Text("Refresh")
             }
         }

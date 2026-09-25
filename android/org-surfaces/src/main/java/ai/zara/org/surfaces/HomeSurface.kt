@@ -9,8 +9,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
@@ -45,16 +47,9 @@ fun HomeSurface(model: OrgWorkspaceModel) {
             }
         }
         items(todays, key = { it.stableKey }) { reminder ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(8.dp),
-            ) {
-                Text(
+            OrgPanel {
+                OrgMutedText(
                     "${reminder.kind.name.lowercase()} · ${reminder.whenLocal.toLocalTime()}",
-                    color = MaterialTheme.colorScheme.secondary,
-                    style = MaterialTheme.typography.labelMedium,
                 )
                 Text(reminder.title)
             }
@@ -66,18 +61,19 @@ fun HomeSurface(model: OrgWorkspaceModel) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 fleet.forEach { packageName ->
                     val label = OrgFleetApps.labels()[packageName] ?: packageName
-                    Text(
-                        label,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .clickable {
-                                context.packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
-                                    context.startActivity(intent)
+                    OrgPanel(active = true, modifier = Modifier.width(IntrinsicSize.Min)) {
+                        Text(
+                            label,
+                            color = LocalOrgTokens.current.primary,
+                            modifier = Modifier
+                                .clickable {
+                                    context.packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
+                                        context.startActivity(intent)
+                                    }
                                 }
-                            }
-                            .padding(8.dp),
-                    )
+                                .padding(vertical = 2.dp),
+                        )
+                    }
                 }
             }
         }
@@ -86,14 +82,9 @@ fun HomeSurface(model: OrgWorkspaceModel) {
                 Text("Recent daily pages", style = MaterialTheme.typography.titleMedium)
             }
             items(recentDailies, key = { it.path }) { entry ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface)
-                        .padding(8.dp),
-                ) {
-                    Text(entry.date.toString(), color = MaterialTheme.colorScheme.secondary)
-                    Text(entry.path, style = MaterialTheme.typography.labelSmall)
+                OrgPanel {
+                    Text(entry.date.toString(), color = LocalOrgTokens.current.accentCyan)
+                    OrgMutedText(entry.path)
                 }
             }
         }

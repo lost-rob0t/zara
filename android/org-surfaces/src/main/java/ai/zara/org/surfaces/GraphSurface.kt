@@ -31,9 +31,10 @@ fun GraphSurface(model: OrgWorkspaceModel) {
 fun GraphContent(graph: ai.zara.org.core.OrgRoamGraph) {
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val selected = selectedId?.let(graph.nodes::get)
-    val nodeColor = MaterialTheme.colorScheme.secondary
-    val edgeColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-    val selectedColor = MaterialTheme.colorScheme.primary
+    val tokens = LocalOrgTokens.current
+    val nodeColor = tokens.accentCyan
+    val edgeColor = tokens.border
+    val selectedColor = tokens.primary
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (graph.nodes.isEmpty()) {

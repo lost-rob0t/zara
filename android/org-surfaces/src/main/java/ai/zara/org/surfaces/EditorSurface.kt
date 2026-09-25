@@ -38,23 +38,15 @@ fun EditorSurface(model: OrgWorkspaceModel) {
                     )
                 }
                 items(files, key = { it.relativePath }) { file ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surface)
-                            .clickable {
-                                runCatching { OrgEditorSessions.open(file.relativePath, repository.read(file)) }
-                                    .onSuccess { session = it }
-                                    .onFailure { failure -> model.report(failure.message ?: "Unable to open ${file.relativePath}") }
-                            }
-                            .padding(10.dp),
-                    ) {
-                        Text(file.name)
-                        Text(
-                            file.relativePath,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                    OrgPanel {
+                        Column(modifier = Modifier.clickable {
+                            runCatching { OrgEditorSessions.open(file.relativePath, repository.read(file)) }
+                                .onSuccess { session = it }
+                                .onFailure { failure -> model.report(failure.message ?: "Unable to open ${file.relativePath}") }
+                        }) {
+                            Text(file.name)
+                            OrgMutedText(file.relativePath)
+                        }
                     }
                 }
             }
