@@ -120,6 +120,7 @@ class MainActivity : ComponentActivity() {
                 projectIdForConversation = { conversationId ->
                     conversationStore.state().conversation(conversationId)?.projectId
                 },
+                canonicalExpertInvocationPort = appSession.canonicalExpertInvocationPort(),
             )::submit,
         )
         if (conversationState.loadFailure == null && conversationState.selectedConversation == null) {
