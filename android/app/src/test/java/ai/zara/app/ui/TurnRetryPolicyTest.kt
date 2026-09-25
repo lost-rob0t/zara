@@ -29,6 +29,13 @@ class TurnRetryPolicyTest {
         assertFalse(TurnRetryPolicy.shouldAutoRetry(stale, attempt = 1))
     }
 
+    @Test fun `retry is blocked until canonical terminal state is durably persisted`() {
+        val unresolved = retryableFailure(connected = true).copy(terminalPersisted = false)
+
+        assertFalse(TurnRetryPolicy.shouldAutoRetry(unresolved, attempt = 1))
+        assertFalse(TurnRetryPolicy.canManualRetry(unresolved))
+    }
+
     @Test fun `final attempt hides retry and reports exhausted budget`() {
         val failure = TurnRetryPolicy.decorate(retryableFailure(connected = true), attempt = 2)
         assertEquals(2, failure.attempt)
