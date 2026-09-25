@@ -148,6 +148,91 @@ class TurnFailureTest {
         )
     }
 
+    @Test fun `current cancellation beats stale retryable failure even with same incident`() {
+        val stale = TurnFailures.from(
+            failure(
+                code = ZaraFailureCodes.TRANSPORT_TIMEOUT,
+                subsystem = ZaraSubsystem.TRANSPORT,
+                operation = ZaraOperation.SUBMIT,
+                recovery = ZaraRecovery.RETRYABLE,
+            ),
+            transportConnected = true,
+            incidentId = "diag-shared",
+        )
+        val cancelled = TurnFailures.from(
+            failure(
+                code = ZaraFailureCodes.PROTOCOL_TURN_CANCELLED,
+                subsystem = ZaraSubsystem.PROTOCOL,
+                operation = ZaraOperation.SUBMIT,
+                recovery = ZaraRecovery.RETRYABLE,
+            ),
+            transportConnected = true,
+            incidentId = "diag-shared",
+        )
+
+        val resolved = TurnFailures.mostSpecific(existing = stale, candidate = cancelled)
+
+        assertEquals(ZaraFailureCodes.PROTOCOL_TURN_CANCELLED, resolved.code)
+        assertFalse(TurnRetryPolicy.shouldAutoRetry(resolved, attempt = 1))
+    }
+
+    @Test fun `current stale generation beats stale retryable failure even with same incident`() {
+        val prior = TurnFailures.from(
+            failure(
+                code = ZaraFailureCodes.TRANSPORT_TIMEOUT,
+                subsystem = ZaraSubsystem.TRANSPORT,
+                operation = ZaraOperation.SUBMIT,
+                recovery = ZaraRecovery.RETRYABLE,
+            ),
+            transportConnected = true,
+            incidentId = "diag-shared",
+        )
+        val stale = TurnFailures.from(
+            failure(
+                code = ZaraFailureCodes.PROTOCOL_STALE_GENERATION,
+                subsystem = ZaraSubsystem.PROTOCOL,
+                operation = ZaraOperation.SUBMIT,
+                recovery = ZaraRecovery.RETRYABLE,
+            ),
+            transportConnected = true,
+            incidentId = "diag-shared",
+        )
+
+        val resolved = TurnFailures.mostSpecific(existing = prior, candidate = stale)
+
+        assertEquals(ZaraFailureCodes.PROTOCOL_STALE_GENERATION, resolved.code)
+        assertFalse(TurnRetryPolicy.shouldAutoRetry(resolved, attempt = 1))
+    }
+
+    @Test fun `unknown failure from a new incident cannot inherit stale retry authority`() {
+        val stale = TurnFailures.from(
+            failure(
+                code = ZaraFailureCodes.TRANSPORT_TIMEOUT,
+                subsystem = ZaraSubsystem.TRANSPORT,
+                operation = ZaraOperation.SUBMIT,
+                recovery = ZaraRecovery.RETRYABLE,
+            ),
+            transportConnected = true,
+            incidentId = "diag-old",
+        )
+        val current = TurnFailures.from(
+            failure(
+                code = ZaraFailureCodes.UNKNOWN,
+                subsystem = ZaraSubsystem.LIFECYCLE,
+                operation = ZaraOperation.SUBMIT,
+                recovery = ZaraRecovery.UNKNOWN,
+            ),
+            transportConnected = true,
+            incidentId = "diag-new",
+        )
+
+        val resolved = TurnFailures.mostSpecific(existing = stale, candidate = current)
+
+        assertEquals(ZaraFailureCodes.UNKNOWN, resolved.code)
+        assertFalse(resolved.retryPossible)
+        assertFalse(TurnRetryPolicy.shouldAutoRetry(resolved, attempt = 1))
+    }
+
     private fun failure(
         code: String,
         subsystem: ZaraSubsystem,
