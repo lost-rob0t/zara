@@ -99,6 +99,18 @@
         </activity>
 
         <service
+            android:name=".watch.WearCompanionLinkService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/zara/watch/hello"
+                    android:scheme="wear" />
+            </intent-filter>
+        </service>
+
+        <service
             android:name=".localai.LocalAiService"
             android:exported="false"
             android:process=":voice" />

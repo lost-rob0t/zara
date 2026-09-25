@@ -14,7 +14,7 @@ def test_android_gate_emits_stock_server_log_before_failing_gradle_gate():
     failure_path = script.split(guarded_gradle, 1)[1].split("\nfi\n", 1)[0]
     assert 'cat "$interop_log" >&2' in failure_path
     assert (
-        'echo "stock ZaraServer Android/Wear/Code/Termux interop gate failed" >&2'
+        'echo "stock ZaraServer Android/Wear/Code/Termux/Org interop gate failed" >&2'
         in failure_path
     )
     assert 'cp "$recovery_log" "$diagnostics_dir/remote-recovery-fixture.log"' in failure_path

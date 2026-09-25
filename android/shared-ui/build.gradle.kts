@@ -17,6 +17,7 @@ android {
 }
 
 dependencies {
+    api(project(":org-core"))
     api(platform(libs.compose.bom))
     api(libs.compose.ui)
     testImplementation(libs.junit)
