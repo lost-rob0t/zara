@@ -156,6 +156,26 @@ class AndroidRuntimeRegistryOwnerTest {
         assertTrue(sidecar.selectable)
     }
 
+    @Test
+    fun localAiStateReadFailureClearsStaleEmbeddedReadiness() {
+        val owner = owner()
+        val model = modelSpec()
+
+        val ready = owner.refresh(LocalAiState(phase = LocalAiPhase.READY, model = model))
+        assertTrue(ready.descriptors.single().selectable)
+        owner.select(EMBEDDED_LOCAL_RUNTIME_ID)
+
+        val unavailable = owner.refreshUnavailable()
+        val embedded = unavailable.descriptors.single()
+
+        assertEquals(RuntimeHealth.DEGRADED, embedded.health)
+        assertFalse(embedded.available)
+        assertFalse(embedded.selectable)
+        assertTrue(embedded.capabilities.isEmpty())
+        assertTrue(embedded.profiles.isEmpty())
+        assertEquals(null, unavailable.selection)
+    }
+
     private fun owner(): AndroidRuntimeRegistryOwner = AndroidRuntimeRegistryOwner(
         runtimeVersion = "0.2.2-alpha",
         implementationVersion = "abc123",
