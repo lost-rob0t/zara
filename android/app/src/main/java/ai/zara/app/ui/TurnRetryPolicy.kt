@@ -19,6 +19,7 @@ object TurnRetryPolicy {
     ): TurnFailure {
         require(attempt in 1..MAX_ATTEMPTS) { "retry attempt is outside the bounded budget" }
         val retryAvailable = failure.retryPossible &&
+            failure.terminalPersisted &&
             attempt < MAX_ATTEMPTS &&
             !autoRetrying
         return failure.copy(
@@ -31,6 +32,7 @@ object TurnRetryPolicy {
 
     fun shouldAutoRetry(failure: TurnFailure, attempt: Int): Boolean {
         if (attempt >= MAX_ATTEMPTS) return false
+        if (!failure.terminalPersisted) return false
         if (!failure.retryPossible || failure.reconnectPossible) return false
         if (failure.code == ZaraFailureCodes.PROTOCOL_TURN_CANCELLED) return false
         if (failure.code == ZaraFailureCodes.PROTOCOL_STALE_GENERATION) return false
@@ -38,7 +40,9 @@ object TurnRetryPolicy {
     }
 
     fun canManualRetry(failure: TurnFailure?): Boolean =
-        failure?.retryPossible == true && !failure.autoRetrying
+        failure?.terminalPersisted == true &&
+            failure.retryPossible &&
+            !failure.autoRetrying
 }
 
 fun retryStatusLabel(failure: TurnFailure): String =
