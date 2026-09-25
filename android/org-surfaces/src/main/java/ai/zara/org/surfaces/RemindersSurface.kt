@@ -25,55 +25,47 @@ private val reminderFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 fun RemindersSurface(model: OrgWorkspaceModel) {
     val reminders = remember(model.projection) { OrgReminders.fromProjection(model.projection) }
     val now = remember(model.projection) { LocalDateTime.now() }
+    val tokens = LocalOrgTokens.current
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         item("summary") {
-            Text(
-                "${reminders.size} reminders derived from canonical SCHEDULED/DEADLINE timestamps",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            OrgMutedText("${reminders.size} reminders derived from canonical SCHEDULED/DEADLINE timestamps")
         }
         items(reminders, key = { it.stableKey }) { reminder ->
             val overdue = reminder.whenLocal.isBefore(now)
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(8.dp),
-            ) {
+            OrgPanel {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OrgStatusDot(
+                        color = when {
+                            overdue -> tokens.error
+                            reminder.kind == OrgReminderKind.DEADLINE -> tokens.accentMagenta
+                            else -> tokens.accentCyan
+                        },
+                    )
                     Text(
                         reminder.kind.name,
                         color = if (reminder.kind == OrgReminderKind.DEADLINE) {
-                            MaterialTheme.colorScheme.primary
+                            tokens.accentMagenta
                         } else {
-                            MaterialTheme.colorScheme.secondary
+                            tokens.accentCyan
                         },
                         style = MaterialTheme.typography.labelMedium,
                     )
                     Text(
                         reminder.whenLocal.format(reminderFormatter),
                         color = if (overdue) {
-                            MaterialTheme.colorScheme.primary
+                            tokens.error
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
                         style = MaterialTheme.typography.labelMedium,
                     )
                     if (!reminder.explicitTime) {
-                        Text(
-                            "default ${OrgReminders.defaultReminderTime}",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                        OrgMutedText("default ${OrgReminders.defaultReminderTime}")
                     }
                 }
                 Text(reminder.title)
-                Text(
-                    "${reminder.taskPath}:${reminder.taskLine} · ${reminder.taskState}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall,
-                )
+                OrgMutedText("${reminder.taskPath}:${reminder.taskLine} · ${reminder.taskState}")
             }
         }
     }
