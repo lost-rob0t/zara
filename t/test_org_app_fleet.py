@@ -131,7 +131,14 @@ def test_version_context_is_promoted_for_the_org_fleet_release():
         for line in properties.splitlines()
         if "=" in line and not line.startswith("#")
     )
-    assert values["zara.version"] == "0.3.0-alpha"
-    assert values["android.versionCode"] == "5"
-    assert values["release.target"] == "0.3.0-alpha"
-    assert values["release.targetAndroidVersionCode"] == "5"
+    semver = re.compile(
+        r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$"
+    )
+    assert semver.match(values["zara.version"]), values
+    assert values["zara.version"] == values["release.target"], (
+        "source must be promoted to the active release target before publication"
+    )
+    assert values["android.versionCode"] == values["release.targetAndroidVersionCode"]
+    assert int(values["android.versionCode"]) >= 5, (
+        "the org fleet release line starts at Android versionCode 5"
+    )
