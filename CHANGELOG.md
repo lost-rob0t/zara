@@ -96,6 +96,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Release-note sections render consistently on Desktop and Android without extra blank lines between a subsection heading and its first item.
 - Immutable alpha publication now keys off canonical version readiness plus actual GitHub release absence instead of push-event changed-file metadata, so protected-branch promotion merges cannot silently skip APK publication.
 - The mutable `android-latest` channel now starts a fresh signed Android/Wear build on every `master` push instead of waiting for the entire repository CI workflow, preserving an exact-SHA APK payload for each successful master build and rolling the direct-download release forward promptly.
+- Android Updates now keeps **Master (fastest green)** as a selectable update beside immutable versions and verifies the rolling APK's exact source, version, package identity, and checksum before installation.
 
 ### Changed
 

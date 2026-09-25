@@ -22,6 +22,61 @@ class UpdateSecurityTest {
     }
 
     @Test
+    fun canonicalSemverValidationMatchesVersionContextGrammar() {
+        val invalid = listOf(
+            "1.2.3-alpha..1",
+            "1.2.3-.alpha",
+            "1.2.3-alpha.",
+            "1.2.3-01",
+            "1.2.3-alpha.01",
+            "01.2.3",
+            "1.02.3",
+            "1.2.03",
+            "v1.2.3",
+            " 1.2.3",
+        )
+        val valid = listOf(
+            "1.2.3+build.7",
+            "1.2.3-alpha+build.7",
+            "1.2.3-alpha-1",
+            "1.2.3-alpha.1",
+        )
+        fun release(version: String) = UpdateRelease(
+            version = version,
+            sourceSha = "a".repeat(40),
+            apkUrl = "https://github.com/lost-rob0t/zara/releases/download/test/zara.apk",
+            sha256 = "b".repeat(64),
+        )
+
+        invalid.forEach { version ->
+            assertTrue(
+                "Expected canonical SemVer rejection for $version",
+                UpdateSecurity.validate(release(version)).isFailure,
+            )
+        }
+        valid.forEach { version ->
+            assertTrue(
+                "Expected canonical SemVer acceptance for $version",
+                UpdateSecurity.validate(release(version)).isSuccess,
+            )
+        }
+    }
+
+    @Test
+    fun canonicalSemverOrderingHandlesArbitraryPrecisionAndIgnoresBuildMetadata() {
+        assertTrue(
+            UpdateSecurity.isNewer(
+                "1000000000000000000000000.0.0",
+                "999999999999999999999999.0.0",
+            )
+        )
+        assertTrue(UpdateSecurity.isNewer("1.2.3-alpha.10", "1.2.3-alpha.2"))
+        assertTrue(UpdateSecurity.isNewer("1.2.3-alpha.beta", "1.2.3-alpha.9"))
+        assertFalse(UpdateSecurity.isNewer("1.2.3+build.2", "1.2.3+build.1"))
+        assertFalse(UpdateSecurity.isNewer("1.2.3+build.1", "1.2.3+build.2"))
+    }
+
+    @Test
     fun rollingMasterCandidateUsesExactSourceShaInsteadOfSemver() {
         val rolling = UpdateRelease(
             version = "master",

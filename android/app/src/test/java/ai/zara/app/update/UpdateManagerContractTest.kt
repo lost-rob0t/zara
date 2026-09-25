@@ -17,6 +17,37 @@ class UpdateManagerContractTest {
         assertTrue(source.contains("fun select("))
         assertTrue(source.contains("choices ="))
         assertTrue(source.contains("Master (fastest green)"))
+        assertTrue(source.contains("MasterUpdateManifest.parse"))
+        assertTrue(source.contains("verifyUpdateApk"))
+        assertTrue(source.contains("currentVersionCode"))
+    }
+
+    @Test
+    fun `versioned release binds exact phone provenance instead of release commitish`() {
+        val source = File(
+            "src/main/java/ai/zara/app/update/AndroidUpdateManager.kt"
+        ).readText()
+        val candidate = source.substringAfter("private fun releaseCandidate")
+            .substringBefore("private fun readText")
+
+        assertTrue(candidate.contains("VersionedUpdateManifest.apkName(version)"))
+        assertTrue(candidate.contains("VersionedUpdateManifest.manifestName(version)"))
+        assertTrue(candidate.contains("VersionedUpdateManifest.parse"))
+        assertTrue(candidate.contains("uniqueAsset"))
+        assertFalse(candidate.contains("target_commitish"))
+        assertFalse(candidate.contains("endsWith(\".apk\")"))
+    }
+
+    @Test
+    fun `every downloaded candidate verifies package and version provenance before ready`() {
+        val source = File(
+            "src/main/java/ai/zara/app/update/AndroidUpdateManager.kt"
+        ).readText()
+        val download = source.substringAfter("fun download()")
+            .substringBefore("fun requestInstall()")
+
+        assertTrue(download.contains("verifyUpdateApk(destination, selected.provenance)"))
+        assertFalse(download.contains("masterManifest?.let"))
     }
 
     @Test
