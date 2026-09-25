@@ -18,8 +18,10 @@ class CanonicalExpertOwnerSourceContractTest {
             .substringBefore("\n            )::submit")
 
         assertTrue(
-            "AndroidAppSession must expose the existing canonical expert invocation owner to UI composition",
-            sessionSource.contains("fun canonicalExpertInvocationPort(): CanonicalExpertInvocationPort"),
+            "AndroidAppSession must expose a non-null existing canonical expert invocation owner to UI composition",
+            Regex(
+                """fun\s+canonicalExpertInvocationPort\(\):\s+CanonicalExpertInvocationPort\s*(?:=|\{)""",
+            ).containsMatchIn(sessionSource),
         )
         assertTrue(
             "MainActivity must source canonical expert invocation from AndroidAppSession rather than fabricate one",
