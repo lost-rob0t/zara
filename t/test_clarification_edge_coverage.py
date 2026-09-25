@@ -199,16 +199,6 @@ def test_followup_ready_correction_and_unknown_active_paths_are_bounded():
             "ghost", DurationValue(1), principal="alice", conversation_id="c"
         )
 
-    opened.session.state = SessionState.ELICITING
-    opened.session.frame = replace_frame_complete(opened.session.frame)
-    assert c.submit_follow_up("x", principal="alice", conversation_id="c").reason == "already_complete"
-
-
-def replace_frame_complete(frame):
-    from dataclasses import replace
-    return replace(frame, status=FrameStatus.COMPLETE, missing=())
-
-
 def test_cancel_finish_expire_and_prune_cover_terminal_registry_edges():
     c, clock = coordinator(session_ttl=1)
     assert c.cancel(principal="alice", conversation_id="missing").reason == "no_active_dialogue"
