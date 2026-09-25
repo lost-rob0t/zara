@@ -247,6 +247,15 @@ def runtime_event_to_message(
             if event.kind != "approval":
                 raise RuntimeCodecError("wire tool event kind must be approval")
             body.update({"kind": event.kind, "prompt": _wire_tool_text("prompt", event.prompt)})
+    elif type(event) is events.PhoneEventReceived:
+        message_type, body = "phone.event", {
+            "event_id": event.event_id,
+            "kind": event.kind,
+            "remote": event.remote,
+            "text": event.text,
+            "greeting": event.greeting,
+            "actions": list(event.actions),
+        }
     elif type(event) is events.RuntimeError:
         message_type, body = "runtime.error", {
             "reason": event.reason,
@@ -260,7 +269,11 @@ def runtime_event_to_message(
     payload_count = 0
     content_type = None
     seq = envelope.sequence
-    if type(event) in (events.AudioOutputStarted, events.AudioOutputFinished):
+    if type(event) in (
+        events.AudioOutputStarted,
+        events.AudioOutputFinished,
+        events.PhoneEventReceived,
+    ):
         seq = None
     elif type(event) is events.AudioOutputChunk:
         payload_count = 1

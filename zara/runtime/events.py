@@ -332,6 +332,24 @@ class TaskCancelled(RuntimeEvent):
     reason: str = ""
 
 
+# Phone bridge -------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True)
+class PhoneEventReceived(RuntimeEvent):
+    event_id: str = ""
+    kind: str = ""
+    remote: str = ""
+    text: str = ""
+    greeting: str = ""
+    actions: tuple[str, ...] = ("alert", "voice_takeover")
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"sms.received", "call.suspected_spam"}:
+            raise ValueError(f"unsupported phone event kind: {self.kind!r}")
+        if self.actions != ("alert", "voice_takeover"):
+            raise ValueError("phone events expose alert and voice_takeover only")
+
+
 # Provider / notification --------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
