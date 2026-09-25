@@ -48,14 +48,16 @@ class AndroidRetryCompositionContractTest {
         val defaultsClosed = record.indexOf("var terminalPersisted = false")
         val terminalWrite = record.indexOf("conversationStore.failTurn(")
         val marksPersisted = record.indexOf("terminalPersisted = true")
+        val catchesPersistenceFailure = record.indexOf("} catch (_: Exception) {")
         val bindsFailure = record.indexOf("copy(terminalPersisted = terminalPersisted)")
 
         assertTrue("retry admission must default closed before the canonical terminal write", defaultsClosed >= 0)
         assertTrue("recordTurnFailure must retain the canonical failTurn write", terminalWrite >= 0)
         assertTrue("terminal persistence may be admitted only after failTurn returns", marksPersisted > terminalWrite)
+        assertTrue("persistence failure must be caught after the success-only admission mark", catchesPersistenceFailure > marksPersisted)
         assertTrue(
-            "the visible retry failure must bind admission to the observed persistence result",
-            bindsFailure > marksPersisted,
+            "the visible retry failure must bind admission after the persistence attempt resolves",
+            bindsFailure > catchesPersistenceFailure,
         )
         assertTrue(defaultsClosed < terminalWrite)
     }
