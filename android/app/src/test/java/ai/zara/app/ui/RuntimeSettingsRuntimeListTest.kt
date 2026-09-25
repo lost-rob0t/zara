@@ -71,6 +71,7 @@ class RuntimeSettingsRuntimeListTest {
         assertTrue(activity.contains("AndroidRuntimeRegistryOwner("))
         assertTrue(activity.contains("appSession.localAiState()"))
         assertTrue(activity.contains("runtimeRegistryOwner.refresh("))
+        assertTrue(activity.contains("runtimeRegistryOwner.refreshUnavailable()"))
         assertTrue(activity.contains("runtimeSnapshot = runtimeSnapshot"))
         assertTrue(activity.contains("runtimeRegistryOwner.select(runtimeId)"))
     }
