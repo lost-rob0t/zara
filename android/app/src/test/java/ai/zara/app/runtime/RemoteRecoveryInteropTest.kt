@@ -47,6 +47,7 @@ class RemoteRecoveryInteropTest {
         val actor = ZaraTextClientActor(
             dealerFactory = factory,
             requestTimeoutMillis = 5_000,
+            turnResponseTimeoutMillis = 5_000,
             audioOutputFormats = listOf(AudioOutputFormat.pcmS16leMono(24_000)),
         )
         actor.setConnectionFailureObserver { failure -> failures += failure }
