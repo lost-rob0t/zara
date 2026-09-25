@@ -16,6 +16,7 @@ data class TurnFailure(
     val incidentId: String?,
     val retryPossible: Boolean,
     val reconnectPossible: Boolean,
+    val terminalPersisted: Boolean = true,
     val attempt: Int = 1,
     val maxAttempts: Int = TurnRetryPolicy.MAX_ATTEMPTS,
     val autoRetrying: Boolean = false,
