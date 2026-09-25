@@ -126,6 +126,82 @@ They are intentionally *not* added to the closed ZARA/1 device capability enum.
 Remote protocol expansion requires its own schema/versioning change rather than
 silently inheriting local power.
 
+* Wireless ADB automation
+
+Android can reuse the same authenticated Wireless debugging connection already
+used by the Wear installer.  Prolog plans gain a second closed action family:
+
+#+begin_src prolog
+adb_tap(540, 1700).
+adb_swipe(540, 1700, 540, 400, 300).
+adb_text("hello world").
+adb_key(home).
+adb_wait(250).
+#+end_src
+
+The native adapter accepts only bounded coordinates, durations, an allowlisted
+key set, and a restricted text alphabet.  It builds fixed =input= commands from
+those typed values; the Prolog surface never receives =adb shell= or an
+arbitrary command string.  =screenshotPng()= uses bounded binary ADB =exec:=
+with =screencap -p= and validates the PNG signature before returning bytes.
+
+ADB actions are available only while Zara already owns an authorized ADB
+connection.  Pairing/debug authorization remains an explicit Android-controlled
+step.
+
+* Desktop ADB + vision loop
+
+Desktop ships an optional first-party =android-adb= service plugin.  Enable it
+explicitly:
+
+#+begin_src toml
+[plugins.android-adb]
+enabled = true
+# serial = "192.0.2.10:37123"  # optional; required when more than one target is connected
+# adb_path = "adb"
+# timeout_seconds = 20
+#+end_src
+
+The plugin exposes read-only device discovery, a bounded UIAutomator tree, and
+PNG screenshot capture.  State-changing tools (tap, swipe, text, key, app open,
+or a named Prolog plan) all use Zara's canonical interactive tool approval.
+
+Prolog owns durable policy/configuration:
+
+#+begin_src prolog
+android_app_package(settings, "com.android.settings").
+android_adb_plan(open_settings, [
+    open_app(settings),
+    wait(500)
+]).
+android_vision_policy(confirm_each_action).
+#+end_src
+
+Vision is an observe/decide/act/verify loop rather than a shell escape hatch:
+
+#+begin_example
+android_adb_screenshot
+        |
+        v
+image_url(DataURL, high) -> multimodal model
+        |
+        +---- optional android_adb_ui_tree
+        |
+        v
+Prolog android_vision_policy/1
+        |
+        v
+canonical approval -> one typed ADB action
+        |
+        v
+android_adb_screenshot (verify)
+#+end_example
+
+=disabled= and =observe_only= policies reject vision mutations.  The stock
+=confirm_each_action= policy allows a single typed mutation only through the
+normal approval controller.  No vision result can name a raw command, package
+manager operation, Intent, or executable.
+
 * Git config template import
 
 The =Zara Automation= surface accepts a public HTTPS Git repository and an

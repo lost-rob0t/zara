@@ -2,6 +2,7 @@ package ai.zara.app.prolog
 
 import ai.zara.app.accessibility.AccessibilityGlobalAction
 import ai.zara.app.accessibility.AccessibilitySelector
+import ai.zara.app.automation.AdbAutomationKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -90,6 +91,35 @@ class AndroidAutomationPlanParserTest {
             AndroidAutomationAction.GlobalAction(AccessibilityGlobalAction.Back),
             plan.actions[4],
         )
+    }
+
+    @Test
+    fun `ADB grammar parses into typed actions`() {
+        val plan = AndroidAutomationPlanParser.parse(
+            "adb_demo",
+            "actions([adb_tap(120,240), adb_swipe(10,20,30,40,300), " +
+                "adb_text('hello world'), adb_key(home), adb_wait(50)])",
+        )
+
+        assertEquals(
+            listOf(
+                AndroidAutomationAction.AdbTap(120, 240),
+                AndroidAutomationAction.AdbSwipe(10, 20, 30, 40, 300),
+                AndroidAutomationAction.AdbText("hello world"),
+                AndroidAutomationAction.AdbKey(AdbAutomationKey.Home),
+                AndroidAutomationAction.AdbWait(50),
+            ),
+            plan.actions,
+        )
+    }
+
+    @Test
+    fun `ADB grammar rejects out of range and unsupported actions`() {
+        assertRejected("actions([adb_tap(-1,20)])")
+        assertRejected("actions([adb_tap(99999,20)])")
+        assertRejected("actions([adb_swipe(1,2,3,4,0)])")
+        assertRejected("actions([adb_key(power)])")
+        assertRejected("actions([adb_shell('id')])")
     }
 
     @Test
