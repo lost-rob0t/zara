@@ -73,6 +73,12 @@ class ZaraClient(ABC):
     def close(self, timeout: Optional[float] = None) -> None:
         raise NotImplementedError
 
+    def send_sms(self, destination: str, text: str) -> concurrent.futures.Future:
+        """Send one SMS through a connected phone bridge when supported."""
+        future = concurrent.futures.Future()
+        future.set_exception(NotImplementedError("client does not support SMS bridging"))
+        return future
+
     def reconnect(self) -> concurrent.futures.Future:
         """Reconnect this client if the concrete transport supports it."""
         future = concurrent.futures.Future()

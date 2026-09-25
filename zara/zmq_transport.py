@@ -689,6 +689,144 @@ class ZaraZmqGateway:
                 DeviceActionRemoteError(body["code"], body.get("message", "device action failed"))
             )
 
+    def _handle_phone_message(
+        self,
+        socket: zmq.Socket,
+        route: bytes,
+        state: _RouteState,
+        message: ProtocolMessage,
+    ) -> None:
+        if message.session_id != state.session_id:
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code="stale_session",
+                    message="message session is stale",
+                    retryable=False,
+                ),
+            )
+            return
+
+        body = dict(message.body or {})
+        if message.type == "device.event":
+            kind = body["kind"]
+            event_body = {
+                "event_id": body["event_id"],
+                "kind": kind,
+                "remote": body["remote"],
+                "text": body.get("text", ""),
+                "greeting": "Hi, I'm a symbolic system."
+                if kind == "call.suspected_spam"
+                else "",
+                "actions": ["alert", "voice_takeover"],
+            }
+            with self._lock:
+                targets = [
+                    candidate
+                    for candidate, candidate_state in self._routes.items()
+                    if candidate != route
+                    and candidate_state.ready
+                    and candidate_state.principal_id == state.principal_id
+                ]
+            for candidate in targets:
+                self._enqueue_outbound(
+                    candidate,
+                    self._response_for_route(
+                        ProtocolMessage(
+                            type="phone.event",
+                            id=_message_id(),
+                            timestamp_ns=_now_ns(),
+                            payload_count=0,
+                            body=event_body,
+                        ),
+                        candidate,
+                    ),
+                )
+            return
+
+        with self._lock:
+            candidates = [
+                (candidate, candidate_state)
+                for candidate, candidate_state in self._routes.items()
+                if candidate != route
+                and candidate_state.ready
+                and candidate_state.principal_id == state.principal_id
+                and "sms_send" in candidate_state.capabilities
+            ]
+        if len(candidates) != 1:
+            code = "phone_device_unavailable" if not candidates else "phone_device_ambiguous"
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code=code,
+                    message="exactly one SMS-capable phone must be connected",
+                    retryable=True,
+                ),
+            )
+            return
+
+        _, target_state = candidates[0]
+        try:
+            handle = self.request_device_action(
+                principal_id=state.principal_id,
+                session_id=target_state.session_id,
+                capability="sms_send",
+                args={"to": body["to"], "text": body["text"]},
+                deadline_ns=_now_ns() + int(max(1.0, self._config.request_timeout) * 1_000_000_000),
+            )
+        except (DeviceCapabilityUnavailable, ClientBackpressureError, ValueError):
+            self._send(
+                socket,
+                route,
+                _protocol_error(
+                    reply_to=message.id,
+                    code="phone_sms_failed",
+                    message="SMS could not be queued",
+                    retryable=True,
+                ),
+            )
+            return
+
+        generation = self._generation
+        origin_session = state.session_id
+
+        def completed(done: concurrent.futures.Future) -> None:
+            try:
+                done.result()
+                result_body = {"outcome": "completed"}
+            except DeviceActionRemoteError as error:
+                result_body = {"outcome": "failed", "code": error.code}
+            except BaseException:
+                result_body = {"outcome": "failed", "code": "device_failed"}
+
+            with self._lock:
+                current = self._routes.get(route)
+                if (
+                    generation != self._generation
+                    or current is None
+                    or not current.ready
+                    or current.session_id != origin_session
+                ):
+                    return
+            self._enqueue_outbound(
+                route,
+                ProtocolMessage(
+                    type="phone.sms.result",
+                    id=_message_id(),
+                    reply_to=message.id,
+                    session_id=origin_session,
+                    timestamp_ns=_now_ns(),
+                    payload_count=0,
+                    body=result_body,
+                ),
+            )
+
+        handle.add_done_callback(completed)
+
     def _receive(self, socket: zmq.Socket) -> None:
         frames = socket.recv_multipart()
         if len(frames) < 2:
@@ -733,6 +871,9 @@ class ZaraZmqGateway:
             "device.action.error",
         }:
             self._handle_device_message(socket, route, state, message)
+            return
+        if message.type in {"phone.sms.send", "device.event"}:
+            self._handle_phone_message(socket, route, state, message)
             return
         if message.type == "ping":
             self._send(
@@ -1472,6 +1613,7 @@ class _PendingKind(str, enum.Enum):
     CONVERSATION = "conversation"
     COMMAND = "command"
     AUDIO = "audio"
+    PHONE_SMS = "phone_sms"
 
 
 @dataclass
@@ -1821,6 +1963,17 @@ class ZmqZaraClient(ZaraClient):
                 pending.future.set_exception(ProtocolValidationError("invalid audio input response"))
             else:
                 pending.future.set_result(message)
+            return
+        if pending.kind is _PendingKind.PHONE_SMS:
+            body = message.body or {}
+            if message.type != "phone.sms.result" or body.get("outcome") not in {"completed", "failed"}:
+                pending.future.set_exception(ProtocolValidationError("invalid phone SMS response"))
+            elif body["outcome"] == "completed":
+                pending.future.set_result("completed")
+            else:
+                pending.future.set_exception(
+                    ProtocolRemoteError(str(body.get("code", "phone_sms_failed")), "SMS send failed")
+                )
 
     def _publish_runtime_event(self, message: ProtocolMessage) -> None:
         body = message.body or {}
@@ -1878,6 +2031,15 @@ class ZmqZaraClient(ZaraClient):
                 trace_id=message.trace_id,
                 text=body["text"],
                 **common,
+            )
+        elif message.type == "phone.event":
+            event = events.PhoneEventReceived(
+                event_id=str(body.get("event_id", "")),
+                kind=str(body.get("kind", "")),
+                remote=str(body.get("remote", "")),
+                text=str(body.get("text", "")),
+                greeting=str(body.get("greeting", "")),
+                actions=tuple(body.get("actions", ())),
             )
         elif message.type == "runtime.error":
             event = events.RuntimeError(
@@ -1942,6 +2104,24 @@ class ZmqZaraClient(ZaraClient):
                 self._pending.pop(message.id, None)
             raise ClientBackpressureError("client outbound queue is full") from error
         return future
+
+    def send_sms(self, destination: str, text: str) -> concurrent.futures.Future:
+        destination = destination.strip()
+        if not destination:
+            raise ValueError("SMS destination must not be empty")
+        if not text:
+            raise ValueError("SMS text must not be empty")
+        return self._request(
+            ProtocolMessage(
+                type="phone.sms.send",
+                id=_message_id(),
+                session_id=self._session_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body={"to": destination, "text": text},
+            ),
+            _PendingKind.PHONE_SMS,
+        )
 
     def ping(self) -> concurrent.futures.Future:
         return self._request(
