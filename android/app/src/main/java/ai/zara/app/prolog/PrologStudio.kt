@@ -479,9 +479,15 @@ class PrologWorkspace(private val root: File) {
             require(index < lines.size) { "Unterminated workspace source" }
             val text = body.joinToString("\n") + "\n"
             require(text.encodeToByteArray().size == expectedBytes) { "Workspace source length mismatch" }
-            imported += saveSource(name, text)
+            imported += PrologSource(name, text)
             index += 1
         }
+
+        // Bundles cross an untrusted import boundary. Validate the complete bundle before the first
+        // file is persisted so effectful/model-provided source cannot become executable merely by
+        // being imported into the operator-owned workspace.
+        PrologAuthorityPolicy.requireSafeUntrustedWorkspace(imported)
+        imported.forEach { source -> saveSource(source.name, source.text) }
         return imported
     }
 

@@ -238,13 +238,16 @@ class PrologStudioTest {
             LocalPrologCommand.parse("/expert triage_explain alice", catalog).query,
         )
         assertEquals(
+            "triage_decision(alice, Result)",
+            LocalPrologCommand.parse("/expert triage_decision alice", catalog).query,
+        )
+        assertEquals(
             "triage_explain(alice, Result)",
             LocalPrologCommand.parse("/prolog triage_explain(alice, Result)", catalog).query,
         )
         listOf(
             "/expert missing alice",
             "/expert triage_explain '); shell(id).",
-            "/expert triage_decision alice",
         ).forEach { text ->
             try {
                 LocalPrologCommand.parse(text, catalog)
