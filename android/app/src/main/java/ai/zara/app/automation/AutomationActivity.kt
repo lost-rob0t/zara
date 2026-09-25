@@ -10,6 +10,7 @@ import ai.zara.app.device.AndroidUriLauncher
 import ai.zara.app.device.AppSearchAdapter
 import ai.zara.app.device.OpenAppAdapter
 import ai.zara.app.device.OpenUriAdapter
+import ai.zara.app.prolog.AndroidAutomationAction
 import ai.zara.app.prolog.AndroidAutomationCatalog
 import ai.zara.app.prolog.AndroidAutomationResult
 import ai.zara.app.prolog.AndroidAutomationRunner
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -49,15 +51,23 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
+private data class VisionApprovalRequest(
+    val action: AndroidAutomationAction,
+    val future: CompletableFuture<Boolean>,
+)
+
 class AutomationActivity : ComponentActivity() {
     private val io: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-config-template-import").apply { isDaemon = true }
     }
     private lateinit var accessBroker: AndroidControlAccessBroker
     private lateinit var runner: AndroidAutomationRunner
+    private lateinit var visionControl: AndroidAdbVisionConversationControl
     private var status by mutableStateOf("Preparing local Prolog automation…")
     private var access by mutableStateOf(emptyMap<AndroidControlAccess, Boolean>())
     private var busy by mutableStateOf(false)
+    private var visionBusy by mutableStateOf(false)
+    private var pendingVisionApproval by mutableStateOf<VisionApprovalRequest?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +81,11 @@ class AutomationActivity : ComponentActivity() {
             accessibility = AccessibilityAutomationAdapter(),
             adb = AndroidAdbAutomationAdapter(this),
             accessGranted = accessBroker::isGranted,
+        )
+        visionControl = AndroidAdbVisionConversationControl(
+            context = this,
+            appSession = session,
+            requestApproval = ::requestVisionApproval,
         )
         refreshAccess()
         seedDemo().whenComplete { _, error ->
@@ -107,8 +122,13 @@ class AutomationActivity : ComponentActivity() {
                     AutomationScreen(
                         status = status,
                         busy = busy,
+                        visionBusy = visionBusy,
+                        pendingVisionApproval = pendingVisionApproval,
                         access = access,
                         onRun = ::runAutomation,
+                        onRunVision = ::runVision,
+                        onCancelVision = ::cancelVision,
+                        onResolveVisionApproval = ::resolveVisionApproval,
                         onRequestAccess = ::requestAccess,
                         onImportGit = ::importGitTemplate,
                     )
@@ -123,6 +143,9 @@ class AutomationActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        pendingVisionApproval?.future?.complete(false)
+        pendingVisionApproval = null
+        if (::visionControl.isInitialized) visionControl.close()
         io.shutdownNow()
         super.onDestroy()
     }
@@ -174,6 +197,97 @@ class AutomationActivity : ComponentActivity() {
                     else -> "Automation failed"
                 }
             }
+        }
+    }
+
+    private fun runVision(goal: String) {
+        val normalized = goal.trim()
+        if (normalized.isEmpty()) {
+            status = "Describe the Android state you want Zara to reach"
+            return
+        }
+        if (busy) return
+        busy = true
+        visionBusy = true
+        status = "Observing the authorized ADB target…"
+        io.execute {
+            visionControl.run(goal).whenComplete { result, error ->
+                runOnUiThread {
+                    pendingVisionApproval?.future?.complete(false)
+                    pendingVisionApproval = null
+                    visionBusy = false
+                    busy = false
+                    status = when {
+                        error != null -> error.cause?.message ?: error.message ?: "ADB vision control failed"
+                        result is AndroidVisionLoopResult.Completed ->
+                            "Verified: ${result.summary} (${result.steps} action(s), ${result.observedBytes} observed bytes)"
+                        result is AndroidVisionLoopResult.CapabilityUnavailable ->
+                            "ADB capability is unavailable for the proposed typed action"
+                        result is AndroidVisionLoopResult.ApprovalRejected ->
+                            "ADB vision action was not approved"
+                        result is AndroidVisionLoopResult.PolicyRejected ->
+                            "Prolog policy rejected the proposed ADB action"
+                        result is AndroidVisionLoopResult.VerificationFailed ->
+                            "Fresh screenshot did not verify the approved ADB action"
+                        result is AndroidVisionLoopResult.ActionFailed ->
+                            "ADB action failed: ${result.message ?: "unknown failure"}"
+                        result is AndroidVisionLoopResult.Unavailable ->
+                            "ADB vision unavailable: ${result.reason}"
+                        result is AndroidVisionLoopResult.BoundsExceeded ->
+                            "ADB vision stopped at its safety bound: ${result.reason}"
+                        result is AndroidVisionLoopResult.Failed ->
+                            "ADB vision failed: ${result.reason}"
+                        result == AndroidVisionLoopResult.Cancelled -> "ADB vision cancelled"
+                        else -> "ADB vision failed"
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cancelVision() {
+        if (!visionBusy) return
+        pendingVisionApproval?.future?.complete(false)
+        pendingVisionApproval = null
+        status = "Cancelling ADB vision…"
+        io.execute {
+            visionControl.cancel()
+            runOnUiThread {
+                if (visionBusy) {
+                    visionBusy = false
+                    busy = false
+                    status = "ADB vision cancelled"
+                }
+            }
+        }
+    }
+
+    private fun requestVisionApproval(
+        action: AndroidAutomationAction,
+    ): CompletableFuture<Boolean> {
+        val decision = CompletableFuture<Boolean>()
+        runOnUiThread {
+            if (isFinishing || isDestroyed || !visionBusy) {
+                decision.complete(false)
+                return@runOnUiThread
+            }
+            pendingVisionApproval?.future?.complete(false)
+            pendingVisionApproval = VisionApprovalRequest(action, decision)
+            status = "Approval required before the typed ADB action can run"
+        }
+        return decision
+    }
+
+    private fun resolveVisionApproval(approved: Boolean) {
+        val pending = pendingVisionApproval ?: return
+        pendingVisionApproval = null
+        status = if (approved) {
+            "Executing approved ADB action; fresh verification will follow…"
+        } else {
+            "ADB action rejected"
+        }
+        io.execute {
+            pending.future.complete(approved)
         }
     }
 
@@ -236,19 +350,78 @@ class AutomationActivity : ComponentActivity() {
 private fun AutomationScreen(
     status: String,
     busy: Boolean,
+    visionBusy: Boolean,
+    pendingVisionApproval: VisionApprovalRequest?,
     access: Map<AndroidControlAccess, Boolean>,
     onRun: (String) -> Unit,
+    onRunVision: (String) -> Unit,
+    onCancelVision: () -> Unit,
+    onResolveVisionApproval: (Boolean) -> Unit,
     onRequestAccess: (AndroidControlAccess) -> Unit,
     onImportGit: (String, String) -> Unit,
 ) {
     var repository by androidx.compose.runtime.remember { mutableStateOf("") }
     var ref by androidx.compose.runtime.remember { mutableStateOf("") }
+    var visionGoal by androidx.compose.runtime.remember { mutableStateOf("") }
+
+    pendingVisionApproval?.let { request ->
+        AlertDialog(
+            onDismissRequest = { onResolveVisionApproval(false) },
+            title = { Text("Approve Android action?") },
+            text = {
+                Text(
+                    describeVisionAction(request.action) +
+                        "\n\nProlog policy requires confirmation. Zara will capture a fresh screenshot after the action and will not report success unless the postcondition verifies.",
+                )
+            },
+            confirmButton = {
+                Button(onClick = { onResolveVisionApproval(true) }) { Text("Approve") }
+            },
+            dismissButton = {
+                Button(onClick = { onResolveVisionApproval(false) }) { Text("Reject") }
+            },
+        )
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Prolog Automation", style = MaterialTheme.typography.headlineSmall)
         Text(status, style = MaterialTheme.typography.bodyMedium)
+
+        Text("ADB vision control", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Uses the authorized wireless ADB target, the selected local image-capable model, Prolog policy, and one approved typed action at a time.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        OutlinedTextField(
+            value = visionGoal,
+            onValueChange = { visionGoal = it.take(2_048) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Goal") },
+            singleLine = false,
+            enabled = !busy,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                modifier = Modifier.weight(1f),
+                enabled = !busy && visionGoal.isNotBlank(),
+                onClick = { onRunVision(visionGoal) },
+            ) {
+                Text("Observe & run")
+            }
+            Button(
+                modifier = Modifier.weight(1f),
+                enabled = visionBusy,
+                onClick = onCancelVision,
+            ) {
+                Text("Cancel")
+            }
+        }
 
         Text("Demo", style = MaterialTheme.typography.titleMedium)
         Row(
@@ -320,4 +493,14 @@ private fun AutomationScreen(
             style = MaterialTheme.typography.bodySmall,
         )
     }
+}
+
+private fun describeVisionAction(action: AndroidAutomationAction): String = when (action) {
+    is AndroidAutomationAction.AdbTap -> "Tap at (${action.x}, ${action.y})"
+    is AndroidAutomationAction.AdbSwipe ->
+        "Swipe (${action.x1}, ${action.y1}) → (${action.x2}, ${action.y2}) for ${action.durationMs} ms"
+    is AndroidAutomationAction.AdbText -> "Type ${action.text.length} character(s)"
+    is AndroidAutomationAction.AdbKey -> "Press ${action.key.name.lowercase()}"
+    is AndroidAutomationAction.AdbWait -> "Wait ${action.durationMs} ms"
+    else -> "Unsupported action"
 }

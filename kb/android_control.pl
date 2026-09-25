@@ -2,6 +2,7 @@
     [
         android_adb_plan/2,
         android_app_package/2,
+        android_vision_action_decision/2,
         android_vision_policy/1,
         valid_android_adb_plan/2,
         valid_android_app_package/2,
@@ -12,10 +13,20 @@
 :- dynamic android_app_package/2.
 :- dynamic android_vision_policy/1.
 
-% The model may observe screenshots when the desktop ADB plugin is enabled, but
+% The model may observe screenshots when the ADB transport is enabled, but
 % every state-changing vision action still travels through Zara's canonical
-% tool-approval path.
+% capability + approval boundary.
 android_vision_policy(confirm_each_action).
+
+% Vision interpretation is advisory. Prolog is the policy authority and only
+% admits the same closed ADB vocabulary validated below. The Android loop treats
+% anything other than exactly require_approval as deny/fail-closed.
+android_vision_action_decision(Action, require_approval) :-
+    valid_android_adb_action(Action),
+    android_vision_policy(confirm_each_action),
+    !.
+android_vision_action_decision(Action, deny) :-
+    valid_android_adb_action(Action).
 
 valid_android_adb_plan(Name, Actions) :-
     bounded_atom(Name, 64),

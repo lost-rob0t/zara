@@ -2,6 +2,7 @@ package ai.zara.app.localai
 
 import android.content.Context
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Contents
@@ -37,6 +38,7 @@ class LiteRtLocalLlmBackend(
         val config = EngineConfig(
             modelPath = model.absolutePath,
             backend = spec.backend.toLiteRtBackend(),
+            visionBackend = spec.backend.toLiteRtBackend(),
             maxNumTokens = spec.maxContextTokens,
             cacheDir = cacheDirectory.absolutePath,
         )
@@ -83,27 +85,40 @@ class LiteRtLocalLlmBackend(
         }
 
         try {
-            conversation.sendMessageAsync(
-                request.prompt,
-                object : MessageCallback {
-                    override fun onMessage(message: Message) {
-                        if (!terminal.get()) listener.onChunk(message.toString())
-                    }
+            val callback = object : MessageCallback {
+                override fun onMessage(message: Message) {
+                    if (!terminal.get()) listener.onChunk(message.toString())
+                }
 
-                    override fun onDone() {
-                        if (!terminal.compareAndSet(false, true)) return
-                        finishConversation(conversation)
-                        listener.onDone()
-                    }
+                override fun onDone() {
+                    if (!terminal.compareAndSet(false, true)) return
+                    finishConversation(conversation)
+                    listener.onDone()
+                }
 
-                    override fun onError(throwable: Throwable) {
-                        if (!terminal.compareAndSet(false, true)) return
-                        finishConversation(conversation)
-                        listener.onError(throwable)
-                    }
-                },
-                maxOutputToken = request.maxOutputTokens,
-            )
+                override fun onError(throwable: Throwable) {
+                    if (!terminal.compareAndSet(false, true)) return
+                    finishConversation(conversation)
+                    listener.onError(throwable)
+                }
+            }
+            val image = request.imagePng
+            if (image == null) {
+                conversation.sendMessageAsync(
+                    request.prompt,
+                    callback,
+                    maxOutputToken = request.maxOutputTokens,
+                )
+            } else {
+                conversation.sendMessageAsync(
+                    Contents.of(
+                        Content.Text(request.prompt),
+                        Content.ImageBytes(image),
+                    ),
+                    callback,
+                    maxOutputToken = request.maxOutputTokens,
+                )
+            }
         } catch (error: Throwable) {
             if (terminal.compareAndSet(false, true)) finishConversation(conversation)
             throw error
