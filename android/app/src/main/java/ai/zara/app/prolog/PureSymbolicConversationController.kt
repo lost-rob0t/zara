@@ -56,6 +56,19 @@ class PureSymbolicConversationController(
     fun submit(
         text: String,
         conversationId: String,
+    ): CompletableFuture<PureSymbolicTurnResult> =
+        submitInternal(text, conversationId, allowExplicitProlog = true)
+
+    fun submitConversationOnly(
+        text: String,
+        conversationId: String,
+    ): CompletableFuture<PureSymbolicTurnResult> =
+        submitInternal(text, conversationId, allowExplicitProlog = false)
+
+    private fun submitInternal(
+        text: String,
+        conversationId: String,
+        allowExplicitProlog: Boolean,
     ): CompletableFuture<PureSymbolicTurnResult> {
         val input = text.trim()
         require(input.isNotEmpty()) { "Text is required" }
@@ -70,14 +83,14 @@ class PureSymbolicConversationController(
         }
 
         val routed = try {
-            route(input)
+            route(input, allowExplicitProlog)
         } catch (error: CancellationException) {
             return cancelledTurnFuture()
         } catch (error: Exception) {
             return CompletableFuture.completedFuture(
                 failure(
                     conversationId = normalizedConversationId,
-                    route = routeKind(input),
+                    route = routeKind(input, allowExplicitProlog),
                     runtimeFailure = true,
                 ),
             )
@@ -122,7 +135,10 @@ class PureSymbolicConversationController(
         return output
     }
 
-    private fun route(input: String): RoutedQuery = when (routeKind(input)) {
+    private fun route(
+        input: String,
+        allowExplicitProlog: Boolean,
+    ): RoutedQuery = when (routeKind(input, allowExplicitProlog)) {
         PureSymbolicRoute.EXPLICIT_QUERY -> RoutedQuery(
             PureSymbolicRoute.EXPLICIT_QUERY,
             query(input),
@@ -137,11 +153,25 @@ class PureSymbolicConversationController(
         )
     }
 
-    private fun routeKind(input: String): PureSymbolicRoute = when {
-        input.startsWith("?-") -> PureSymbolicRoute.EXPLICIT_QUERY
-        input.startsWith("/prolog ") || input.startsWith("/expert ") ->
-            PureSymbolicRoute.EXPLICIT_COMMAND
-        else -> PureSymbolicRoute.FRAME_RESOLVER
+    private fun routeKind(
+        input: String,
+        allowExplicitProlog: Boolean,
+    ): PureSymbolicRoute {
+        if (!allowExplicitProlog &&
+            (input.startsWith("?-") ||
+                input.startsWith("/prolog ") ||
+                input.startsWith("/expert "))
+        ) {
+            throw IllegalArgumentException(
+                "Explicit Prolog and expert commands are disabled for symbolic voice",
+            )
+        }
+        return when {
+            input.startsWith("?-") -> PureSymbolicRoute.EXPLICIT_QUERY
+            input.startsWith("/prolog ") || input.startsWith("/expert ") ->
+                PureSymbolicRoute.EXPLICIT_COMMAND
+            else -> PureSymbolicRoute.FRAME_RESOLVER
+        }
     }
 
     private fun failure(
