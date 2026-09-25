@@ -4,6 +4,12 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+## 0.3.0-alpha
+
+### Fixed
+
+- CI Android builds now give the Gradle daemon a larger heap, so building the full 13-APK fleet gate no longer dies mid dex-merge with an out-of-memory error.
+
 ### Added
 
 - The Zara Android Org app fleet now ships as one installable APK per Org app system on the versioned release page: the full Org flagship plus focused Org Editor, Todo, Reminder, Timer, Roam, Graph, and Home apps. Every app works standalone over ordinary canonical Org files (its own SAF-selected directory or the optional shared Org Sync workspace), needs none of the other apps or the main Zara phone app installed, and keeps Todo/Roam/Daily/Reminder/Timer/Graph projections derived from the shared Org parser/storage stack with no per-app shadow database. The versioned release is now a full release so it serves as the latest release page, with per-app SHA-256 checksums and provenance manifests on both the release and the rolling `android-latest` channel.
