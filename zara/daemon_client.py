@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Optional
 
+from zara.client_enrollment import ClientEnrollmentStore
 from zara.config import ZaraConfig, get_config
 from zara.security_transport import CurveClientConfig
 from zara.server import ServerLease, default_zmq_endpoint
@@ -25,6 +26,13 @@ def _daemon_section(config: Optional[ZaraConfig] = None) -> dict:
     if not isinstance(section, dict):
         raise ValueError("daemon configuration must be a table")
     return section
+
+
+def _paired_profile(config: Optional[ZaraConfig] = None):
+    active = config or get_config()
+    if getattr(active, "config_dir", None) is None:
+        return None
+    return ClientEnrollmentStore.for_config(active).ready_profile()
 
 
 def resolve_daemon_endpoint(
@@ -54,6 +62,10 @@ def resolve_daemon_endpoint(
     if configured_endpoint:
         return configured_endpoint
 
+    paired = _paired_profile(config)
+    if paired is not None:
+        return paired.endpoint
+
     return default_zmq_endpoint(ServerLease()._runtime_dir())
 
 
@@ -72,7 +84,8 @@ def curve_client_config(config: Optional[ZaraConfig] = None) -> Optional[CurveCl
         for value in (public_key, secret_key, server_public_key)
     )
     if not any(values):
-        return None
+        paired = _paired_profile(config)
+        return None if paired is None else paired.curve_config()
     if not all(values):
         raise ValueError(
             "daemon CURVE client authentication requires public, secret, and server public keys"

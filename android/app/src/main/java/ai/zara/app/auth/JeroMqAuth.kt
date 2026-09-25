@@ -47,7 +47,23 @@ class JeroMqCurveSocket(
 
     override fun setPublicKey(key: ByteArray): Boolean = socket.setCurvePublicKey(key)
 
-    override fun setSecretKey(key: ByteArray): Boolean = socket.setCurveSecretKey(key)
+    override fun setSecretKey(key: ByteArray): Boolean {
+        // JeroMQ 0.6.0 deliberately retains a caller-supplied 32-byte CURVE key
+        // array instead of copying it. CurveAuthConfigurator zeroizes its
+        // transient secret immediately after this call, so passing that array
+        // through directly silently replaces the socket's secret with zeroes and
+        // makes every production CURVE handshake fail. Give JeroMQ socket-owned
+        // storage while preserving zeroization at the authentication boundary.
+        val socketOwnedKey = key.copyOf()
+        return try {
+            val configured = socket.setCurveSecretKey(socketOwnedKey)
+            if (!configured) socketOwnedKey.fill(0)
+            configured
+        } catch (error: Throwable) {
+            socketOwnedKey.fill(0)
+            throw error
+        }
+    }
 }
 
 class JeroMqCurveDealerFactory(
@@ -57,7 +73,15 @@ class JeroMqCurveDealerFactory(
         val socket = context.createSocket(SocketType.DEALER)
         try {
             socket.setLinger(0)
-            socket.setHandshakeIvl(5_000)
+            // TCP/CURVE establishment is asynchronous. Allow the first ZARA/1
+            // hello to queue while that bounded handshake completes; IMMEDIATE
+            // drops/blocks that first frame on higher-latency adb-reverse paths
+            // before an eligible peer exists. Handshake, send and request
+            // timeouts still bound a dead route and reconnect remains fail-closed.
+            check(socket.setHandshakeIvl(5_000)) { "failed to bound the CURVE handshake" }
+            check(socket.setHeartbeatIvl(1_000)) { "failed to configure Zara heartbeat interval" }
+            check(socket.setHeartbeatTimeout(5_000)) { "failed to configure Zara heartbeat timeout" }
+            check(socket.setSendTimeOut(5_000)) { "failed to bound Zara sends" }
             enrollment.configure(JeroMqCurveSocket(socket))
             return socket
         } catch (error: Exception) {

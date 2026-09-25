@@ -10,6 +10,8 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 private const val CONVERSATION_STORE_MAGIC = "ZARA-CONVERSATIONS/1"
 private const val MAX_CONVERSATION_STORE_BYTES = 4 * 1024 * 1024
@@ -22,6 +24,55 @@ private const val MAX_REMOTE_CONVERSATION_ID_CHARS = 256
 private const val MAX_TEXT_CHARS = 64 * 1024
 private const val DEFAULT_TITLE = "New chat"
 private const val INTERRUPTED_MESSAGE = "Interrupted before completion."
+
+private data class ConversationStoreLease(
+    val path: String,
+    val generation: Long,
+)
+
+private data class ConversationStoreLeaseEntry(
+    val generation: AtomicLong = AtomicLong(0),
+    val lock: Any = Any(),
+)
+
+private object ConversationStoreLeaseRegistry {
+    private val entries = ConcurrentHashMap<String, ConversationStoreLeaseEntry>()
+
+    private fun path(file: File): String = file.absoluteFile.path
+
+    private fun entry(path: String): ConversationStoreLeaseEntry =
+        entries.computeIfAbsent(path) { ConversationStoreLeaseEntry() }
+
+    fun observe(file: File): ConversationStoreLease {
+        val path = path(file)
+        val entry = entry(path)
+        return synchronized(entry.lock) {
+            ConversationStoreLease(path = path, generation = entry.generation.get())
+        }
+    }
+
+    fun advance(file: File): ConversationStoreLease {
+        val path = path(file)
+        val entry = entry(path)
+        return synchronized(entry.lock) {
+            ConversationStoreLease(path = path, generation = entry.generation.incrementAndGet())
+        }
+    }
+
+    fun requireCurrent(lease: ConversationStoreLease) {
+        withCurrent(lease) { Unit }
+    }
+
+    fun <T> withCurrent(lease: ConversationStoreLease, action: () -> T): T {
+        val entry = entry(lease.path)
+        return synchronized(entry.lock) {
+            check(entry.generation.get() == lease.generation) {
+                "Conversation store instance is stale after lifecycle recreation"
+            }
+            action()
+        }
+    }
+}
 
 enum class ConversationStatus {
     Empty,
@@ -82,8 +133,25 @@ class ConversationStore(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
+    private val lease: ConversationStoreLease
+
     @Volatile
-    private var current: ConversationState = load()
+    private var current: ConversationState
+
+    init {
+        val (loaded, recoveredRunningTurn) = load()
+        if (recoveredRunningTurn) {
+            lease = ConversationStoreLeaseRegistry.advance(file)
+            current = ConversationStoreLeaseRegistry.withCurrent(lease) {
+                val (refreshed, stillRecoveredRunningTurn) = load()
+                if (stillRecoveredRunningTurn) persist(refreshed)
+                refreshed
+            }
+        } else {
+            lease = ConversationStoreLeaseRegistry.observe(file)
+            current = loaded
+        }
+    }
 
     @Synchronized
     fun state(): ConversationState = current
@@ -217,58 +285,55 @@ class ConversationStore(
     }
 
     private fun ensureHealthy() {
+        ConversationStoreLeaseRegistry.requireCurrent(lease)
         check(current.loadFailure == null) {
             "Conversation history is degraded; preserve the file for recovery before changing chats"
         }
     }
 
-    private fun commit(next: ConversationState): ConversationState {
-        val clean = next.copy(loadFailure = null)
-        persist(clean)
-        current = clean
-        return current
-    }
+    private fun commit(next: ConversationState): ConversationState =
+        ConversationStoreLeaseRegistry.withCurrent(lease) {
+            val clean = next.copy(loadFailure = null)
+            persist(clean)
+            current = clean
+            current
+        }
 
-    private fun load(): ConversationState {
-        if (!file.exists()) return ConversationState()
+    private fun load(): Pair<ConversationState, Boolean> {
+        if (!file.exists()) return ConversationState() to false
         if (!file.isFile || file.length() !in 1..MAX_CONVERSATION_STORE_BYTES.toLong()) {
-            return degradedState()
+            return degradedState() to false
         }
         return try {
-            val (loaded, recoveredRunningTurn) =
-                DataInputStream(FileInputStream(file).buffered()).use { input ->
-                    require(input.readUTF() == CONVERSATION_STORE_MAGIC)
-                    val selectedConversationId =
-                        input.readBoundedString(MAX_CONVERSATION_ID_CHARS).ifEmpty { null }
-                    val count = input.readInt()
-                    require(count in 0..MAX_CONVERSATIONS)
-                    var recoveredRunningTurn = false
-                    val conversations = buildList(count) {
-                        repeat(count) {
-                            val conversation = input.readConversation()
-                            if (conversation.status == ConversationStatus.Running) {
-                                recoveredRunningTurn = true
-                            }
-                            add(conversation.recoverInterrupted())
+            DataInputStream(FileInputStream(file).buffered()).use { input ->
+                require(input.readUTF() == CONVERSATION_STORE_MAGIC)
+                val selectedConversationId =
+                    input.readBoundedString(MAX_CONVERSATION_ID_CHARS).ifEmpty { null }
+                val count = input.readInt()
+                require(count in 0..MAX_CONVERSATIONS)
+                var recoveredRunningTurn = false
+                val conversations = buildList(count) {
+                    repeat(count) {
+                        val conversation = input.readConversation()
+                        if (conversation.status == ConversationStatus.Running) {
+                            recoveredRunningTurn = true
                         }
+                        add(conversation.recoverInterrupted())
                     }
-                    require(conversations.map { it.id }.toSet().size == conversations.size)
-                    require(
-                        selectedConversationId == null ||
-                            conversations.any { it.id == selectedConversationId }
-                    )
-                    require(input.read() == -1)
-                    ConversationState(
-                        conversations = conversations,
-                        selectedConversationId = selectedConversationId,
-                    ) to recoveredRunningTurn
                 }
-            if (recoveredRunningTurn) {
-                persist(loaded)
+                require(conversations.map { it.id }.toSet().size == conversations.size)
+                require(
+                    selectedConversationId == null ||
+                        conversations.any { it.id == selectedConversationId }
+                )
+                require(input.read() == -1)
+                ConversationState(
+                    conversations = conversations,
+                    selectedConversationId = selectedConversationId,
+                ) to recoveredRunningTurn
             }
-            loaded
         } catch (_: Exception) {
-            degradedState()
+            degradedState() to false
         }
     }
 

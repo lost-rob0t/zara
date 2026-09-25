@@ -2,6 +2,8 @@ package ai.zara.wear
 
 import ai.zara.ui.theme.ZaraTheme
 import ai.zara.ui.theme.themeTokens
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,31 +19,49 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
 class WearMainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val runtime = WearCompanionRuntime.get(applicationContext)
+        runtime.start()
         setContent {
-            ZaraWearClient()
+            ZaraWearClient(runtime)
         }
     }
 }
 
 @Composable
-internal fun ZaraWearClient() {
+internal fun ZaraWearClient(runtime: WearCompanionRuntime) {
     val tokens = themeTokens(ZaraTheme.Outrun, systemDark = true, reducedGlow = false)
+    var linkState by remember { mutableStateOf<WearCompanionLinkState>(runtime.state()) }
+
+    DisposableEffect(runtime) {
+        runtime.observe { state -> linkState = state }
+        onDispose { runtime.observe(null) }
+    }
+
+    val presentation = WearClientPresentation.from(linkState)
 
     MaterialTheme {
         Box(
@@ -54,47 +74,144 @@ internal fun ZaraWearClient() {
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 28.dp, vertical = 22.dp),
+                    .padding(horizontal = 22.dp, vertical = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
             ) {
-                ZaraWearSigil(74.dp)
-                Spacer(Modifier.size(14.dp))
+                ZaraWearSigil(46.dp)
+                Spacer(Modifier.size(8.dp))
                 Text(
-                    text = "ZARA",
-                    color = tokens.text,
+                    text = presentation.statusLabel,
+                    color = if (presentation.linkLive) tokens.accentCyan else tokens.textMuted,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 18.sp,
-                    letterSpacing = 2.4.sp,
-                )
-                Text(
-                    text = "SYMBOLIC WATCH CLIENT",
-                    modifier = Modifier.padding(top = 4.dp),
-                    color = tokens.textMuted,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 9.sp,
-                    letterSpacing = 1.4.sp,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    text = "STANDALONE • NOT ENROLLED",
-                    modifier = Modifier.padding(top = 18.dp),
-                    color = tokens.accentCyan,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 9.sp,
-                    letterSpacing = 1.1.sp,
-                    textAlign = TextAlign.Center,
-                )
-                Text(
-                    text = "Shared Zara transport and enrollment wiring follows in #866. Voice launch is owned by #867.",
-                    modifier = Modifier.padding(top = 10.dp),
-                    color = tokens.textMuted,
                     fontSize = 11.sp,
+                    letterSpacing = 1.6.sp,
                     textAlign = TextAlign.Center,
                 )
+                presentation.phoneName?.let { phone ->
+                    Text(
+                        text = phone,
+                        modifier = Modifier.padding(top = 4.dp),
+                        color = tokens.text,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                presentation.conversationAct?.let { act ->
+                    Spacer(Modifier.size(12.dp))
+                    ConversationCard(presentation, act)
+                }
+                presentation.rejectionNotice?.let { notice ->
+                    Text(
+                        text = notice,
+                        modifier = Modifier.padding(top = 8.dp),
+                        color = tokens.textMuted,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 9.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                if (presentation.statusLabel == "SEARCHING FOR PHONE") {
+                    Text(
+                        text = "Open Zara on your paired phone — pairing continues automatically.",
+                        modifier = Modifier.padding(top = 12.dp),
+                        color = tokens.textMuted,
+                        fontSize = 10.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                Spacer(Modifier.size(14.dp))
+                VoiceLaunchButton()
             }
         }
+    }
+}
+
+@Composable
+private fun ConversationCard(presentation: WearClientPresentation, act: String) {
+    val tokens = themeTokens(ZaraTheme.Outrun, systemDark = true, reducedGlow = false)
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = act,
+            color = tokens.accentMagenta,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+            letterSpacing = 1.2.sp,
+            textAlign = TextAlign.Center,
+        )
+        presentation.discourseEntities.take(3).forEach { entity ->
+            Text(
+                text = entity,
+                modifier = Modifier.padding(top = 4.dp),
+                color = tokens.text,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+        presentation.unresolvedQuestions.take(2).forEach { question ->
+            Text(
+                text = "? $question",
+                modifier = Modifier.padding(top = 4.dp),
+                color = tokens.accentCyan,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+        if (presentation.verifiedOutcomeCount > 0) {
+            Text(
+                text = "✓ ${presentation.verifiedOutcomeCount} verified",
+                modifier = Modifier.padding(top = 4.dp),
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+            )
+        }
+        presentation.generationLabel?.let { label ->
+            Text(
+                text = label,
+                modifier = Modifier.padding(top = 6.dp),
+                color = tokens.textMuted,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 8.sp,
+                letterSpacing = 0.8.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VoiceLaunchButton() {
+    val context = LocalContext.current
+    val tokens = themeTokens(ZaraTheme.Outrun, systemDark = true, reducedGlow = false)
+    var missing by remember { mutableStateOf(false) }
+
+    Button(
+        onClick = {
+            try {
+                context.startActivity(Intent("ai.zara.action.WEAR_VOICE"))
+            } catch (_: ActivityNotFoundException) {
+                missing = true
+            }
+        },
+    ) {
+        Text(
+            text = if (missing) "VOICE NOT INSTALLED" else "ZARA VOICE",
+            color = tokens.accentCyan,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            letterSpacing = 1.2.sp,
+        )
     }
 }
 

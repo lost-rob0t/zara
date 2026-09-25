@@ -6,6 +6,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <queries>
+        <intent>
+            <action android:name="ai.zara.action.WEAR_VOICE" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:label="Zara"
@@ -22,5 +28,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name="ai.zara.wear.WearCompanionLinkService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/zara/phone/provision"
+                    android:scheme="wear" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>

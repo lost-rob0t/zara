@@ -194,13 +194,14 @@ def test_dual_surface_validator_rejects_manifest_path_escape(tmp_path: Path) -> 
 
 def test_ci_generates_android_screenshots_and_validates_both_surfaces() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    emulator_smoke = (ROOT / "scripts/test-android-emulator-install.sh").read_text(encoding="utf-8")
 
     assert "reactivecircus/android-emulator-runner@v2" in workflow
     assert "Capture Android screenshot evidence" in workflow
-    assert "script: bash -euo pipefail -c '" in workflow
-    assert "android/integration/device_acceptance.py" in workflow
-    assert '--source-sha "$SOURCE_SHA"' in workflow
-    assert "--output android/app/build/reports/device" in workflow
+    assert 'bash scripts/test-android-emulator-install.sh "$serial" "$SOURCE_SHA"' in workflow
+    assert "android/integration/device_acceptance.py" in emulator_smoke
+    assert '--source-sha "$source_sha"' in emulator_smoke
+    assert "--output android/app/build/reports/device" in emulator_smoke
     assert "android-ui-evidence" in workflow
     assert "Validate dual-surface screenshot evidence" in workflow
     assert "scripts/validate-ui-evidence.py" in workflow
@@ -220,12 +221,14 @@ def test_ci_refreshes_android_command_line_tools_before_emulator_provisioning() 
 
 def test_ci_targets_the_action_managed_emulator_explicitly() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    emulator_smoke = (ROOT / "scripts/test-android-emulator-install.sh").read_text(encoding="utf-8")
 
     assert 'serial="emulator-5554"' in workflow
-    assert 'adb -s "$serial" wait-for-device' in workflow
-    assert 'adb -s "$serial" get-state' in workflow
-    assert 'adb -s "$serial" install -r' in workflow
+    assert 'adb -s "$serial" wait-for-device' in emulator_smoke
+    assert 'adb -s "$serial" get-state' in emulator_smoke
+    assert 'adb -s "$serial" install -r' in emulator_smoke
     assert 'adb devices | awk' not in workflow
+    assert 'adb devices | awk' not in emulator_smoke
 
 
 def test_ci_adds_independent_deep_regression_matrix() -> None:
@@ -387,7 +390,7 @@ def test_android_acceptance_release_notes_button_timeout_still_fails_closed(
         device.dismiss_release_notes(timeout=1.0)
 
 
-def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
+def test_android_acceptance_launch_surface_clears_launcher_anr_and_release_notes_before_waiting(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -396,6 +399,11 @@ def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
     events: list[str] = []
 
     monkeypatch.setattr(device, "adb", lambda *args, **kwargs: events.append("launch") or "")
+    monkeypatch.setattr(
+        device,
+        "dismiss_pixel_launcher_anr",
+        lambda: events.append("dismiss-launcher-anr") or False,
+    )
     monkeypatch.setattr(
         device,
         "dismiss_release_notes",
@@ -409,7 +417,12 @@ def test_android_acceptance_launch_surface_clears_release_notes_before_waiting(
 
     device.launch_surface("ai.zara.app/.MainActivity", "Chat")
 
-    assert events == ["launch", "dismiss-release-notes", "await:Chat"]
+    assert events == [
+        "launch",
+        "dismiss-launcher-anr",
+        "dismiss-release-notes",
+        "await:Chat",
+    ]
 
 
 def test_android_acceptance_recreate_relaunches_saved_launcher_task(

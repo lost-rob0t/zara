@@ -61,6 +61,17 @@ jobs:
       - name: Build and test phone + Wear APKs
         run: nix develop ./android -c bash scripts/test-android.sh
 
+      - name: Verify update-compatible APK signing certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+          code_editor_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
+          wear_apk="android/wear-app/build/outputs/apk/debug/wear-app-debug.apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$phone_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$code_editor_apk"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$wear_apk"
+
       - name: Prepare exact-master rolling payload
         env:
           SOURCE_SHA: ${{ github.sha }}

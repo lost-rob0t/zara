@@ -3,6 +3,7 @@
 :- use_module('../kb/intents').
 :- use_module('../kb/config').
 :- use_module('../kb/device_providers').
+:- use_module('../kb/android_control').
 :- use_module('../modules/config_loader').
 
 write_config(Path, Text) :-
@@ -56,6 +57,35 @@ test(device_facts_never_land_in_shared_semantic_config) :-
     once(kb_device_providers:app_mapping(split_app, "split-browser")),
     \+ current_predicate(kb_config:app_mapping/2),
     \+ current_predicate(kb_config:timer_sound/1).
+
+test(android_adb_facts_are_device_scope_and_validated) :-
+    config_loader:user_config_path(Path),
+    atomics_to_string([
+        'android_app_package(settings, "com.android.settings").',
+        'android_adb_plan(open_settings, [open_app(settings), wait(250), key(home)]).',
+        'android_vision_policy(observe_only).'
+    ], '\n', Config),
+    write_config(Path, Config),
+    config_loader:reload_user_config,
+    once(kb_android_control:android_app_package(settings, "com.android.settings")),
+    once(kb_android_control:android_adb_plan(
+        open_settings,
+        [open_app(settings), wait(250), key(home)]
+    )),
+    once(kb_android_control:android_vision_policy(observe_only)),
+    \+ current_predicate(kb_config:android_adb_plan/2).
+
+test(unsafe_android_adb_action_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'android_adb_plan(bad, [shell("id")]).\n'),
+    config_loader:reload_user_config.
+
+test(invalid_android_package_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'android_app_package(bad, "not a package;id").\n'),
+    config_loader:reload_user_config.
 
 test(unsafe_declaration_is_rejected,
      [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
@@ -188,6 +218,14 @@ test(server_rejects_device_fact_from_local_overlay,
     config_loader:user_local_config_path(LocalPath),
     write_config(BasePath, 'search_engine("https://server-base.example/?q=~w").\n'),
     write_config(LocalPath, 'app_mapping(browser, ["xdg-open"]).\n'),
+    config_loader:load_server_config.
+
+test(server_rejects_android_adb_policy,
+     [throws(error(domain_error(zarathushtra_server_config_fact, _), _))]) :-
+    config_loader:user_config_path(BasePath),
+    config_loader:user_local_config_path(LocalPath),
+    write_config(BasePath, 'search_engine("https://server-base.example/?q=~w").\n'),
+    write_config(LocalPath, 'android_vision_policy(confirm_each_action).\n'),
     config_loader:load_server_config.
 
 :- end_tests(prolog_config).

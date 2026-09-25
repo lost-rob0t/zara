@@ -43,6 +43,10 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:allowBackup="false">
 
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="barcode_ui" />
+
         <uses-native-library
             android:name="libvndksupport.so"
             android:required="false" />
@@ -53,11 +57,21 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:process=":voice"
             android:taskAffinity="ai.zara.app.task.main">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="zara"
+                    android:host="pair"
+                    android:pathPrefix="/v1" />
             </intent-filter>
         </activity>
 
@@ -83,6 +97,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".watch.WearCompanionLinkService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data
+                    android:host="*"
+                    android:pathPrefix="/zara/watch/hello"
+                    android:scheme="wear" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".localai.LocalAiService"

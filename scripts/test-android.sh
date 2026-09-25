@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Org/Wear debug APKs + secret inspection.
-# Run via: nix develop .#android -c bash scripts/test-android.sh
+# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Termux bridge/Org/Wear debug APKs + secret inspection.
+# Run via: nix develop ./android -c bash scripts/test-android.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -59,12 +59,51 @@ fi
 chmod 600 "$interop_fixture"
 export ZARA_STOCK_FIXTURE="$interop_fixture"
 
+recovery_dir="$(mktemp -d)"
+recovery_fixture="$recovery_dir/fixture.env"
+recovery_log="$recovery_dir/server.log"
+recovery_pid=""
+cleanup_recovery() {
+  if [[ -n "$recovery_pid" ]] && kill -0 "$recovery_pid" 2>/dev/null; then
+    kill "$recovery_pid" 2>/dev/null || true
+    wait "$recovery_pid" 2>/dev/null || true
+  fi
+  rm -rf "$recovery_dir"
+}
+trap 'cleanup_interop; cleanup_recovery' EXIT
+
+nix develop "$repo_root" -c env \
+  PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$repo_root/android/integration/remote_recovery_fixture.py" \
+  --fixture-file "$recovery_fixture" </dev/null >"$recovery_log" 2>&1 &
+recovery_pid=$!
+
+for _ in $(seq 1 1200); do
+  if [[ -f "$recovery_fixture" ]] && grep -qx 'READY' "$recovery_log"; then
+    break
+  fi
+  if ! kill -0 "$recovery_pid" 2>/dev/null; then
+    cat "$recovery_log" >&2
+    echo "remote recovery fixture exited before readiness" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -f "$recovery_fixture" ]] || ! grep -qx 'READY' "$recovery_log"; then
+  cat "$recovery_log" >&2
+  echo "remote recovery fixture did not become ready" >&2
+  exit 1
+fi
+chmod 600 "$recovery_fixture"
+export ZARA_RECOVERY_FIXTURE="$recovery_fixture"
+
 gradle_log="$(mktemp)"
 if ! gradle --no-daemon \
   :app:testDebugUnitTest \
   :shared-ui:testDebugUnitTest \
   :editor-core:testDebugUnitTest \
   :code-editor:testDebugUnitTest \
+  :termux-bridge:testDebugUnitTest \
   :org-core:testDebugUnitTest \
   :org-storage:testDebugUnitTest \
   :org-sync-core:testDebugUnitTest \
@@ -73,6 +112,7 @@ if ! gradle --no-daemon \
   :wear-voice:testDebugUnitTest \
   :app:assembleDebug \
   :code-editor:assembleDebug \
+  :termux-bridge:assembleDebug \
   :org-app:assembleDebug \
   :wear-app:assembleDebug \
   :wear-voice:assembleDebug 2>&1 | tee "$gradle_log"; then
@@ -80,8 +120,9 @@ if ! gradle --no-daemon \
   mkdir -p "$diagnostics_dir"
   tail -n 240 "$gradle_log" > "$diagnostics_dir/gradle-failure-tail.log"
   cp "$interop_log" "$diagnostics_dir/stock-zara-server.log"
+  cp "$recovery_log" "$diagnostics_dir/remote-recovery-fixture.log" 2>/dev/null || true
   cat "$interop_log" >&2
-  echo "stock ZaraServer Android/Wear/Code/Org interop gate failed" >&2
+  echo "stock ZaraServer Android/Wear/Code/Termux/Org interop gate failed" >&2
   exit 1
 fi
 rm -f "$gradle_log"
@@ -91,18 +132,29 @@ wait "$interop_pid"
 interop_pid=""
 unset ZARA_STOCK_FIXTURE
 
+kill "$recovery_pid" 2>/dev/null || true
+wait "$recovery_pid" 2>/dev/null || true
+recovery_pid=""
+unset ZARA_RECOVERY_FIXTURE
+
 phone_apk="app/build/outputs/apk/debug/app-debug.apk"
 code_apk="code-editor/build/outputs/apk/debug/code-editor-debug.apk"
+termux_bridge_apk="termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk"
 org_apk="org-app/build/outputs/apk/debug/org-app-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 voice_apk="wear-voice/build/outputs/apk/debug/wear-voice-debug.apk"
 test -f "$phone_apk"
 test -f "$code_apk"
+test -f "$termux_bridge_apk"
 test -f "$org_apk"
 test -f "$wear_apk"
 test -f "$voice_apk"
 
-for apk in "$phone_apk" "$code_apk" "$org_apk" "$wear_apk" "$voice_apk"; do
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$phone_apk" "ai.zara.app"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$code_apk" "ai.zara.code.editor"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$termux_bridge_apk" "ai.zara.termux.bridge"
+
+for apk in "$phone_apk" "$code_apk" "$termux_bridge_apk" "$org_apk" "$wear_apk" "$voice_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
@@ -111,7 +163,16 @@ done
 
 aapt2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
 if [[ ! -x "$aapt2" ]]; then
-  echo "Wear Voice permission gate FAILED: pinned aapt2 not found at $aapt2" >&2
+  echo "Android permission gate FAILED: pinned aapt2 not found at $aapt2" >&2
+  exit 1
+fi
+termux_bridge_permissions="$($aapt2 dump permissions "$termux_bridge_apk")"
+if ! grep -Fq "com.termux.permission.RUN_COMMAND" <<<"$termux_bridge_permissions"; then
+  echo "Termux bridge permission gate FAILED: RUN_COMMAND permission missing" >&2
+  exit 1
+fi
+if grep -Fq "android.permission.INTERNET" <<<"$termux_bridge_permissions"; then
+  echo "Termux bridge permission gate FAILED: foundation APK unexpectedly requests INTERNET" >&2
   exit 1
 fi
 voice_permissions="$($aapt2 dump permissions "$voice_apk")"
@@ -120,4 +181,4 @@ if grep -Fq "android.permission.INTERNET" <<<"$voice_permissions"; then
   exit 1
 fi
 
-echo "android/wear/code/org gate ok: $phone_apk $code_apk $org_apk $wear_apk $voice_apk"
+echo "android/wear/code/termux/org gate ok: $phone_apk $code_apk $termux_bridge_apk $org_apk $wear_apk $voice_apk"

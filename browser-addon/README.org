@@ -1,0 +1,98 @@
+#+title: Zara Browser Bridge Add-on
+
+* What it does
+
+This WebExtension connects a real browser session to Zara's =browser-bridge=
+service plugin.  Browser cookies, logged-in sessions, CAPTCHA state, and profile
+storage remain inside the browser.  Zara receives only the bounded results of
+explicit browser RPC actions.
+
+The bridge supports:
+
+- list tabs
+- open/navigate HTTP(S) tabs
+- read visible page text
+- list visible interactive elements with CSS selectors
+- extract one CSS-selected element
+- click
+- type
+- submit
+- capture the visible active tab as a PNG data URL
+
+The screenshot data URL can be passed directly to Prolog-RLM's existing
+multimodal =image_url(...)= content path.
+
+* Security boundary
+
+The Zara service is disabled by default and binds to =127.0.0.1= by default.
+It requires a secret of at least 24 characters from:
+
+#+begin_example
+ZARA_BROWSER_BRIDGE_TOKEN
+#+end_example
+
+The add-on stores the same token in browser extension storage and sends it only
+as the first WebSocket authentication message.
+
+Ordinary web pages cannot connect to the browser WebSocket: the bridge accepts
+only =chrome-extension://= and =moz-extension://= WebSocket origins.  Prolog
+HTTP RPC uses =Authorization: Bearer ...=.
+
+Mutating Zara tools (=browser_open=, =browser_navigate=, =browser_click=,
+=browser_type=, and =browser_submit=) carry Zara's canonical
+=zara_requires_approval= marker.  Prolog-RLM projects the same operations as
+=network_write= effects.
+
+This intentionally does not bypass browser anti-abuse systems, CAPTCHAs, rate
+limits, or bans.
+
+* Zara configuration
+
+Enable the first-party plugin:
+
+#+begin_src toml
+[plugins.browser-bridge]
+enabled = true
+host = "127.0.0.1"
+port = 8765
+timeout_seconds = 20
+token_env = "ZARA_BROWSER_BRIDGE_TOKEN"
+#+end_src
+
+Generate/store a strong token through your normal secret-management path and
+export it to the Zara process.
+
+Prolog-RLM uses the same token.  Its default RPC endpoint is:
+
+#+begin_example
+http://127.0.0.1:8765/v1/rpc
+#+end_example
+
+Override that endpoint only when needed with:
+
+#+begin_example
+PROLOG_RLM_BROWSER_BRIDGE_URL
+#+end_example
+
+* Chromium
+
+=manifest.json= is the Chromium Manifest V3 definition.
+
+Load this directory as an unpacked extension, open the extension options page,
+set the bridge URL and the token, then start Zara with the plugin enabled.
+
+* Firefox
+
+=manifest.firefox.json= carries Firefox's background-script form of the same
+Manifest V3 extension.
+
+For development/package generation, use it as the package's =manifest.json=.
+The extension code itself is shared.
+
+* Posting through the browser
+
+A site post is intentionally not a special hidden transport.  The agent can
+read the page, fill fields with =browser_type=, and submit with
+=browser_submit=.  That means posting to an interactive site—including 4chan—
+uses the same visible browser session and the same approval/effect boundary as
+any other browser mutation.
