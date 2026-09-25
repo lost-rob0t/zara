@@ -93,4 +93,36 @@ class CanonicalExpertOwnerSourceContractTest {
                 applicationSource.contains("canonicalExpertInvocationPortProvider = appSession::queryLocalProlog"),
         )
     }
+
+    @Test
+    fun canonicalExpertProviderIsImmutablePrivateCompositionDependency() {
+        val sessionSource = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val applicationSource = File("src/main/java/ai/zara/app/ZaraApplication.kt").readText()
+        val activitySource = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+
+        assertTrue(
+            "AndroidAppSession canonical expert provider must remain a private immutable dependency",
+            Regex(
+                """private\s+val\s+canonicalExpertInvocationPortProvider:\s*\(\)\s*->\s*CanonicalExpertInvocationPort\?""",
+            ).containsMatchIn(sessionSource),
+        )
+        assertFalse(
+            "AndroidAppSession must not expose a mutable canonical expert authority hook",
+            Regex("""\bvar\s+canonicalExpertInvocationPortProvider\b""").containsMatchIn(sessionSource) ||
+                sessionSource.contains("setCanonicalExpertInvocationPort"),
+        )
+        assertTrue(
+            "ZaraApplication must keep the temporary Core-owner composition slot private and immutable",
+            Regex(
+                """private\s+val\s+canonicalExpertInvocationPortProvider:\s*\(\)\s*->\s*CanonicalExpertInvocationPort\?""",
+            ).containsMatchIn(applicationSource),
+        )
+        assertFalse(
+            "UI must not add nullable fallback or replacement authority around the canonical owner injection",
+            activitySource.contains("canonicalExpertInvocationPort()?.") ||
+                activitySource.contains("canonicalExpertInvocationPort() ?:") ||
+                activitySource.contains("canonicalExpertInvocationPort()?:"),
+        )
+    }
+
 }
