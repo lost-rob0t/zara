@@ -210,11 +210,32 @@ choice_tokens(Choice, Tokens) :-
 % --- Deterministic response rendering -------------------------------------
 
 render_response(Act, Text) :-
-    phrase(response_codes(Act), Codes),
+    phrase(response_codes(Act), Units),
+    response_units_codes(Units, Codes),
     max_render_codes(Max),
     length(Codes, Length),
     Length =< Max,
     string_codes(Text, Codes).
+
+% SWI emits DCG string literals as integer code units while pinned Trealla
+% emits one-character atoms. Normalize only those two inert representations
+% before constructing the response string; any other unit fails closed.
+response_units_codes([], []).
+response_units_codes([Unit|Units], [Code|Codes]) :-
+    response_unit_code(Unit, Code),
+    response_units_codes(Units, Codes).
+
+response_unit_code(Unit, Unit) :-
+    integer(Unit),
+    Unit >= 0,
+    Unit =< 1114111,
+    !.
+response_unit_code(Unit, Code) :-
+    atom(Unit),
+    atom_codes(Unit, [Code]),
+    integer(Code),
+    Code >= 0,
+    Code =< 1114111.
 
 response_codes(greeting) -->
     "Hey — what can I help with?".

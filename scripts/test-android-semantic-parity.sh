@@ -16,6 +16,8 @@ test -f "$semantic_core"
 test -f "$semantic_corpus"
 test -f "$repo_root/modules/intent_frames.pl"
 test -f "$repo_root/modules/normalizer.pl"
+test -f "$repo_root/modules/symbolic_dialogue.pl"
+test -f "$repo_root/modules/symbolic_dialogue_turn.pl"
 test -f "$repo_root/kb/intents.pl"
 
 trealla_embed_sample="$ZARA_TREALLA_SOURCE_DIR/samples/embed.c"
@@ -48,11 +50,15 @@ mkdir -p "$stage/portable" "$stage/shared/modules" "$stage/shared/kb"
 cp "$semantic_core" "$stage/portable/semantic_core.pl"
 cp "$repo_root/modules/intent_frames.pl" "$stage/shared/modules/intent_frames.pl"
 cp "$repo_root/modules/normalizer.pl" "$stage/shared/modules/normalizer.pl"
+cp "$repo_root/modules/symbolic_dialogue.pl" "$stage/shared/modules/symbolic_dialogue.pl"
+cp "$repo_root/modules/symbolic_dialogue_turn.pl" "$stage/shared/modules/symbolic_dialogue_turn.pl"
 cp "$repo_root/kb/intents.pl" "$stage/shared/kb/intents.pl"
 cp "$semantic_corpus" "$stage/shared/kb/semantic_corpus.pl"
 
 cat >"$stage/parity_driver.pl" <<'PL'
 parity_main :-
+    parity_dialogue_envelope,
+    parity_expert_evidence_wire,
     findall(Id, corpus_case(Id, _, _, _, _, _), Ids),
     sort(Ids, UniqueIds),
     length(Ids, Count),
@@ -62,6 +68,89 @@ parity_main :-
     halt(0).
 parity_main :-
     halt(2).
+
+% Exercise the exact logical envelope Android sends through the JNI bridge.
+% This keeps the parity gate honest: semantic_core.pl imports the canonical
+% dialogue modules, Context0 is bridged from persisted string data to the atom
+% input required by pinned Trealla read_term_from_atom/3, the router/renderer
+% is committed once, and canonical Context1, dialogue act, and expert-evidence
+% wire are rendered through the same portable paths used by Android.
+parity_dialogue_envelope :-
+    string_codes("[]", Context0Codes),
+    atom_codes(Context0Atom, Context0Codes),
+    read_term_from_atom(Context0Atom, Context0, []),
+    findall(Result,
+        ( ( ( symbolic_dialogue_turn:valid_dialogue_context(Context0),
+              symbolic_dialogue_turn:dialogue_turn(
+                  "timer",
+                  conversation,
+                  Context0,
+                  turn(_Frames, Act, Context1)
+              ),
+              symbolic_dialogue_turn:valid_dialogue_context(Context1),
+              symbolic_dialogue:render_response(Act, Response),
+              with_output_to(atom(ContextAtom), write_term(Context1, [quoted(true)])),
+              atom_concat('__zara_context__:', ContextAtom, ContextTagged),
+              atom_codes(ContextTagged, ContextWireCodes),
+              string_codes(ContextWire, ContextWireCodes),
+              expert_wire_parts(Act, ActName, EvidenceCodes),
+              atom_concat('__zara_act__:', ActName, ActTagged),
+              atom_codes(ActTagged, ActWireCodes),
+              string_codes(ActWire, ActWireCodes),
+              string_codes("__zara_expert_evidence__:", EvidencePrefixCodes),
+              append(EvidencePrefixCodes, EvidenceCodes, EvidenceWireCodes),
+              string_codes(EvidenceWire, EvidenceWireCodes)
+            ) -> true ; fail
+          ),
+          ( Result = Response ; Result = ContextWire ; Result = ActWire ; Result = EvidenceWire )
+        ),
+        Results),
+    Results = [Rendered, ContextWire, ActWire, EvidenceWire],
+    string_codes(Rendered, RenderedCodes),
+    string_codes("How long should I set the timer for?", ExpectedCodes),
+    RenderedCodes == ExpectedCodes,
+    string_codes(ActWire, ActWireCodes),
+    string_codes("__zara_act__:clarify", ExpectedActWireCodes),
+    ActWireCodes == ExpectedActWireCodes,
+    string_codes(EvidenceWire, EvidenceWireCodes),
+    string_codes("__zara_expert_evidence__:", ExpectedEvidenceWireCodes),
+    EvidenceWireCodes == ExpectedEvidenceWireCodes,
+    string_codes(ContextWire, ContextWireCodes),
+    string_codes("__zara_context__:", PrefixCodes),
+    append(PrefixCodes, ContextAtomCodes, ContextWireCodes),
+    atom_codes(ContextAtom, ContextAtomCodes),
+    read_term_from_atom(ContextAtom, Context, []),
+    symbolic_dialogue_turn:valid_dialogue_context(Context),
+    Context = partial_frame(
+        frame(intent(ns(device), name('timer.set')), [], missing([duration])),
+        [duration]
+    ),
+    write_canonical(dialogue(timer_envelope, verified)),
+    nl.
+
+% The timer turn above proves the empty non-expert evidence wire. Exercise the
+% expert branch independently so SWI and pinned Trealla both prove the exact
+% expert_answer token and EvidenceRef code-list conversion used by Android.
+parity_expert_evidence_wire :-
+    Act = answer(expert, "summary", evidence("expert:dotfiles:1")),
+    expert_wire_parts(Act, ActName, EvidenceCodes),
+    ActName == expert_answer,
+    string_codes(EvidenceWire, EvidenceCodes),
+    EvidenceWire == "expert:dotfiles:1",
+    write_canonical(dialogue(expert_evidence_wire, verified)),
+    nl.
+
+expert_wire_parts(Act, ActName, EvidenceCodes) :-
+    ( Act = answer(expert, _, evidence(EvidenceRef)) ->
+        ActName = expert_answer,
+        ( atom(EvidenceRef) -> atom_codes(EvidenceRef, EvidenceCodes)
+        ; string(EvidenceRef) -> string_codes(EvidenceRef, EvidenceCodes)
+        ; fail
+        )
+    ;
+        functor(Act, ActName, _),
+        EvidenceCodes = []
+    ).
 
 parity_cases([]).
 parity_cases([Id|Rest]) :-
@@ -102,7 +191,7 @@ fi
 if ! "$trealla/tpl" -q -f \
     "$stage/portable/semantic_core.pl" \
     "$stage/shared/kb/semantic_corpus.pl" \
-    "$stage/parity_driver.pl" \
+    -s "$stage/parity_driver.pl" \
     -g parity_main >"$trealla_out" 2>"$trealla_err"; then
   echo "semantic parity FAILED: Trealla corpus execution failed" >&2
   cat "$trealla_err" >&2

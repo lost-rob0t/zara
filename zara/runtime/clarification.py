@@ -112,7 +112,7 @@ _NUMBER_WORDS = {
 _TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 _DIGIT_NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _ISO_DATETIME = re.compile(
-    r"^(\d{4})-(\d{2})-(\d{2})[ t]+(\d{1,2}):(\d{2})(?::(\d{2}))?$"
+    r"^(\d{4})-(\d{2})-(\d{2})[ Tt]+(\d{1,2}):(\d{2})(?::(\d{2}))?$"
 )
 
 
@@ -249,11 +249,12 @@ def parse_duration(text: str) -> Optional[int]:
 
 
 def parse_number(text: str) -> Optional[NumberValue]:
-    tokens = _tokens(text)
-    if len(tokens) == 1 and _DIGIT_NUMBER.fullmatch(tokens[0]):
-        raw = tokens[0]
+    raw = text.strip()
+    if _DIGIT_NUMBER.fullmatch(raw):
         value: Union[int, float] = float(raw) if "." in raw else int(raw)
         return NumberValue(value=value)
+
+    tokens = _tokens(raw)
     word_number = _parse_number_words(tokens)
     if word_number is not None:
         return NumberValue(value=word_number)

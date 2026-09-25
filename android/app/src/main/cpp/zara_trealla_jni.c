@@ -2,6 +2,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "trealla.h"
@@ -84,13 +85,45 @@ static void throw_query_state(
     throw_state(env, detail);
 }
 
+static char *copy_result_text(const char *text, size_t length)
+{
+    if (text == NULL)
+        return NULL;
+
+    char *copy = malloc(length + 1);
+    if (copy == NULL)
+        return NULL;
+
+    memcpy(copy, text, length);
+    copy[length] = '\0';
+    return copy;
+}
+
+static char *result_text(pl_term *term)
+{
+    if (pl_term_type(term) == PL_TYPE_STRING) {
+        const char *text = pl_atom_text(term);
+        if (text == NULL)
+            return NULL;
+        return copy_result_text(text, pl_atom_len(term));
+    }
+
+    char *canonical = pl_term_text(term);
+    if (canonical == NULL)
+        return NULL;
+
+    char *copy = copy_result_text(canonical, strlen(canonical));
+    pl_free(canonical);
+    return copy;
+}
+
 static bool capture_result(pl_sub_query *query, char **results, size_t *count)
 {
     pl_term *term = pl_binding(query, "Result");
     if (term == NULL)
         return false;
 
-    char *text = pl_term_text(term);
+    char *text = result_text(term);
     if (text == NULL)
         return false;
 
@@ -255,7 +288,7 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
 
     if (!result_ok || runtime_error) {
         for (size_t i = 0; i < count; i++)
-            pl_free(results[i]);
+            free(results[i]);
         throw_query_state(
             env,
             "Trealla semantic result extraction failed",
@@ -270,20 +303,20 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_evaluate(
     jclass string_class = (*env)->FindClass(env, "java/lang/String");
     if (string_class == NULL) {
         for (size_t i = 0; i < count; i++)
-            pl_free(results[i]);
+            free(results[i]);
         return NULL;
     }
 
     jobjectArray output = (*env)->NewObjectArray(env, (jsize)count, string_class, NULL);
     if (output == NULL) {
         for (size_t i = 0; i < count; i++)
-            pl_free(results[i]);
+            free(results[i]);
         return NULL;
     }
 
     for (size_t i = 0; i < count; i++) {
         jstring value = (*env)->NewStringUTF(env, results[i]);
-        pl_free(results[i]);
+        free(results[i]);
         if (value == NULL)
             return NULL;
         (*env)->SetObjectArrayElement(env, output, (jsize)i, value);
@@ -310,10 +343,17 @@ Java_ai_zara_app_prolog_JniTreallaNativeApi_consult(
         return JNI_FALSE;
 
     pthread_mutex_lock(&g_runtime_lock);
-    bool loaded = g_runtime != NULL && pl_consult(g_runtime, path) && !get_error(g_runtime);
+    if (g_runtime == NULL) {
+        pthread_mutex_unlock(&g_runtime_lock);
+        (*env)->ReleaseStringUTFChars(env, source_path, path);
+        return JNI_FALSE;
+    }
+
+    bool loaded = pl_consult(g_runtime, path);
+    bool runtime_error = get_error(g_runtime);
     pthread_mutex_unlock(&g_runtime_lock);
     (*env)->ReleaseStringUTFChars(env, source_path, path);
-    return loaded ? JNI_TRUE : JNI_FALSE;
+    return loaded && !runtime_error ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL

@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "python": {
-    "line_floor_percent": 80.0,
-    "branch_floor_percent": 66.8,
-    "total_floor_percent": 76.8
+    "line_floor_percent": 82,
+    "branch_floor_percent": 68.8,
+    "total_floor_percent": 78.8
   },
   "ratchet": {
-    "minimum_increment_points": 2.0,
-    "target_increment_points": 10.0,
-    "ultimate_target_percent": 100.0
+    "minimum_increment_points": 2,
+    "target_increment_points": 10,
+    "ultimate_target_percent": 100
   }
 }

@@ -56,30 +56,21 @@ test -f "$trealla_library_root/arm64-v8a/libtrealla.a"
 test -f "$trealla_library_root/x86_64/libtrealla.a"
 
 # Exercise the real Android SQLiteOpenHelper migrations, persisted-type fences,
-# legacy symbolic-owner claim, restart cancellation fencing, and bounded v2
-# verified-outcome replay fence on the same emulator used for acceptance. The
-# v2 fixture proves history plus a new zero-call projection survives
-# migration/reopen. The v3 fixture proves fail-closed policy defaults can be
-# replaced only by authoritative false/0 policy and that REAL/TEXT counter
-# corruption stays rejected after recreation. The legacy-owner fixture proves
-# numeric-UID projection state follows canonical local history to local:owner
-# without losing clarification or zero-call ledgers. The restart fixture proves
-# a recovered streaming turn terminalizes both canonical history and its
-# matching symbolic projection before any late completion/effect callback can
-# land. The verified-outcome v2 fixture proves 80+ verified turns remain bounded
-# at 64 live receipts, survive process recreation, accept fresh evidence, and
-# reject retired/stale replay with exact zero provider/model accounting. The
-# edge duplicate-reference fixture proves repeated canonical references remain
-# readable by the edge/Wear projection after process recreation with the same
-# hard-zero provider/model accounting. The expert-evidence fixture proves typed
-# symbolic evidence remains trusted across canonical store recreation while
-# provider-shaped nested metadata fails closed with the same exact-zero ledger.
+# legacy symbolic-owner claim, restart cancellation fencing, bounded verified-
+# outcome replay, duplicate edge-reference normalization, expert-evidence trust
+# fencing, native Result binding/context persistence boundaries, selected-conversation
+# + canonical-history recreation, project-switch stale-generation fencing,
+# project-switch verified-receipt retention for edge/Wear, verified-effect restart/ABA
+# evidence, stale UI completion identity fencing, preflight-failure terminalization,
+# and the actual native pure-symbolic dialogue runtime on the same emulator used for
+# acceptance. These classes are named explicitly, so every acceptance class below
+# must stay in this filter rather than merely compiling in androidTest.
 set +e
 ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
   ZARA_TREALLA_LIBRARY_ROOT="$trealla_library_root" \
   nix develop ./android -c bash -lc \
   'cd android && gradle :app:connectedDebugAndroidTest --no-daemon \
-    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest,ai.zara.app.history.SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest' \
+    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest,ai.zara.app.history.SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest,ai.zara.app.prolog.NativeTreallaResultBindingInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicContextRoundTripInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicPersistenceBoundaryInstrumentedTest,ai.zara.app.conversations.CanonicalConversationSelectionRecreationInstrumentedTest,ai.zara.app.conversations.CanonicalConversationProjectSwitchFenceInstrumentedTest,ai.zara.app.conversations.CanonicalConversationProjectSwitchVerifiedReceiptEdgeInstrumentedTest,ai.zara.app.conversations.CanonicalConversationStaleUiCompletionFenceInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicPreflightFailureInstrumentedTest,ai.zara.app.prolog.AndroidPureSymbolicConversationInstrumentedTest' \
   2>&1 | tee "$instrumentation_log"
 instrumentation_status=${PIPESTATUS[0]}
 set -e
@@ -103,6 +94,16 @@ adb -s "$serial" install -r "$phone_apk"
 adb -s "$serial" shell cmd package path ai.zara.app | grep -Fq "package:"
 
 python android/integration/device_acceptance.py \
+  --serial "$serial" \
+  --source-sha "$source_sha" \
+  --output android/app/build/reports/device
+
+# Run the same installed candidate through the natural pure-symbolic UI path from
+# cleared app state. This proves no provider credentials are required, the hard-zero
+# policy stays selected across process recreation, canonical dialogue Context0/1 is
+# durable, effect-shaped output does not claim unverified success, and the persisted
+# projection ledger remains providers_enabled=false with model/provider calls at 0.
+python android/integration/device_pure_symbolic_acceptance.py \
   --serial "$serial" \
   --source-sha "$source_sha" \
   --output android/app/build/reports/device

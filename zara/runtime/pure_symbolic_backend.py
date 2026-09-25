@@ -420,6 +420,7 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
 
 __all__ = [
     "PURE_SYMBOLIC_RENDERER",
+    "PURE_SYMBOLIC_RENDER_ERROR",
     "PureSymbolicRuntimeBackend",
     "PureSymbolicTurn",
     "SymbolicProjectionPort",

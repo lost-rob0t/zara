@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+import zara.runtime.clarification as clarification
+
 from zara.runtime.clarification import (
     ClarificationCoordinator,
     TIMER_SET_TEMPLATE,
@@ -546,3 +549,118 @@ def test_typed_value_validation_fails_closed():
     assert validate_value(BoolValue(value=True)) is None
     assert validate_value(DateTimeValue(2026, 13, 1, 0, 0, 0)) == "month_range"
     assert validate_value(DurationValue(seconds=0)) is None
+
+
+
+def test_dialogue_template_lookup_and_default_argument_order_edges():
+    template = clarification.DialogueTemplate(
+        intent_ns="fixture",
+        intent_name="edge",
+        specs=(
+            clarification.SlotSpec("first", clarification.SlotType.TEXT),
+            clarification.SlotSpec("second", clarification.SlotType.NUMBER),
+        ),
+    )
+    assert template.arg_order_names() == ("first", "second")
+    with pytest.raises(KeyError):
+        template.spec("missing")
+
+
+def test_number_word_parser_rejects_ambiguous_sequences_and_handles_hundreds():
+    assert clarification._parse_number_words([]) is None
+    assert clarification._parse_number_words(["one", "2"]) is None
+    assert clarification._parse_number_words(["unknown"]) is None
+    assert clarification._parse_number_words(["hundred"]) == 100
+    assert clarification._parse_number_words(["two", "hundred"]) == 200
+    assert clarification._parse_number_words(["twenty", "thirty"]) is None
+    assert clarification._parse_number_words(["one", "two"]) is None
+
+
+def test_slot_parsers_cover_fail_closed_and_typed_success_edges():
+    assert clarification.parse_duration("seconds") is None
+    assert clarification.parse_duration("bananas seconds") is None
+    assert clarification.parse_duration("one fortnight") is None
+    assert clarification.parse_duration("999999999 days") is None
+    assert clarification.parse_duration("two minutes") == 120
+
+    assert clarification.parse_number("12.5") == NumberValue(value=12.5)
+    assert clarification.parse_number("twenty one") == NumberValue(value=21)
+    assert clarification.parse_number("not a number") is None
+
+    assert clarification.parse_boolean("YES") == BoolValue(value=True)
+    assert clarification.parse_boolean("off") == BoolValue(value=False)
+    assert clarification.parse_boolean("yes please") is None
+    assert clarification.parse_boolean("maybe") is None
+
+    assert clarification.parse_datetime("not-a-date") is None
+    assert clarification.parse_datetime("2026-09-25T04:26") == DateTimeValue(
+        year=2026,
+        month=9,
+        day=25,
+        hour=4,
+        minute=26,
+        second=0,
+    )
+
+
+def test_parse_slot_value_covers_all_symbolic_slot_types_and_bounds():
+    max_chars = 64
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec("value", clarification.SlotType.TEXT),
+        "   ",
+        max_chars=max_chars,
+    ) is None
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec("value", clarification.SlotType.TEXT),
+        "x" * 65,
+        max_chars=max_chars,
+    ) is None
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec("value", clarification.SlotType.DURATION),
+        "three seconds",
+        max_chars=max_chars,
+    ) == DurationValue(seconds=3)
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec("value", clarification.SlotType.NUMBER),
+        "42",
+        max_chars=max_chars,
+    ) == NumberValue(value=42)
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec("value", clarification.SlotType.BOOLEAN),
+        "true",
+        max_chars=max_chars,
+    ) == BoolValue(value=True)
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec("value", clarification.SlotType.DATETIME),
+        "2026-09-25T04:26:06",
+        max_chars=max_chars,
+    ) == DateTimeValue(2026, 9, 25, 4, 26, 6)
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec(
+            "value",
+            clarification.SlotType.REF,
+            ref_kind="contact",
+        ),
+        "Alice Smith",
+        max_chars=max_chars,
+    ) == RefValue(kind="contact", id="alice smith")
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec(
+            "value",
+            clarification.SlotType.REF,
+            ref_kind="contact",
+        ),
+        "Alice B Smith",
+        max_chars=max_chars,
+    ) is None
+    assert clarification.parse_slot_value(
+        clarification.SlotSpec("value", clarification.SlotType.TEXT),
+        "  keep case  ",
+        max_chars=max_chars,
+    ) == TextValue(text="keep case")
+
+
+def test_correction_marker_requires_following_content():
+    assert strip_correction_marker("actually five minutes") == ("five minutes", True)
+    assert strip_correction_marker("actually") == ("actually", False)
+    assert strip_correction_marker("five minutes") == ("five minutes", False)

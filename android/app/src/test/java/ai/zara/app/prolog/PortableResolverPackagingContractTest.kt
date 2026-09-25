@@ -13,6 +13,8 @@ class PortableResolverPackagingContractTest {
             listOf(
                 "prolog/shared/modules/intent_frames.pl",
                 "prolog/shared/modules/normalizer.pl",
+                "prolog/shared/modules/symbolic_dialogue.pl",
+                "prolog/shared/modules/symbolic_dialogue_turn.pl",
                 "prolog/shared/kb/intents.pl"
             ),
             PortableSemanticCore.resolverDependencies
@@ -54,5 +56,15 @@ class PortableResolverPackagingContractTest {
 
         assertTrue(core.contains("resolve_frames/4"))
         assertTrue(core.contains("intent_frames:resolve_frames"))
+    }
+
+    @Test
+    fun portableEntrypointLoadsCanonicalSymbolicDialogueRuntime() {
+        val core = Files.readString(
+            java.nio.file.Path.of("src", "main", "assets", PortableSemanticCore.coreAssetPath)
+        )
+
+        assertTrue(core.contains("../shared/modules/symbolic_dialogue"))
+        assertTrue(core.contains("../shared/modules/symbolic_dialogue_turn"))
     }
 }

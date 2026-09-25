@@ -33,10 +33,12 @@ class SymbolicConversationEdgeWindowTest {
 
         incoming.assertPureSymbolic()
         val accepted = SymbolicConversationContinuityGate.decodeAccepted(
-            EXPECTED_PRINCIPAL_ID,
-            EXPECTED_CONVERSATION_ID,
-            null,
-            SymbolicConversationEdgeCodec.encode(incoming),
+            expectedPrincipalId = EXPECTED_PRINCIPAL_ID,
+            expectedConversationId = EXPECTED_CONVERSATION_ID,
+            expectedProjectId = incoming.projectId,
+            expectedProjectGeneration = incoming.projectGeneration,
+            current = null,
+            encoded = SymbolicConversationEdgeCodec.encode(incoming),
         )
 
         assertNotNull(accepted)

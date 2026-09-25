@@ -10,9 +10,14 @@ class SamsungHealthApplicationWiringContractTest {
     fun applicationInstallsPrologSourceBeforeSessionAndExposesController() {
         val source = projectFile("app/src/main/java/ai/zara/app/ZaraApplication.kt").readText()
         val install = source.indexOf("SamsungHealthPrologPlugin.install")
-        val session = source.indexOf("AndroidAppSession(this)")
+        val session = source.indexOf("AndroidAppSession(")
         assertTrue(install >= 0)
         assertTrue(session > install)
+        assertTrue(
+            source.contains(
+                "canonicalExpertInvocationPortProvider = canonicalExpertInvocationPortProvider",
+            ),
+        )
         assertTrue(source.contains("val samsungHealthPlugin: SamsungHealthAndroidPlugin"))
     }
 

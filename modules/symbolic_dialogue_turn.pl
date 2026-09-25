@@ -1,4 +1,4 @@
-:- module(symbolic_dialogue_turn, [dialogue_turn/4]).
+:- module(symbolic_dialogue_turn, [dialogue_turn/4, valid_dialogue_context/1]).
 
 :- use_module('../modules/intent_frames', [resolve_frames/4]).
 :- use_module('../modules/normalizer', [normalize_string/2]).
@@ -13,19 +13,53 @@
 % Runtime/project generations, cancellation and principal/conversation fencing
 % remain the caller's responsibility at that canonical projection boundary.
 %
+% valid_dialogue_context/1 is the shared runtime-side trust boundary for a
+% context restored from durable storage. It intentionally accepts only the
+% three context shapes emitted by dialogue_turn/4. Adapters may serialize the
+% ground term, but they must validate the decoded term here before routing a
+% follow-up. This keeps persistence language-neutral without making raw stored
+% Prolog executable.
+%
 % The bounded social vocabulary below is part of this canonical Prolog router;
 % it does not create a second parser, history store, or provider fallback. It
 % exists here because these conversational turns do not belong to an effect or
 % command frame. Open/completed semantic context is preserved across them.
 
+valid_dialogue_context([]).
+valid_dialogue_context(partial_frame(Frame, Open)) :-
+    ground(Frame),
+    ground(Open),
+    valid_partial_context(Frame, Open).
+valid_dialogue_context(completed_frame(Frame)) :-
+    ground(Frame),
+    Frame = frame(_Intent, Slots, complete),
+    bounded_context_list(Slots).
+
+valid_partial_context(frame(_Intent, Slots, missing(Missing)), Open) :-
+    bounded_context_list(Slots),
+    bounded_context_list(Missing),
+    Open == Missing.
+valid_partial_context(frame(_Intent, Slots, ambiguous(Choices)), Open) :-
+    bounded_context_list(Slots),
+    bounded_context_list(Choices),
+    Open == Choices.
+
+bounded_context_list(List) :-
+    is_list(List),
+    length(List, Length),
+    Length =< 64.
+
 dialogue_turn(Text, _State, Context0, turn([Frame], Act, Context1)) :-
+    valid_dialogue_context(Context0),
     conversation_vocabulary_frame(Text, Frame),
     symbolic_dialogue:response_act(frame(Frame), Act),
     preserve_dialogue_context(Context0, Context1),
     !.
 dialogue_turn(Text, State, Context0, turn(Frames, Act, Context1)) :-
+    valid_dialogue_context(Context0),
     dialogue_frames(Text, State, Context0, Frames),
     turn_response(Frames, Context0, Act, Context1),
+    valid_dialogue_context(Context1),
     !.
 
 % The frozen IntentFrame API only accepts [] or partial_frame/2. To correct a

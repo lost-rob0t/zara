@@ -1,6 +1,7 @@
 package ai.zara.app.prolog
 
 import java.net.URI
+import java.util.Locale
 import kotlin.math.sqrt
 
 enum class PrologTokenKind { COMMENT, DIRECTIVE, VARIABLE, ATOM, NUMBER, STRING, OPERATOR, PUNCTUATION }
@@ -147,15 +148,49 @@ data class PrologWorkspaceCatalog(
     }
 }
 
+data class NaturalLanguageExpertSelection(
+    val expertId: String,
+    val expertOperation: String,
+    val input: Map<String, Any?>,
+)
+
 object LocalNaturalLanguageExpertRouter {
-    private val utterance = Regex("^([a-z][A-Za-z0-9_]*)\\s+([a-z][A-Za-z0-9_]*)$")
+    private const val MAX_ENTITY_CHARS = 128
+    private const val MAX_ENTITY_TOKENS = 8
+    private val whitespace = Regex("\\s+")
+    private val activationWord = Regex("^[a-z][a-z0-9_]{0,31}$")
+    private val entityWord = Regex("^[a-z][a-z0-9_]*$")
+
+    fun select(text: String, catalog: PrologWorkspaceCatalog): NaturalLanguageExpertSelection? {
+        val tokens = text.trim()
+            .lowercase(Locale.ROOT)
+            .split(whitespace)
+            .filter(String::isNotEmpty)
+        if (tokens.size !in 2..(MAX_ENTITY_TOKENS + 1)) return null
+
+        val actionWord = tokens.first()
+        if (!activationWord.matches(actionWord)) return null
+
+        val entityTokens = tokens.drop(1)
+        if (entityTokens.any { !entityWord.matches(it) }) return null
+        val entity = entityTokens.joinToString(" ")
+        if (entity.length !in 1..MAX_ENTITY_CHARS) return null
+
+        val expertId = catalog.activations[actionWord] ?: return null
+        val predicate = PredicateRef("${expertId}_explain", 2)
+        if (predicate !in catalog.experts) return null
+        return NaturalLanguageExpertSelection(
+            expertId = expertId,
+            expertOperation = "explain",
+            input = mapOf("entity" to entity),
+        )
+    }
 
     fun query(text: String, catalog: PrologWorkspaceCatalog): String? {
-        val match = utterance.matchEntire(text.trim().lowercase()) ?: return null
-        val expert = catalog.activations[match.groupValues[1]] ?: return null
-        val predicate = PredicateRef("${expert}_explain", 2)
-        if (predicate !in catalog.experts) return null
-        return "${predicate.name}(${match.groupValues[2]}, Result)"
+        val selection = select(text, catalog) ?: return null
+        val entity = selection.input["entity"] as? String ?: return null
+        val renderedEntity = if (' ' in entity) "'$entity'" else entity
+        return "${selection.expertId}_explain($renderedEntity, Result)"
     }
 }
 
@@ -386,7 +421,7 @@ object LocalEmbeddingModel {
         require(configuration.modelVersion == "zara-token-hash-1") { "Unsupported local embedding model" }
         require(configuration.dimensions in 32..512) { "Invalid local embedding dimensions" }
         val vector = FloatArray(configuration.dimensions)
-        text.lowercase().split(Regex("[^a-z0-9_]+"))
+        text.lowercase(Locale.ROOT).split(Regex("[^a-z0-9_]+"))
             .filter(String::isNotBlank)
             .forEach { token ->
                 val hash = token.fold(0x811c9dc5.toInt()) { value, character ->

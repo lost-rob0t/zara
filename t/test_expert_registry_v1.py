@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from zara import _experts_v1 as expert_impl
+
 from zara.experts import (
     ACTIVATION_TRANSITIONS,
     EXPERT_OPERATIONS,
@@ -949,3 +951,231 @@ def test_concurrent_activate_invoke_deactivate_remain_consistent() -> None:
     assert failures == []
     assert registry.snapshot().activation_ids == ()
     assert registry.generation >= 1
+
+
+
+def test_expert_wire_low_level_bounds_reject_ambiguous_values() -> None:
+    with pytest.raises(TypeError):
+        activation_transition("active", LifecycleState.DRAINING)
+    with pytest.raises(TypeError):
+        activation_transition(LifecycleState.ACTIVE, "draining")
+    with pytest.raises(ExpertInvalidInputError):
+        activation_transition(LifecycleState.ACTIVE, LifecycleState.INACTIVE)
+
+    for value in (1, "x" * 5, "", " padded", "bad\x1f"):
+        with pytest.raises((TypeError, ValueError)):
+            expert_impl._bounded_text(value, field_name="fixture", limit=4)
+
+    with pytest.raises(TypeError):
+        expert_impl._bounded_pattern(
+            1,
+            field_name="fixture",
+            pattern=expert_impl._TOKEN,
+            limit=8,
+        )
+    with pytest.raises(ValueError):
+        expert_impl._bounded_pattern(
+            "bad token",
+            field_name="fixture",
+            pattern=expert_impl._TOKEN,
+            limit=8,
+        )
+
+    with pytest.raises(ValueError):
+        expert_impl._bounded_unique_tokens(
+            ("a", "b"),
+            field_name="tokens",
+            limit=1,
+            pattern=expert_impl._TOKEN,
+            token_limit=8,
+        )
+    with pytest.raises(ValueError):
+        expert_impl._bounded_unique_tokens(
+            ("a", "a"),
+            field_name="tokens",
+            limit=2,
+            pattern=expert_impl._TOKEN,
+            token_limit=8,
+        )
+    with pytest.raises(TypeError):
+        expert_impl._bounded_unique_tokens(
+            ("a", 1),
+            field_name="tokens",
+            limit=2,
+            pattern=expert_impl._TOKEN,
+            token_limit=8,
+        )
+    with pytest.raises(ValueError):
+        expert_impl._bounded_unique_tokens(
+            ("bad token",),
+            field_name="tokens",
+            limit=2,
+            pattern=expert_impl._TOKEN,
+            token_limit=8,
+        )
+
+    with pytest.raises(ExpertInvalidInputError):
+        expert_impl._wire_enum(expert_impl.FieldType, 1, field_name="field type")
+    with pytest.raises(ExpertInvalidInputError):
+        expert_impl._wire_enum(
+            expert_impl.FieldType,
+            "made_up",
+            field_name="field type",
+        )
+
+
+def test_field_and_operation_descriptors_reject_malformed_schema_edges() -> None:
+    field = expert_impl.FieldSpec("value", expert_impl.FieldType.STRING)
+    with pytest.raises(TypeError):
+        expert_impl.FieldSpec("value", "string")
+    with pytest.raises(TypeError):
+        expert_impl.FieldSpec("value", expert_impl.FieldType.STRING, required=1)
+    with pytest.raises(ValueError):
+        expert_impl.FieldSpec(
+            "value",
+            expert_impl.FieldType.STRING,
+            enum_values=tuple(str(index) for index in range(33)),
+        )
+    with pytest.raises(ValueError):
+        expert_impl.FieldSpec(
+            "value",
+            expert_impl.FieldType.STRING,
+            enum_values=("dup", "dup"),
+        )
+    with pytest.raises(ValueError):
+        expert_impl.FieldSpec(
+            "value",
+            expert_impl.FieldType.STRING,
+            enum_values=("",),
+        )
+    with pytest.raises(ValueError):
+        expert_impl.FieldSpec("value", expert_impl.FieldType.ENUM)
+
+    for payload in (
+        [],
+        {"name": "value", "type": "string", "required": True, "extra": 1},
+        {"name": "value", "type": "string"},
+        {"name": "value", "type": "string", "required": True, "enum_values": "bad"},
+    ):
+        with pytest.raises(ExpertInvalidInputError):
+            expert_impl.FieldSpec.from_wire(payload)
+
+    with pytest.raises(TypeError):
+        expert_impl.OperationSpec("route.test", input_fields=[field])
+    with pytest.raises(ValueError):
+        expert_impl.OperationSpec(
+            "route.test",
+            input_fields=tuple(
+                expert_impl.FieldSpec(f"f{index}", expert_impl.FieldType.STRING)
+                for index in range(65)
+            ),
+        )
+    with pytest.raises(ValueError):
+        expert_impl.OperationSpec(
+            "route.test",
+            input_fields=(field, field),
+        )
+
+    for payload in (
+        [],
+        {
+            "operation_id": "route.test",
+            "input_schema": {"fields": []},
+            "output_schema": {"fields": []},
+            "extra": 1,
+        },
+        {"operation_id": "route.test", "input_schema": {"fields": []}},
+        {
+            "operation_id": "route.test",
+            "input_schema": [],
+            "output_schema": {"fields": []},
+        },
+        {
+            "operation_id": "route.test",
+            "input_schema": {"fields": "bad"},
+            "output_schema": {"fields": []},
+        },
+    ):
+        with pytest.raises(ExpertInvalidInputError):
+            expert_impl.OperationSpec.from_wire(payload)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"timeout_ms": True},
+        {"timeout_ms": 0},
+        {"timeout_ms": HOST_CEILINGS["timeout_ms"] + 1},
+        {"max_results": 0},
+        {"max_results": HOST_CEILINGS["max_results"] + 1},
+        {"max_output_bytes": 0},
+        {"max_output_bytes": HOST_CEILINGS["max_output_bytes"] + 1},
+        {"max_model_calls": -1},
+        {"max_model_calls": HOST_CEILINGS["max_model_calls"] + 1},
+    ],
+)
+def test_expert_limits_reject_invalid_host_budget_edges(kwargs) -> None:
+    with pytest.raises(ExpertInvalidInputError):
+        ExpertLimits(**kwargs)
+
+
+def test_expert_limits_wire_rejects_nonobject_and_unknown_fields() -> None:
+    with pytest.raises(ExpertInvalidInputError):
+        ExpertLimits.from_wire([])
+    with pytest.raises(ExpertInvalidInputError):
+        ExpertLimits.from_wire({"timeout_ms": 1, "unknown": 1})
+
+
+def test_descriptor_wire_shape_rejects_malformed_authority_fields() -> None:
+    invalid_payloads = [
+        [],
+        {**expert_wire(), "unknown": True},
+        {key: value for key, value in expert_wire().items() if key != "name"},
+        expert_wire(protocol=1),
+        expert_wire(protocol="bad"),
+        expert_wire(protocol="ZARA-EXPERT/2"),
+        expert_wire(applicability=[]),
+        expert_wire(applicability={}),
+        expert_wire(operations={}),
+        expert_wire(required_capabilities="filesystem.read"),
+        expert_wire(possible_effects="none"),
+        expert_wire(supported_engines="swi"),
+        expert_wire(supported_platforms="linux"),
+        expert_wire(applicability={"keywords": "todo"}),
+    ]
+    for payload in invalid_payloads:
+        with pytest.raises(ExpertContractError):
+            ExpertDescriptor.from_wire(payload)
+
+
+def test_activation_and_request_envelopes_reject_forged_identity_fields() -> None:
+    valid_handle = {
+        "activation_id": "act:" + ("a" * 32),
+        "principal": "user:alice",
+        "workspace": "ws:main",
+        "expert_id": "zara:expert/todo",
+        "expert_version": "1.0.0",
+        "manifest_digest": "sha256:todo.expert.v1",
+        "registry_generation": 1,
+        "runtime_generation": 1,
+    }
+    with pytest.raises(ValueError):
+        expert_impl.ActivationHandle(**{**valid_handle, "activation_id": "bad"})
+    with pytest.raises(ValueError):
+        expert_impl.ActivationHandle(**{**valid_handle, "registry_generation": True})
+
+    request = {
+        "request_id": "req:1",
+        "operation": "expert.invoke",
+        "activation_id": valid_handle["activation_id"],
+        "expert_id": valid_handle["expert_id"],
+        "expert_operation": "route.diagnose",
+    }
+    with pytest.raises(ExpertIncompatibleProtocolError):
+        ExpertRequest(**request, protocol="ZARA-EXPERT/2")
+    with pytest.raises(ExpertInvalidInputError):
+        ExpertRequest(**{**request, "operation": "expert.made_up"})
+    with pytest.raises(ExpertInvalidInputError):
+        ExpertRequest(**request, expected_registry_generation=True)
+    with pytest.raises(ExpertInvalidInputError):
+        ExpertRequest(**request, limits=object())
