@@ -219,3 +219,133 @@ def test_server_lease_runtime_directory_selection_is_owner_scoped(monkeypatch, t
     monkeypatch.setenv("XDG_RUNTIME_DIR", "relative")
     monkeypatch.setattr(core.tempfile, "gettempdir", lambda: str(tmp_path / "tmp"))
     assert core.ServerLease()._runtime_dir() == tmp_path / "tmp" / f"zarathushtra-{core.os.getuid()}"
+
+
+def test_core_server_audio_configuration_and_tts_factory_are_bounded(monkeypatch):
+    class Config:
+        def __init__(self, daemon, tts):
+            self.daemon = daemon
+            self.tts = tts
+
+        def get_section(self, name):
+            if name == "daemon":
+                return self.daemon
+            if name == "tts":
+                return self.tts
+            raise AssertionError(name)
+
+    configured = core.ZaraServer(
+        supervisor=object(),
+        config=Config(
+            {"audio_output_sample_rate": "48000"},
+            {"provider": "test-provider", "voice": "local"},
+        ),
+    )
+    assert configured._audio_output_sample_rate() == 48000
+
+    invalid = core.ZaraServer(
+        supervisor=object(),
+        config=Config({"audio_output_sample_rate": 0}, {}),
+    )
+    assert invalid._audio_output_sample_rate() == 24000
+
+    built = []
+
+    class Engine:
+        def __init__(self, *, provider, config):
+            built.append((provider, config))
+
+    monkeypatch.setattr("zara.tts.engine.TTSEngine", Engine)
+    assert isinstance(configured._build_tts_engine(), Engine)
+    assert built == [
+        ("test-provider", {"tts": {"provider": "test-provider", "voice": "local"}})
+    ]
+
+
+def test_core_server_gateway_start_failure_rolls_back_runtime_and_lease(tmp_path):
+    host = _Host()
+    supervisor = core.RuntimeSupervisor(
+        host_factory=lambda _principal, _bus: host,
+        shutdown_timeout=0.2,
+    )
+    lease = core.ServerLease(tmp_path / "runtime")
+
+    class Gateway:
+        def __init__(self):
+            self.close_calls = 0
+
+        def start(self):
+            return _failed(RuntimeError("gateway bind failed"))
+
+        def close(self, *, timeout):
+            assert timeout > 0
+            self.close_calls += 1
+
+    gateway = Gateway()
+    server = core.ZaraServer(
+        supervisor=supervisor,
+        lease=lease,
+        gateway_factory=lambda *_args, **_kwargs: gateway,
+        shutdown_timeout=0.2,
+    )
+
+    with pytest.raises(RuntimeError, match="gateway bind failed"):
+        server.start()
+
+    assert gateway.close_calls == 1
+    assert host.shutdown_calls == 1
+    assert host.join_calls == 1
+    assert server.state is core.ServerState.FAILED
+    assert lease.held is False
+
+
+def test_core_server_close_helpers_fail_closed_and_clear_component_handles():
+    server = core.ZaraServer(supervisor=object())
+
+    class BrokenVoice:
+        def close(self, *, timeout):
+            assert timeout > 0
+            raise RuntimeError("voice close failed")
+
+    class BrokenTts:
+        def stop(self, *, timeout):
+            assert timeout > 0
+            raise RuntimeError("tts stop failed")
+
+    server._voice_ingress = BrokenVoice()
+    server._tts_bridge = BrokenTts()
+
+    assert server._close_voice_ingress() is False
+    assert server._voice_ingress is None
+    assert server._close_tts_bridge() is False
+    assert server._tts_bridge is None
+    assert server._close_voice_ingress() is True
+    assert server._close_tts_bridge() is True
+
+
+def test_core_server_stop_aggregates_gateway_and_supervisor_cleanup_failures():
+    class Supervisor:
+        def shutdown(self):
+            raise RuntimeError("supervisor shutdown failed")
+
+    class Lease:
+        def __init__(self):
+            self.release_calls = 0
+
+        def release(self):
+            self.release_calls += 1
+
+    class Gateway:
+        def close(self, *, timeout):
+            assert timeout > 0
+            raise RuntimeError("gateway close failed")
+
+    lease = Lease()
+    server = core.ZaraServer(supervisor=Supervisor(), lease=lease)
+    server._state = core.ServerState.READY
+    server._gateway = Gateway()
+
+    assert server.stop() is False
+    assert server.state is core.ServerState.FAILED
+    assert server._gateway is None
+    assert lease.release_calls == 1
