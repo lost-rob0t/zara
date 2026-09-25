@@ -82,9 +82,10 @@ def test_ipc_endpoint_validation_and_long_path_fallback_are_fail_closed(monkeypa
         "_private_ipc_fallback",
         lambda runtime_dir: seen.append(runtime_dir) or fallback,
     )
-    endpoint = core.default_zmq_endpoint(tmp_path / ("x" * 40))
+    long_runtime_path = tmp_path / ("x" * 40)
+    endpoint = core.default_zmq_endpoint(long_runtime_path)
     assert endpoint == f"ipc://{fallback}"
-    assert seen
+    assert seen == [long_runtime_path]
 
 
 def test_principal_runtime_health_tracks_startup_and_host_state():
@@ -174,18 +175,26 @@ def test_default_host_composition_keeps_one_runtime_and_optional_router(monkeypa
             return ["/plugins/a", "/plugins/b"]
 
     captured: list[dict[str, object]] = []
+    captured_backends: list[tuple[object, object]] = []
+    routers: list[object] = []
 
     class CapturedHost:
         def __init__(self, **kwargs):
             captured.append(kwargs)
+
+    class CapturedBackend:
+        def __init__(self, manager_factory, *, router):
+            captured_backends.append((manager_factory, router))
 
     class Router:
         def __init__(self, engine, *, wake_words, principal_id):
             self.engine = engine
             self.wake_words = wake_words
             self.principal_id = principal_id
+            routers.append(self)
 
     monkeypatch.setattr(core, "RuntimeHost", CapturedHost)
+    monkeypatch.setattr(core, "AgentRuntimeBackend", CapturedBackend)
     monkeypatch.setattr("zara.runtime.intent_router.PrologFirstRouter", Router)
     monkeypatch.setattr("zara.wake_words.resolve_wake_words", lambda _config, _engine: ("zara",))
 
@@ -205,8 +214,13 @@ def test_default_host_composition_keeps_one_runtime_and_optional_router(monkeypa
     assert kwargs["plugin_paths"] == ("/plugins/a", "/plugins/b")
 
     backend = kwargs["backend_factory"]()
-    assert backend._delegate._router.engine is engine
-    assert backend._delegate._router.principal_id == "owner"
+    assert isinstance(backend, CapturedBackend)
+    assert len(captured_backends) == 1
+    manager_factory, captured_router = captured_backends[0]
+    assert callable(manager_factory)
+    assert captured_router is routers[0]
+    assert captured_router.engine is engine
+    assert captured_router.principal_id == "owner"
 
 
 def test_server_lease_runtime_directory_selection_is_owner_scoped(monkeypatch, tmp_path):
