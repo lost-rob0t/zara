@@ -24,3 +24,25 @@
 - Separate parser/sync per app: violates #1000 source-of-truth rule (forbidden).
 - Publishing only to android-latest: mutable channel is not release evidence; operator asked for the latest release page.
 - Keeping flagship surfaces private and copying them into 7 apps: duplicative UI forks; single canonical surface library instead.
+
+** Implementation (2026-09-25)
+- Merge 62c39cd2: resolved master-vs-trunk conflicts (settings.gradle.kts, test-android.sh, gate diagnostics test, changelog) combining termux-bridge (master) and Org modules (trunk).
+- Commit e6bfde94: org-surfaces shared library (OrgWorkspaceScreen/OrgTheme/model + Todo/Roam/Daily/Reminders/Timers/Graph/Editor/Home surfaces + OrgGraphLayout/OrgEditorSession/OrgTimerModel/OrgFleetApps pure logic), flagship org-app refactored onto the shared screen with all 8 surfaces, 7 new focused app modules with distinct applicationIds, per-module wiring contract tests, org-surfaces JVM tests, fleet contract test t/test_org_app_fleet.py, gate/workflow/version updates, changelog entry.
+
+** Red/green evidence
+- RED: t/test_org_app_fleet.py failed with "fleet modules missing from android/settings.gradle.kts: [org-editor, org-graph, org-home, org-reminder, org-roam, org-timer, org-todo]" before implementation.
+- GREEN: 13/13 focused fleet/version/diagnostics tests; gradle unit tests green for org-surfaces + all 8 org modules; all 8 APKs assemble.
+- APK-level independence proof: aapt2 badging shows 8 distinct package ids (ai.zara.org.{app,editor,todo,reminder,timer,roam,graph,home}), each with its own LAUNCHER, only ORG_HOME uses-permission (+ per-app DYNAMIC_RECEIVER), no INTERNET; check-android-apk-installable.sh passed for all 8.
+- Gates at e6bfde94: scripts/test-all.sh 13/13 PASS; android+wear gate PASS (fleet APKs built + installable checks); scripts/test-android-release.sh PASS (release manifest written); nix flake check PASS; nix build PASS.
+
+** Release surface changes
+- release.yml: fleet build paths trigger, per-app dist/zara-org-*-{apk,sha256,manifest.txt} with application_id, signer + installable verification loops, idempotent required-asset/manifest checks extended to fleet assets, release created WITHOUT --prerelease so the versioned release serves as GitHub /releases/latest (previously the stale device-acceptance-661 release held /latest because real releases were all prereleases).
+- android-latest.yml: fleet signer checks, zara-org-<app>-latest.apk assets + per-app manifests + main-manifest org_* entries + publish-job SHA verification.
+- Version: 0.2.2-alpha/code 4 -> 0.3.0-alpha/code 5, release.target promoted (release_ready=true).
+
+** Publication plan (after exact-head CI + merge)
+1. Merge PR #972 at green e6bfde94.
+2. Reconcile Unreleased changelog into 0.3.0-alpha section on master.
+3. Tag v0.3.0-alpha at the approved SHA; release.yml publishes full release with phone + code editor + 8 org APKs, checksums, manifests.
+4. Verify release assets (sha256, manifest source_sha, signer) via downloaded assets; confirm /releases/latest points at the new release.
+5. Comment delivery evidence on #1000/#1056/#1177/#972.
