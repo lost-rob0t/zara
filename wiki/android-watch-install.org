@@ -15,6 +15,22 @@ Wear OS 3 and newer do not support Bluetooth ADB. Zara therefore separates the w
 
 The phone app must not claim that the APK itself is pushed through Bluetooth. The Watch Setup screen states this limitation explicitly.
 
+* Auto pairing and the watch client (#866)
+
+After the APK is installed, the watch client pairs with the phone automatically over the Wear Data Layer; no watch-side code entry is ever required:
+
+- The watch declares the =zara_watch= capability; the phone declares =zara_phone=.
+- =WearCompanionRuntime= on the watch watches reachable =zara_phone= nodes and sends a =/zara/watch/hello= message. The phone's =WearCompanionLinkService= answers with a =/zara/phone/provision= payload: the phone display name plus the newest canonical pure-symbolic conversation projection (=WearCompanionContract=, bounded, versioned).
+- The first accepted provision pins the pairing to that phone node and to the delivered principal/conversation scope. Later projections must pass =SymbolicConversationContinuityGate=; stale, malformed, wrong-scope, or foreign-phone payloads are rejected without clearing accepted truth.
+- The watch UI renders truthful link states: =SEARCHING FOR PHONE=, =PAIRING VIA PHONE=, =PAIRED= / =PAIRED · LINK LIVE= (with the canonical conversation card), and =LINK OFFLINE= (accepted truth is kept). Rejected updates surface as a muted counter, never as truth.
+- Phone reachability loss keeps accepted truth but marks the link offline; restoration re-requests automatically.
+
+Security invariants:
+
+- The provision payload carries no credentials, endpoints, transcripts, or authority grants. Enrollment material (CURVE identity, server pin) never leaves the phone's Keystore-backed stores.
+- A second phone cannot silently take over a pairing; scope or phone switches require the pinned identities to match.
+- The watch holds no second auth/session/transport authority in this slice; server enrollment remains phone-owned (#1358).
+
 * Phone workflow
 
 1. Open =Zara Watch Setup= on the phone.
