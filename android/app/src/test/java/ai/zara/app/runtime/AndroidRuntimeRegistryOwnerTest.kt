@@ -157,6 +157,36 @@ class AndroidRuntimeRegistryOwnerTest {
     }
 
     @Test
+    fun localAiStateReadFailureKeepsUniqueOptionalRuntimeButClearsEmbeddedSelection() {
+        val sidecar = descriptor("sidecar-y", RuntimeHealth.READY)
+        val owner = AndroidRuntimeRegistryOwner(
+            runtimeVersion = "0.2.2-alpha",
+            implementationVersion = "abc123",
+            optionalRuntimeSources = listOf({ sidecar }),
+        )
+        val model = modelSpec()
+
+        owner.refresh(LocalAiState(phase = LocalAiPhase.READY, model = model))
+        owner.select(EMBEDDED_LOCAL_RUNTIME_ID)
+
+        val unavailable = owner.refreshUnavailable()
+
+        assertEquals(
+            listOf(EMBEDDED_LOCAL_RUNTIME_ID, "sidecar-y"),
+            unavailable.descriptors.map { it.id },
+        )
+        val embedded = unavailable.descriptors.single { it.id == EMBEDDED_LOCAL_RUNTIME_ID }
+        assertEquals(RuntimeHealth.DEGRADED, embedded.health)
+        assertFalse(embedded.available)
+        assertFalse(embedded.selectable)
+        val optional = unavailable.descriptors.single { it.id == "sidecar-y" }
+        assertEquals(RuntimeHealth.READY, optional.health)
+        assertTrue(optional.available)
+        assertTrue(optional.selectable)
+        assertEquals(null, unavailable.selection)
+    }
+
+    @Test
     fun localAiStateReadFailureClearsStaleEmbeddedReadiness() {
         val owner = owner()
         val model = modelSpec()
