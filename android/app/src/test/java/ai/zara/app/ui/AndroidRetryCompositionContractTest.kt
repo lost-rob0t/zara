@@ -36,6 +36,30 @@ class AndroidRetryCompositionContractTest {
         assertTrue(store.contains("attempt >= maxAttempts"))
     }
 
+
+    @Test fun `retry admission requires successful canonical terminal persistence`() {
+        val activity = Files.readString(
+            root.resolve("app/src/main/java/ai/zara/app/MainActivity.kt")
+        )
+        val recordStart = activity.indexOf("private fun recordTurnFailure(")
+        assertTrue("recordTurnFailure must remain in the production composition path", recordStart >= 0)
+        val record = activity.substring(recordStart)
+
+        val defaultsClosed = record.indexOf("var terminalPersisted = false")
+        val terminalWrite = record.indexOf("conversationStore.failTurn(")
+        val marksPersisted = record.indexOf("terminalPersisted = true")
+        val bindsFailure = record.indexOf("copy(terminalPersisted = terminalPersisted)")
+
+        assertTrue("retry admission must default closed before the canonical terminal write", defaultsClosed >= 0)
+        assertTrue("recordTurnFailure must retain the canonical failTurn write", terminalWrite >= 0)
+        assertTrue("terminal persistence may be admitted only after failTurn returns", marksPersisted > terminalWrite)
+        assertTrue(
+            "the visible retry failure must bind admission to the observed persistence result",
+            bindsFailure > marksPersisted,
+        )
+        assertTrue(defaultsClosed < terminalWrite)
+    }
+
     @Test fun `retry UI exposes automatic retry and capped attempt state`() {
         val ui = Files.readString(root.resolve("app/src/main/java/ai/zara/app/ui/ZaraApp.kt"))
         assertTrue(ui.contains("retryStatusLabel(failure)"))
