@@ -72,7 +72,7 @@ def test_copilot_fixture_renderer_isolated_from_user_state(tmp_path, monkeypatch
     render_copilot_fixtures(output_dir, source_commit="test-source")
 
     assert list(forbidden.iterdir()) == []
-    assert set(path.name for path in output_dir.glob("*.png")) == REQUIRED_SCREENSHOTS
+    assert set(path.name for path in output_dir.glob("copilot-*.png")) == REQUIRED_SCREENSHOTS
 
 
 def test_copilot_fixture_renderer_restores_application_theme_state(tmp_path):

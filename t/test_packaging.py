@@ -120,6 +120,11 @@ def test_wheel_declares_all_console_scripts(wheel_entry_points):
         "zara-agent = zara.agent_cli:main",
         "zara-pets = zara.pets.cli:main",
         "zara-desktop = zara.desktop.app:main",
+        "zara-org = zara.desktop.org_app:main",
+        "zara-org-editor = zara.desktop.org_app:main_editor",
+        "zara-org-todo = zara.desktop.org_app:main_todo",
+        "zara-org-sync = zara.desktop.org_app:main_sync",
+        "zara-org-notebook = zara.desktop.org_app:main_notebook",
     }
     missing = [line for line in expected if line not in wheel_entry_points]
     assert not missing, (
@@ -186,6 +191,7 @@ def test_entrypoint_functions_exist():
     from zara import agent_cli, console, dictate, server, wake
     from zara import __main__ as zara_main
     from zara.desktop import app as desktop_app
+    from zara.desktop import org_app
     from zara.pets import cli as pets_cli
 
     assert callable(zara_main.main)
@@ -196,6 +202,11 @@ def test_entrypoint_functions_exist():
     assert callable(agent_cli.main)
     assert callable(pets_cli.main_overlay)
     assert callable(desktop_app.main)
+    assert callable(org_app.main)
+    assert callable(org_app.main_editor)
+    assert callable(org_app.main_todo)
+    assert callable(org_app.main_sync)
+    assert callable(org_app.main_notebook)
 
 
 def test_find_main_pl_locates_project_root_main():

@@ -13,7 +13,14 @@ on:
       - setup.py
       - android/app/build.gradle.kts
       - android/code-editor/build.gradle.kts
-      - android/wear-app/build.gradle.kts
+      - android/org-app/build.gradle.kts
+      - android/org-editor/build.gradle.kts
+      - android/org-todo/build.gradle.kts
+      - android/org-reminder/build.gradle.kts
+      - android/org-timer/build.gradle.kts
+      - android/org-roam/build.gradle.kts
+      - android/org-graph/build.gradle.kts
+      - android/org-home/build.gradle.kts
       - .github/workflows/release.yml
 
 permissions:
@@ -137,6 +144,26 @@ jobs:
             echo "apk=$(basename "$code_editor_apk")"
             echo "apk_sha256=$(sha256sum "$code_editor_apk" | awk '{print $1}')"
           } > "dist/zara-code-editor-${VERSION}.manifest.txt"
+
+          org_modules=("org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home")
+          org_application_ids=("ai.zara.org.app" "ai.zara.org.editor" "ai.zara.org.todo" "ai.zara.org.reminder" "ai.zara.org.timer" "ai.zara.org.roam" "ai.zara.org.graph" "ai.zara.org.home")
+          for index in "${!org_modules[@]}"; do
+            module="${org_modules[$index]}"
+            application_id="${org_application_ids[$index]}"
+            org_apk="dist/zara-${module}-${VERSION}.apk"
+            cp "android/${module}/build/outputs/apk/debug/${module}-debug.apk" "$org_apk"
+            sha256sum "$org_apk" > "${org_apk}.sha256"
+            {
+              echo "schema=1"
+              echo "source_sha=${GITHUB_SHA}"
+              echo "version_name=${VERSION}"
+              echo "version_code=${VERSION_CODE}"
+              echo "application_id=${application_id}"
+              echo "apk=$(basename "$org_apk")"
+              echo "apk_sha256=$(sha256sum "$org_apk" | awk '{print $1}')"
+            } > "dist/zara-${module}-${VERSION}.manifest.txt"
+          done
+
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
           echo "code_editor_apk=$code_editor_apk" >> "$GITHUB_OUTPUT"
@@ -149,6 +176,18 @@ jobs:
         run: |
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
+          for org_apk in dist/zara-org-*-*.apk; do
+            case "$org_apk" in *.sha256) continue ;; esac
+            nix develop ./android -c bash scripts/check-android-apk-signer.sh "$org_apk"
+          done
+
+      - name: Verify fleet APKs are installable under their own identities
+        run: |
+          for entry in dist/zara-org-*-*.manifest.txt; do
+            application_id="$(sed -n 's/^application_id=//p' "$entry")"
+            apk_name="$(sed -n 's/^apk=//p' "$entry")"
+            nix develop ./android -c bash scripts/check-android-apk-installable.sh "dist/$apk_name" "$application_id"
+          done
 
       - name: Publish GitHub prerelease
         env:
@@ -163,6 +202,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          org_modules=("org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home")
+          org_assets=()
+          for module in "${org_modules[@]}"; do
+            org_assets+=("dist/zara-${module}-${VERSION}.apk" "dist/zara-${module}-${VERSION}.apk.sha256" "dist/zara-${module}-${VERSION}.manifest.txt")
+          done
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
@@ -179,7 +224,8 @@ jobs:
                 "$(basename "$MANIFEST")" \
                 "$(basename "$CODE_EDITOR_APK")" \
                 "$(basename "${CODE_EDITOR_APK}.sha256")" \
-                "$(basename "$CODE_EDITOR_MANIFEST")"
+                "$(basename "$CODE_EDITOR_MANIFEST")" \
+                "${org_assets[@]##*/}"
               do
                 if ! grep -Fxq "$required" <<< "$assets"; then
                   echo "Release $TAG is missing required asset $required." >&2
@@ -191,36 +237,26 @@ jobs:
               mkdir -p "$existing_dir"
               gh release download "$TAG" \
                 --dir "$existing_dir" \
-                --pattern "$(basename "$MANIFEST")"
-              gh release download "$TAG" \
-                --dir "$existing_dir" \
-                --pattern "$(basename "$CODE_EDITOR_MANIFEST")"
-              existing_manifest="$existing_dir/$(basename "$MANIFEST")"
-              existing_code_editor_manifest="$existing_dir/$(basename "$CODE_EDITOR_MANIFEST")"
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
-                echo "Release $TAG manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_manifest" || {
-                echo "Release $TAG manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_manifest" || {
-                echo "Release $TAG manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
+                --pattern "*.manifest.txt"
+              for manifest_entry in \
+                "$(basename "$MANIFEST")" \
+                "$(basename "$CODE_EDITOR_MANIFEST")" \
+                "${org_assets[@]##*/}"; do
+                case "$manifest_entry" in *.manifest.txt) ;; *) continue ;; esac
+                existing_manifest="$existing_dir/$manifest_entry"
+                grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
+                  echo "Release $TAG manifest $manifest_entry source_sha does not match $GITHUB_SHA." >&2
+                  exit 1
+                }
+                grep -Fxq "version_name=${VERSION}" "$existing_manifest" || {
+                  echo "Release $TAG manifest $manifest_entry version_name does not match $VERSION." >&2
+                  exit 1
+                }
+                grep -Fxq "version_code=${VERSION_CODE}" "$existing_manifest" || {
+                  echo "Release $TAG manifest $manifest_entry version_code does not match $VERSION_CODE." >&2
+                  exit 1
+                }
+              done
 
               echo "Release $TAG already exists and matches canonical promotion $GITHUB_SHA."
               exit 0
@@ -244,7 +280,7 @@ jobs:
             "$CODE_EDITOR_APK" \
             "${CODE_EDITOR_APK}.sha256" \
             "$CODE_EDITOR_MANIFEST" \
+            "${org_assets[@]}" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
-            --prerelease \
-            --notes "Android alpha preview of Zara and Zara Code Editor. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file. Source commit: $GITHUB_SHA"
+            --notes "Zara Android alpha preview plus the Org app fleet: one installable APK per Org app system (Org flagship, Editor, Todo, Reminder, Timer, Roam, Graph, Home). Every Org app works standalone over ordinary Org files and needs none of the others installed. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file and provenance manifest. Source commit: $GITHUB_SHA"

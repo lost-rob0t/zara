@@ -71,6 +71,10 @@ jobs:
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$phone_apk"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$code_editor_apk"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$wear_apk"
+          for module in "org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home"; do
+            nix develop ./android -c bash scripts/check-android-apk-signer.sh \
+              "android/${module}/build/outputs/apk/debug/${module}-debug.apk"
+          done
 
       - name: Prepare exact-master rolling payload
         env:
@@ -87,6 +91,9 @@ jobs:
           test -f "$code_editor_apk"
           test -f "$wear_apk"
 
+          org_modules=("org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home")
+          org_application_ids=("ai.zara.org.app" "ai.zara.org.editor" "ai.zara.org.todo" "ai.zara.org.reminder" "ai.zara.org.timer" "ai.zara.org.roam" "ai.zara.org.graph" "ai.zara.org.home")
+
           mkdir -p dist/latest
           cp "$phone_apk" dist/latest/zara-latest.apk
           cp "$code_editor_apk" dist/latest/zara-code-editor-latest.apk
@@ -94,6 +101,27 @@ jobs:
           sha256sum dist/latest/zara-latest.apk > dist/latest/zara-latest.apk.sha256
           sha256sum dist/latest/zara-code-editor-latest.apk > dist/latest/zara-code-editor-latest.apk.sha256
           sha256sum dist/latest/zara-wear-latest.apk > dist/latest/zara-wear-latest.apk.sha256
+
+          for index in "${!org_modules[@]}"; do
+            module="${org_modules[$index]}"
+            application_id="${org_application_ids[$index]}"
+            src="android/${module}/build/outputs/apk/debug/${module}-debug.apk"
+            test -f "$src"
+            asset="dist/latest/zara-${module}-latest.apk"
+            cp "$src" "$asset"
+            sha256sum "$asset" > "${asset}.sha256"
+            {
+              echo "schema=1"
+              echo "channel=android-latest"
+              echo "mutable=true"
+              echo "source_sha=${SOURCE_SHA}"
+              echo "version_name=${VERSION}"
+              echo "version_code=${VERSION_CODE}"
+              echo "application_id=${application_id}"
+              echo "apk=zara-${module}-latest.apk"
+              echo "apk_sha256=$(sha256sum "$asset" | awk '{print $1}')"
+            } > "dist/latest/zara-${module}-latest.manifest.txt"
+          done
 
           phone_sha="$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')"
           code_editor_sha="$(sha256sum dist/latest/zara-code-editor-latest.apk | awk '{print $1}')"
@@ -111,6 +139,11 @@ jobs:
             echo "code_editor_sha256=${code_editor_sha}"
             echo "wear_apk=zara-wear-latest.apk"
             echo "wear_sha256=${wear_sha}"
+            for index in "${!org_modules[@]}"; do
+              module="${org_modules[$index]}"
+              echo "org_${module}_apk=zara-${module}-latest.apk"
+              echo "org_${module}_sha256=$(sed -n 's/^apk_sha256=//p' "dist/latest/zara-${module}-latest.manifest.txt")"
+            done
           } > dist/latest/zara-latest.manifest.txt
 
       - name: Preserve this master SHA's APK payload
@@ -159,6 +192,14 @@ jobs:
           test "$(sha256sum dist/latest/zara-latest.apk | awk '{print $1}')" = "$phone_sha"
           test "$(sha256sum dist/latest/zara-code-editor-latest.apk | awk '{print $1}')" = "$code_editor_sha"
           test "$(sha256sum dist/latest/zara-wear-latest.apk | awk '{print $1}')" = "$wear_sha"
+          for module in "org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home"; do
+            entry_sha="$(sed -n "s/^apk_sha256=//p" "dist/latest/zara-${module}-latest.manifest.txt")"
+            test -n "$entry_sha"
+            test "$(sha256sum "dist/latest/zara-${module}-latest.apk" | awk '{print $1}')" = "$entry_sha"
+            grep -Fxq "org_${module}_sha256=${entry_sha}" dist/latest/zara-latest.manifest.txt
+            test "$(sha256sum "dist/latest/zara-${module}-latest.apk" | awk '{print $1}')" = \
+              "$(sed -n "s/^org_${module}_sha256=//p" dist/latest/zara-latest.manifest.txt)"
+          done
 
       - name: Publish rolling android-latest release
         env:
@@ -189,7 +230,7 @@ jobs:
           git tag -f android-latest "$SOURCE_SHA"
           git push --force origin refs/tags/android-latest
 
-          notes="Rolling convenience build from master commit ${SOURCE_SHA}. Every master push starts a fresh signed Android/Code Editor/Wear build; this mutable channel advances after that exact build passes its Android/Wear/Code gate. Use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
+          notes="Rolling convenience build from master commit ${SOURCE_SHA}. Every master push starts a fresh signed build of the phone app, Code Editor, Wear clients, and the full Org app fleet (one standalone APK per Org app system); this mutable channel advances after that exact build passes its Android/Wear/Code/Org gate. Use zara-latest.manifest.txt for the exact source SHA and checksums. Immutable SemVer releases remain under v* tags."
 
           if gh release view android-latest >/dev/null 2>&1; then
             gh release upload android-latest dist/latest/* --clobber
