@@ -156,10 +156,10 @@ def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
             pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
             if not re.fullmatch(r"\d+", pid):
                 raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
-            logcat = device.adb("logcat", "-d", "--pid", pid, "-v", "threadtime")
+            logcat = device.adb("shell", "logcat", "-d", "--pid", pid, "-v", "threadtime")
             evidence["logcat_pid_filtered"] = True
         except Exception:
-            logcat = device.adb("logcat", "-d", "-v", "threadtime")
+            logcat = device.adb("shell", "logcat", "-d", "-v", "threadtime")
             evidence["logcat_pid_filtered"] = False
         path = output / "remote-logcat.log"
         path.write_text(logcat, encoding="utf-8")
@@ -186,8 +186,8 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     # First prove the embedded Android Local server through the installed UI.
     open_menu(device, "Settings")
-    device.tap_tab("Runtime")
-    device.await_contains("LOCAL ZARA SERVER", timeout=20.0)
+    device.tap("Runtime & local AI")
+    device.await_contains("LOCAL RUNTIME", timeout=20.0)
     device.await_label("ready", timeout=20.0)
     device.tap("Local")
     open_menu(device, "Chat")
@@ -218,7 +218,10 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
-    device.tap_tab("Connection")
+    device.await_contains("LOCAL RUNTIME", timeout=20.0)
+    device.press_back()
+    device.await_label("Runtime & local AI")
+    device.tap("Connection")
     device.await_label("Create client identity")
     device.tap("Create client identity")
     device.await_label("CLIENT PUBLIC KEY")
@@ -245,7 +248,9 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     # Force the exact Remote routing policy for the turn so a Local response
     # cannot accidentally satisfy this end-to-end gate.
-    device.tap_tab("Runtime")
+    device.press_back()
+    device.await_label("Runtime & local AI")
+    device.tap("Runtime & local AI")
     device.tap("Remote")
     open_menu(device, "Chat")
     device.await_label("Ask anything…", timeout=10.0)

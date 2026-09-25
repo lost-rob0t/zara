@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.assistant.AssistantLifecycleFence
+import ai.zara.app.assistant.LocalAssistantVoiceController
 import ai.zara.app.auth.PairingProgress
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
@@ -50,6 +52,14 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import java.io.File
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelBackend
+import ai.zara.app.localai.LocalModelMetadata
+import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalModelSpec
+import java.io.InputStream
+import java.security.MessageDigest
+import java.util.concurrent.CompletableFuture
 
 private data class PairingDialogState(
     val title: String,
@@ -61,19 +71,47 @@ class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
     private lateinit var pairingCoordinator: AndroidPairingCoordinator
     private lateinit var conversationStore: ConversationStore
+    private lateinit var localVoiceController: LocalAssistantVoiceController
+    private val localVoiceFence = AssistantLifecycleFence()
     private var conversationState by mutableStateOf(ConversationState())
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
     private var turnFailure by mutableStateOf<TurnFailure?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
+    private var localVoiceActive by mutableStateOf(false)
+    private var localVoiceStatus by mutableStateOf<String?>(null)
     private var enrollmentPublicKey by mutableStateOf<String?>(null)
     private var pinnedServerPublicKey by mutableStateOf<String?>(null)
     private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
     private var pairingUiGeneration = 0L
 
+    private var localAiState by mutableStateOf(LocalAiState())
+    private var localModels by mutableStateOf<List<LocalModelSpec>>(emptyList())
+    private var localModelBusy by mutableStateOf(false)
+    private var pendingLocalModelImport: LocalModelImportRequest? = null
+
+    private data class LocalModelImportRequest(
+        val id: String,
+        val version: String,
+        val quantization: LocalModelQuantization,
+        val maxContextTokens: Int,
+        val backend: LocalModelBackend,
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        localVoiceController = LocalAssistantVoiceController(
+            applicationContext,
+            appSession,
+            localVoiceFence,
+        ) { status ->
+            runOnUiThread {
+                localVoiceStatus = status
+                localVoiceActive =
+                    status.startsWith("Listening") || status.startsWith("Heard:")
+            }
+        }
         pairingCoordinator = AndroidPairingCoordinator(applicationContext, appSession)
         val updateManager = (application as ZaraApplication).updateManager
         val changelogSeenStore = ChangelogSeenStore(this)
@@ -91,6 +129,8 @@ class MainActivity : ComponentActivity() {
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
         var localServerState by mutableStateOf(appSession.localServerState())
+        var cloudModelState by mutableStateOf(appSession.cloudModelState())
+        var cloudModelBusy by mutableStateOf(false)
         var prologSources by mutableStateOf(appSession.prologSources())
         var prologQueryResult by mutableStateOf<ai.zara.app.runtime.LocalQueryResult?>(null)
         var updateState by mutableStateOf(updateManager.state())
@@ -137,6 +177,51 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        val localModelPicker = registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            val request = pendingLocalModelImport
+            pendingLocalModelImport = null
+            if (uri == null || request == null) return@registerForActivityResult
+
+            operationError = null
+            localModelBusy = true
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            CompletableFuture.supplyAsync {
+                val source = contentResolver.openInputStream(uri)
+                    ?: error("Selected local model could not be opened")
+                sha256(source)
+            }.thenCompose { digest ->
+                val source = contentResolver.openInputStream(uri)
+                    ?: error("Selected local model could not be reopened")
+                val metadata = LocalModelMetadata(
+                    id = request.id,
+                    version = request.version,
+                    quantization = request.quantization,
+                    sha256 = digest,
+                    maxContextTokens = request.maxContextTokens,
+                    backend = request.backend,
+                )
+                try {
+                    appSession.installLocalModel(source, metadata)
+                } catch (error: Throwable) {
+                    source.close()
+                    throw error
+                }
+            }.whenComplete { _, error ->
+                runOnUiThread {
+                    localModelBusy = false
+                    operationError = error?.let(UiOperationFailure::summarize)
+                    refreshLocalModels()
+                }
+            }
+        }
+
         appSession.setStateObserver { state ->
             runOnUiThread { runtimeState = state }
         }
@@ -153,6 +238,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { updateState = state }
         }
         appSession.assessAssistantRole()
+        refreshLocalModels()
 
         setContent {
             val systemDark = isSystemInDarkTheme()
@@ -264,6 +350,8 @@ class MainActivity : ComponentActivity() {
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
                 voiceState = voiceState,
+                localVoiceActive = localVoiceActive,
+                localVoiceStatus = localVoiceStatus,
                 voiceStreamState = voiceStreamState,
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
@@ -276,6 +364,11 @@ class MainActivity : ComponentActivity() {
                 showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                localAiState = localAiState,
+                localModels = localModels,
+                localModelBusy = localModelBusy,
+                cloudModelState = cloudModelState,
+                cloudModelBusy = cloudModelBusy,
                 projectState = projectState,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
@@ -289,6 +382,64 @@ class MainActivity : ComponentActivity() {
                 onSetLocalEmbeddingEnabled = { enabled ->
                     localEmbedding = localEmbedding.copy(enabled = enabled)
                     embeddingPreferenceStore.save(localEmbedding)
+                },
+                onImportLocalModel = { id, version, quantization, maxContextTokens, backend ->
+                    pendingLocalModelImport = LocalModelImportRequest(
+                        id = id,
+                        version = version,
+                        quantization = quantization,
+                        maxContextTokens = maxContextTokens,
+                        backend = backend,
+                    )
+                    localModelPicker.launch(arrayOf("*/*"))
+                },
+                onSelectLocalModel = { id, version ->
+                    operationError = null
+                    localModelBusy = true
+                    appSession.selectLocalModel(id, version).whenComplete { _, error ->
+                        runOnUiThread {
+                            localModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            refreshLocalModels()
+                        }
+                    }
+                },
+                onUnloadLocalModel = {
+                    operationError = null
+                    localModelBusy = true
+                    appSession.unloadLocalModel().whenComplete { _, error ->
+                        runOnUiThread {
+                            localModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            refreshLocalModels()
+                        }
+                    }
+                },
+                onConfigureCloudModel = { config, apiKey ->
+                    operationError = null
+                    cloudModelBusy = true
+                    CompletableFuture.supplyAsync {
+                        appSession.configureCloudModel(config, apiKey)
+                    }.whenComplete { state, error ->
+                        runOnUiThread {
+                            cloudModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (state != null) cloudModelState = state
+                        }
+                    }
+                },
+                onClearCloudModelApiKey = {
+                    operationError = null
+                    cloudModelBusy = true
+                    CompletableFuture.supplyAsync {
+                        appSession.clearCloudModelApiKey()
+                    }.whenComplete { state, error ->
+                        runOnUiThread {
+                            cloudModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (state != null) cloudModelState = state
+                        }
+                    }
                 },
                 onScanPairingQr = ::scanPairingQr,
                 onCreateIdentity = {
@@ -436,34 +587,54 @@ class MainActivity : ComponentActivity() {
                 },
                 onStartVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (shouldUseRemoteVoiceTransport(runtimeMode, runtimeState)) {
+                        operationBusy = true
+                        appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
+                        }
+                    } else {
+                        try {
+                            localVoiceController.start(microphonePermissionGranted)
+                            localVoiceActive = true
+                        } catch (error: Throwable) {
+                            localVoiceActive = false
+                            operationError = UiOperationFailure.summarize(error)
                         }
                     }
                 },
                 onStopVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.releasePushToTalk().whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (localVoiceActive) {
+                        localVoiceController.stop()
+                        localVoiceActive = false
+                    } else {
+                        operationBusy = true
+                        appSession.releasePushToTalk().whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
                         }
                     }
                 },
                 onCancelVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.cancelPushToTalk().whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (localVoiceActive) {
+                        localVoiceController.cancel()
+                        localVoiceActive = false
+                    } else {
+                        operationBusy = true
+                        appSession.cancelPushToTalk().whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
                         }
                     }
                 },
@@ -619,6 +790,7 @@ class MainActivity : ComponentActivity() {
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
         reconcileMicrophonePermission(hasMicrophonePermission())
+        refreshLocalModels()
     }
 
     override fun onStop() {
@@ -641,8 +813,25 @@ class MainActivity : ComponentActivity() {
             appSession.setLocalServerObserver(null)
             (application as ZaraApplication).updateManager.setObserver(null)
         }
+        if (::localVoiceController.isInitialized) {
+            localVoiceFence.invalidate()
+            localVoiceController.close()
+        }
         if (::pairingCoordinator.isInitialized) pairingCoordinator.close()
         super.onDestroy()
+    }
+
+    private fun shouldUseRemoteVoiceTransport(
+        mode: ai.zara.app.runtime.RuntimeMode,
+        state: ai.zara.app.runtime.RuntimeState,
+    ): Boolean {
+        val remoteReady =
+            state.enrollment == ai.zara.app.runtime.EnrollmentReadiness.Ready &&
+                state.server is ServerConnection.Connected &&
+                state.sessionId != null
+        return remoteReady &&
+            (mode == ai.zara.app.runtime.RuntimeMode.Remote ||
+                mode == ai.zara.app.runtime.RuntimeMode.Auto)
     }
 
     private fun scanPairingQr() {
@@ -726,6 +915,35 @@ class MainActivity : ComponentActivity() {
 
     private fun isPairingUiCurrent(pairingGeneration: Long): Boolean =
         !isDestroyed && pairingUiGeneration == pairingGeneration
+
+    private fun refreshLocalModels() {
+        if (!::appSession.isInitialized) return
+        appSession.localAiState()
+            .thenCombine(appSession.localAiModels()) { state, models -> state to models }
+            .whenComplete { snapshot, error ->
+                runOnUiThread {
+                    if (error != null) {
+                        operationError = UiOperationFailure.summarize(error)
+                    } else if (snapshot != null) {
+                        localAiState = snapshot.first
+                        localModels = snapshot.second
+                    }
+                }
+            }
+    }
+
+    private fun sha256(source: InputStream): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        source.use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 
     private fun reconcileMicrophonePermission(granted: Boolean) {
         microphonePermissionGranted = granted

@@ -93,7 +93,34 @@ class LocalAiRuntimeTest {
             second.get(2, TimeUnit.SECONDS)
         }
         assertFalse(first.isDone)
-        runtime.cancel().get(2, TimeUnit.SECONDS)
+        val cancelled = runtime.cancel().get(2, TimeUnit.SECONDS)
+        assertEquals(LocalAiPhase.READY, cancelled.phase)
+        assertTrue("rejecting another request must not orphan the active backend session", backend.cancelled)
+        assertTrue("the originally active generation must remain cancellable", first.isCompletedExceptionally)
+        runtime.close()
+    }
+
+    @Test
+    fun backendGenerationFailureAfterClaimReturnsToReadyAndAllowsNextGeneration() {
+        val backend = FakeLlmBackend().apply {
+            nextGenerateFailure = IllegalStateException("backend start failed")
+        }
+        val runtime = LocalAiRuntime(backend)
+        runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+
+        val failed = runtime.generate(LocalGenerationRequest("fail once", 8))
+        assertThrows(Exception::class.java) {
+            failed.get(2, TimeUnit.SECONDS)
+        }
+        assertEquals(LocalAiPhase.READY, runtime.state().phase)
+        assertTrue(runtime.state().failure?.contains("backend start failed") == true)
+
+        val next = runtime.generate(LocalGenerationRequest("recover", 8))
+        assertTrue(backend.awaitGenerationStarted())
+        val cancelled = runtime.cancel().get(2, TimeUnit.SECONDS)
+        assertEquals(LocalAiPhase.READY, cancelled.phase)
+        assertTrue(backend.cancelled)
+        assertTrue(next.isCompletedExceptionally)
         runtime.close()
     }
 
@@ -227,6 +254,45 @@ class LocalAiRuntimeTest {
         assertTrue(backend.awaitCloseStarted())
     }
 
+    @Test
+    fun remoteCallerDeathCancelsCanonicalGenerationAndDropsLateBackendCallbacks() {
+        val backend = FakeLlmBackend()
+        val runtime = LocalAiRuntime(backend)
+        runtime.load(modelSpec()).get(2, TimeUnit.SECONDS)
+        val firstChunk = CountDownLatch(1)
+        val chunks = mutableListOf<String>()
+        var cancellation: java.util.concurrent.CompletableFuture<LocalAiState>? = null
+        val lease = LocalAiRemoteGenerationLease(
+            cancel = { cancellation = runtime.cancel() },
+            unlink = {},
+        )
+
+        val future = checkNotNull(
+            lease.runIfActive {
+                runtime.generate(LocalGenerationRequest("remote caller", 16)) { chunk ->
+                    chunks += chunk
+                    firstChunk.countDown()
+                }
+            }
+        )
+        assertTrue(backend.awaitGenerationStarted())
+        backend.emit("first")
+        assertTrue(firstChunk.await(2, TimeUnit.SECONDS))
+
+        assertTrue(lease.callerDied())
+        val cancelledState = checkNotNull(cancellation).get(2, TimeUnit.SECONDS)
+        assertEquals(LocalAiPhase.READY, cancelledState.phase)
+        assertTrue(backend.cancelled)
+        assertTrue(future.isCompletedExceptionally)
+
+        backend.emit("late")
+        backend.complete()
+        Thread.sleep(50)
+        assertEquals(listOf("first"), chunks)
+        assertEquals(LocalAiPhase.READY, runtime.state().phase)
+        runtime.close()
+    }
+
     private fun modelSpec() = LocalModelSpec(
         id = "fixture",
         version = "1",
@@ -245,6 +311,7 @@ class LocalAiRuntimeTest {
         var cancelled = false
         var unloaded = false
         var blockClose = false
+        var nextGenerateFailure: Throwable? = null
 
         override fun load(spec: LocalModelSpec) = Unit
 
@@ -252,6 +319,10 @@ class LocalAiRuntimeTest {
             request: LocalGenerationRequest,
             listener: LocalGenerationListener,
         ): LocalGenerationSession {
+            nextGenerateFailure?.let { failure ->
+                nextGenerateFailure = null
+                throw failure
+            }
             this.listener = listener
             generationStarted.countDown()
             return object : LocalGenerationSession {
