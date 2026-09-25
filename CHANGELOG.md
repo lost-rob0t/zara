@@ -4,6 +4,12 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+## 0.3.1-alpha
+
+### Fixed
+
+- The 0.3.0-alpha release ships with its matching changelog section embedded, so the first-launch What's-new overlay now shows the Org app fleet notes instead of finding no section for the running version. This patch republishes the same Org app fleet with the corrected in-app changelog and the CI dex-merge heap fix.
+
 ## 0.3.0-alpha
 
 ### Fixed
