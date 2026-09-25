@@ -54,4 +54,43 @@ class CanonicalExpertOwnerSourceContractTest {
                 ownerMethod.contains("CanonicalExpertInvocationPort{"),
         )
     }
+
+    @Test
+    fun productionCompositionRequiresExplicitCoreOwnerProviderWithoutAndroidAuthority() {
+        val sessionSource = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val applicationSource = File("src/main/java/ai/zara/app/ZaraApplication.kt").readText()
+        val sessionConstructor = sessionSource
+            .substringAfter("class AndroidAppSession(")
+            .substringBefore(") : AutoCloseable {")
+
+        assertTrue(
+            "AndroidAppSession must require an explicit canonical expert provider from composition",
+            Regex(
+                """canonicalExpertInvocationPortProvider:\s*\(\)\s*->\s*CanonicalExpertInvocationPort\??""",
+            ).containsMatchIn(sessionConstructor),
+        )
+        assertFalse(
+            "AndroidAppSession must not silently default the canonical expert owner to null",
+            sessionConstructor.contains("= { null }"),
+        )
+        assertTrue(
+            "ZaraApplication must pass the canonical expert provider explicitly into AndroidAppSession",
+            applicationSource.contains(
+                "canonicalExpertInvocationPortProvider = canonicalExpertInvocationPortProvider",
+            ),
+        )
+        assertFalse(
+            "ZaraApplication must not fabricate a CanonicalExpertInvocationPort implementation",
+            applicationSource.contains("object : CanonicalExpertInvocationPort"),
+        )
+        assertFalse(
+            "ZaraApplication must not mint activation authority",
+            applicationSource.contains("ActivationHandle("),
+        )
+        assertFalse(
+            "ZaraApplication canonical expert composition must not route through raw local Prolog",
+            applicationSource.contains("canonicalExpertInvocationPortProvider = ::queryLocalProlog") ||
+                applicationSource.contains("canonicalExpertInvocationPortProvider = appSession::queryLocalProlog"),
+        )
+    }
 }

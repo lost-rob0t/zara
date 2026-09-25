@@ -94,7 +94,7 @@ import java.util.concurrent.Executors
 
 class AndroidAppSession(
     context: Context,
-    private val canonicalExpertInvocationPortProvider: () -> CanonicalExpertInvocationPort? = { null },
+    private val canonicalExpertInvocationPortProvider: () -> CanonicalExpertInvocationPort?,
 ) : AutoCloseable {
     private val enrollment: EnrollmentRepository = AndroidEnrollmentRepository.create(context)
     private val stateStore = ClientStateStore(File(context.noBackupFilesDir, "zara/client-state.bin"))
