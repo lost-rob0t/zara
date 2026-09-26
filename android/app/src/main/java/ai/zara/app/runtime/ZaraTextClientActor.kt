@@ -43,6 +43,7 @@ class ZaraTextClientActor(
     private val requestIds: Iterator<String> = generateSequence { java.util.UUID.randomUUID().toString().replace("-", "") }.iterator(),
     private val timestamps: Iterator<Long> = generateSequence { System.nanoTime() }.iterator(),
     private val requestTimeoutMillis: Int = 5_000,
+    private val turnIdleTimeoutMillis: Int = 120_000,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-text-client").apply { isDaemon = true }
     },
@@ -70,6 +71,9 @@ class ZaraTextClientActor(
 
     init {
         require(requestTimeoutMillis > 0) { "request timeout must be positive" }
+        require(turnIdleTimeoutMillis >= requestTimeoutMillis) {
+            "turn idle timeout must be at least the request timeout"
+        }
         require(audioOutputFormats.size <= 8) { "audio output offer exceeds format limit" }
         require(audioOutputFormats.distinct() == audioOutputFormats) {
             "audio output offer contains duplicates"
@@ -186,12 +190,7 @@ class ZaraTextClientActor(
         if (current.generation != generation || current.sessionId != sessionId) {
             throw StaleTextSessionException("text request belongs to a stale session")
         }
-        try {
-            submitTextInternal(generation, sessionId, current, conversationId, text)
-        } catch (error: Throwable) {
-            reportConnectionFailureIfCurrent(error, current, ai.zara.app.telemetry.ZaraOperation.SUBMIT)
-            throw error
-        }
+        submitTextInternal(generation, sessionId, current, conversationId, text)
     }
 
     private fun submitTextInternal(
@@ -204,6 +203,7 @@ class ZaraTextClientActor(
         val current = connected
         val active = dealer ?: throw StaleTextSessionException("text dealer is unavailable")
         val requestId = nextRequestId()
+        var acceptedTurnId: String? = null
         correlations.register(requestId, generation, sessionId)
         try {
             active.send(
@@ -215,27 +215,13 @@ class ZaraTextClientActor(
                     timestampNs = nextTimestamp(),
                 )
             )
-            val first = receiveMessage(active)
-            if (first is TextServerMessage.ProtocolError) {
-                verifySession(first.sessionId, sessionId)
-                correlations.complete(requestId, generation, sessionId)
-                throw ZaraWireException(
-                            "turn submit failed: ${first.code}",
-                            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_SERVER_ERROR,
-                            serverCode = first.code,
-                            retryable = first.retryable,
-                        )
-            }
-            val accepted = first as? TextServerMessage.TurnAccepted
-                ?: throw ZaraWireException(
-                    "expected turn.accepted",
-                    code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_UNEXPECTED_MESSAGE,
-                )
-            verifySession(accepted.sessionId, sessionId)
-            if (accepted.replyTo != requestId) throw ZaraWireException(
-                        "turn reply correlation mismatch",
-                        code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_OUT_OF_ORDER,
-                    )
+            val accepted = receiveTurnAccepted(
+                active = active,
+                requestId = requestId,
+                generation = generation,
+                sessionId = sessionId,
+            )
+            acceptedTurnId = accepted.turnId
             if (correlations.complete(requestId, generation, sessionId) != CorrelationResult.Accepted) {
                 throw ZaraWireException("turn reply was stale or unknown")
             }
@@ -245,7 +231,13 @@ class ZaraTextClientActor(
 
             var assistantCompletion: TextTurnResult? = null
             while (true) {
-                when (val event = receiveMessage(active)) {
+                when (
+                    val event = receiveMessage(
+                        active,
+                        timeoutMillis = turnIdleTimeoutMillis,
+                        timeoutMessage = "ZARA/1 turn response timed out",
+                    )
+                ) {
                     is TextServerMessage.Progress -> verifyEvent(
                         event.sessionId,
                         event.turnId,
@@ -354,6 +346,15 @@ class ZaraTextClientActor(
                 }
             }
             error("unreachable")
+        } catch (error: Throwable) {
+            reportConnectionFailureIfCurrent(
+                error = error,
+                failingSession = current,
+                operation = ai.zara.app.telemetry.ZaraOperation.SUBMIT,
+                requestId = requestId,
+                turnId = acceptedTurnId,
+            )
+            throw error
         } finally {
             correlations.complete(requestId, generation, sessionId)
         }
@@ -639,6 +640,8 @@ class ZaraTextClientActor(
         error: Throwable,
         failingSession: ConnectedTextSession?,
         operation: ai.zara.app.telemetry.ZaraOperation,
+        requestId: String? = null,
+        turnId: String? = null,
     ) {
         val current = failingSession ?: return
         if (closed) return
@@ -648,15 +651,124 @@ class ZaraTextClientActor(
             error,
             operation,
             connectionGeneration = current.generation,
+            requestId = requestId,
+            turnId = turnId,
         )
         if (!ai.zara.app.telemetry.ZaraFailures.isSessionDesyncing(failure.code, failure.retryable)) return
         connectionFailureObserver?.invoke(failure)
     }
 
-    private fun receiveMessage(active: TextDealer): TextServerMessage {
+    private fun receiveTurnAccepted(
+        active: TextDealer,
+        requestId: String,
+        generation: Long,
+        sessionId: String,
+    ): TextServerMessage.TurnAccepted {
         while (true) {
-            val frames = active.receive(requestTimeoutMillis)
-                ?: throw TextRequestTimeoutException("ZARA/1 response timed out")
+            when (
+                val message = receiveMessage(
+                    active,
+                    timeoutMillis = requestTimeoutMillis,
+                    timeoutMessage = "ZARA/1 turn acceptance timed out",
+                )
+            ) {
+                is TextServerMessage.TurnAccepted -> {
+                    verifySession(message.sessionId, sessionId)
+                    if (message.replyTo == requestId) return message
+                    staleFrameObserver?.invoke("TurnAccepted", generation)
+                }
+                is TextServerMessage.ProtocolError -> {
+                    if (message.replyTo != null && message.replyTo != requestId) {
+                        message.sessionId?.let { verifySession(it, sessionId) }
+                        staleFrameObserver?.invoke("ProtocolError", generation)
+                        continue
+                    }
+                    message.sessionId?.let { verifySession(it, sessionId) }
+                    throw ZaraWireException(
+                        "turn submit failed: ${message.code}",
+                        code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_SERVER_ERROR,
+                        serverCode = message.code,
+                        retryable = message.retryable,
+                    )
+                }
+                is TextServerMessage.Progress -> drainStaleTurnFrame(
+                    "Progress",
+                    message.sessionId,
+                    generation,
+                    sessionId,
+                )
+                is TextServerMessage.AssistantDelta -> drainStaleTurnFrame(
+                    "AssistantDelta",
+                    message.sessionId,
+                    generation,
+                    sessionId,
+                )
+                is TextServerMessage.AssistantCompleted -> drainStaleTurnFrame(
+                    "AssistantCompleted",
+                    message.sessionId,
+                    generation,
+                    sessionId,
+                )
+                is TextServerMessage.TurnCompleted -> drainStaleTurnFrame(
+                    "TurnCompleted",
+                    message.sessionId,
+                    generation,
+                    sessionId,
+                )
+                is TextServerMessage.AssistantResponse -> drainStaleTurnFrame(
+                    "AssistantResponse",
+                    message.sessionId,
+                    generation,
+                    sessionId,
+                )
+                is TextServerMessage.TurnCancelled -> drainStaleTurnFrame(
+                    "TurnCancelled",
+                    message.sessionId,
+                    generation,
+                    sessionId,
+                )
+                is TextServerMessage.RuntimeError -> {
+                    verifySession(message.sessionId, sessionId)
+                    throw ZaraWireException(
+                        "server runtime error: ${message.reason}",
+                        code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_RUNTIME_ERROR,
+                        retryable = !message.fatal,
+                    )
+                }
+                is TextServerMessage.RuntimeStopped -> {
+                    verifySession(message.sessionId, sessionId)
+                    throw ZaraWireException(
+                        "server runtime stopped: ${message.reason}",
+                        code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_RUNTIME_STOPPED,
+                        retryable = true,
+                    )
+                }
+                is TextServerMessage.HelloOk -> throw ZaraWireException(
+                    "unexpected hello.ok while awaiting turn acceptance",
+                    code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_UNEXPECTED_MESSAGE,
+                )
+            }
+        }
+    }
+
+    private fun drainStaleTurnFrame(
+        messageType: String,
+        actualSessionId: String,
+        generation: Long,
+        expectedSessionId: String,
+    ) {
+        verifySession(actualSessionId, expectedSessionId)
+        staleFrameObserver?.invoke(messageType, generation)
+    }
+
+    private fun receiveMessage(
+        active: TextDealer,
+        timeoutMillis: Int = requestTimeoutMillis,
+        timeoutMessage: String = "ZARA/1 response timed out",
+    ): TextServerMessage {
+        while (true) {
+            val frames = active.receive(timeoutMillis)
+                ?: throw TextRequestTimeoutException(timeoutMessage)
             try {
                 val voiceEvent = ai.zara.app.voice.ZaraVoiceStreamCodec.decode(frames)
                 dispatchVoiceStream(voiceEvent)
