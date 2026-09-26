@@ -87,7 +87,7 @@ def test_authority_executes_in_separate_process_and_emits_exact_provenance(autho
 def test_plugin_client_contains_no_binding_registry_or_executor(authority):
     state = vars(authority.client)
 
-    assert set(state) == {"_transport", "_process", "_lock"}
+    assert set(state) == {"_transport", "_lifecycle", "_lock"}
     assert "bindings" not in state
     assert "executor" not in state
     assert "predicate" not in state
