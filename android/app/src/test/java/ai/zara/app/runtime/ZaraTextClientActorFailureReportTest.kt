@@ -235,6 +235,7 @@ class ZaraTextClientActorFailureReportTest {
 
         val failure = failures.await().last()
         assertEquals(ZaraFailureCodes.PROTOCOL_MALFORMED, failure.code)
+        assertEquals("turn_response", failure.phase)
         assertEquals("req-2", failure.requestId)
         assertEquals("turn-1", failure.turnId)
         client.close()
