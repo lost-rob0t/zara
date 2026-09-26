@@ -6,6 +6,8 @@ socket and can inject one armed failure mode into the next interaction:
   ARM MALFORMED         send a truncated/malformed multipart mid-turn
   ARM VERSION_MISMATCH  hello.ok reports an unsupported version
   ARM OUT_OF_ORDER      assistant.delta arrives before turn.accepted
+  ARM STALE_TEXT        stale prior-turn lifecycle frames precede turn.accepted
+  ARM SLOW_TURN         accepted turn stays application-quiet for >5 seconds
   ARM CLOSE             abrupt transport close mid-stream, socket rebinds
   ARM STALE             first post-reconnect frame carries the old session_id
 
@@ -53,7 +55,15 @@ def _write_fixture(path: Path, values: dict[str, str]) -> None:
         os.fsync(output.fileno())
 
 
-VALID_MODES = {"MALFORMED", "VERSION_MISMATCH", "OUT_OF_ORDER", "CLOSE", "STALE"}
+VALID_MODES = {
+    "MALFORMED",
+    "VERSION_MISMATCH",
+    "OUT_OF_ORDER",
+    "STALE_TEXT",
+    "SLOW_TURN",
+    "CLOSE",
+    "STALE",
+}
 
 
 class _SessionState:
@@ -328,6 +338,30 @@ class RecoveryFixture:
                 ),
             )
             return
+        if mode == "STALE_TEXT":
+            _trace("inject", "stale_text_before_acceptance")
+            self._send(
+                identity,
+                self._message(
+                    "turn.completed",
+                    session=state.session_id,
+                    turn="stale-voice-turn",
+                    conversation="stale-voice-conversation",
+                    seq=state.next_seq(),
+                    body={"success": True},
+                ),
+            )
+            self._send(
+                identity,
+                self._message(
+                    "assistant.response",
+                    session=state.session_id,
+                    turn="stale-voice-turn",
+                    conversation="stale-voice-conversation",
+                    seq=state.next_seq(),
+                    body={"text": "stale voice response", "truncated": False},
+                ),
+            )
         self._send(
             identity,
             self._message(
@@ -342,6 +376,9 @@ class RecoveryFixture:
             _trace("inject", "malformed")
             self.socket.send_multipart([identity, MARKER, b'{"type":"assistant.delta","trunc'])
             return
+        if mode == "SLOW_TURN":
+            _trace("inject", "slow_turn_idle", seconds=6.25)
+            time.sleep(6.25)
         self._send(
             identity,
             self._message(
