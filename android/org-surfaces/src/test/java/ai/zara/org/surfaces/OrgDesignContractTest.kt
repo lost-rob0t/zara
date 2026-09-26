@@ -70,4 +70,9 @@ class OrgDesignContractTest {
         assertTrue(workspace.contains("horizontalScroll(rememberScrollState())"))
         assertTrue(workspace.contains(".weight(1f)"))
     }
+
+    @Test fun `workspace content stays inside safe system bounds`() {
+        val workspace = source("OrgWorkspaceScreen.kt")
+        assertTrue(workspace.contains("windowInsetsPadding(WindowInsets.safeDrawing)"))
+    }
 }
