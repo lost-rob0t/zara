@@ -37,6 +37,8 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "device.action.accepted",
         "device.action.result",
         "device.action.error",
+        "device.event",
+        "phone.sms.send",
     }
 )
 
@@ -62,6 +64,8 @@ SERVER_MESSAGE_TYPES = frozenset(
         "capability.snapshot.ok",
         "device.action.request",
         "device.action.cancel",
+        "phone.sms.result",
+        "phone.event",
         "assistant.started",
         "assistant.delta",
         "assistant.completed",
@@ -140,7 +144,7 @@ _TOOL_EVENT_BODY_FIELDS = {
     "tool.cancelled": frozenset({"tool_run_id", "tool_name", "reason"}),
 }
 _TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
-DEVICE_CAPABILITIES = frozenset({"open_app", "open_uri"})
+DEVICE_CAPABILITIES = frozenset({"open_app", "open_uri", "sms_send"})
 _DEVICE_CAPABILITY_LIMIT = 32
 _DEVICE_ACTION_IDEMPOTENCY = frozenset({"at_most_once", "idempotent"})
 _DEVICE_ACTION_ERROR_CODES = frozenset(
@@ -614,6 +618,16 @@ def _validate_device_action_args(capability: str, value: Any) -> None:
         if not app:
             raise ProtocolValidationError("app must not be empty")
         return
+    if capability == "sms_send":
+        if set(value) != {"to", "text"}:
+            raise ProtocolValidationError("sms_send args have invalid fields")
+        destination = _bounded_safe_text("to", value["to"], max_bytes=128)
+        text = _bounded_safe_text("text", value["text"], max_bytes=4096)
+        if not destination:
+            raise ProtocolValidationError("to must not be empty")
+        if not text:
+            raise ProtocolValidationError("text must not be empty")
+        return
     raise ProtocolValidationError("unknown device capability")
 
 
@@ -718,6 +732,69 @@ def _validate_device_envelope(message: ProtocolMessage) -> None:
             raise ProtocolValidationError("unknown device action error code")
         if "message" in body:
             _bounded_safe_text("message", body["message"], max_bytes=256)
+        return
+
+    if message.type == "device.event":
+        body = _validate_device_common(message)
+        if message.reply_to is not None or message.trace_id is not None:
+            raise ProtocolValidationError("device.event has invalid correlation")
+        kind = body.get("kind")
+        expected = (
+            {"event_id", "kind", "remote", "text"}
+            if kind == "sms.received"
+            else {"event_id", "kind", "remote"}
+            if kind == "call.suspected_spam"
+            else None
+        )
+        if expected is None or set(body) != expected:
+            raise ProtocolValidationError("device.event body has invalid fields")
+        _validate_ascii_token("event_id", body["event_id"], max_bytes=128)
+        _bounded_safe_text("remote", body["remote"], max_bytes=128)
+        if "text" in body:
+            _bounded_safe_text("text", body["text"], max_bytes=4096)
+        return
+
+    if message.type == "phone.sms.send":
+        body = _validate_device_common(message)
+        if message.reply_to is not None or message.trace_id is not None:
+            raise ProtocolValidationError("phone.sms.send has invalid correlation")
+        if set(body) != {"to", "text"}:
+            raise ProtocolValidationError("phone.sms.send body has invalid fields")
+        destination = _bounded_safe_text("to", body["to"], max_bytes=128)
+        text = _bounded_safe_text("text", body["text"], max_bytes=4096)
+        if not destination:
+            raise ProtocolValidationError("to must not be empty")
+        if not text:
+            raise ProtocolValidationError("text must not be empty")
+        return
+
+    if message.type == "phone.sms.result":
+        body = _validate_device_common(message)
+        if message.reply_to is None or message.trace_id is not None:
+            raise ProtocolValidationError("phone.sms.result has invalid correlation")
+        if set(body) not in ({"outcome"}, {"outcome", "code"}):
+            raise ProtocolValidationError("phone.sms.result body has invalid fields")
+        if body["outcome"] not in {"completed", "failed"}:
+            raise ProtocolValidationError("phone.sms.result outcome is invalid")
+        if "code" in body:
+            _validate_ascii_token("code", body["code"], max_bytes=64)
+        return
+
+    if message.type == "phone.event":
+        body = _validate_device_common(message)
+        if message.reply_to is not None or message.trace_id is not None:
+            raise ProtocolValidationError("phone.event has invalid correlation")
+        if set(body) != {"event_id", "kind", "remote", "text", "greeting", "actions"}:
+            raise ProtocolValidationError("phone.event body has invalid fields")
+        if body["kind"] not in {"sms.received", "call.suspected_spam"}:
+            raise ProtocolValidationError("phone.event kind is invalid")
+        _validate_ascii_token("event_id", body["event_id"], max_bytes=128)
+        _bounded_safe_text("remote", body["remote"], max_bytes=128)
+        _bounded_safe_text("text", body["text"], max_bytes=4096)
+        _bounded_safe_text("greeting", body["greeting"], max_bytes=256)
+        if body["actions"] != ["alert", "voice_takeover"]:
+            raise ProtocolValidationError("phone.event actions are invalid")
+        return
 
 
 def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> ProtocolMessage:

@@ -130,10 +130,13 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             "device.action.accepted",
             "device.action.result",
             "device.action.error",
+            "device.event",
         }:
             return Capability.SESSION_BASIC
         if message_type == "runtime.status":
             return Capability.RUNTIME_STATUS
+        if message_type == "phone.sms.send":
+            return Capability.PHONE_SEND_SMS
         if message_type in {
             "turn.submit",
             "audio.input.start",

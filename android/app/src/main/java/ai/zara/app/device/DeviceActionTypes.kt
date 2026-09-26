@@ -3,6 +3,7 @@ package ai.zara.app.device
 sealed interface DeviceActionArguments {
     data class OpenUri(val uri: String) : DeviceActionArguments
     data class OpenApp(val app: String) : DeviceActionArguments
+    data class SendSms(val to: String, val text: String) : DeviceActionArguments
     data class AppSearch(val app: String, val query: String) : DeviceActionArguments
 }
 
