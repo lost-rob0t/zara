@@ -61,3 +61,10 @@
 ** Outcome
 - Delivered: one installable, standalone APK per Org app system (Org flagship + Editor/Todo/Reminder/Timer/Roam/Graph/Home) on the Zara latest release page, each working without any other fleet app, the Org Sync provider, or the Zara phone app.
 - Remaining follow-ups (not in this delivery): typed IPC/deep-link integration and full share->capture->index->sync->desktop flow (#1177 leftovers), per-app plugin systems (#1056 leftovers), Org Sync provider APK (SHARED workspace mode still optional), zara-store (#1018).
+
+** Redesign on the Zara design KB (2026-09-25)
+- Consumed authority: android/DESIGN.md (frozen) + ai.zara.ui.theme token layer + epic #648; operator direction "work on redesign following zara design kb".
+- TDD: OrgDesignContractTest red (5 failures: hard-coded colors, missing token mapping, missing luminous components) -> implementation -> green.
+- PR #1488 merged at 0a921e34 (all 8 checks green): org-surfaces now renders on ZaraSemanticTokens via LocalOrgTokens + orgColorScheme; OrgPanel/OrgStatusDot/OrgMutedText components; no hard-coded colors in org surfaces; six themes render the fleet without forks.
+- Gap found: org-android-ui.yml paths filter predated the fleet split, so #1488 shipped without exact-head org screenshot evidence. PR #1489 widened the filter to all nine org modules; its own evidence run caught a real redesign regression ("Control is not reachable after scrolling: Roam" — tab underline fillMaxWidth made every tab full-row-width). Fixed with IntrinsicSize.Max; merged at 21f4169d with fresh exact-head screenshot evidence of the redesigned flagship (all 9 checks green at 95942072).
+- Local screenshots note: the nix android SDK ships no emulator binary, so per-app screenshots come from CI artifacts (org-android-ui-evidence-*); desktop evidence from the dual-surface gate.
