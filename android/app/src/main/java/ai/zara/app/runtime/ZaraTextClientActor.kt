@@ -696,26 +696,20 @@ class ZaraTextClientActor(
                         retryable = message.retryable,
                     )
                 }
-                is TextServerMessage.Progress -> drainStaleTurnFrame(
+                is TextServerMessage.Progress -> unexpectedBeforeTurnAcceptance(
                     "Progress",
                     message.sessionId,
-                    generation,
                     sessionId,
-                    ++interleavedFrames,
                 )
-                is TextServerMessage.AssistantDelta -> drainStaleTurnFrame(
+                is TextServerMessage.AssistantDelta -> unexpectedBeforeTurnAcceptance(
                     "AssistantDelta",
                     message.sessionId,
-                    generation,
                     sessionId,
-                    ++interleavedFrames,
                 )
-                is TextServerMessage.AssistantCompleted -> drainStaleTurnFrame(
+                is TextServerMessage.AssistantCompleted -> unexpectedBeforeTurnAcceptance(
                     "AssistantCompleted",
                     message.sessionId,
-                    generation,
                     sessionId,
-                    ++interleavedFrames,
                 )
                 is TextServerMessage.TurnCompleted -> drainStaleTurnFrame(
                     "TurnCompleted",
@@ -760,6 +754,18 @@ class ZaraTextClientActor(
                 )
             }
         }
+    }
+
+    private fun unexpectedBeforeTurnAcceptance(
+        messageType: String,
+        actualSessionId: String,
+        expectedSessionId: String,
+    ): Nothing {
+        verifySession(actualSessionId, expectedSessionId)
+        throw ZaraWireException(
+            "unexpected $messageType before turn.accepted",
+            code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_UNEXPECTED_MESSAGE,
+        )
     }
 
     private fun drainStaleTurnFrame(
