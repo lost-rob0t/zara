@@ -352,6 +352,7 @@ class ZaraTextClientActor(
                 error = error,
                 failingSession = current,
                 operation = ai.zara.app.telemetry.ZaraOperation.SUBMIT,
+                phase = if (acceptedTurnId == null) "turn_acceptance" else "turn_response",
                 requestId = requestId,
                 turnId = acceptedTurnId,
             )
@@ -641,6 +642,7 @@ class ZaraTextClientActor(
         error: Throwable,
         failingSession: ConnectedTextSession?,
         operation: ai.zara.app.telemetry.ZaraOperation,
+        phase: String? = null,
         requestId: String? = null,
         turnId: String? = null,
     ) {
@@ -651,6 +653,7 @@ class ZaraTextClientActor(
         val failure = ai.zara.app.telemetry.ZaraFailures.classify(
             error,
             operation,
+            phase = phase,
             connectionGeneration = current.generation,
             requestId = requestId,
             turnId = turnId,
