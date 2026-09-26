@@ -58,4 +58,16 @@ class OrgDesignContractTest {
         assertTrue(source("TimersSurface.kt").contains("tokens.success"))
         assertTrue(source("GraphSurface.kt").contains("tokens.border"))
     }
+
+    @Test fun `workspace establishes readable themed content color`() {
+        val workspace = source("OrgWorkspaceScreen.kt")
+        assertTrue(workspace.contains("Surface("))
+        assertTrue(workspace.contains("contentColor = MaterialTheme.colorScheme.onBackground"))
+    }
+
+    @Test fun `flagship tab strip scrolls without crushing labels`() {
+        val workspace = source("OrgWorkspaceScreen.kt")
+        assertTrue(workspace.contains("horizontalScroll(rememberScrollState())"))
+        assertTrue(workspace.contains(".weight(1f)"))
+    }
 }

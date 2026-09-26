@@ -5,6 +5,8 @@ import ai.zara.org.storage.OrgHomeSelection
 import ai.zara.org.storage.OrgRepository
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -113,69 +116,80 @@ fun OrgWorkspaceScreen(title: String, tabs: List<OrgSurfaceTab>) {
     val tokens = LocalOrgTokens.current
     val connected = model.repository != null
 
-    Column(
+    Surface(
         modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground,
     ) {
-        Row {
-            OrgStatusDot(color = if (connected) tokens.success else tokens.warning)
-            Text(
-                title,
-                modifier = Modifier.padding(start = 8.dp),
-                style = MaterialTheme.typography.headlineSmall,
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row {
+                OrgStatusDot(color = if (connected) tokens.success else tokens.warning)
+                Text(
+                    title,
+                    modifier = Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+            }
+            OrgMutedText(
+                model.status.ifBlank {
+                    when (model.home.mode) {
+                        ai.zara.org.storage.OrgHomeMode.SHARED -> "Shared canonical Org workspace"
+                        ai.zara.org.storage.OrgHomeMode.CUSTOM_SAF -> "Custom canonical Org workspace"
+                    }
+                },
             )
-        }
-        OrgMutedText(
-            model.status.ifBlank {
-                when (model.home.mode) {
-                    ai.zara.org.storage.OrgHomeMode.SHARED -> "Shared canonical Org workspace"
-                    ai.zara.org.storage.OrgHomeMode.CUSTOM_SAF -> "Custom canonical Org workspace"
-                }
-            },
-        )
 
-        Row {
-            if (tabs.size > 1) {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    tabs.forEachIndexed { index, tab ->
-                        val active = index == selected
-                        Column(modifier = Modifier.width(IntrinsicSize.Max)) {
-                            TextButton(onClick = { selected = index }) {
-                                Text(
-                                    tab.name,
-                                    color = if (active) {
-                                        MaterialTheme.colorScheme.secondary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
+            Row {
+                if (tabs.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        tabs.forEachIndexed { index, tab ->
+                            val active = index == selected
+                            Column(modifier = Modifier.width(IntrinsicSize.Max)) {
+                                TextButton(onClick = { selected = index }) {
+                                    Text(
+                                        tab.name,
+                                        color = if (active) {
+                                            MaterialTheme.colorScheme.secondary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(if (active) tokens.borderActive else Color.Transparent),
                                 )
                             }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(1.dp)
-                                    .background(if (active) tokens.borderActive else Color.Transparent),
-                            )
                         }
                     }
                 }
+                TextButton(onClick = { model.refresh() }, enabled = connected) {
+                    Text("Refresh")
+                }
             }
-            TextButton(onClick = { model.refresh() }, enabled = connected) {
-                Text("Refresh")
-            }
-        }
 
-        if (model.repository == null) {
-            OrgWorkspaceUnavailable(
-                shared = model.home.mode == ai.zara.org.storage.OrgHomeMode.SHARED,
-                onChooseDirectory = model.pickDirectory,
-                onUseShared = model.useShared,
-            )
-        } else {
-            activeTab.content(model)
+            if (model.repository == null) {
+                OrgWorkspaceUnavailable(
+                    shared = model.home.mode == ai.zara.org.storage.OrgHomeMode.SHARED,
+                    onChooseDirectory = model.pickDirectory,
+                    onUseShared = model.useShared,
+                )
+            } else {
+                activeTab.content(model)
+            }
         }
     }
 }
