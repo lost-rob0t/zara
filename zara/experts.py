@@ -363,6 +363,42 @@ class ExpertRegistry(_impl.ExpertRegistry):
             idempotency_key,
         )
         if durable_replay is not None:
+            if durable_replay.verdict is ExpertVerdict.SUCCEEDED:
+                record = self._resolve_record_unlocked(handle)
+                descriptor = self._resolve_active_state_unlocked(record)
+                operation = next(
+                    (
+                        item
+                        for item in descriptor.operations
+                        if item.operation_id == expert_operation
+                    ),
+                    None,
+                )
+                if operation is None:
+                    raise ExpertUnsupportedOperationError(
+                        f"expert {descriptor.expert_id!r} does not declare operation "
+                        f"{expert_operation!r}"
+                    )
+                if operation.output_fields:
+                    output_contract = replace(
+                        operation,
+                        input_fields=operation.output_fields,
+                    )
+                    try:
+                        self._validate_input_against_operation(
+                            output_contract,
+                            dict(durable_replay.data),
+                        )
+                    except ExpertInvalidInputError as error:
+                        durable_replay = replace(
+                            durable_replay,
+                            verdict=ExpertVerdict.UNKNOWN,
+                            data={},
+                            evidence_refs=(),
+                            error_code=ExpertErrorCode.INVALID_INPUT,
+                            error_message=f"output schema violation: {error}",
+                        )
+
             replay_usage = durable_replay.usage
             replay_model_calls = (
                 replay_usage.get("model_calls")
@@ -751,6 +787,30 @@ class ExpertRegistry(_impl.ExpertRegistry):
                     idempotency_key,
                 )
             raise ExpertDeadlineExceededError(deadline_message)
+
+        if durable_claim is not None and not result.replayed:
+            raw_terminal = raw_outcome.get("value")
+            raw_data = (
+                raw_terminal.get("data")
+                if isinstance(raw_terminal, Mapping)
+                else None
+            )
+            if isinstance(raw_data, Mapping):
+                try:
+                    json.dumps(
+                        dict(raw_data),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    )
+                except (TypeError, ValueError):
+                    # Preserve the handler's raw terminal data long enough for the
+                    # existing durable journal to persist known usage/effect
+                    # accounting fail-closed and raise the canonical JSON error.
+                    return self._commit_durable_result(
+                        durable_claim,
+                        replace(result, data=dict(raw_data)),
+                    )
 
         return self._commit_durable_result(durable_claim, result)
 
