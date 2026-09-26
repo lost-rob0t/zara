@@ -330,7 +330,7 @@ def capture_with_text(device: Device, name: str, text_evidence: list[dict]) -> N
 
 def connect_fixture_through_saf(device: Device) -> None:
     device.adb("shell", "am", "force-stop", PACKAGE)
-    device.launch_surface(COMPONENT, "Org")
+    device.launch_surface(COMPONENT, "Todo")
     device.await_contains("Shared Org workspace is unavailable")
     _tap_app_control_through_launcher_anr(device, "Choose Org directory")
     _await_picker_action(device, "Use this folder")
