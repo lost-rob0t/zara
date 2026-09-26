@@ -6,7 +6,12 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- The Org fleet now uses a compact knowledge-workspace shell with drawer navigation and a full-page editor inspired by Logseq: rendered blocks edit in place, raw Org markup remains available as a page mode, and a validated user-owned `config.pl` exposes typed full-app policy without bypassing Zara's capability approvals.
 - The Org app fleet now renders on the canonical Zara semantic token layer: the Outrun theme's near-black ground with restrained magenta/cyan accents, thin luminous panel outlines, and small status lights for workspace connection, reminder urgency, and timer state. No Org surface hard-codes theme colors, so the whole fleet inherits the shared theme system (Outrun, StarIntel, Midnight, Terminal, Light, System) without divergent implementations.
+
+### Fixed
+
+- Org app text now remains readable on dark themes, and the flagship's tab strip scrolls horizontally without crushing or hiding later surface labels.
 
 ## 0.3.1-alpha
 

@@ -13,9 +13,19 @@ import re
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 REQUIRED_STATES = {
     "org-todo",
+    "org-drawer",
     "org-roam",
     "org-daily-today",
     "org-daily-previous",
+    "org-reminders",
+    "org-timers",
+    "org-graph",
+    "org-editor-pages",
+    "org-editor-page",
+    "org-editor-block-edit",
+    "org-editor-raw",
+    "org-editor-config",
+    "org-home",
 }
 EXPECTED_FILES = {
     "screenshot": {state: f"{state}.png" for state in REQUIRED_STATES},
@@ -115,6 +125,24 @@ def validate(source_sha: str, manifest_path: Path) -> None:
             raise EvidenceError(f"Daily-today text twin is missing {expected!r}")
     if "Separate daily file retained" not in previous_text:
         raise EvidenceError("Daily-previous text twin does not prove a separate prior Org file")
+
+    expected_by_state = {
+        "org-drawer": ("Knowledge workspace", "Editor", "Home"),
+        "org-reminders": ("Acceptance reminder", "SCHEDULED"),
+        "org-timers": ("Acceptance timer", "Start", "Reset"),
+        "org-graph": ("3 nodes", "id: links"),
+        "org-editor-pages": ("Pages", "tasks.org"),
+        "org-editor-page": ("Page", "Raw", "config.pl", "Acceptance Tasks"),
+        "org-editor-block-edit": ("Editing block", "Done", "Cancel"),
+        "org-editor-raw": ("Raw Org markup", "Acceptance task"),
+        "org-editor-config": ("Typed app policy facts", "Validate and save policy"),
+        "org-home": ("Org apps", "Recent daily pages"),
+    }
+    for state, expected_values in expected_by_state.items():
+        text = (root / text_evidence[state]["file"]).read_text(encoding="utf-8")
+        for expected in expected_values:
+            if expected not in text:
+                raise EvidenceError(f"{state} text twin is missing {expected!r}")
 
 
 def main() -> None:
