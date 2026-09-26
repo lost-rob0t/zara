@@ -11,6 +11,13 @@ import sys
 from typing import Any
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from zara.desktop.org_evidence import OrgEvidenceError, validate_org_evidence
+
+
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -99,6 +106,15 @@ def validate_desktop(manifest_path: Path, source_sha: str) -> int:
             raise EvidenceError(
                 f"desktop screenshot hash mismatch for {state}: expected {expected_hash}, got {actual_hash}"
             )
+
+    try:
+        validate_org_evidence(
+            manifest_path.parent,
+            expected_source_commit=source_sha,
+        )
+    except OrgEvidenceError as error:
+        raise EvidenceError(f"desktop Org evidence invalid: {error}") from error
+
     return len(fixtures)
 
 
