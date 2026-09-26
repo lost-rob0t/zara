@@ -156,6 +156,91 @@ class ZaraTextClientActorFailureReportTest {
         client.close()
     }
 
+
+    @Test fun `stale voice lifecycle frames before a new turn acceptance are drained by correlation`() {
+        val dealer = QueueingTextDealer(
+            listOf(
+                helloOk("hello-ok-1", "req-1", "session-1", 2),
+                capabilityAck("caps-ok-1", "req-caps-1", "session-1", 3),
+                server("{\"body\":{\"success\":true},\"conversation_id\":\"voice-conversation\",\"id\":\"stale-done\",\"payload_count\":0,\"seq\":9,\"session_id\":\"session-1\",\"timestamp_ns\":4,\"turn_id\":\"voice-turn\",\"type\":\"turn.completed\"}"),
+                server("{\"body\":{\"text\":\"old voice answer\",\"truncated\":false},\"conversation_id\":\"voice-conversation\",\"id\":\"stale-response\",\"payload_count\":0,\"seq\":10,\"session_id\":\"session-1\",\"timestamp_ns\":5,\"turn_id\":\"voice-turn\",\"type\":\"assistant.response\"}"),
+                server("{\"conversation_id\":\"conversation-2\",\"id\":\"accepted-2\",\"payload_count\":0,\"reply_to\":\"req-2\",\"session_id\":\"session-1\",\"timestamp_ns\":6,\"turn_id\":\"turn-2\",\"type\":\"turn.accepted\"}"),
+                server("{\"body\":{\"text\":\"fresh answer\",\"success\":true},\"conversation_id\":\"conversation-2\",\"id\":\"assistant-done-2\",\"payload_count\":0,\"seq\":1,\"session_id\":\"session-1\",\"timestamp_ns\":7,\"turn_id\":\"turn-2\",\"type\":\"assistant.completed\"}"),
+                server("{\"body\":{\"success\":true},\"conversation_id\":\"conversation-2\",\"id\":\"turn-done-2\",\"payload_count\":0,\"seq\":2,\"session_id\":\"session-1\",\"timestamp_ns\":8,\"turn_id\":\"turn-2\",\"type\":\"turn.completed\"}"),
+            )
+        )
+        val stale = mutableListOf<String>()
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = sequenceOf("req-1", "req-caps-1", "req-2").iterator(),
+            timestamps = sequenceOf(1L, 2L, 3L).iterator(),
+        )
+        client.setStaleFrameObserver { type, _ -> stale += type }
+        client.connect(ServerProfile.create("tcp://zara.example:7731"), 1).get()
+
+        val result = client.submitText(1, "session-1", null, "new turn").get()
+
+        assertEquals("fresh answer", result.text)
+        assertEquals("turn-2", result.turnId)
+        assertTrue(stale.contains("TurnCompleted"))
+        assertTrue(stale.contains("AssistantResponse"))
+        client.close()
+    }
+
+    @Test fun `assistant completion uses the turn idle budget instead of the short command ack timeout`() {
+        val dealer = QueueingTextDealer(
+            listOf(
+                helloOk("hello-ok-1", "req-1", "session-1", 2),
+                capabilityAck("caps-ok-1", "req-caps-1", "session-1", 3),
+                server("{\"conversation_id\":\"conversation-1\",\"id\":\"accepted-1\",\"payload_count\":0,\"reply_to\":\"req-2\",\"session_id\":\"session-1\",\"timestamp_ns\":4,\"turn_id\":\"turn-1\",\"type\":\"turn.accepted\"}"),
+                server("{\"body\":{\"text\":\"slow answer\",\"success\":true},\"conversation_id\":\"conversation-1\",\"id\":\"assistant-done\",\"payload_count\":0,\"seq\":1,\"session_id\":\"session-1\",\"timestamp_ns\":5,\"turn_id\":\"turn-1\",\"type\":\"assistant.completed\"}"),
+                server("{\"body\":{\"success\":true},\"conversation_id\":\"conversation-1\",\"id\":\"turn-done\",\"payload_count\":0,\"seq\":2,\"session_id\":\"session-1\",\"timestamp_ns\":6,\"turn_id\":\"turn-1\",\"type\":\"turn.completed\"}"),
+            )
+        )
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = sequenceOf("req-1", "req-caps-1", "req-2").iterator(),
+            timestamps = sequenceOf(1L, 2L, 3L).iterator(),
+            requestTimeoutMillis = 25,
+            turnIdleTimeoutMillis = 250,
+        )
+        client.connect(ServerProfile.create("tcp://zara.example:7731"), 1).get()
+
+        val result = client.submitText(1, "session-1", null, "slow turn").get()
+
+        assertEquals("slow answer", result.text)
+        assertEquals(listOf(250, 250), dealer.receiveTimeouts.takeLast(2))
+        client.close()
+    }
+
+    @Test fun `submit failure reports the correlated request and accepted turn ids`() {
+        val dealer = QueueingTextDealer(
+            listOf(
+                helloOk("hello-ok-1", "req-1", "session-1", 2),
+                capabilityAck("caps-ok-1", "req-caps-1", "session-1", 3),
+                server("{\"conversation_id\":\"conversation-1\",\"id\":\"accepted-1\",\"payload_count\":0,\"reply_to\":\"req-2\",\"session_id\":\"session-1\",\"timestamp_ns\":4,\"turn_id\":\"turn-1\",\"type\":\"turn.accepted\"}"),
+                listOf("ZARA/1".encodeToByteArray(), byteArrayOf(0x7f)),
+            )
+        )
+        val client = ZaraTextClientActor(
+            dealerFactory = TextDealerFactory { dealer },
+            requestIds = sequenceOf("req-1", "req-caps-1", "req-2").iterator(),
+            timestamps = sequenceOf(1L, 2L, 3L).iterator(),
+        )
+        val failures = TypedFailureRecorder()
+        client.setConnectionFailureObserver(failures::record)
+        client.connect(ServerProfile.create("tcp://zara.example:7731"), 1).get()
+
+        assertFutureFails { client.submitText(1, "session-1", null, "explode").get() }
+
+        val failure = failures.await().last()
+        assertEquals(ZaraFailureCodes.PROTOCOL_MALFORMED, failure.code)
+        assertEquals("turn_response", failure.phase)
+        assertEquals("req-2", failure.requestId)
+        assertEquals("turn-1", failure.turnId)
+        client.close()
+    }
+
     private fun assertFutureFails(block: () -> Unit): Throwable {
         try {
             block()
@@ -225,8 +310,12 @@ private class QueueingTextDealer(responses: List<List<ByteArray>>) : TextDealer 
         sent += frames.map(ByteArray::copyOf)
     }
 
-    override fun receive(timeoutMillis: Int): List<ByteArray>? =
-        if (responses.isEmpty()) null else responses.poll()
+    val receiveTimeouts = mutableListOf<Int>()
+
+    override fun receive(timeoutMillis: Int): List<ByteArray>? {
+        receiveTimeouts += timeoutMillis
+        return if (responses.isEmpty()) null else responses.poll()
+    }
 
     override fun close() {
         closed = true

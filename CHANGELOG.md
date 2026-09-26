@@ -11,6 +11,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ## 0.3.1-alpha
 
 ### Fixed
+- Android Remote now drains stale voice-turn lifecycle frames by request/session correlation before accepting a new text turn, uses a separate long-running turn idle budget instead of the short command-ack timeout, and preserves request/turn IDs in typed failure diagnostics so a slow response no longer masquerades as an unexplained transport disconnect.
 
 - The 0.3.0-alpha release ships with its matching changelog section embedded, so the first-launch What's-new overlay now shows the Org app fleet notes instead of finding no section for the running version. This patch republishes the same Org app fleet with the corrected in-app changelog and the CI dex-merge heap fix.
 
