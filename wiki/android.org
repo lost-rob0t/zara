@@ -232,6 +232,9 @@ and retryability when present.
 
 Invariants:
 
+- handshake and =turn.accepted= retain a five-second response deadline, while
+  an accepted text turn allows up to 30 minutes between generation events so
+  complex work is not misclassified as a dead transport;
 - a failed frame can never leave the client in a fake-connected state;
   session-desyncing failures collapse the connection into the bounded
   reconnect with a typed reason;

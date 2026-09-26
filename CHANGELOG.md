@@ -28,6 +28,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android remote turns keep the strict five-second handshake and acceptance deadline but allow up to 30 minutes between accepted generation events, so complex model work no longer disconnects a healthy authenticated session after five seconds.
 - Android embedding preferences now use one application-owned path with recoverable storage errors. Existing directories no longer cause saves to fail, valid legacy settings remain active when migration cannot finish, and file-access or cleanup failures are reported instead of escaping to the UI as crashes.
 - Desktop pure-symbolic project switches now fence stale clarification, discourse, expert, and verified-fact context before the next turn, matching project-scoped Android semantics without enabling provider or model fallback.
 - Android remote sessions no longer break after a successful voice turn: the client now decodes the server's `voice.speech.started`/`voice.speech.ended` markers and the legal `turn.cancelled`/`runtime.error`/`runtime.stopped` lifecycle messages it previously rejected as protocol errors, and interleaved text frames no longer kill the voice stream.
