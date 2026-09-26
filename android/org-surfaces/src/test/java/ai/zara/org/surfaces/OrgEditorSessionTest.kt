@@ -1,5 +1,6 @@
 package ai.zara.org.surfaces
 
+import ai.zara.org.core.OrgPageParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -47,5 +48,16 @@ class OrgEditorSessionTest {
 
         assertFalse(settled.dirty)
         assertEquals("* DONE thing", settled.originalText)
+    }
+
+    @Test fun `editing one rendered block preserves every other source byte`() {
+        val source = "#+title: Page\n* One\nBody one\n* Two\nBody two"
+        val block = OrgPageParser.parse(source).blocks.first()
+        val session = OrgEditorSessions.open("page.org", source)
+
+        val updated = OrgEditorSessions.replaceBlock(session, block, "* One edited\nBody one\n")
+
+        assertEquals("#+title: Page\n* One edited\nBody one\n* Two\nBody two", updated.draft)
+        assertEquals(source, updated.originalText)
     }
 }

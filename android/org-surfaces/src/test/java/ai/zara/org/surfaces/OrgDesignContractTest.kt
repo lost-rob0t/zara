@@ -65,14 +65,25 @@ class OrgDesignContractTest {
         assertTrue(workspace.contains("contentColor = MaterialTheme.colorScheme.onBackground"))
     }
 
-    @Test fun `flagship tab strip scrolls without crushing labels`() {
+    @Test fun `workspace uses a compact drawer instead of a crowded tab strip`() {
         val workspace = source("OrgWorkspaceScreen.kt")
-        assertTrue(workspace.contains("horizontalScroll(rememberScrollState())"))
-        assertTrue(workspace.contains(".weight(1f)"))
+        assertTrue(workspace.contains("ModalNavigationDrawer("))
+        assertTrue(workspace.contains("NavigationDrawerItem("))
+        assertFalse(workspace.contains("horizontalScroll("))
     }
 
     @Test fun `workspace content stays inside safe system bounds`() {
         val workspace = source("OrgWorkspaceScreen.kt")
         assertTrue(workspace.contains("windowInsetsPadding(WindowInsets.safeDrawing)"))
+    }
+
+    @Test fun `editor provides full page block raw and config workspaces`() {
+        val editor = source("EditorSurface.kt")
+        assertTrue(editor.contains("OrgPageParser.parse("))
+        assertTrue(editor.contains("EditorMode.PAGE"))
+        assertTrue(editor.contains("EditorMode.RAW"))
+        assertTrue(editor.contains("EditorMode.CONFIG"))
+        assertTrue(editor.contains("OrgAppPolicy.parse("))
+        assertTrue(editor.contains("fillMaxSize()"))
     }
 }

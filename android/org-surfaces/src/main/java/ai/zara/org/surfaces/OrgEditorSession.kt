@@ -1,5 +1,8 @@
 package ai.zara.org.surfaces
 
+import ai.zara.org.core.OrgPageBlock
+import ai.zara.org.core.OrgPageParser
+
 data class OrgEditorSession(
     val path: String,
     val originalText: String,
@@ -22,4 +25,12 @@ object OrgEditorSessions {
 
     fun settle(session: OrgEditorSession, savedText: String): OrgEditorSession =
         OrgEditorSession(session.path, savedText, savedText)
+
+    fun replaceBlock(
+        session: OrgEditorSession,
+        block: OrgPageBlock,
+        replacement: String,
+    ): OrgEditorSession = session.withDraft(
+        OrgPageParser.replaceBlock(session.draft, block, replacement),
+    )
 }

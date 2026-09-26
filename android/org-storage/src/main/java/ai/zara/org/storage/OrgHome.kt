@@ -14,6 +14,7 @@ import java.time.ZoneId
 interface OrgRepository {
     fun listOrgFiles(): List<OrgFileRef>
     fun read(file: OrgFileRef): String
+    fun readRelative(relativePath: String): String?
     fun write(file: OrgFileRef, text: String)
     fun writeRelative(relativePath: String, text: String): OrgFileRef
     fun appendAgendaCapture(text: String, relativePath: String = "agenda/inbox.org"): OrgFileRef
@@ -214,6 +215,12 @@ class SharedOrgRepository(
     override fun read(file: OrgFileRef): String =
         resolver.openInputStream(file.uri)?.bufferedReader()?.use { it.readText() }
             ?: error("Unable to read ${file.relativePath}")
+
+    override fun readRelative(relativePath: String): String? = runCatching {
+        resolver.openInputStream(SharedOrgHomeContract.fileUri(relativePath))
+            ?.bufferedReader()
+            ?.use { it.readText() }
+    }.getOrNull()
 
     override fun write(file: OrgFileRef, text: String) {
         writeText(file.relativePath, text)

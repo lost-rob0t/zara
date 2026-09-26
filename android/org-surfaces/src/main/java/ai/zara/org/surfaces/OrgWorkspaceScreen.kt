@@ -4,42 +4,47 @@ import ai.zara.org.storage.OrgHome
 import ai.zara.org.storage.OrgHomeSelection
 import ai.zara.org.storage.OrgRepository
 import android.content.Context
-import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Button
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import ai.zara.org.core.OrgTask
 import ai.zara.org.core.OrgWorkspaceProjection
 import ai.zara.org.core.OrgWorkspaceProjector
+import kotlinx.coroutines.launch
 
 class OrgWorkspaceModel(
     val context: Context,
@@ -118,81 +123,103 @@ fun OrgWorkspaceScreen(title: String, tabs: List<OrgSurfaceTab>) {
     val activeTab = tabs[selected.coerceAtLeast(0).coerceAtMost(tabs.lastIndex)]
     val tokens = LocalOrgTokens.current
     val connected = model.repository != null
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
 
-    Surface(
-        modifier = Modifier
-            .fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
-        contentColor = MaterialTheme.colorScheme.onBackground,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row {
-                OrgStatusDot(color = if (connected) tokens.success else tokens.warning)
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = tabs.size > 1,
+        drawerContent = {
+            ModalDrawerSheet {
+                Spacer(Modifier.height(24.dp))
                 Text(
                     title,
-                    modifier = Modifier.padding(start = 8.dp),
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
                     style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
                 )
+                OrgMutedText(
+                    "Knowledge workspace",
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                )
+                Spacer(Modifier.height(16.dp))
+                tabs.forEachIndexed { index, tab ->
+                    NavigationDrawerItem(
+                        label = { Text(tab.name) },
+                        selected = index == selected,
+                        onClick = {
+                            selected = index
+                            scope.launch { drawerState.close() }
+                        },
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
             }
-            OrgMutedText(
-                model.status.ifBlank {
-                    when (model.home.mode) {
-                        ai.zara.org.storage.OrgHomeMode.SHARED -> "Shared canonical Org workspace"
-                        ai.zara.org.storage.OrgHomeMode.CUSTOM_SAF -> "Custom canonical Org workspace"
-                    }
-                },
-            )
-
-            Row {
-                if (tabs.size > 1) {
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        tabs.forEachIndexed { index, tab ->
-                            val active = index == selected
-                            Column(modifier = Modifier.width(IntrinsicSize.Max)) {
-                                TextButton(onClick = { selected = index }) {
-                                    Text(
-                                        tab.name,
-                                        color = if (active) {
-                                            MaterialTheme.colorScheme.secondary
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(1.dp)
-                                        .background(if (active) tokens.borderActive else Color.Transparent),
-                                )
-                            }
+        },
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.onBackground,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (tabs.size > 1) {
+                        TextButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Text("Menu")
                         }
                     }
+                    OrgStatusDot(color = if (connected) tokens.success else tokens.warning)
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 10.dp),
+                    ) {
+                        Text(
+                            activeTab.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        OrgMutedText(
+                            model.status.ifBlank {
+                                when (model.home.mode) {
+                                    ai.zara.org.storage.OrgHomeMode.SHARED -> "Shared Org workspace"
+                                    ai.zara.org.storage.OrgHomeMode.CUSTOM_SAF -> "Custom Org workspace"
+                                }
+                            },
+                        )
+                    }
+                    TextButton(onClick = { model.refresh() }, enabled = connected) {
+                        Text("Refresh")
+                    }
                 }
-                TextButton(onClick = { model.refresh() }, enabled = connected) {
-                    Text("Refresh")
-                }
-            }
+                HorizontalDivider(color = tokens.border)
 
-            if (model.repository == null) {
-                OrgWorkspaceUnavailable(
-                    shared = model.home.mode == ai.zara.org.storage.OrgHomeMode.SHARED,
-                    onChooseDirectory = model.pickDirectory,
-                    onUseShared = model.useShared,
-                )
-            } else {
-                activeTab.content(model)
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    if (model.repository == null) {
+                        OrgWorkspaceUnavailable(
+                            shared = model.home.mode == ai.zara.org.storage.OrgHomeMode.SHARED,
+                            onChooseDirectory = model.pickDirectory,
+                            onUseShared = model.useShared,
+                        )
+                    } else {
+                        activeTab.content(model)
+                    }
+                }
             }
         }
     }

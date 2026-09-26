@@ -35,6 +35,12 @@ class OrgTreeRepository(
         resolver.openInputStream(file.uri)?.bufferedReader()?.use { it.readText() }
             ?: error("Unable to read ${file.relativePath}")
 
+    override fun readRelative(relativePath: String): String? {
+        val target = findFile(relativePath) ?: return null
+        return resolver.openInputStream(target.uri)?.bufferedReader()?.use { it.readText() }
+            ?: error("Unable to read $relativePath")
+    }
+
     override fun write(file: OrgFileRef, text: String) {
         resolver.openOutputStream(file.uri, "wt")?.bufferedWriter()?.use { it.write(text) }
             ?: error("Unable to write ${file.relativePath}")
@@ -96,13 +102,8 @@ class OrgTreeRepository(
     }
 
     private fun ensureFile(relativePath: String, mimeType: String): DocumentFile {
-        val normalized = relativePath.replace('\\', '/').removePrefix("./")
-        require(normalized.isNotBlank()) { "Empty relative path" }
-        require(!normalized.startsWith('/')) { "Absolute paths are not allowed" }
-        require(normalized.split('/').none { it == ".." }) { "Parent traversal is not allowed" }
-
+        val normalized = normalize(relativePath)
         val pieces = normalized.split('/').filter { it.isNotBlank() }
-        require(pieces.isNotEmpty()) { "Invalid relative path" }
 
         var directory = root
         pieces.dropLast(1).forEach { segment ->
@@ -115,6 +116,23 @@ class OrgTreeRepository(
         return directory.findFile(leaf)
             ?: directory.createFile(mimeType, leaf)
             ?: error("Unable to create $normalized")
+    }
+
+    private fun findFile(relativePath: String): DocumentFile? {
+        val pieces = normalize(relativePath).split('/').filter { it.isNotBlank() }
+        var current = root
+        pieces.forEach { segment ->
+            current = current.findFile(segment) ?: return null
+        }
+        return current.takeIf { it.isFile }
+    }
+
+    private fun normalize(relativePath: String): String {
+        val normalized = relativePath.replace('\\', '/').removePrefix("./")
+        require(normalized.isNotBlank()) { "Empty relative path" }
+        require(!normalized.startsWith('/')) { "Absolute paths are not allowed" }
+        require(normalized.split('/').none { it == ".." }) { "Parent traversal is not allowed" }
+        return normalized
     }
 
     private fun mimeType(language: String): String = when (language) {
