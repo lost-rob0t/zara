@@ -24,6 +24,7 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun TimersSurface(model: OrgWorkspaceModel) {
+    val tokens = LocalOrgTokens.current
     val templates = remember(model.projection) { OrgTimers.fromProjection(model.projection) }
     var runs by remember(templates) {
         mutableStateOf(templates.map { template -> OrgTimerRun(template.stableKey, template.name, template.duration) })
@@ -48,16 +49,23 @@ fun TimersSurface(model: OrgWorkspaceModel) {
             )
         }
         items(runs, key = { it.key }) { run ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(8.dp),
-            ) {
-                Text(OrgTimerFormat.format(run.remaining), style = MaterialTheme.typography.headlineSmall)
+            OrgPanel(active = run.running) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OrgStatusDot(
+                        color = when {
+                            run.running -> tokens.accentCyan
+                            run.finished -> tokens.success
+                            else -> tokens.borderActive
+                        },
+                    )
+                    Text(
+                        OrgTimerFormat.format(run.remaining),
+                        style = MaterialTheme.typography.headlineSmall,
+                    )
+                }
                 Text(
                     run.name,
-                    color = if (run.finished) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurface,
+                    color = if (run.finished) tokens.success else MaterialTheme.colorScheme.onSurface,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (run.running) {

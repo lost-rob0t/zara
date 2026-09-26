@@ -39,14 +39,9 @@ fun DailySurface(model: OrgWorkspaceModel) {
             }
         }
         items(projection.dailies, key = OrgDailyEntry::path) { entry ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(10.dp),
-            ) {
-                Text(entry.date.toString(), color = MaterialTheme.colorScheme.secondary)
-                Text(entry.path, style = MaterialTheme.typography.labelSmall)
+            OrgPanel {
+                Text(entry.date.toString(), color = LocalOrgTokens.current.accentCyan)
+                OrgMutedText(entry.path)
                 Text(entry.source, maxLines = 12)
             }
         }

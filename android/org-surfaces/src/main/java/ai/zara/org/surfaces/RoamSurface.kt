@@ -60,19 +60,11 @@ fun RoamContent(graph: OrgRoamGraph) {
 
 @Composable
 private fun RoamRow(node: OrgRoamNode, onSelect: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onSelect)
-            .padding(10.dp),
-    ) {
-        Text(node.title)
-        Text(
-            "${node.path}:${node.line}",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall,
-        )
+    OrgPanel {
+        Column(modifier = Modifier.clickable(onClick = onSelect)) {
+            Text(node.title)
+            OrgMutedText("${node.path}:${node.line}")
+        }
     }
 }
 
