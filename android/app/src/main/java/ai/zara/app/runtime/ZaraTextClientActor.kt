@@ -54,6 +54,7 @@ class ZaraTextClientActor(
 ) : TextSessionClient, VoiceCommandClient {
     companion object {
         private const val MAX_INTERLEAVED_VOICE_EVENTS = 256
+        private const val MAX_INTERLEAVED_TEXT_EVENTS = 256
         private const val MAX_TERMINAL_DEVICE_ACTIONS = 256
     }
 
@@ -664,6 +665,7 @@ class ZaraTextClientActor(
         generation: Long,
         sessionId: String,
     ): TextServerMessage.TurnAccepted {
+        var interleavedFrames = 0
         while (true) {
             when (
                 val message = receiveMessage(
@@ -675,12 +677,12 @@ class ZaraTextClientActor(
                 is TextServerMessage.TurnAccepted -> {
                     verifySession(message.sessionId, sessionId)
                     if (message.replyTo == requestId) return message
-                    staleFrameObserver?.invoke("TurnAccepted", generation)
+                    recordInterleavedTextFrame("TurnAccepted", generation, ++interleavedFrames)
                 }
                 is TextServerMessage.ProtocolError -> {
                     if (message.replyTo != null && message.replyTo != requestId) {
                         message.sessionId?.let { verifySession(it, sessionId) }
-                        staleFrameObserver?.invoke("ProtocolError", generation)
+                        recordInterleavedTextFrame("ProtocolError", generation, ++interleavedFrames)
                         continue
                     }
                     message.sessionId?.let { verifySession(it, sessionId) }
@@ -696,36 +698,42 @@ class ZaraTextClientActor(
                     message.sessionId,
                     generation,
                     sessionId,
+                    ++interleavedFrames,
                 )
                 is TextServerMessage.AssistantDelta -> drainStaleTurnFrame(
                     "AssistantDelta",
                     message.sessionId,
                     generation,
                     sessionId,
+                    ++interleavedFrames,
                 )
                 is TextServerMessage.AssistantCompleted -> drainStaleTurnFrame(
                     "AssistantCompleted",
                     message.sessionId,
                     generation,
                     sessionId,
+                    ++interleavedFrames,
                 )
                 is TextServerMessage.TurnCompleted -> drainStaleTurnFrame(
                     "TurnCompleted",
                     message.sessionId,
                     generation,
                     sessionId,
+                    ++interleavedFrames,
                 )
                 is TextServerMessage.AssistantResponse -> drainStaleTurnFrame(
                     "AssistantResponse",
                     message.sessionId,
                     generation,
                     sessionId,
+                    ++interleavedFrames,
                 )
                 is TextServerMessage.TurnCancelled -> drainStaleTurnFrame(
                     "TurnCancelled",
                     message.sessionId,
                     generation,
                     sessionId,
+                    ++interleavedFrames,
                 )
                 is TextServerMessage.RuntimeError -> {
                     verifySession(message.sessionId, sessionId)
@@ -756,8 +764,23 @@ class ZaraTextClientActor(
         actualSessionId: String,
         generation: Long,
         expectedSessionId: String,
+        interleavedCount: Int,
     ) {
         verifySession(actualSessionId, expectedSessionId)
+        recordInterleavedTextFrame(messageType, generation, interleavedCount)
+    }
+
+    private fun recordInterleavedTextFrame(
+        messageType: String,
+        generation: Long,
+        interleavedCount: Int,
+    ) {
+        if (interleavedCount > MAX_INTERLEAVED_TEXT_EVENTS) {
+            throw ZaraWireException(
+                "turn acceptance displaced by too many unrelated frames",
+                code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_OUT_OF_ORDER,
+            )
+        }
         staleFrameObserver?.invoke(messageType, generation)
     }
 
