@@ -1,0 +1,189 @@
+* Run identity
+- Consumed issue :: #1396
+- Branch :: =rage/1396-accepted-before-events=
+- RAGE start commit :: =af7185ee48def384783002332262412e9674343e=
+
+* Iteration 1
+
+** Research
+- Operator Diagnostics/2 export (10:39Z): submit -> protocol.unexpected_message
+  "expected turn.accepted" -> disconnect -> reconnect (gen 1->2->3) loop.
+  #1299/#1301 fencing + typed telemetry behaved correctly.
+- Server: RuntimeHost._submit_turn publishes TurnStarted before the submit
+  future resolves (zara/runtime/host.py:730); transport sent turn.accepted
+  from the completion callback through the per-route outbound FIFO
+  (zmq_transport.py completed()), while the event drain sent directly from
+  the poller thread (zmq_transport.py _send). Fast symbolic turns put events
+  on the wire first -> client rejects out-of-order frames.
+
+** Design (Auto-RAGE decision)
+Transport-local ordering (option a); rejected host-side immediate-accept
+(option b) because the host already accepts at start - execution is a
+background task - and the defect is purely wire serialization:
+1. Hold turn-scoped runtime events per (principal, turn_id) when the route
+   is unknown or the accepted reply is awaiting flush (bounded 64x128,
+   drop-oldest; replaces the silent drop of pre-registration events).
+2. Flush buffered events through the same per-route FIFO strictly after
+   turn.accepted; conversation-fallback and non-turn events unchanged.
+3. Turn-scoped events enqueue via _enqueue_outbound (never direct _send)
+   so they cannot overtake a queued accepted reply.
+
+** RED/GREEN
+- RED deterministic: turn.started overtook turn.accepted
+  (t/test_zmq_turn_accept_ordering.py).
+- GREEN: ordering test stable 5/5; full transport/voice suite 74 passed.
+- First implementation over-buffered conversation-fallback events
+  (two-routes + reconnect-idempotency tests caught it); corrected to
+  buffer only unroutable/awaiting turn events.
+
+** Deployment + gate
+- Dotfiles pin bumped to 629344a8 (local commit 619c8fcf lineage), home
+  built + activated on flake; zara-server + zara-pair green.
+- PR :: https://github.com/lost-rob0t/zara/pull/1397 (exact head =629344a8=)
+- Exact-head CI pending; merge on green.
+
+* Iteration 2 (CI red at 0dd917dc: test, deep regression seeds 1/31337, android+wear)
+
+** Research
+- Every failing job shared one signature: turn events never arriving
+  (_queue.Empty, "terminal event did not arrive", Android stock-server
+  interop TimeoutException); base af7185ee passed the same tests.
+- Local reproduction of
+  t/test_zara1_tool_approvals.py::test_authenticated_clients_receive_and_answer_only_their_principal_events
+  failed deterministically; a debug harness showed the secure gateway
+  poller thread was dead with _principal_subscriptions cleared and the
+  swallowed exception (except BaseException only feeds an already-done
+  _started future).
+- Root cause 1 (crash): SecureZaraZmqGateway._enqueue_outbound overrode the
+  base with a (route, message) signature while the base contract is
+  (route, message, payloads=()); iteration 1's drain/flush calls pass
+  payloads positionally, so the FIRST turn-scoped event drained on a
+  secure gateway raised TypeError inside the poller thread and killed the
+  gateway silently. Latent signature mismatch predates this branch; the
+  iteration-1 calls made it reachable. Explains all four red jobs
+  (approval tests, daemon connection guards, both hash seeds, Android
+  stock-server interop which drives the real Python secure gateway).
+- Root cause 2 (race): the drain read _turns_awaiting_accept membership
+  outside the lock and appended to _early_turn_events in a separate
+  critical section; completed()'s flush could pop-empty + discard the key
+  between them, stranding the event in the early buffer forever.
+
+** RED/GREEN
+- RED 1 (recorded): the failing approval integration test at PR head;
+  focused unit test test_secure_gateway_enqueue_outbound_forwards_payloads
+  red with the exact TypeError when the override is reverted.
+- GREEN 1: override forwards payloads; 17 passed across approvals,
+  connection guards, ordering, security gateway suites.
+- RED 2 (deterministic interleaving):
+  test_turn_event_racing_accepted_flush_is_never_stranded hooks the codec
+  call that sits between the awaiting check and the buffer append and lets
+  completed()'s flush finish inside the hook; unfixed code delivered only
+  turn.accepted with the event left in _early_turn_events (verified:
+  early buffer size 1, FIFO 1).
+- GREEN 2: hold decision + append (or turn-route read) now one critical
+  section under the gateway lock after the encode; racing event routes
+  directly through the FIFO after turn.accepted.
+- Poller-thread death is no longer silent: logger.exception in the secure
+  gateway _run except handler.
+
+** Gate
+- scripts/test-all.sh exit 0 at candidate head (prolog-verify recorded).
+
+** Outcome
+- Pending: push iteration-2 commits, exact-head CI green, merge.
+
+* Iteration 3 — autonomous end-to-end transport ownership (2026-09-24)
+
+** Immutable takeover / ownership
+- Operator requested end-to-end autonomous implementation instead of review-only
+  blocker reporting.
+- Retained PR :: #1463 / issue #1396
+- Takeover head :: =015205e2ac2b7b8eef86e172b90371412e6b8c29=
+- Live master consumed :: =7649e375453b35c9dc079792305449c35e73e72a=
+- Because R03 authored production/test changes in this iteration, R03 is
+  recused from serving as the required independent final reviewer for this
+  candidate. Final authority review must come from an unconflicted reviewer.
+
+** Research / defect composition
+The retained blocker set was re-read against the exact source instead of
+opening replacement PRs. The implementation closes these owner/lifecycle
+failures in the existing ZARA/1 gateway and SecurityRegistry boundaries:
+1. per-turn event 129 must fail closed rather than silently evict event 1;
+2. a generation-N completion may not delete generation N+1 inflight state for
+   the same stable request id;
+3. post-future/pre-wire overflow must replace unsent turn.accepted with bounded
+   server_backpressure and clear turn ownership;
+4. completed/disconnected turn ids must not resurrect through conversation
+   fallback, while previously unseen legitimate conversation events must still
+   route normally;
+5. turn ownership retires only after turn.completed is successfully written;
+6. approval ownership is created only for a deliverable tool.waiting prompt
+   and removed when the bounded FIFO evicts that prompt;
+7. distinct-route stable-request retry owns one acceptance/event stream, and a
+   pre-wire replay transfers rather than duplicates the acceptance barrier;
+8. CURVE key rotation for the same registry-owned device supersedes the stale
+   revoked route before per-principal connection quota is charged.
+
+** Implementation commits
+- =8e6d0cec3d9a3afff48636119a29d1590a7b88f8=
+  fix(protocol): close transport lifecycle ownership races
+- =2bf2c43d9dcd12726b13883d963557f64c32a78b=
+  non-force merge of live master into retained protocol branch
+- =dcf0bf3d6372ce8e49817564ab4ee62c8f1b95e5=
+  fix(protocol): fence retired turns without breaking conversation routing
+- =9ab682aa2f617e008be2ed36e0e1956944a2b6ba=
+  fix(security): supersede rotated device routes before quota
+- =cbb6e353acb43e1ce06887aa4e26bf209d5a8864=
+  fix(protocol): transfer pre-wire acceptance on reconnect
+- =5246417b62d5ca7998a9c5a4658320a784951b0d=
+  test(security): satisfy whitespace gate
+
+** RED / repair evidence
+- Exact run =36030906682= on =2bf2c43...= reached the full repository
+  transport phase and failed
+  =t/test_zmq_transport.py::test_two_routes_do_not_receive_each_others_runtime_events=.
+  The first orphan fence was too broad and removed the legitimate
+  unique-conversation route for a previously unseen turn.
+- Repair =dcf0bf3...= introduced a bounded retired-turn cache owned by the
+  existing gateway lifecycle: explicit terminal/disconnect keys are fenced,
+  but unknown live turn events may still use the existing unique-conversation
+  projection when no submit is awaiting acceptance.
+- Superseded run =36031447511= exposed only a whitespace-gate failure
+  (=t/test_daemon_security_gateway.py: new blank line at EOF=) before tests;
+  =5246417...= removes that blank line without changing assertions.
+
+** Current verification state
+- Current candidate at this log append descends from
+  =5246417b62d5ca7998a9c5a4658320a784951b0d= and live master, with no
+  force update.
+- The newest exact-head CI matrix is required to rerun repository tests,
+  formal verification, flake/package, adversarial hash seeds, Android/Wear,
+  installed evidence, and shared-mic lanes after this documentation commit.
+- Canonical #999 coverage remains a repository dependency: live master returns
+  404 for =coverage-baseline.json= even though #999 requires that file plus
+  =scripts/test-coverage.sh= and the Coverage workflow. This iteration does not
+  fabricate coverage, lower floors, or duplicate the separately owned coverage
+  infrastructure.
+
+** Retained blocker closure after first freeze
+- Consumed W05 terminal-failure evidence comment =5810555707=:
+  =AgentFailed= was previously unsupported by the ZARA/1 runtime-event codec,
+  so an accepted turn could become terminally silent. The existing wire
+  vocabulary now maps it to =turn.completed {success:false}= without leaking
+  the server-side failure reason.
+- Consumed W05 early-audio evidence comment =5813094228=:
+  pre-accept audio now computes and retains PCM payload frames before buffering,
+  checks negotiated output capability for known/pending owners, and revalidates
+  the actual route before releasing held audio. A non-negotiated route cannot
+  receive or consume hidden audio-output buffer capacity.
+- Implementation :: =979470af83f57683978d80a56fdb1cb68392c45c=
+  =fix(protocol): preserve terminal failure and early audio=
+- RED/GREEN contract is pinned by:
+  - =t/test_protocol_runtime.py= AgentFailed -> existing terminal failure wire
+    representation with no internal reason leakage;
+  - =t/test_zmq_turn_session_demux.py= accepted-before-AgentFailed actual socket
+    terminal closure + retired owner;
+  - negotiated early PCM exact payload survival across acceptance;
+  - non-negotiated early audio quiet + gateway remains alive.
+- No alternate protocol type, audio runtime, provider route, session owner, or
+  transport registry was introduced.
