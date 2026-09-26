@@ -82,7 +82,7 @@ class ZaraVoiceInteractionSession(
         super.onShow(args, showFlags)
         invocationGate.show()
         appSession.assessAssistantRole()
-        updateStatus("Hold to talk to Zara")
+        localVoice.announceSymbolicMode()
     }
 
     override fun onHide() {
