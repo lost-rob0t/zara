@@ -74,6 +74,12 @@ def prepare_canonical_saf_fixture(device: Device) -> tuple[str, str]:
                 ":ID: acceptance-task",
                 ":END:",
                 "See [[id:beta][Beta note]].",
+                "* TODO Acceptance reminder",
+                f"SCHEDULED: <{today.isoformat()} 09:00>",
+                "* TODO Acceptance timer :timer:",
+                ":PROPERTIES:",
+                ":Effort: 0:25",
+                ":END:",
                 "",
             )
         ),
@@ -335,6 +341,13 @@ def connect_fixture_through_saf(device: Device) -> None:
     device.await_contains("Acceptance task", timeout=20.0)
 
 
+def open_surface(device: Device, label: str) -> None:
+    device.tap("Menu")
+    device.await_label(label)
+    device.tap(label)
+    device.await_label(label)
+
+
 def exercise_org_surfaces(
     device: Device,
     *,
@@ -347,13 +360,16 @@ def exercise_org_surfaces(
     device.await_contains("Today acceptance")
     capture_with_text(device, "org-todo", text_evidence)
 
+    device.tap("Menu")
+    device.await_label("Editor")
+    capture_with_text(device, "org-drawer", text_evidence)
     device.tap("Roam")
     device.await_label("Search Org-roam nodes")
     device.await_contains("Acceptance task")
     device.await_contains("Beta note")
     capture_with_text(device, "org-roam", text_evidence)
 
-    device.tap("Daily")
+    open_surface(device, "Daily")
     device.await_contains(f"Today · {today}")
     device.await_contains("Ordinary Org text is canonical")
     capture_with_text(device, "org-daily-today", text_evidence)
@@ -361,6 +377,47 @@ def exercise_org_surfaces(
     device.reveal(previous)
     device.await_contains("Separate daily file retained")
     capture_with_text(device, "org-daily-previous", text_evidence)
+
+    open_surface(device, "Reminders")
+    device.await_contains("Acceptance reminder")
+    capture_with_text(device, "org-reminders", text_evidence)
+
+    open_surface(device, "Timers")
+    device.await_contains("Acceptance timer")
+    capture_with_text(device, "org-timers", text_evidence)
+
+    open_surface(device, "Graph")
+    device.await_contains("3 nodes")
+    capture_with_text(device, "org-graph", text_evidence)
+
+    open_surface(device, "Editor")
+    device.await_label("Pages")
+    device.await_label("tasks.org")
+    capture_with_text(device, "org-editor-pages", text_evidence)
+
+    device.tap("tasks.org")
+    device.await_label("Page")
+    device.await_contains("Acceptance Tasks")
+    capture_with_text(device, "org-editor-page", text_evidence)
+
+    device.tap("TODO Acceptance task")
+    device.await_label("Editing block")
+    capture_with_text(device, "org-editor-block-edit", text_evidence)
+    device.tap("Cancel")
+
+    device.tap("Raw")
+    device.await_label("Raw Org markup")
+    capture_with_text(device, "org-editor-raw", text_evidence)
+
+    device.tap("config.pl")
+    device.await_contains("Typed app policy facts")
+    device.await_label("Validate and save policy")
+    capture_with_text(device, "org-editor-config", text_evidence)
+
+    open_surface(device, "Home")
+    device.await_label("Org apps")
+    device.await_contains("Recent daily pages")
+    capture_with_text(device, "org-home", text_evidence)
 
 
 def main() -> None:

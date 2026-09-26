@@ -84,17 +84,29 @@ def test_org_acceptance_runner_has_one_fail_closed_direct_stream_fallback():
     assert "org_acceptance.Device = OrgEvidenceDevice" in text
 
 
-def test_org_acceptance_captures_todo_roam_and_scrolled_separate_dailies_with_text_twins():
+def test_org_acceptance_captures_workspace_navigation_and_editor_modes_with_text_twins():
     text = ACCEPTANCE.read_text(encoding="utf-8")
     for state in (
         "org-todo",
+        "org-drawer",
         "org-roam",
         "org-daily-today",
         "org-daily-previous",
+        "org-reminders",
+        "org-timers",
+        "org-graph",
+        "org-editor-pages",
+        "org-editor-page",
+        "org-editor-block-edit",
+        "org-editor-raw",
+        "org-editor-config",
+        "org-home",
     ):
         assert f'"{state}"' in text
-    assert 'device.tap("Roam")' in text
-    assert 'device.tap("Daily")' in text
+    assert 'device.tap("Menu")' in text
+    assert 'open_surface(device, "Editor")' in text
+    assert 'device.tap("Raw")' in text
+    assert 'device.tap("config.pl")' in text
     assert "device.reveal(previous)" in text
     assert 'f"{name}.txt"' in text
     assert '"sha256"' in text
