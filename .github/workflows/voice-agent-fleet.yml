@@ -51,7 +51,7 @@ jobs:
           nix develop -c python -m pytest -q \
             t/test_config.py t/test_tasks_config.py \
             t/test_voice_agent_fleet.py t/test_voice_agent_routing.py \
-            t/test_voice_agent_barge_regressions.py \
+            t/test_voice_agent_barge_regressions.py t/test_voice_agent_host.py \
             t/test_task_runner.py t/test_task_store.py t/test_task_tools.py \
             t/test_task_host_wiring.py t/test_task_turn_context.py \
             t/test_task_approval_flow.py t/test_task_observability.py \
