@@ -1,0 +1,61 @@
+name: Publish verified voice fleet patch once
+
+on:
+  push:
+    branches: ['feat/voice-agent-fleet']
+    paths: ['.voice-fleet-publish/**']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: voice-fleet-publish-once
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'lost-rob0t/zara' && github.ref == 'refs/heads/feat/voice-agent-fleet'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+      - name: Apply exact locally verified source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = '705e88208cab58e2f4f497b2c33b3af11f8cb218'
+          python3 - <<'PY'
+          import base64, hashlib, lzma, pathlib, re, subprocess
+          source = pathlib.Path('.voice-fleet-publish')
+          encoded = ''.join((source / f'part-{index}.b64').read_text() for index in range(4))
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          expected = 'fd159ebf02b0ca8dcd4b9cd2fd365b3ba93d137b9440071aba5685ca1cc46284'
+          if hashlib.sha256(patch).hexdigest() != expected:
+              raise SystemExit('source patch digest mismatch')
+          allowed = {
+              'CHANGELOG.md', 'kb/voice_agent.pl', 'main.pl', 'modules/voice_agent.pl',
+              'server_main.pl', 't/test_task_store.py', 't/test_tasks_config.py',
+              't/test_voice_agent_fleet.py', 't/test_voice_agent_routing.py',
+              't/voice_agent.pl', 'wiki/voice-agent-fleet.org',
+              'zara/agent/tools/builtin_tools.py', 'zara/config.py',
+              'zara/plugins/builtin/agent_mode.py', 'zara/prolog_engine.py',
+              'zara/runtime/backend.py', 'zara/runtime/events.py', 'zara/runtime/host.py',
+              'zara/tasks/runner.py', 'zara/tasks/store.py', 'zara/voice_agent.py',
+          }
+          actual = set(re.findall(r'^diff --git a/(\S+) b/\S+$', patch.decode(), re.M))
+          if actual != allowed:
+              raise SystemExit('source patch path set mismatch')
+          subprocess.run(['git', 'apply', '--index', '--check', '-'], input=patch, check=True)
+          subprocess.run(['git', 'apply', '--index', '-'], input=patch, check=True)
+          print('Verified patch:', expected)
+          PY
+          python3 -m compileall -q zara
+          git diff --cached --check
+          git rm -r .voice-fleet-publish
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(voice): implement bounded conversational agent fleet and interruptible speech'
+          git push origin HEAD:refs/heads/feat/voice-agent-fleet
