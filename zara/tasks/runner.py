@@ -532,7 +532,7 @@ class TaskRunner:
 
     def _cancel_step(self, task_id: str, turn_id: str) -> None:
         try:
-            asyncio.get_running_loop().create_task(self._cancel_turn(turn_id))
+            asyncio.get_running_loop().create_task(self._revoke_turn(turn_id))
         except RuntimeError:
             return
         run = self._runs.get(task_id)
