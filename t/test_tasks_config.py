@@ -14,7 +14,11 @@ def test_tasks_defaults_are_gated_off(tmp_path):
     config = ZaraConfig(str(config_path))
     assert config.get_tasks_config() == {
         "enabled": False,
+        "voice_agent": True,
         "max_concurrent": 2,
+        "max_queued": 32,
+        "max_subagents": 8,
+        "max_depth": 2,
         "max_task_steps": 20,
         "wall_clock_minutes": 30.0,
         "step_log_chars": 2000,
@@ -30,7 +34,11 @@ def test_tasks_values_are_preserved(tmp_path):
     config = ZaraConfig(str(config_path))
     assert config.get_tasks_config() == {
         "enabled": True,
+        "voice_agent": True,
         "max_concurrent": 3,
+        "max_queued": 32,
+        "max_subagents": 8,
+        "max_depth": 2,
         "max_task_steps": 7,
         "wall_clock_minutes": 1.5,
         "step_log_chars": 512,
@@ -41,6 +49,13 @@ def test_tasks_values_are_preserved(tmp_path):
     "setting",
     [
         "enabled = 1",
+        "voice_agent = 1",
+        "max_queued = 0",
+        "max_queued = 1025",
+        "max_subagents = true",
+        "max_subagents = 65",
+        "max_depth = 0",
+        "max_depth = 9",
         'enabled = "yes"',
         "max_concurrent = true",
         "max_concurrent = 0",

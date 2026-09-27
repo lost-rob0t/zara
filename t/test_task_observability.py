@@ -80,6 +80,8 @@ class TestObservability:
                 "approval_timeout",
                 "approval_rejected",
                 "runtime_shutdown",
+                "no_progress",
+                "child_failed",
             }
         )
 
