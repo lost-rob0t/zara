@@ -115,6 +115,15 @@ def test_runtime_command_codec_fails_closed_on_unsupported_or_invalid_messages(m
             "turn.completed",
             {"success": True},
         ),
+        (
+            events.AgentFailed(
+                turn_id="t1",
+                conversation_id="c1",
+                reason="backend secret must stay server-side",
+            ),
+            "turn.completed",
+            {"success": False},
+        ),
         (events.AssistantStarted(turn_id="t1", conversation_id="c1"), "assistant.started", {}),
         (
             events.AssistantDelta(turn_id="t1", conversation_id="c1", text="delta"),
