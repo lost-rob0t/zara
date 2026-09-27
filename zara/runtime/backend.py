@@ -50,6 +50,10 @@ class RuntimeBackend:
     def bind_event_publisher(self, publisher) -> None:
         pass
 
+    def bind_task_runner(self, runner) -> None:
+        """Bind the host-owned task service; backends may opt into voice routing."""
+        pass
+
     async def start(self) -> None:
         pass
 
@@ -162,6 +166,15 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         self._semantic_first = bool(semantic_first)
         self._memory_session: Optional[str] = None
 
+    def bind_task_runner(self, runner) -> None:
+        if runner is None:
+            self._voice_agent = None
+            return
+        from zara.voice_agent import VoiceAgentRouter
+        engine = getattr(self._manager, "prolog_engine", None)
+        resolver = engine.resolve_voice_agent if engine is not None else None
+        self._voice_agent = VoiceAgentRouter(runner, resolver=resolver, publisher=self._publisher)
+
     @property
     def principal_id(self) -> str:
         manager = self._manager
@@ -212,6 +225,12 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             )
 
         task_turn = conversation_history is not None or system_context is not None
+        voice_agent = getattr(self, "_voice_agent", None)
+        if voice_agent is not None and not task_turn:
+            response = await voice_agent.handle(text, conversation_id=conversation_id)
+            if response is not None:
+                await self._persist_turn(text, response)
+                return RuntimeTurnResult(response=response, metadata={"route": "voice_agent"})
         command_like = command_gate.looks_like_command(text)
 
         if (
@@ -535,6 +554,9 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     def bind_event_publisher(self, publisher) -> None:
         self._delegate.bind_event_publisher(publisher)
+
+    def bind_task_runner(self, runner) -> None:
+        self._delegate.bind_task_runner(runner)
 
     async def start(self) -> None:
         await self._delegate.start()

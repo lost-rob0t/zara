@@ -10,6 +10,7 @@ executed long-horizon tasks have a different lifecycle.
 from __future__ import annotations
 
 import enum
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -46,7 +47,7 @@ ACTIVE_STATES = frozenset(
 )
 
 LEGAL_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
-    TaskStatus.PENDING: frozenset({TaskStatus.RUNNING, TaskStatus.CANCELLED}),
+    TaskStatus.PENDING: frozenset({TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.INTERRUPTED}),
     TaskStatus.RUNNING: frozenset(
         {
             TaskStatus.WAITING_APPROVAL,
@@ -86,7 +87,7 @@ LEGAL_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     TaskStatus.FAILED: frozenset(),
     TaskStatus.CANCELLED: frozenset(),
     TaskStatus.INTERRUPTED: frozenset(
-        {TaskStatus.RUNNING, TaskStatus.CANCELLED}
+        {TaskStatus.RUNNING, TaskStatus.PENDING, TaskStatus.CANCELLED}
     ),
 }
 
@@ -110,6 +111,11 @@ class AgentTask:
     created_at: str
     updated_at: str
     reason: Optional[str] = None
+    parent_task_id: Optional[str] = None
+    root_task_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    attempts_started: int = 0
+    deadline_at: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -197,6 +203,18 @@ class TaskStore:
             )
         except ValueError:
             pass
+        try:
+            self._db.register_migration(4, [
+                "ALTER TABLE agent_tasks ADD COLUMN parent_task_id TEXT REFERENCES agent_tasks(task_id)",
+                "ALTER TABLE agent_tasks ADD COLUMN root_task_id TEXT",
+                "ALTER TABLE agent_tasks ADD COLUMN conversation_id TEXT",
+                "ALTER TABLE agent_tasks ADD COLUMN deadline_at REAL",
+                "ALTER TABLE agent_tasks ADD COLUMN attempts_started INTEGER NOT NULL DEFAULT 0",
+                "UPDATE agent_tasks SET root_task_id = task_id, attempts_started = steps_completed",
+                "CREATE INDEX IF NOT EXISTS idx_agent_tasks_root ON agent_tasks(principal_id, root_task_id)",
+            ])
+        except ValueError:
+            pass
         self._db.connect()
 
     # ------------------------------------------------------------------
@@ -208,18 +226,35 @@ class TaskStore:
         principal_id: str,
         goal: str,
         max_task_steps: int,
+        parent_task_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+        deadline_at: Optional[float] = None,
     ) -> AgentTask:
         principal = _validate_principal(principal_id)
         clean_goal = _validate_goal(goal)
         steps_budget = _validate_step_budget(max_task_steps)
         now = _now_iso()
         task_id = f"task-{uuid.uuid4().hex[:12]}"
+        parent = self.get_task(parent_task_id, principal_id=principal) if parent_task_id else None
+        if parent_task_id is not None and parent is None:
+            raise TaskStoreError("parent task not found for this principal")
+        if conversation_id is not None and (
+            not isinstance(conversation_id, str) or not 1 <= len(conversation_id) <= 256
+        ):
+            raise ValueError("conversation_id must be a bounded non-empty string")
+        if deadline_at is not None and (
+            isinstance(deadline_at, bool) or not isinstance(deadline_at, (int, float))
+            or not math.isfinite(deadline_at) or deadline_at <= 0
+        ):
+            raise ValueError("deadline_at must be a positive finite timestamp")
+        root_task_id = parent.root_task_id if parent is not None else task_id
         self._db.execute(
             """
             INSERT INTO agent_tasks (
                 task_id, principal_id, goal, status, reason,
-                max_task_steps, steps_completed, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, NULL, ?, 0, ?, ?)
+                max_task_steps, steps_completed, created_at, updated_at,
+                parent_task_id, root_task_id, conversation_id, deadline_at
+            ) VALUES (?, ?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_id,
@@ -229,6 +264,10 @@ class TaskStore:
                 steps_budget,
                 now,
                 now,
+                parent_task_id,
+                root_task_id,
+                parent.conversation_id if parent is not None else conversation_id,
+                parent.deadline_at if parent is not None else deadline_at,
             ),
         )
         return self.get_task(task_id, principal_id=principal)
@@ -276,14 +315,44 @@ class TaskStore:
                 f"illegal task transition {current.status.value!r} -> {target.value!r} "
                 f"for {task_id!r}"
             )
-        self._db.execute(
-            "UPDATE agent_tasks SET status = ?, reason = ?, updated_at = ? WHERE task_id = ?",
-            (target.value, clean_reason, _now_iso(), task_id),
+        cursor = self._db.execute(
+            "UPDATE agent_tasks SET status = ?, reason = ?, updated_at = ? "
+            "WHERE task_id = ? AND principal_id = ? AND status = ?",
+            (target.value, clean_reason, _now_iso(), task_id, principal_id, current.status.value),
         )
+        if cursor.rowcount != 1:
+            raise TaskTransitionError("task changed while applying transition")
         return self.get_task(task_id, principal_id=principal_id)
 
     # ------------------------------------------------------------------
     # Step log
+
+    def claim_step(self, task_id: str, *, principal_id: str) -> bool:
+        """Reserve an attempt against both task and root budgets, including retries."""
+        principal = _validate_principal(principal_id)
+        with self._db.transaction(immediate=True) as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_tasks WHERE task_id = ? AND principal_id = ?",
+                (task_id, principal),
+            ).fetchone()
+            if row is None or row["status"] != TaskStatus.RUNNING.value:
+                return False
+            root = conn.execute(
+                "SELECT max_task_steps FROM agent_tasks WHERE task_id = ? AND principal_id = ?",
+                (row["root_task_id"], principal),
+            ).fetchone()
+            used = conn.execute(
+                "SELECT COALESCE(SUM(attempts_started), 0) FROM agent_tasks "
+                "WHERE root_task_id = ? AND principal_id = ?",
+                (row["root_task_id"], principal),
+            ).fetchone()[0]
+            if root is None or used >= root["max_task_steps"] or row["attempts_started"] >= row["max_task_steps"]:
+                return False
+            conn.execute(
+                "UPDATE agent_tasks SET attempts_started = attempts_started + 1 WHERE task_id = ?",
+                (task_id,),
+            )
+            return True
 
     def record_step(
         self,
@@ -360,7 +429,7 @@ class TaskStore:
     # ------------------------------------------------------------------
     # Recovery
 
-    def recover_interrupted(self) -> int:
+    def recover_interrupted(self, *, principal_id: Optional[str] = None) -> int:
         """Move tasks left active by a dead runtime into ``interrupted``."""
         with self._db.transaction() as conn:
             cursor = conn.execute(
@@ -368,7 +437,7 @@ class TaskStore:
                 UPDATE agent_tasks
                 SET status = ?, reason = ?, updated_at = ?
                 WHERE status IN (?, ?, ?, ?)
-                """,
+                """ + (" AND principal_id = ?" if principal_id is not None else ""),
                 (
                     TaskStatus.INTERRUPTED.value,
                     "runtime_recovery",
@@ -377,7 +446,7 @@ class TaskStore:
                     TaskStatus.WAITING_APPROVAL.value,
                     TaskStatus.WAITING_INPUT.value,
                     TaskStatus.BLOCKED.value,
-                ),
+                ) + ((_validate_principal(principal_id),) if principal_id is not None else ()),
             )
             return int(cursor.rowcount or 0)
 
@@ -427,6 +496,11 @@ def _row_to_task(row) -> AgentTask:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         reason=row["reason"],
+        parent_task_id=row["parent_task_id"],
+        root_task_id=row["root_task_id"],
+        conversation_id=row["conversation_id"],
+        attempts_started=int(row["attempts_started"]),
+        deadline_at=row["deadline_at"],
     )
 
 
