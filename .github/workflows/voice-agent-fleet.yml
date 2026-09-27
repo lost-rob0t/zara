@@ -1,0 +1,47 @@
+name: Voice Agent Fleet
+
+on:
+  pull_request:
+    paths:
+      - 'zara/tasks/**'
+      - 'zara/runtime/**'
+      - 'zara/voice_runtime.py'
+      - 'zara/voice_agent.py'
+      - 'zara/agent/tools/**'
+      - 'zara/prolog_engine.py'
+      - 'kb/**'
+      - 'modules/**'
+      - 't/test_voice_agent_fleet.py'
+      - 't/voice_agent.pl'
+      - '.github/workflows/voice-agent-fleet.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-agent-fleet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Record exact test source
+        run: |
+          mkdir -p artifacts/voice-fleet
+          git rev-parse HEAD > artifacts/voice-fleet/source-sha.txt
+          git archive --format=tar.gz HEAD > artifacts/voice-fleet/source.tar.gz
+      - uses: cachix/install-nix-action@v31
+      - name: Run voice fleet contracts
+        run: nix develop -c python -m pytest -q t/test_voice_agent_fleet.py --junitxml=artifacts/voice-fleet/junit.xml
+      - name: Upload reproducible contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-agent-fleet-evidence
+          path: artifacts/voice-fleet/
+          if-no-files-found: error
