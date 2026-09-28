@@ -1,6 +1,7 @@
 package ai.zara.app.assistant
 
 import ai.zara.app.AndroidAppSession
+import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.ui.UiOperationFailure
 import android.annotation.SuppressLint
@@ -28,6 +29,15 @@ internal class LocalAssistantVoiceController(
     private var closed = false
     private val speaker = OfflineSpeaker(appContext)
     private val pendingTurn = PendingLocalTurn()
+    private val symbolicConversation =
+        AndroidPureSymbolicConversationFactory.create(appSession)
+
+    fun announceSymbolicMode() {
+        check(!closed) { "Local assistant voice is closed" }
+        val introduction = "Hi, I am a symbolic system."
+        statusObserver(introduction)
+        speaker.speak(introduction)
+    }
 
     @SuppressLint("NewApi")
     fun start(permissionGranted: Boolean) {
@@ -127,8 +137,11 @@ internal class LocalAssistantVoiceController(
                 statusObserver("Local voice did not hear a usable utterance")
                 return
             }
-            statusObserver("Thinking locally…")
-            val turn = appSession.submitLocalText(transcript)
+            statusObserver("Thinking symbolically…")
+            val turn = symbolicConversation.submitConversationOnly(
+                transcript,
+                "android-assistant-voice",
+            )
             pendingTurn.track(turn)
             turn.whenComplete { result, error ->
                 appContext.mainExecutor.execute {
@@ -138,8 +151,8 @@ internal class LocalAssistantVoiceController(
                     if (error != null) {
                         statusObserver("Local assistant failed: ${UiOperationFailure.summarize(error)}")
                     } else if (result != null) {
-                        statusObserver(result.text)
-                        if (result.text.isNotBlank()) speaker.speak(result.text)
+                        statusObserver(result.turn.text)
+                        if (result.turn.text.isNotBlank()) speaker.speak(result.turn.text)
                     }
                 }
             }
