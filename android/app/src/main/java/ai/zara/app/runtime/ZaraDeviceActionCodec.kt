@@ -26,6 +26,7 @@ sealed interface DeviceServerMessage {
         override val sessionId: String,
         val traceId: String?,
         val actionId: String,
+        val actionSeq: Long,
         val capability: DeviceCapability,
         val arguments: DeviceActionArguments,
         val deadlineNs: Long,
@@ -139,10 +140,12 @@ object ZaraDeviceActionCodec {
     ): DeviceServerMessage.Request {
         requireExactKeys(
             body,
-            setOf("action_id", "capability", "args", "deadline_ns", "idempotency"),
+            setOf("action_id", "action_seq", "capability", "args", "deadline_ns", "idempotency"),
             "device action request body",
         )
         val actionId = token("action_id", requiredString(body, "action_id", maxIdBytes))
+        val actionSeq = requiredLong(body, "action_seq")
+        if (actionSeq <= 0) throw ZaraWireException("device action sequence must be positive")
         val capability = try {
             DeviceCapability.fromWireId(requiredString(body, "capability", 64))
         } catch (error: IllegalArgumentException) {
@@ -158,6 +161,7 @@ object ZaraDeviceActionCodec {
             sessionId = sessionId,
             traceId = traceId,
             actionId = actionId,
+            actionSeq = actionSeq,
             capability = capability,
             arguments = args,
             deadlineNs = deadlineNs,
@@ -196,6 +200,14 @@ object ZaraDeviceActionCodec {
             val app = boundedText("app", requiredString(args, "app", 128), 128)
             if (app.isEmpty()) throw ZaraWireException("app must not be empty")
             DeviceActionArguments.OpenApp(app)
+        }
+        DeviceCapability.SmsSend -> {
+            requireExactKeys(args, setOf("to", "text"), "sms_send args")
+            val destination = boundedText("to", requiredString(args, "to", 128), 128)
+            val text = boundedText("text", requiredString(args, "text", 4_096), 4_096)
+            if (destination.isEmpty()) throw ZaraWireException("to must not be empty")
+            if (text.isEmpty()) throw ZaraWireException("text must not be empty")
+            DeviceActionArguments.SendSms(destination, text)
         }
     }
 
