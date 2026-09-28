@@ -56,6 +56,7 @@ class ZaraTextClientActor(
         private const val MAX_TERMINAL_DEVICE_ACTIONS = 256
     }
 
+    private val protocolTrace = ProtocolFailureTrace()
     private var dealer: TextDealer? = null
     private var session: ConnectedTextSession? = null
     private val correlations = RequestCorrelations(limit = 256)
@@ -105,9 +106,10 @@ class ZaraTextClientActor(
             terminalDeviceActions.clear()
             session = null
             val requestId = nextRequestId()
+            protocolTrace.begin(generation, null, requestId, "awaiting_hello", "hello.ok")
             val active = requireNotNull(dealer)
             val helloSessionId = if (audioOutputFormats.isEmpty()) {
-                active.send(ZaraTextCodec.encodeHello(requestId, nextTimestamp()))
+                sendTraced(active, ZaraTextCodec.encodeHello(requestId, nextTimestamp()), "hello", requestId, null)
                 val response = receiveMessage(active)
                 if (response is TextServerMessage.ProtocolError) {
                     throw ZaraWireException(
@@ -126,16 +128,20 @@ class ZaraTextClientActor(
                 selectedAudioOutputFormat = null
                 hello.sessionId
             } else {
-                active.send(
+                sendTraced(
+                    active,
                     ZaraVoiceHelloCodec.encodeHello(
                         requestId = requestId,
                         timestampNs = nextTimestamp(),
                         audioOutputFormats = audioOutputFormats,
-                    )
+                    ),
+                    "hello", requestId, null,
                 )
                 val helloFrames = active.receive(requestTimeoutMillis)
                     ?: throw TextRequestTimeoutException("ZARA/1 voice hello timed out")
+                protocolTrace.received(helloFrames)
                 val hello = ZaraVoiceHelloCodec.decodeHelloOk(helloFrames)
+                protocolTrace.decodedControl("hello.ok", hello.sessionId, hello.replyTo)
                 if (hello.replyTo != requestId) throw ZaraWireException("voice hello reply correlation mismatch")
                 if (hello.audioOutputFormat !in audioOutputFormats) {
                     throw ZaraWireException("server selected an unoffered audio output format")
@@ -149,17 +155,25 @@ class ZaraTextClientActor(
                 throw ZaraWireException("executable device capabilities require an action handler")
             }
             val capabilityRequestId = nextRequestId()
-            active.send(
+            protocolTrace.expect(
+                "awaiting_capabilities", "capability.snapshot.ok", capabilityRequestId,
+                pending = 1, sessionId = helloSessionId,
+            )
+            sendTraced(
+                active,
                 ZaraCapabilityCodec.encodeSnapshot(
                     requestId = capabilityRequestId,
                     sessionId = helloSessionId,
                     capabilities = advertisedCapabilities,
                     timestampNs = nextTimestamp(),
-                )
+                ),
+                "capability.snapshot", capabilityRequestId, helloSessionId,
             )
             val capabilityFrames = active.receive(requestTimeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 capability negotiation timed out")
+            protocolTrace.received(capabilityFrames)
             val capabilityAck = ZaraCapabilityCodec.decodeSnapshotOk(capabilityFrames)
+            protocolTrace.decodedControl("capability.snapshot.ok", capabilityAck.sessionId, capabilityAck.replyTo)
             if (capabilityAck.replyTo != capabilityRequestId) {
                 throw ZaraWireException("capability snapshot reply correlation mismatch")
             }
@@ -204,16 +218,19 @@ class ZaraTextClientActor(
         val current = connected
         val active = dealer ?: throw StaleTextSessionException("text dealer is unavailable")
         val requestId = nextRequestId()
+        protocolTrace.begin(generation, sessionId, requestId, "awaiting_turn_acceptance", "turn.accepted")
         correlations.register(requestId, generation, sessionId)
         try {
-            active.send(
+            sendTraced(
+                active,
                 ZaraTextCodec.encodeTurnSubmit(
                     requestId = requestId,
                     sessionId = sessionId,
                     conversationId = conversationId,
                     text = text,
                     timestampNs = nextTimestamp(),
-                )
+                ),
+                "turn.submit", requestId, sessionId,
             )
             val first = receiveMessage(active)
             if (first is TextServerMessage.ProtocolError) {
@@ -228,7 +245,7 @@ class ZaraTextClientActor(
             }
             val accepted = first as? TextServerMessage.TurnAccepted
                 ?: throw ZaraWireException(
-                    "expected turn.accepted",
+                    "expected turn.accepted; received ${ProtocolFailureTrace.typeOf(first)}",
                     code = ai.zara.app.telemetry.ZaraFailureCodes.PROTOCOL_UNEXPECTED_MESSAGE,
                 )
             verifySession(accepted.sessionId, sessionId)
@@ -243,6 +260,7 @@ class ZaraTextClientActor(
                 throw ZaraWireException("turn conversation correlation mismatch")
             }
 
+            protocolTrace.accepted(sessionId, accepted.turnId)
             var assistantCompletion: TextTurnResult? = null
             while (true) {
                 when (val event = receiveMessage(active)) {
@@ -644,6 +662,8 @@ class ZaraTextClientActor(
         if (closed) return
         val liveSession = session ?: return
         if (liveSession.generation != current.generation || liveSession.sessionId != current.sessionId) return
+        protocolTrace.decodeFailed()
+        attachProtocolFailureContext(error, protocolTrace.snapshot())
         val failure = ai.zara.app.telemetry.ZaraFailures.classify(
             error,
             operation,
@@ -653,17 +673,30 @@ class ZaraTextClientActor(
         connectionFailureObserver?.invoke(failure)
     }
 
+    private fun sendTraced(
+        active: TextDealer,
+        frames: List<ByteArray>,
+        messageType: String,
+        requestId: String,
+        sessionId: String?,
+    ) {
+        active.send(frames)
+        protocolTrace.transmitted(messageType, requestId, sessionId, frames)
+    }
+
     private fun receiveMessage(active: TextDealer): TextServerMessage {
         while (true) {
             val frames = active.receive(requestTimeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 response timed out")
+            protocolTrace.received(frames)
             try {
                 val voiceEvent = ai.zara.app.voice.ZaraVoiceStreamCodec.decode(frames)
+                protocolTrace.decodedControl("voice.stream", voiceEvent.sessionId)
                 dispatchVoiceStream(voiceEvent)
                 continue
             } catch (_: ZaraWireException) {
                 if (handleDeviceServerMessage(active, frames)) continue
-                return ZaraTextCodec.decode(frames)
+                return ZaraTextCodec.decode(frames).also(protocolTrace::decoded)
             }
         }
     }
@@ -677,6 +710,7 @@ class ZaraTextClientActor(
         } catch (_: ZaraWireException) {
             return false
         }
+        protocolTrace.decodedControl("device.action", message.sessionId)
         val current = session ?: throw StaleTextSessionException("device action arrived without a live session")
         if (message.sessionId != current.sessionId) {
             throw StaleTextSessionException("device action belongs to a stale session")
@@ -783,8 +817,13 @@ class ZaraTextClientActor(
         val future = CompletableFuture<T>()
         executor.execute {
             try {
-                future.complete(block())
+                val result = block()
+                protocolTrace.finish()
+                future.complete(result)
             } catch (error: Throwable) {
+                protocolTrace.decodeFailed()
+                attachProtocolFailureContext(error, protocolTrace.snapshot())
+                protocolTrace.finish()
                 future.completeExceptionally(error)
             }
         }
