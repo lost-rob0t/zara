@@ -40,6 +40,47 @@ jobs:
             exit 1
           }
 
+      - name: Resolve trusted coverage base
+        id: coverage-base
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_REF: ${{ github.base_ref }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          zero_sha=0000000000000000000000000000000000000000
+          case "$EVENT_NAME" in
+            pull_request)
+              test -n "$PR_BASE_REF" || {
+                echo "pull_request coverage base ref is unavailable" >&2
+                exit 1
+              }
+              git fetch --no-tags origin "$PR_BASE_REF"
+              base_ref="origin/$PR_BASE_REF"
+              ;;
+            push)
+              [[ "$PUSH_BEFORE" =~ ^[0-9a-f]{40}$ ]] || {
+                echo "push before SHA is malformed" >&2
+                exit 1
+              }
+              test "$PUSH_BEFORE" != "$zero_sha" || {
+                echo "branch-creation push has no trusted previous coverage base" >&2
+                exit 1
+              }
+              git cat-file -e "${PUSH_BEFORE}^{commit}" || {
+                echo "push before SHA is not available in checkout: $PUSH_BEFORE" >&2
+                exit 1
+              }
+              base_ref="$PUSH_BEFORE"
+              ;;
+            *)
+              echo "unsupported coverage event: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+
       - name: Check whitespace errors
         shell: bash
         run: |
@@ -55,6 +96,8 @@ jobs:
         uses: cachix/install-nix-action@v31
 
       - name: Run all tests
+        env:
+          ZARA_COVERAGE_BASE_REF: ${{ steps.coverage-base.outputs.base_ref }}
         run: nix develop -c bash scripts/test-all.sh
 
       - name: Run formal AGENTIC-15 verification
