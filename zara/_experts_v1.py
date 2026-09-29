@@ -14,6 +14,7 @@ import hashlib
 import inspect
 import json
 import logging
+import math
 import re
 import threading
 import uuid
@@ -69,6 +70,7 @@ _MAX_DECISION_REFS = 16
 _MAX_EVIDENCE_REFS = 32
 _MAX_REF_LENGTH = 128
 _MAX_RECEIPTS = 32
+_MAX_ERROR_MESSAGE = 256
 _SELECTABLE_AVAILABILITY = frozenset(
     {"installed", "available", "ready"}
 )
@@ -264,6 +266,21 @@ def _bounded_text(value: str, *, field_name: str, limit: int) -> str:
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
         raise ValueError(f"{field_name} contains control characters")
     return value
+
+
+def _bounded_error_message(value: Any) -> str:
+    if type(value) is not str:
+        raise ExpertInvalidInputError("error_message must be a string")
+    if not value:
+        return value
+    try:
+        return _bounded_text(
+            value,
+            field_name="error_message",
+            limit=_MAX_ERROR_MESSAGE,
+        )
+    except (TypeError, ValueError) as error:
+        raise ExpertInvalidInputError(str(error)) from error
 
 
 def _bounded_pattern(
@@ -886,6 +903,9 @@ class ExpertResult:
     error_message: str = ""
     replayed: bool = False
 
+    def __post_init__(self) -> None:
+        _bounded_error_message(self.error_message)
+
 
 @dataclass(frozen=True)
 class ExpertRegistrySnapshot:
@@ -924,7 +944,11 @@ def _validate_input_value(value: Any, *, depth: int = 0) -> None:
         raise ExpertInvalidInputError("input payload exceeds bounded depth")
     if isinstance(value, bool):
         return
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ExpertInvalidInputError("input payload contains non-finite number")
         return
     if isinstance(value, str):
         if len(value) > _MAX_INPUT_STRING:
@@ -958,6 +982,10 @@ def _check_field_value(spec: FieldSpec, value: Any) -> None:
     elif field_type is FieldType.NUMBER:
         if type(value) not in (int, float):
             raise ExpertInvalidInputError(f"input field {spec.name!r} must be a number")
+        if type(value) is float and not math.isfinite(value):
+            raise ExpertInvalidInputError(
+                f"input field {spec.name!r} must be a finite number"
+            )
     elif field_type in (
         FieldType.STRING,
         FieldType.REFERENCE,
@@ -1562,7 +1590,10 @@ class ExpertRegistry:
         try:
             _validate_input_value(resolved_input)
             serialized = json.dumps(
-                resolved_input, sort_keys=True, separators=(",", ":")
+                resolved_input,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
             )
         except (TypeError, ValueError) as error:
             raise ExpertInvalidInputError(
@@ -1692,11 +1723,26 @@ class ExpertRegistry:
                 )
         elif handler_error is not None:
             error_code = ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
-            error_message = f"handler raised: {handler_error!r}"[:256]
+            error_message = f"handler raised: {handler_error!r}"[:_MAX_ERROR_MESSAGE]
         else:
             error_code = ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
             error_message = "handler returned an unparseable outcome"
 
+        if verdict is ExpertVerdict.SUCCEEDED and operation.output_fields:
+            try:
+                output_contract = replace(
+                    operation,
+                    input_fields=operation.output_fields,
+                )
+                self._validate_input_against_operation(output_contract, data)
+            except ExpertInvalidInputError as error:
+                verdict = ExpertVerdict.UNKNOWN
+                data = {}
+                evidence_refs = ()
+                error_code = ExpertErrorCode.INVALID_INPUT
+                error_message = f"output schema violation: {error}"
+
+        error_message = _bounded_error_message(error_message)
         result = ExpertResult(
             protocol=ZARA_EXPERT_PROTOCOL,
             request_id=resolved_request_id,
@@ -1754,6 +1800,25 @@ class ExpertRegistry:
 
 def _input_digest(serialized: str) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _result_output_size_bytes(result: ExpertResult) -> int:
+    payload = {
+        "verdict": result.verdict.value,
+        "data": result.data,
+        "evidence_refs": list(result.evidence_refs),
+        "usage": result.usage,
+        "effect_receipts": list(result.effect_receipts),
+        "error_code": result.error_code.value if result.error_code else None,
+        "error_message": result.error_message,
+    }
+    serialized = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=repr,
+    )
+    return len(serialized.encode("utf-8"))
 
 
 def _bounded_mapping(value: Any, label: str) -> dict[str, Any]:

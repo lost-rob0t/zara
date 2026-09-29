@@ -559,7 +559,10 @@ def test_cancel_after_commit_returns_committed_receipt_without_reversal() -> Non
         idempotency_key="write-1",
     )
     assert replay.invocation_id == result.invocation_id
-    assert replay.verdict is ExpertVerdict.SUCCEEDED
+    assert replay.replayed is True
+    assert replay.verdict is ExpertVerdict.UNKNOWN
+    assert replay.error_code is ExpertErrorCode.UNKNOWN_EXTERNAL_OUTCOME
+    assert replay.effect_receipts == result.effect_receipts
     assert len(handler.calls) == 1
 
     with pytest.raises(ExpertInvalidInputError, match="invocation"):
