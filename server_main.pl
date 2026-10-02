@@ -4,7 +4,7 @@
 % Server-safe Prolog boot (issue #158).
 %
 % Consulted by the server-side plan engine. This boot loads ONLY the intent
-% vocabulary, the capability/provider selection layer, the server
+% and workflow vocabulary, the capability/provider selection layer, the server
 % api_service registry, and the config loader. It never consults
 % kb/device_providers.pl, so Linux shell mappings can never become server
 % execution targets, and it loads user configuration with the server scope:
@@ -19,6 +19,7 @@
 :- module(server_main, []).
 
 :- use_module('kb/intents').
+:- use_module('kb/workflows').
 :- use_module('kb/server_providers').
 :- use_module('modules/capability_plans').
 :- use_module('modules/config_loader').
