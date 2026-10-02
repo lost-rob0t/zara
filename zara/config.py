@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from zara.themes import configure_theme_registry
+
 
 DEFAULT_FILE_TOOL_MAX_BYTES = 20000
 DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
@@ -31,6 +33,10 @@ DEFAULT_CONFIG_TOML = """# Zarathushtra Configuration
 [desktop]
 # Native desktop appearance. Unknown values fall back to Signal Cabin.
 theme = "signal-cabin"
+
+[themes]
+# Add custom semantic themes as [themes.<name>] tables. Each theme may inherit
+# a built-in or package theme and override only the semantic color tokens it needs.
 
 [daemon]
 # ZARA/1 daemon service. Clients (wake listener, CLI, desktop) connect here.
@@ -238,6 +244,14 @@ lifecycle_timeout = 5.0
 event_queue_size = 256
 max_managed_workers = 8
 
+[plugins.beta-console]
+# Shipped first-party beta tester console. Minimal/legacy configs remain safe
+# because the plugin class itself is disabled unless this policy enables it.
+enabled = true
+host = "127.0.0.1"
+port = 8787
+theme = "inherit"
+
 [api_service]
 # Server-side plan execution services behind RuntimeHost (issue #158).
 # Providers are declared in kb/server_providers.pl; this section only gates
@@ -333,6 +347,14 @@ class ZaraConfig:
             raise ConfigError(f"Failed to load config {self.config_file}: {error}") from error
 
         self._validate_config(config)
+        desktop_theme = config.get("desktop", {}).get("theme", "signal-cabin")
+        try:
+            configure_theme_registry(
+                config.get("themes", {}),
+                active_theme=desktop_theme,
+            )
+        except (TypeError, ValueError) as error:
+            raise ConfigError(f"Invalid theme configuration: {error}") from error
         return config
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
@@ -342,6 +364,15 @@ class ZaraConfig:
         desktop_theme = desktop_config.get("theme", "signal-cabin")
         if not isinstance(desktop_theme, str):
             raise ConfigError("desktop.theme must be a string")
+
+        themes_config = config.get("themes", {})
+        if not isinstance(themes_config, dict):
+            raise ConfigError("Invalid [themes] configuration: expected a TOML table")
+        for theme_name, theme_config in themes_config.items():
+            if not isinstance(theme_name, str) or not theme_name:
+                raise ConfigError("theme names must be non-empty strings")
+            if not isinstance(theme_config, dict):
+                raise ConfigError(f"themes.{theme_name} must be a TOML table")
 
         tts_config = config.get("tts", {})
         if not isinstance(tts_config, dict):
