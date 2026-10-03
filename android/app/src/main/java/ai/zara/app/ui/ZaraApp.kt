@@ -1,6 +1,7 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.app.localai.LocalAiState
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
@@ -75,6 +76,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -146,6 +148,7 @@ fun ZaraApp(
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
@@ -157,6 +160,7 @@ fun ZaraApp(
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onRefreshLocalAiState: () -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
@@ -298,6 +302,7 @@ fun ZaraApp(
                                                     state = runtimeState,
                                                     runtimeMode = runtimeMode,
                                                     localServerState = localServerState,
+                                                    localAiState = localAiState,
                                                     conversation = conversation,
                                                     project = project,
                                                     turnFailure = turnFailure,
@@ -358,6 +363,8 @@ fun ZaraApp(
                                                 state = runtimeState,
                                                 sourceSha = sourceSha,
                                                 localServerState = localServerState,
+                                                localAiState = localAiState,
+                                                runtimeMode = runtimeMode,
                                                 voiceStreamState = voiceStreamState,
                                                 voiceStreamFailure = voiceStreamFailure,
                                                 operationError = operationError,
@@ -373,6 +380,7 @@ fun ZaraApp(
                                                 onConnect = onConnect,
                                                 state = runtimeState,
                                                 localServerState = localServerState,
+                                                localAiState = localAiState,
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
@@ -389,6 +397,7 @@ fun ZaraApp(
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
+                                                onRefreshLocalAiState = onRefreshLocalAiState,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                                                 padding = padding,
                                             )
@@ -845,6 +854,7 @@ private fun ChatSurface(
     state: RuntimeState,
     runtimeMode: RuntimeMode,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     conversation: ConversationRecord?,
     project: ProjectContext?,
     turnFailure: TurnFailure?,
@@ -856,10 +866,17 @@ private fun ChatSurface(
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
-    val remoteReady = state.server is ServerConnection.Connected &&
-        state.enrollment == EnrollmentReadiness.Ready
-    val localReady = localServerState.phase == LocalServerPhase.READY
-    val ready = conversation != null && (remoteReady || localReady)
+    val projection = runtimeUiProjection(runtimeMode, localServerState, state)
+    val ready = conversation != null && projection.chatReady
+    val backend = projection.backendLabel
+    val runtimeStatus = when {
+        backend == "remote" -> "Online · Remote"
+        backend == "local" || backend == "local fallback" ->
+            localAiState?.model?.let { "Offline · Local model ${it.id}" } ?: "Offline · Symbolic"
+        runtimeMode == RuntimeMode.Local && localServerState.phase == LocalServerPhase.STARTING ->
+            "Connecting…"
+        else -> "Degraded"
+    }
     val tokens = LocalZaraTokens.current
 
     Column(
@@ -951,12 +968,9 @@ private fun ChatSurface(
             },
         )
         Text(
-            chatFooter(
-                mode = runtimeMode,
-                server = state.server,
-                enrollment = state.enrollment,
-            ),
-            modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp),
+            runtimeStatus,
+            modifier = Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 10.dp)
+                .semantics { contentDescription = "Runtime status $runtimeStatus" },
             color = tokens.textMuted,
             textAlign = TextAlign.Center,
             fontFamily = FontFamily.Monospace,
@@ -1226,6 +1240,7 @@ private fun SettingsSurface(
     onConnect: (String) -> Unit,
     state: RuntimeState,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
@@ -1242,6 +1257,7 @@ private fun SettingsSurface(
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onRefreshLocalAiState: () -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
 ) {
@@ -1250,6 +1266,10 @@ private fun SettingsSurface(
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
     val tokens = LocalZaraTokens.current
+
+    LaunchedEffect(section) {
+        if (section == AppRoute.Runtime) onRefreshLocalAiState()
+    }
 
     ScreenBody(padding) {
         ScreenTitle(section.label, "Settings")
@@ -1261,27 +1281,39 @@ private fun SettingsSurface(
                     KeyValueRow("knowledge sources", localServerState.loadedSources.size.toString())
                     MutedNotice("Runs inside Zara with no account or network. The Logic workspace is app-private and never syncs to a remote server implicitly.")
                     localServerState.failure?.let { ErrorBanner(it) }
-                    Text("CHAT BACKEND", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                    Text("RUNTIME MODE", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                    KeyValueRow("selected", runtimeMode.name)
                     RuntimeMode.entries.forEach { mode ->
+                        val description = when (mode) {
+                            RuntimeMode.Auto -> "Use authenticated Remote when available; otherwise use Local."
+                            RuntimeMode.Local -> "Stay on-device. No account, server, or cloud fallback."
+                            RuntimeMode.Remote -> "Use only an authenticated Zara server; fail closed when unavailable."
+                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .selectable(
-                                    selected = mode == runtimeMode,
-                                    onClick = { onSelectRuntimeMode(mode) },
-                                )
-                                .padding(vertical = 8.dp),
+                                .selectable(selected = mode == runtimeMode, onClick = { onSelectRuntimeMode(mode) })
+                                .semantics { contentDescription = "Runtime mode ${mode.name}; ${if (mode == runtimeMode) "selected" else "not selected"}" }
+                                .padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             StatusDot(if (mode == runtimeMode) tokens.success else tokens.border)
-                            Text(
-                                mode.name,
-                                modifier = Modifier.padding(start = 10.dp),
-                                color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
-                            )
+                            Column(modifier = Modifier.padding(start = 10.dp).weight(1f)) {
+                                Text(mode.name, color = if (mode == runtimeMode) tokens.text else tokens.textMuted, fontWeight = if (mode == runtimeMode) FontWeight.SemiBold else FontWeight.Normal)
+                                Text(description, color = tokens.textMuted, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
-                    MutedNotice("Auto prefers an authenticated remote session and falls back to local. Local never sends the turn to the network. Remote fails closed when disconnected.")
+                    MutedNotice("Mode selection is saved on this device and applies to new turns immediately. Auto, Local, and Remote are routing choices; they do not change which concrete optional runtime is installed.")
+                    val localModel = localAiState?.model
+                    Text("LOCAL MODEL", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                    KeyValueRow("phase", localAiState?.phase?.name?.lowercase() ?: "unavailable")
+                    KeyValueRow("model", localModel?.let { "${it.id}@${it.version}" } ?: "none")
+                    KeyValueRow("format", localModel?.format?.wireName ?: "none")
+                    KeyValueRow("quantization", localModel?.quantization?.wireName ?: "none")
+                    KeyValueRow("accelerator", localModel?.backend?.name?.lowercase() ?: "none")
+                    localAiState?.failure?.let { ErrorBanner(it) }
+                    MutedNotice("Read directly from the local AI service. 'none' means no local model is loaded; Zara never invents local-model readiness.")
                     Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                     Row(
                         modifier = Modifier
@@ -1481,6 +1513,8 @@ private fun DiagnosticsSurface(
     state: RuntimeState,
     sourceSha: String,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
+    runtimeMode: RuntimeMode,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
@@ -1497,16 +1531,36 @@ private fun DiagnosticsSurface(
             KeyValueRow("source", sourceSha.take(12))
         }
         SectionCard("RUNTIME") {
-            KeyValueRow("local server", localServerState.phase.name.lowercase())
-            KeyValueRow("local generation", localServerState.generation.toString())
-            KeyValueRow("local sources", localServerState.loadedSources.size.toString())
-            KeyValueRow("local failure", localServerState.failure ?: "none")
+            val projection = runtimeUiProjection(runtimeMode, localServerState, state)
+            KeyValueRow("mode", runtimeMode.name.lowercase())
+            KeyValueRow("active backend", projection.backendLabel)
+            KeyValueRow("chat ready", projection.chatReady.toString())
+            KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+        }
+        SectionCard("LOCAL") {
+            KeyValueRow("server", localServerState.phase.name.lowercase())
+            KeyValueRow("generation", localServerState.generation.toString())
+            KeyValueRow("sources", localServerState.loadedSources.size.toString())
+            KeyValueRow("failure", localServerState.failure ?: "none")
+        }
+        SectionCard("LOCAL MODEL") {
+            val localModel = localAiState?.model
+            KeyValueRow("phase", localAiState?.phase?.name?.lowercase() ?: "unavailable")
+            KeyValueRow("model", localModel?.let { "${it.id}@${it.version}" } ?: "none")
+            KeyValueRow("format", localModel?.format?.wireName ?: "none")
+            KeyValueRow("quantization", localModel?.quantization?.wireName ?: "none")
+            KeyValueRow("accelerator", localModel?.backend?.name?.lowercase() ?: "none")
+            localAiState?.failure?.let { ErrorBanner(it) }
+        }
+        SectionCard("REMOTE") {
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("generation", state.generation.toString())
             KeyValueRow("session", state.sessionId ?: "none")
             KeyValueRow("conversation", state.selectedConversationId ?: "none")
             KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
-            KeyValueRow("assistant role", assistantRoleLabel(state.assistantRole))
+            if (runtimeUiProjection(runtimeMode, localServerState, state).remoteInformational) {
+                MutedNotice("Remote state is informational in Local mode and is not required for local chat or Android Assistant voice.")
+            }
         }
         if (preview.contains("ZARA-LOCAL-DIAGNOSTICS/2")) {
             SectionCard("DIAGNOSTICS V2") {

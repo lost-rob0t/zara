@@ -4,6 +4,7 @@ import ai.zara.app.auth.PairingProgress
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStore
+import ai.zara.app.localai.LocalAiState
 import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.ConversationExecutionPolicy
@@ -67,6 +68,8 @@ class MainActivity : ComponentActivity() {
     private var operationError by mutableStateOf<String?>(null)
     private var turnFailure by mutableStateOf<TurnFailure?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
+    private var localAiState by mutableStateOf<LocalAiState?>(null)
+    private var localAiRefreshGeneration = 0L
     private var enrollmentPublicKey by mutableStateOf<String?>(null)
     private var pinnedServerPublicKey by mutableStateOf<String?>(null)
     private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
@@ -122,6 +125,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         appSession.setRuntimeMode(runtimeMode)
+        refreshLocalAiState()
 
         val microphonePermission = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
@@ -223,6 +227,7 @@ class MainActivity : ComponentActivity() {
                             future.whenComplete { result, error ->
                                 runOnUiThread {
                                     operationBusy = false
+                                    refreshLocalAiState()
                                     if (error != null) {
                                         recordTurnFailure(conversationId, error)
                                     } else if (result != null) {
@@ -271,6 +276,7 @@ class MainActivity : ComponentActivity() {
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
                 localServerState = localServerState,
+                localAiState = localAiState,
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
@@ -288,7 +294,9 @@ class MainActivity : ComponentActivity() {
                     runtimeMode = mode
                     runtimeModeStore.save(mode)
                     appSession.setRuntimeMode(mode)
+                    refreshLocalAiState()
                 },
+                onRefreshLocalAiState = ::refreshLocalAiState,
                 onSetLocalEmbeddingEnabled = { enabled ->
                     operationError = null
                     val nextEmbedding = localEmbedding.copy(enabled = enabled)
@@ -627,6 +635,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
+        refreshLocalAiState()
         reconcileMicrophonePermission(hasMicrophonePermission())
     }
 
@@ -644,6 +653,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         pairingUiGeneration += 1
+        localAiRefreshGeneration += 1
         if (::appSession.isInitialized) {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
@@ -735,6 +745,17 @@ class MainActivity : ComponentActivity() {
 
     private fun isPairingUiCurrent(pairingGeneration: Long): Boolean =
         !isDestroyed && pairingUiGeneration == pairingGeneration
+
+    private fun refreshLocalAiState() {
+        if (!::appSession.isInitialized || isFinishing || isDestroyed) return
+        val refreshGeneration = ++localAiRefreshGeneration
+        appSession.localAiState().whenComplete { state, error ->
+            runOnUiThread {
+                if (refreshGeneration != localAiRefreshGeneration || isFinishing || isDestroyed) return@runOnUiThread
+                localAiState = if (error == null) state else null
+            }
+        }
+    }
 
     private fun reconcileMicrophonePermission(granted: Boolean) {
         microphonePermissionGranted = granted

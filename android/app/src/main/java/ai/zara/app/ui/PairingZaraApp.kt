@@ -2,6 +2,7 @@ package ai.zara.app.ui
 
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
+import ai.zara.app.localai.LocalAiState
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.prolog.LocalEmbeddingConfiguration
@@ -53,6 +54,7 @@ fun ZaraApp(
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
     localServerState: LocalServerState,
+    localAiState: LocalAiState?,
     prologSources: List<PrologSource>,
     prologQueryResult: LocalQueryResult?,
     updateState: UpdateState,
@@ -64,6 +66,7 @@ fun ZaraApp(
     projectState: ProjectContextState,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
+    onRefreshLocalAiState: () -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onScanPairingQr: () -> Unit,
     onCreateIdentity: () -> Unit,
@@ -120,6 +123,7 @@ fun ZaraApp(
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
                 localServerState = localServerState,
+                localAiState = localAiState,
                 prologSources = prologSources,
                 prologQueryResult = prologQueryResult,
                 updateState = updateState,
@@ -131,6 +135,7 @@ fun ZaraApp(
                 projectState = projectState,
                 onSelectTheme = onSelectTheme,
                 onSelectRuntimeMode = onSelectRuntimeMode,
+                onRefreshLocalAiState = onRefreshLocalAiState,
                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                 onCreateIdentity = onCreateIdentity,
                 onPinServer = onPinServer,

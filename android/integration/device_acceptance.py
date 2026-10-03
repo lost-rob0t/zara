@@ -139,6 +139,23 @@ class Device:
                 )
         raise AssertionError(f"Control is not reachable after scrolling: {label}")
 
+    def reveal_contains(self, fragment: str) -> None:
+        width, height = self.size()
+        for direction in (1, -1):
+            for _ in range(6):
+                if self.find_contains(fragment) is not None:
+                    return
+                start, end = (height * 3 // 4, height // 3)
+                if direction < 0:
+                    start, end = end, start
+                self.adb(
+                    "shell", "input", "swipe", str(width // 3), str(start),
+                    str(width // 3), str(end), "250"
+                )
+        raise AssertionError(
+            f"Control containing text is not reachable after scrolling: {fragment}"
+        )
+
     def reveal_horizontal(self, label: str) -> None:
         width, height = self.size()
         for direction in (1, -1):
@@ -163,6 +180,18 @@ class Device:
     def tap(self, label: str) -> None:
         self.reveal(label)
         self._tap_found(label)
+
+    def tap_contains(self, fragment: str) -> None:
+        self.reveal_contains(fragment)
+        node = self.find_contains(fragment)
+        if node is None:
+            raise AssertionError(f"Control containing text is not reachable: {fragment}")
+        left, top, right, bottom = self.bounds(node)
+        if right <= left or bottom <= top:
+            raise AssertionError(f"Control containing text has empty bounds: {fragment}")
+        self.adb(
+            "shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2)
+        )
 
     def tap_tab(self, label: str) -> None:
         self.reveal_horizontal(label)
@@ -453,6 +482,21 @@ def exercise_three_menu_ui(device: Device) -> None:
         device.capture(f"workspace-{tab.lower()}")
 
     open_menu(device, "Settings")
+    device.tap_tab("Runtime")
+    for mode in ("Auto", "Remote", "Local"):
+        device.reveal_contains(f"Runtime mode {mode};")
+        device.tap_contains(f"Runtime mode {mode};")
+        device.await_label(f"Runtime mode {mode}; selected")
+        device.capture(f"runtime-mode-{mode.lower()}")
+
+    device.recreate()
+    open_menu(device, "Settings")
+    device.tap_tab("Runtime")
+    device.reveal_contains("Runtime mode Local; selected")
+    device.capture("runtime-mode-local-recreated")
+    device.reveal("LOCAL MODEL")
+    device.capture("runtime-local-model-state")
+
     for tab in (
         "Runtime",
         "Connection",
@@ -478,6 +522,8 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.tap("Outrun")
 
     open_menu(device, "Chat")
+    device.await_label("Offline · Symbolic")
+    device.capture("local-chat-symbolic")
     device.set_display_profile(
         "wide-navigation-rail", target_width_dp=700, font_scale=1.0
     )

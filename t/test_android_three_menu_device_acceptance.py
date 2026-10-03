@@ -94,3 +94,29 @@ def test_remote_gate_fails_closed_when_app_diagnostics_are_missing_or_fatal():
     assert 'fatal_markers = data.get("fatal_log_markers")' in gate
     assert 'if not isinstance(fatal_markers, list):' in gate
     assert 'if fatal_markers:' in gate
+
+
+
+def test_acceptance_switches_all_runtime_modes_and_persists_strict_local():
+    text = source()
+    assert 'def reveal_contains(self, fragment: str)' in text
+    assert 'def tap_contains(self, fragment: str)' in text
+    assert 'for mode in ("Auto", "Remote", "Local")' in text
+    assert 'device.tap_contains(f"Runtime mode {mode};")' in text
+    assert 'device.await_label(f"Runtime mode {mode}; selected")' in text
+    assert 'device.capture(f"runtime-mode-{mode.lower()}")' in text
+    assert 'device.recreate()' in text
+    assert 'device.reveal_contains("Runtime mode Local; selected")' in text
+    assert 'device.capture("runtime-mode-local-recreated")' in text
+
+
+def test_acceptance_captures_truthful_local_model_state_without_claiming_inference():
+    text = source()
+    assert 'device.reveal("LOCAL MODEL")' in text
+    assert 'device.capture("runtime-local-model-state")' in text
+
+
+def test_acceptance_proves_zero_model_symbolic_local_chat_state():
+    text = source()
+    assert 'device.await_label("Offline · Symbolic")' in text
+    assert 'device.capture("local-chat-symbolic")' in text
