@@ -4,7 +4,16 @@
 
 The Samsung Health plugin is a read-only Android integration driven by Zara's existing local Prolog runtime. It does not create a second Android plugin runtime or a separate policy engine.
 
-The first slice exposes:
+The phone catalog covers all 25 read surfaces documented by Samsung Health Data SDK v1.1.0:
+
+- activity summary, active-calorie and active-time goals;
+- blood glucose, blood oxygen, blood pressure, body composition, body temperature, energy score;
+- exercise and exercise location, floors, heart rate, and irregular rhythm notifications;
+- nutrition and its goal, water intake and its goal;
+- sleep, sleep apnea, sleep goal, and sleep-associated skin temperature;
+- steps, step goal, and the user profile.
+
+The checked-in optional vendor adapter currently normalizes these physically verified reads:
 
 - Samsung Health / SDK readiness;
 - current granted read permissions;
@@ -14,6 +23,8 @@ The first slice exposes:
 - today's exercise duration and calories.
 
 Health values are treated as fitness/wellness data. The plugin does not diagnose conditions or provide treatment decisions.
+
+Metrics that the bundled adapter does not implement are shown as unavailable. Zara never substitutes a fabricated value or labels a catalog entry as captured. Expanding a vendor read requires the official AAR, a typed normalizer, a deterministic adapter test, and physical-device acceptance.
 
 * Architecture
 
@@ -78,6 +89,43 @@ Availability, authorization, and permission are separate states:
 
 =SamsungHealthAndroidPlugin.requestPermissions(Activity, metrics)= is the only permission-request boundary in this slice. It requires a foreground =Activity=. The plugin never silently requests health permission from a background task or from a normal data read.
 
+* Phone and watch experience
+
+The phone Health surface uses Zara's Outrun visual language with section cards, readiness truth, per-metric permission/read actions, and bounded goal bars. Users can set daily targets for steps, sleep, active calories, active time, nutrition, and water. Goal files live under Android =noBackupFilesDir= and are encrypted with an Android Keystore AES-GCM key.
+
+The Wear surface uses circular target gauges and capability cards. Goals are projected from the paired phone through =ZARA-WEAR-PROVISION/2=; no health reading, credential, endpoint, transcript, or authority grant is carried in that provision envelope. Legacy =/1= provisioning still decodes with no goals.
+
+Watch support is capability-based rather than model-name-based. The optional Samsung Health Sensor SDK v1.4.1 gateway asks the watch which tracker types are available and classifies each as available, update-required, or unsupported. The catalog covers accelerometer, EDA, heart rate/IBI, continuous and on-demand PPG, continuous and on-demand skin temperature, BIA, ECG, MF-BIA, SpO2, and sweat loss. Skin temperature requires Watch5-class hardware with Android 13/API 33 or newer; EDA and MF-BIA are reported only by newer capable watches. This is how Zara remains compatible with Watch5 Pro through later Watch generations without inventing a nonexistent model allow-list.
+
+The watch manifest declares the Sensor SDK's documented foreground measurement permissions, but Zara does not register a background health foreground service. Continuous measurement must therefore remain an explicit foreground interaction until a tested service lifecycle exists.
+
+* Private Prolog database, Org, and OpenPGP
+
+Desktop health state uses a strict data-only Prolog grammar:
+
+#+begin_src prolog
+health_db_version(1).
+health_observation(Id, Principal, Metric, StartMs, EndMs, Source, Privacy, Values).
+health_goal(Principal, Metric, Target, Unit, Period, UpdatedMs).
+#+end_src
+
+The parser never consults decrypted files as Prolog source. Unknown directives, duplicate identities, unbounded content, invalid metrics, non-finite numbers, and malformed tokens fail closed.
+
+By default the desktop database is plaintext with owner-only mode =0600= inside an owner-only directory. Setting =health.gpg_enabled=true= and one or more =health.gpg_recipients= switches the canonical database to GPG encryption. Up to 32 unique recipient fingerprints, key IDs, or addresses are supported; GPG is invoked with an argv list, never a shell. Optional =health.gpg_homedir= selects a keyring. Commands are available as =zara health ...= and =zara-health ...=.
+
+Org integration is an explicit projection, not a second health database. =zara health export-org FILE --metric steps --metric sleep= writes only approved aggregate wellness metrics and goals, marks the whole document private, excludes raw ECG/PPG/profile data, and can encrypt the result with =--gpg=. No Org export happens automatically.
+
+Android can import one or many OpenPGP public-key files through the system document picker. The Health screen's =SHARE GPG= action serializes only the current bounded readings and goals to the same data-only Prolog grammar, encrypts in memory with AES-256 OpenPGP integrity protection for every configured recipient, writes only the ciphertext to app cache, and shares it through a read-only =FileProvider= grant. Private keys are never imported into Zara Android.
+
+| Threat | Control |
+|-
+| Health values leak into logs/chat/model context | Health UI and adapters do not log readings; diagnostics and provision envelopes exclude them. |
+| Malicious Prolog file executes code | Closed parser accepts only version, observation, value, and goal facts; files are never consulted. |
+| Local file disclosure | Android goals use Keystore encryption; desktop plaintext is =0600= and GPG is opt-in. |
+| Wrong or excess OpenPGP recipients | Recipient inputs are bounded, deduplicated by key ID, public-key-only, and capped at 32. |
+| Plaintext left during export | Android encrypts in memory and writes only ciphertext; desktop uses private atomic temporary files. |
+| Raw biosignal copied into Org | The Org projection allow-list accepts only aggregate wellness goal metrics. |
+
 * Samsung Health Data SDK
 
 The integration targets Samsung Health Data SDK v1.1.0 rather than the deprecated Samsung Health SDK for Android.
@@ -92,6 +140,8 @@ Without a matching AAR under =android/app/libs/=:
 - ordinary CI/JVM tests remain deterministic.
 
 With exactly one =samsung-health-data-api-*.aar= present, the optional source set compiles =SamsungHealthSdkGateway= and the loader uses that local first-party adapter.
+
+GitHub Actions can inject checksum-pinned protected inputs named =ZARA_SAMSUNG_HEALTH_DATA_AAR_B64= / =ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256= and =ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64= / =ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256=. If those secrets are absent, CI publishes a truthful generic build whose Health surface reports =SDK_MISSING=. The repository does not redistribute Samsung binaries.
 
 Samsung's current requirements include Android 10/API 29+, Java 17+, Samsung Health 6.30.2+, and a physical device for SDK testing. Public app distribution requires Samsung partner registration for the app package and release-signing SHA-256. Developer mode is a development/testing facility, not an end-user deployment path.
 
@@ -132,6 +182,8 @@ The JVM contract suite uses an injected fake =SamsungHealthGateway= and does not
 The tests cover closed effect parsing, fan-out rejection, actor serialization, permission gating, Prolog-before-physical execution, normalized payload bounds, source seeding, and Android/build wiring.
 
 Real Samsung Health proof requires a physical Android device with a compatible Samsung Health installation and an official Samsung Health Data SDK AAR. Emulator success must never be reported as Samsung Health SDK acceptance because Samsung explicitly does not support the SDK on emulators.
+
+The same boundary applies to watch sensors: JVM tests prove catalogs, protocol, failure mapping, and runtime capability classification; only a signed partner build on a physical Galaxy Watch can prove actual sensor capture.
 
 * Source references
 

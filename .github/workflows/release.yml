@@ -13,6 +13,9 @@ on:
       - setup.py
       - android/app/build.gradle.kts
       - android/code-editor/build.gradle.kts
+      - android/termux-bridge/build.gradle.kts
+      - android/wear-app/build.gradle.kts
+      - android/wear-voice/build.gradle.kts
       - android/org-app/build.gradle.kts
       - android/org-editor/build.gradle.kts
       - android/org-todo/build.gradle.kts
@@ -110,6 +113,30 @@ jobs:
           chmod 600 "$keystore"
           echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
+      - name: Load optional approved Samsung Health SDKs
+        shell: bash
+        env:
+          ZARA_SAMSUNG_HEALTH_DATA_AAR_B64: ${{ secrets.ZARA_SAMSUNG_HEALTH_DATA_AAR_B64 }}
+          ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256: ${{ secrets.ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256 }}
+          ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64: ${{ secrets.ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64 }}
+          ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256: ${{ secrets.ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256 }}
+        run: |
+          set -euo pipefail
+          install_sdk() {
+            local payload="$1" expected="$2" destination="$3"
+            if [[ -z "$payload" ]]; then
+              return 0
+            fi
+            test -n "$expected" || { echo "Samsung SDK checksum secret is required." >&2; exit 1; }
+            printf '%s' "$payload" | base64 --decode > "$destination"
+            chmod 600 "$destination"
+            printf '%s  %s\n' "$expected" "$destination" | sha256sum --check
+          }
+          install_sdk "$ZARA_SAMSUNG_HEALTH_DATA_AAR_B64" "$ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256" \
+            android/app/libs/samsung-health-data-api-1.1.0.aar
+          install_sdk "$ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64" "$ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256" \
+            android/wear-app/libs/samsung-health-sensor-api-1.4.1.aar
+
       - name: Run Android release gate
         run: nix develop ./android -c bash scripts/test-android-release.sh
 
@@ -145,6 +172,27 @@ jobs:
             echo "apk_sha256=$(sha256sum "$code_editor_apk" | awk '{print $1}')"
           } > "dist/zara-code-editor-${VERSION}.manifest.txt"
 
+          extra_modules=("termux-bridge" "wear" "wear-voice")
+          extra_sources=("termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk" "wear-app/build/outputs/apk/debug/wear-app-debug.apk" "wear-voice/build/outputs/apk/debug/wear-voice-debug.apk")
+          extra_application_ids=("ai.zara.termux.bridge" "ai.zara.app" "ai.zara.wear.voice")
+          for index in "${!extra_modules[@]}"; do
+            module="${extra_modules[$index]}"
+            source="${extra_sources[$index]}"
+            application_id="${extra_application_ids[$index]}"
+            extra_apk="dist/zara-${module}-${VERSION}.apk"
+            cp "android/${source}" "$extra_apk"
+            sha256sum "$extra_apk" > "${extra_apk}.sha256"
+            {
+              echo "schema=1"
+              echo "source_sha=${GITHUB_SHA}"
+              echo "version_name=${VERSION}"
+              echo "version_code=${VERSION_CODE}"
+              echo "application_id=${application_id}"
+              echo "apk=$(basename "$extra_apk")"
+              echo "apk_sha256=$(sha256sum "$extra_apk" | awk '{print $1}')"
+            } > "dist/zara-${module}-${VERSION}.manifest.txt"
+          done
+
           org_modules=("org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home")
           org_application_ids=("ai.zara.org.app" "ai.zara.org.editor" "ai.zara.org.todo" "ai.zara.org.reminder" "ai.zara.org.timer" "ai.zara.org.roam" "ai.zara.org.graph" "ai.zara.org.home")
           for index in "${!org_modules[@]}"; do
@@ -176,6 +224,12 @@ jobs:
         run: |
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
+          for extra_apk in \
+            "dist/zara-termux-bridge-${{ needs.validate-version-context.outputs.version }}.apk" \
+            "dist/zara-wear-${{ needs.validate-version-context.outputs.version }}.apk" \
+            "dist/zara-wear-voice-${{ needs.validate-version-context.outputs.version }}.apk"; do
+            nix develop ./android -c bash scripts/check-android-apk-signer.sh "$extra_apk"
+          done
           for org_apk in dist/zara-org-*-*.apk; do
             case "$org_apk" in *.sha256) continue ;; esac
             nix develop ./android -c bash scripts/check-android-apk-signer.sh "$org_apk"
@@ -183,7 +237,10 @@ jobs:
 
       - name: Verify fleet APKs are installable under their own identities
         run: |
-          for entry in dist/zara-org-*-*.manifest.txt; do
+          for entry in dist/zara-org-*-*.manifest.txt \
+            "dist/zara-termux-bridge-${{ needs.validate-version-context.outputs.version }}.manifest.txt" \
+            "dist/zara-wear-${{ needs.validate-version-context.outputs.version }}.manifest.txt" \
+            "dist/zara-wear-voice-${{ needs.validate-version-context.outputs.version }}.manifest.txt"; do
             application_id="$(sed -n 's/^application_id=//p' "$entry")"
             apk_name="$(sed -n 's/^apk=//p' "$entry")"
             nix develop ./android -c bash scripts/check-android-apk-installable.sh "dist/$apk_name" "$application_id"
@@ -208,6 +265,11 @@ jobs:
           for module in "${org_modules[@]}"; do
             org_assets+=("dist/zara-${module}-${VERSION}.apk" "dist/zara-${module}-${VERSION}.apk.sha256" "dist/zara-${module}-${VERSION}.manifest.txt")
           done
+          extra_modules=("termux-bridge" "wear" "wear-voice")
+          extra_assets=()
+          for module in "${extra_modules[@]}"; do
+            extra_assets+=("dist/zara-${module}-${VERSION}.apk" "dist/zara-${module}-${VERSION}.apk.sha256" "dist/zara-${module}-${VERSION}.manifest.txt")
+          done
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
@@ -225,6 +287,7 @@ jobs:
                 "$(basename "$CODE_EDITOR_APK")" \
                 "$(basename "${CODE_EDITOR_APK}.sha256")" \
                 "$(basename "$CODE_EDITOR_MANIFEST")" \
+                "${extra_assets[@]##*/}" \
                 "${org_assets[@]##*/}"
               do
                 if ! grep -Fxq "$required" <<< "$assets"; then
@@ -241,6 +304,7 @@ jobs:
               for manifest_entry in \
                 "$(basename "$MANIFEST")" \
                 "$(basename "$CODE_EDITOR_MANIFEST")" \
+                "${extra_assets[@]##*/}" \
                 "${org_assets[@]##*/}"; do
                 case "$manifest_entry" in *.manifest.txt) ;; *) continue ;; esac
                 existing_manifest="$existing_dir/$manifest_entry"
@@ -280,7 +344,8 @@ jobs:
             "$CODE_EDITOR_APK" \
             "${CODE_EDITOR_APK}.sha256" \
             "$CODE_EDITOR_MANIFEST" \
+            "${extra_assets[@]}" \
             "${org_assets[@]}" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
-            --notes "Zara Android alpha preview plus the Org app fleet: one installable APK per Org app system (Org flagship, Editor, Todo, Reminder, Timer, Roam, Graph, Home). Every Org app works standalone over ordinary Org files and needs none of the others installed. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file and provenance manifest. Source commit: $GITHUB_SHA"
+            --notes "Zara Android release containing every installable app: phone, Code Editor, Termux bridge, Wear, Wear Voice, and one standalone APK per Org app system (Org flagship, Editor, Todo, Reminder, Timer, Roam, Graph, Home). These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Verify each APK with its accompanying SHA-256 file and provenance manifest. Source commit: $GITHUB_SHA"

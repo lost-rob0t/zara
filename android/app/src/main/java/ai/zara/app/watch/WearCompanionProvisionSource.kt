@@ -3,6 +3,7 @@ package ai.zara.app.watch
 import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
 import ai.zara.ui.continuity.WearCompanionContract
 import ai.zara.ui.continuity.WearPhoneProvision
+import ai.zara.ui.health.HealthGoalTarget
 
 /**
  * Builds the bounded phone -> Wear auto-provisioning payload from canonical truth.
@@ -14,6 +15,7 @@ import ai.zara.ui.continuity.WearPhoneProvision
 class WearCompanionProvisionSource(
     private val phoneName: () -> String,
     private val latestSnapshot: () -> SymbolicConversationEdgeSnapshot?,
+    private val healthGoals: () -> List<HealthGoalTarget> = { emptyList() },
 ) {
     fun encodeProvision(): ByteArray? =
         try {
@@ -21,6 +23,7 @@ class WearCompanionProvisionSource(
                 WearPhoneProvision(
                     phoneName = phoneName(),
                     snapshot = latestSnapshot(),
+                    healthGoals = healthGoals(),
                 ),
             )
         } catch (_: IllegalArgumentException) {

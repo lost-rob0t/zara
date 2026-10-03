@@ -18,6 +18,8 @@ class SamsungHealthAndroidPlugin(
     fun permissions(): CompletableFuture<SamsungHealthPluginReply> =
         run("samsung_health_permissions(Result)")
 
+    fun supportedMetrics(): Set<SamsungHealthMetric> = gateway.supportedMetrics()
+
     fun today(metric: SamsungHealthMetric): CompletableFuture<SamsungHealthPluginReply> =
         run("samsung_health_today(${metric.atom}, Result)")
 

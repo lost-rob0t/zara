@@ -1,21 +1,13 @@
 package ai.zara.app.samsunghealth
 
 import ai.zara.app.prolog.PrologWorkspace
+import ai.zara.ui.health.SamsungHealthDataMetric
 import android.app.Activity
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-enum class SamsungHealthMetric(val atom: String) {
-    STEPS("steps"),
-    SLEEP("sleep"),
-    HEART_RATE("heart_rate"),
-    EXERCISE("exercise");
-
-    companion object {
-        fun fromAtom(value: String): SamsungHealthMetric? = entries.firstOrNull { it.atom == value }
-    }
-}
+typealias SamsungHealthMetric = SamsungHealthDataMetric
 
 enum class SamsungHealthAvailability {
     SDK_MISSING,
@@ -70,6 +62,7 @@ data class SamsungHealthPluginReply(
     val success: Boolean,
     val status: SamsungHealthPlatformStatus? = null,
     val reading: SamsungHealthReading? = null,
+    val grantedPermissions: Set<SamsungHealthMetric>? = null,
 )
 
 object SamsungHealthPrologCodec {
@@ -108,6 +101,7 @@ object SamsungHealthPrologCodec {
 
 interface SamsungHealthGateway {
     fun status(): SamsungHealthPlatformStatus
+    fun supportedMetrics(): Set<SamsungHealthMetric>
     fun grantedPermissions(): Set<SamsungHealthMetric>
     fun requestPermissions(
         activity: Activity,
@@ -120,6 +114,8 @@ class UnavailableSamsungHealthGateway(
     private val reason: SamsungHealthAvailability = SamsungHealthAvailability.SDK_MISSING,
 ) : SamsungHealthGateway {
     override fun status(): SamsungHealthPlatformStatus = SamsungHealthPlatformStatus(reason)
+
+    override fun supportedMetrics(): Set<SamsungHealthMetric> = emptySet()
 
     override fun grantedPermissions(): Set<SamsungHealthMetric> = emptySet()
 
@@ -176,7 +172,12 @@ class SamsungHealthPluginActor(
             } else {
                 val granted = gateway.grantedPermissions()
                 val names = if (granted.isEmpty()) "none" else granted.sortedBy { it.atom }.joinToString(", ") { it.atom }
-                SamsungHealthPluginReply("Samsung Health read permissions: $names", true, status = status)
+                SamsungHealthPluginReply(
+                    "Samsung Health read permissions: $names",
+                    true,
+                    status = status,
+                    grantedPermissions = granted,
+                )
             }
         }
         is SamsungHealthAction.ReadToday -> readToday(action.metric)
@@ -187,6 +188,13 @@ class SamsungHealthPluginActor(
         val status = gateway.status()
         if (status.availability != SamsungHealthAvailability.READY) {
             return SamsungHealthPluginReply(statusText(status.availability), false, status = status)
+        }
+        if (metric !in gateway.supportedMetrics()) {
+            return SamsungHealthPluginReply(
+                "Samsung Health ${metric.atom} is not supported by this Zara Health adapter.",
+                false,
+                status = status,
+            )
         }
         val granted = gateway.grantedPermissions()
         if (metric !in granted) {
@@ -252,12 +260,33 @@ object SamsungHealthPrologPlugin {
 
     val source: String = """
         % Zara Android Samsung Health plugin.
-        % This first slice is read-only. Samsung Health owns user data permissions.
+        % Read-only. Samsung Health owns user data permissions.
 
-        samsung_health_metric(steps).
-        samsung_health_metric(sleep).
-        samsung_health_metric(heart_rate).
+        samsung_health_metric(activity_summary).
+        samsung_health_metric(active_calories_burned_goal).
+        samsung_health_metric(active_time_goal).
+        samsung_health_metric(blood_glucose).
+        samsung_health_metric(blood_oxygen).
+        samsung_health_metric(blood_pressure).
+        samsung_health_metric(body_composition).
+        samsung_health_metric(body_temperature).
+        samsung_health_metric(energy_score).
         samsung_health_metric(exercise).
+        samsung_health_metric(exercise_location).
+        samsung_health_metric(floors_climbed).
+        samsung_health_metric(heart_rate).
+        samsung_health_metric(irregular_heart_rhythm_notification).
+        samsung_health_metric(nutrition).
+        samsung_health_metric(nutrition_goal).
+        samsung_health_metric(skin_temperature).
+        samsung_health_metric(sleep).
+        samsung_health_metric(sleep_apnea).
+        samsung_health_metric(sleep_goal).
+        samsung_health_metric(steps).
+        samsung_health_metric(step_goal).
+        samsung_health_metric(water_intake).
+        samsung_health_metric(water_intake_goal).
+        samsung_health_metric(user_profile).
 
         samsung_health_status(Result) :-
             Result = samsung_health_action(status).

@@ -14,6 +14,13 @@ import ai.zara.app.ui.LocalEmbeddingPreferenceStore
 import ai.zara.app.ui.RuntimeModePreferenceStore
 import ai.zara.app.ui.ThemePreferenceStore
 import ai.zara.app.projects.ProjectContext
+import ai.zara.app.samsunghealth.SamsungHealthMetric
+import ai.zara.app.samsunghealth.HealthGoalStore
+import ai.zara.app.samsunghealth.HealthOpenPgpRecipientStore
+import ai.zara.app.samsunghealth.HealthPrologExport
+import ai.zara.app.samsunghealth.OpenPgpHealthExporter
+import ai.zara.app.samsunghealth.SamsungHealthUiController
+import ai.zara.app.samsunghealth.SamsungHealthUiState
 import ai.zara.app.runtime.ServerConnection
 import ai.zara.app.telemetry.ZaraFailures
 import ai.zara.app.telemetry.ZaraOperation
@@ -25,6 +32,8 @@ import ai.zara.app.update.Changelog
 import ai.zara.app.update.ChangelogSeenStore
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.ui.theme.ZaraTheme
+import ai.zara.ui.health.HealthGoalMetric
+import ai.zara.ui.health.HealthGoalTarget
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -47,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -71,10 +81,47 @@ class MainActivity : ComponentActivity() {
     private var pinnedServerPublicKey by mutableStateOf<String?>(null)
     private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
     private var pairingUiGeneration = 0L
+    private lateinit var samsungHealthController: SamsungHealthUiController
+    private var samsungHealthState by mutableStateOf(SamsungHealthUiState())
+    private lateinit var healthGoalStore: HealthGoalStore
+    private lateinit var healthOpenPgpRecipientStore: HealthOpenPgpRecipientStore
+    private var healthOpenPgpRecipientCount by mutableStateOf(0)
+    private var healthGoals by mutableStateOf(
+        HealthGoalMetric.entries.map { HealthGoalTarget(it, it.defaultTarget) },
+    )
+    private val importHealthOpenPgpKey = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            val key = contentResolver.openInputStream(uri)?.use { input ->
+                input.readNBytes(HealthOpenPgpRecipientStore.MAX_KEY_BYTES + 1)
+            } ?: error("The selected OpenPGP public key could not be opened")
+            require(key.size <= HealthOpenPgpRecipientStore.MAX_KEY_BYTES) {
+                "The selected OpenPGP public key is too large"
+            }
+            healthOpenPgpRecipientStore.add(key)
+            healthOpenPgpRecipientCount = healthOpenPgpRecipientStore.load().size
+            Toast.makeText(this, "Health OpenPGP recipient added", Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) {
+            operationError = "Health OpenPGP public key could not be imported."
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        samsungHealthController = SamsungHealthUiController(
+            plugin = (application as ZaraApplication).samsungHealthPlugin,
+            publish = { state -> runOnUiThread { samsungHealthState = state } },
+        )
+        samsungHealthState = samsungHealthController.state()
+        healthGoalStore = HealthGoalStore.create(applicationContext)
+        healthOpenPgpRecipientStore = HealthOpenPgpRecipientStore.create(applicationContext)
+        try {
+            healthGoals = healthGoalStore.loadOrDefaults()
+            healthOpenPgpRecipientCount = healthOpenPgpRecipientStore.load().size
+        } catch (error: Exception) {
+            operationError = "Health goals are locked or corrupt."
+        }
         pairingCoordinator = AndroidPairingCoordinator(applicationContext, appSession)
         val updateManager = (application as ZaraApplication).updateManager
         val changelogSeenStore = ChangelogSeenStore(this)
@@ -156,6 +203,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { updateState = state }
         }
         appSession.assessAssistantRole()
+        samsungHealthController.refresh()
 
         setContent {
             val systemDark = isSystemInDarkTheme()
@@ -280,6 +328,9 @@ class MainActivity : ComponentActivity() {
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
+                healthState = samsungHealthState,
+                healthGoals = healthGoals,
+                healthGpgRecipientCount = healthOpenPgpRecipientCount,
                 onSelectTheme = { theme ->
                     selectedTheme = theme
                     themePreferenceStore.save(theme)
@@ -429,6 +480,26 @@ class MainActivity : ComponentActivity() {
                         operationError = UiOperationFailure.summarize(error)
                     }
                 },
+                onRefreshHealth = { samsungHealthController.refresh() },
+                onSetHealthGoal = { goal ->
+                    val next = HealthGoalMetric.entries.map { metric ->
+                        if (metric == goal.metric) goal else healthGoals.first { it.metric == metric }
+                    }
+                    try {
+                        healthGoalStore.save(next)
+                        healthGoals = next
+                    } catch (error: Exception) {
+                        operationError = "Health goal could not be secured."
+                    }
+                },
+                onImportHealthGpgKey = {
+                    importHealthOpenPgpKey.launch(arrayOf("application/pgp-keys", "application/octet-stream", "text/plain"))
+                },
+                onExportHealthGpg = ::shareEncryptedHealthExport,
+                onRequestHealthPermission = { metric: SamsungHealthMetric ->
+                    samsungHealthController.requestPermissions(this, setOf(metric))
+                },
+                onReadHealth = { metric: SamsungHealthMetric -> samsungHealthController.read(metric) },
                 onRequestMicrophonePermission = {
                     operationError = null
                     microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
@@ -644,6 +715,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         pairingUiGeneration += 1
+        if (::samsungHealthController.isInitialized) samsungHealthController.close()
         if (::appSession.isInitialized) {
             appSession.setStateObserver(null)
             appSession.setVoiceStreamObserver(null)
@@ -781,6 +853,34 @@ class MainActivity : ComponentActivity() {
             putExtra(Intent.EXTRA_TEXT, text)
         }
         startActivity(Intent.createChooser(intent, "Share Zara diagnostics"))
+    }
+
+    private fun shareEncryptedHealthExport() {
+        operationError = null
+        try {
+            val recipients = healthOpenPgpRecipientStore.load()
+            require(recipients.isNotEmpty()) { "Import an OpenPGP public key first" }
+            val plaintext = HealthPrologExport.render(samsungHealthState.readings, healthGoals)
+            val encrypted = try {
+                OpenPgpHealthExporter().encrypt(plaintext, recipients)
+            } finally {
+                plaintext.fill(0)
+            }
+            val directory = File(cacheDir, "health-exports").apply { mkdirs() }
+            directory.listFiles()?.filter { it.name.startsWith("zara-health-") }?.forEach(File::delete)
+            val export = File(directory, "zara-health-${System.currentTimeMillis()}.pl.gpg")
+            export.writeBytes(encrypted)
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", export)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pgp-encrypted"
+                putExtra(Intent.EXTRA_SUBJECT, "Zara Health encrypted Prolog export")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(intent, "Share encrypted Zara Health export"))
+        } catch (error: Exception) {
+            operationError = error.message ?: "Health OpenPGP export failed."
+        }
     }
 
     private fun clearDiagnostics() {

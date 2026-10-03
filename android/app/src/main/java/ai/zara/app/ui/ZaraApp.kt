@@ -14,6 +14,9 @@ import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.ServerConnection
+import ai.zara.app.samsunghealth.SamsungHealthMetric
+import ai.zara.app.samsunghealth.SamsungHealthUiState
+import ai.zara.ui.health.HealthGoalTarget
 import ai.zara.app.prolog.PrologSource
 import ai.zara.app.prolog.LocalEmbeddingConfiguration
 import ai.zara.app.update.UpdatePhase
@@ -101,6 +104,7 @@ import kotlinx.coroutines.launch
 enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
     Chat("Chat", "⌂"),
     Logic("Logic", "λ"),
+    Health("Health", "♥"),
     Voice("Voice", "◉"),
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
@@ -155,6 +159,9 @@ fun ZaraApp(
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
+    healthState: SamsungHealthUiState,
+    healthGoals: List<HealthGoalTarget>,
+    healthGpgRecipientCount: Int,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -173,6 +180,12 @@ fun ZaraApp(
     onOpenDiagnostics: () -> Unit,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
+    onRefreshHealth: () -> Unit,
+    onSetHealthGoal: (HealthGoalTarget) -> Unit,
+    onImportHealthGpgKey: () -> Unit,
+    onExportHealthGpg: () -> Unit,
+    onRequestHealthPermission: (SamsungHealthMetric) -> Unit,
+    onReadHealth: (SamsungHealthMetric) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
     onRequestAssistantRole: () -> Unit,
     onStartVoice: () -> Unit,
@@ -324,6 +337,18 @@ fun ZaraApp(
                                                 onExportWorkspace = onExportPrologWorkspace,
                                                 padding = padding,
                                             )
+                                            AppSurface.Health -> ZaraHealthSurface(
+                                                state = healthState,
+                                                goals = healthGoals,
+                                                gpgRecipientCount = healthGpgRecipientCount,
+                                                onRefresh = onRefreshHealth,
+                                                onSetGoal = onSetHealthGoal,
+                                                onImportGpgKey = onImportHealthGpgKey,
+                                                onExportGpg = onExportHealthGpg,
+                                                onRequestPermission = onRequestHealthPermission,
+                                                onRead = onReadHealth,
+                                                padding = padding,
+                                            )
                                             AppSurface.Voice -> VoiceSurface(
                                                 state = runtimeState,
                                                 microphonePermissionGranted = microphonePermissionGranted,
@@ -409,6 +434,7 @@ internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Chat -> AppSurface.Chat
     AppRoute.Voice -> AppSurface.Voice
     AppRoute.Logic -> AppSurface.Logic
+    AppRoute.Health -> AppSurface.Health
     AppRoute.Projects -> AppSurface.Projects
     AppRoute.Scheduled -> AppSurface.Scheduled
     AppRoute.Connection -> AppSurface.Remote

@@ -136,6 +136,7 @@ setup(
             "zara-org-todo=zara.desktop.org_app:main_todo",
             "zara-org-sync=zara.desktop.org_app:main_sync",
             "zara-org-notebook=zara.desktop.org_app:main_notebook",
+            "zara-health=zara.health_cli:main",
         ],
     },
     include_package_data=True,

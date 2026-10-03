@@ -11,6 +11,9 @@ import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.RuntimeMode
 import ai.zara.app.runtime.RuntimeState
+import ai.zara.app.samsunghealth.SamsungHealthMetric
+import ai.zara.app.samsunghealth.SamsungHealthUiState
+import ai.zara.ui.health.HealthGoalTarget
 import ai.zara.app.update.UpdateState
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.VoiceStreamState
@@ -62,6 +65,9 @@ fun ZaraApp(
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
     projectState: ProjectContextState,
+    healthState: SamsungHealthUiState,
+    healthGoals: List<HealthGoalTarget>,
+    healthGpgRecipientCount: Int,
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
@@ -81,6 +87,12 @@ fun ZaraApp(
     onOpenDiagnostics: () -> Unit,
     onCreateProject: (String) -> Unit,
     onSelectProject: (String?) -> Unit,
+    onRefreshHealth: () -> Unit,
+    onSetHealthGoal: (HealthGoalTarget) -> Unit,
+    onImportHealthGpgKey: () -> Unit,
+    onExportHealthGpg: () -> Unit,
+    onRequestHealthPermission: (SamsungHealthMetric) -> Unit,
+    onReadHealth: (SamsungHealthMetric) -> Unit,
     onRequestMicrophonePermission: () -> Unit,
     onRequestAssistantRole: () -> Unit,
     onStartVoice: () -> Unit,
@@ -129,6 +141,9 @@ fun ZaraApp(
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
+                healthState = healthState,
+                healthGoals = healthGoals,
+                healthGpgRecipientCount = healthGpgRecipientCount,
                 onSelectTheme = onSelectTheme,
                 onSelectRuntimeMode = onSelectRuntimeMode,
                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
@@ -147,6 +162,12 @@ fun ZaraApp(
                 onOpenDiagnostics = onOpenDiagnostics,
                 onCreateProject = onCreateProject,
                 onSelectProject = onSelectProject,
+                onRefreshHealth = onRefreshHealth,
+                onSetHealthGoal = onSetHealthGoal,
+                onImportHealthGpgKey = onImportHealthGpgKey,
+                onExportHealthGpg = onExportHealthGpg,
+                onRequestHealthPermission = onRequestHealthPermission,
+                onReadHealth = onReadHealth,
                 onRequestMicrophonePermission = onRequestMicrophonePermission,
                 onRequestAssistantRole = onRequestAssistantRole,
                 onStartVoice = onStartVoice,
