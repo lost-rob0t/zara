@@ -358,6 +358,10 @@ def main():
         from .pairing import pair_client_main
         sys.exit(pair_client_main(sys.argv[2:], config=config))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "health":
+        from .health_cli import main as health_main
+        sys.exit(health_main(sys.argv[2:], config=config))
+
     parser = argparse.ArgumentParser(
         prog="zara",
         description="Zarathustra Voice Assistant - Unified Interface",
@@ -370,6 +374,7 @@ def main():
                "  zara --cancel-turn TURN_ID    # Cancel through ZARA/1\n"
                "  zara pair                     # Start server pairing by QR\n"
                "  zara pair-client URI          # Pair this desktop to a server\n"
+               "  zara health status            # Inspect the private health store\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
                "  zara --console                # Interactive REPL\n"

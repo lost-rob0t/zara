@@ -3,6 +3,7 @@ package ai.zara.wear
 import ai.zara.ui.continuity.SymbolicConversationEdgeSnapshot
 import ai.zara.ui.continuity.WearCompanionContract
 import ai.zara.ui.continuity.WearPhoneProvision
+import ai.zara.ui.health.HealthGoalTarget
 
 /**
  * Truthful link state for the watch's phone-assisted pairing.
@@ -23,6 +24,7 @@ sealed interface WearCompanionLinkState {
         val phoneName: String,
         val phoneReachable: Boolean,
         val conversation: SymbolicConversationEdgeSnapshot?,
+        val healthGoals: List<HealthGoalTarget> = emptyList(),
         val rejections: Int = 0,
     ) : WearCompanionLinkState
 }
@@ -99,6 +101,7 @@ object WearCompanionClient {
             phoneName = provision.phoneName,
             phoneReachable = true,
             conversation = accepted,
+            healthGoals = provision.healthGoals,
         )
     }
 
@@ -108,7 +111,7 @@ object WearCompanionClient {
         incoming: SymbolicConversationEdgeSnapshot?,
     ): WearCompanionLinkState.Paired {
         val current = state.conversation ?: return adoptScopeAfterEmptyPairing(state, provision, incoming)
-        if (incoming == null) return state
+        if (incoming == null) return state.copy(healthGoals = provision.healthGoals)
         val accepted = SymbolicConversationContinuityGate.accepts(
             expectedPrincipalId = current.principalId,
             expectedConversationId = current.conversationId,
@@ -116,7 +119,7 @@ object WearCompanionClient {
             incoming = incoming,
         )
         return if (accepted) {
-            state.copy(conversation = incoming)
+            state.copy(conversation = incoming, healthGoals = provision.healthGoals)
         } else {
             state.copy(rejections = state.rejections + 1)
         }
@@ -128,9 +131,13 @@ object WearCompanionClient {
         incoming: SymbolicConversationEdgeSnapshot?,
     ): WearCompanionLinkState.Paired =
         if (incoming != null && adoptsInitialScope(incoming)) {
-            state.copy(phoneName = provision.phoneName, conversation = incoming)
+            state.copy(
+                phoneName = provision.phoneName,
+                conversation = incoming,
+                healthGoals = provision.healthGoals,
+            )
         } else {
-            state
+            if (incoming == null) state.copy(healthGoals = provision.healthGoals) else state
         }
 
     private fun adoptsInitialScope(incoming: SymbolicConversationEdgeSnapshot): Boolean =

@@ -6,6 +6,7 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import ai.zara.app.history.PortableConversationStore
 import ai.zara.app.history.latestSymbolicEdgeSnapshot
+import ai.zara.app.samsunghealth.HealthGoalStore
 import ai.zara.ui.continuity.WearCompanionContract
 
 /**
@@ -26,6 +27,7 @@ class WearCompanionLinkService : WearableListenerService() {
                     store.close()
                 }
             },
+            healthGoals = { HealthGoalStore.create(this).loadOrDefaults() },
         )
     }
 

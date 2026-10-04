@@ -4,6 +4,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+## 0.4.0-alpha
+
 ### Changed
 
 - The Org app fleet now renders on the canonical Zara semantic token layer: the Outrun theme's near-black ground with restrained magenta/cyan accents, thin luminous panel outlines, and small status lights for workspace connection, reminder urgency, and timer state. No Org surface hard-codes theme colors, so the whole fleet inherits the shared theme system (Outrun, StarIntel, Midnight, Terminal, Light, System) without divergent implementations.
@@ -11,6 +13,12 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Fixed
 
 - Fixed ZARA/1 turn ownership under fast symbolic/runtime interleavings: runtime events cannot overtake `turn.accepted`, bounded pre-accept overflow fails closed without silent event loss, reconnect retries transfer an unsent acceptance barrier to one current route, stale gateway generations cannot erase a current stable-request owner, completed/disconnected turns are fenced without breaking legitimate conversation routing, runtime `AgentFailed` closes an accepted turn as `turn.completed(success=false)`, negotiated early PCM survives the acceptance barrier byte-for-byte while unnegotiated audio stays private, terminal turns retire only after `turn.completed` is written, approval ownership cannot outlive an evicted prompt, and a rotated CURVE device key supersedes its revoked route before connection quota is charged.
+
+### Added
+
+- Zara Health adds a Samsung Health-inspired phone surface and modern Wear surface with runtime capability reporting for Galaxy Watch5-class devices and newer, encrypted step/sleep/activity/nutrition/water goals, phone-to-watch goal continuity, step and sleep goal complications, and explicit permission-gated health reads.
+- Android and desktop can create interoperable OpenPGP-encrypted, data-only Prolog health exports for one or many recipient keys. Desktop GPG storage and encrypted private Org summaries are opt-in; plaintext mode remains owner-only and is the default.
+- Android release automation now publishes every installable Zara APK—phone, Code Editor, Termux bridge, Wear, Wear Voice, and the full Org fleet—to both the rolling =android-latest= channel and immutable versioned releases with checksums and provenance manifests.
 
 ## 0.3.1-alpha
 

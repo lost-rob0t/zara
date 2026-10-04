@@ -2,6 +2,9 @@ package ai.zara.wear
 
 import ai.zara.ui.theme.ZaraTheme
 import ai.zara.ui.theme.themeTokens
+import ai.zara.wear.health.WearHealthController
+import ai.zara.wear.health.WearHealthGatewayLoader
+import ai.zara.wear.health.ZaraWearHealthSurface
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
@@ -41,20 +44,37 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 
 class WearMainActivity : ComponentActivity() {
+    private lateinit var healthController: WearHealthController
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val runtime = WearCompanionRuntime.get(applicationContext)
+        healthController = WearHealthController(WearHealthGatewayLoader.create(applicationContext))
         runtime.start()
         setContent {
-            ZaraWearClient(runtime)
+            ZaraWearClient(
+                runtime,
+                healthController,
+                initialHealthOpen = intent?.getBooleanExtra(EXTRA_OPEN_HEALTH, false) == true,
+            )
         }
+    }
+
+    override fun onDestroy() {
+        if (::healthController.isInitialized) healthController.close()
+        super.onDestroy()
     }
 }
 
 @Composable
-internal fun ZaraWearClient(runtime: WearCompanionRuntime) {
+internal fun ZaraWearClient(
+    runtime: WearCompanionRuntime,
+    health: WearHealthController,
+    initialHealthOpen: Boolean = false,
+) {
     val tokens = themeTokens(ZaraTheme.Outrun, systemDark = true, reducedGlow = false)
     var linkState by remember { mutableStateOf<WearCompanionLinkState>(runtime.state()) }
+    var healthOpen by remember { mutableStateOf(initialHealthOpen) }
 
     DisposableEffect(runtime) {
         runtime.observe { state -> linkState = state }
@@ -62,6 +82,12 @@ internal fun ZaraWearClient(runtime: WearCompanionRuntime) {
     }
 
     val presentation = WearClientPresentation.from(linkState)
+
+    if (healthOpen) {
+        val goals = (linkState as? WearCompanionLinkState.Paired)?.healthGoals.orEmpty()
+        ZaraWearHealthSurface(health, goals = goals, onClose = { healthOpen = false })
+        return
+    }
 
     MaterialTheme {
         Box(
@@ -124,11 +150,23 @@ internal fun ZaraWearClient(runtime: WearCompanionRuntime) {
                     )
                 }
                 Spacer(Modifier.size(14.dp))
+                Button(onClick = { healthOpen = true }) {
+                    Text(
+                        text = "ZARA HEALTH",
+                        color = tokens.accentMagenta,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        letterSpacing = 1.2.sp,
+                    )
+                }
+                Spacer(Modifier.size(6.dp))
                 VoiceLaunchButton()
             }
         }
     }
 }
+
+const val EXTRA_OPEN_HEALTH = "ai.zara.wear.extra.OPEN_HEALTH"
 
 @Composable
 private fun ConversationCard(presentation: WearClientPresentation, act: String) {

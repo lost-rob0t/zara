@@ -51,4 +51,41 @@ class WearCompanionWiringContractTest {
             )
         }
     }
+
+    @Test
+    fun wearHealthUsesOptionalVendorSdkCapabilityDiscoveryAndNoPhoneProvisionPayload() {
+        val build = File("build.gradle.kts").readText()
+        val activity = File("src/main/java/ai/zara/wear/WearMainActivity.kt").readText()
+        val health = File("src/main/java/ai/zara/wear/health/WearHealth.kt").readText()
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+
+        assertTrue(build.contains("samsung-health-sensor-api-*.aar"))
+        assertTrue(build.contains("HAS_SAMSUNG_HEALTH_SENSOR_SDK"))
+        assertTrue(activity.contains("ZaraWearHealthSurface"))
+        assertTrue(health.contains("supportedTrackers"))
+        assertTrue(manifest.contains("android.permission.health.READ_HEART_RATE"))
+        assertTrue(manifest.contains("READ_ADDITIONAL_HEALTH_DATA"))
+        assertTrue(!manifest.contains("FOREGROUND_SERVICE_HEALTH"))
+        assertTrue(!health.contains("WearCompanionContract.PATH_PHONE_PROVISION"))
+        assertTrue(!health.contains("sendMessage("))
+    }
+
+    @Test
+    fun wearHealthPublishesStepAndSleepGoalComplications() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val build = File("build.gradle.kts").readText()
+        val catalog = File("../gradle/libs.versions.toml").readText()
+        val service = File(
+            "src/main/java/ai/zara/wear/health/ZaraHealthGoalComplicationService.kt",
+        ).readText()
+
+        assertTrue(build.contains("libs.wear.watchface.complications.data.source.ktx"))
+        assertTrue(catalog.contains("watchface-complications-data-source-ktx"))
+        assertTrue(manifest.contains("ZaraStepGoalComplicationService"))
+        assertTrue(manifest.contains("ZaraSleepGoalComplicationService"))
+        assertTrue(manifest.contains("BIND_COMPLICATION_PROVIDER"))
+        assertTrue(manifest.contains("ACTION_COMPLICATION_UPDATE_REQUEST"))
+        assertTrue(service.contains("NoDataComplicationData"))
+        assertTrue(service.contains("EXTRA_OPEN_HEALTH"))
+    }
 }

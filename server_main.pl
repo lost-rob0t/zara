@@ -21,6 +21,7 @@
 :- use_module('kb/intents').
 :- use_module('kb/server_providers').
 :- use_module('modules/capability_plans').
+:- use_module('modules/health_reasoning').
 :- use_module('modules/config_loader').
 
 :- initialization(config_loader:load_server_config).

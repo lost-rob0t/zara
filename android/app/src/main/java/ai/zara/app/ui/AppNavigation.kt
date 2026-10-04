@@ -10,6 +10,7 @@ enum class AppRoute(val menu: AppMenu, val label: String) {
     Chat(AppMenu.Chat, "Chat"),
     Voice(AppMenu.Chat, "Voice"),
     Logic(AppMenu.Workspace, "Logic"),
+    Health(AppMenu.Workspace, "Health"),
     Projects(AppMenu.Workspace, "Projects"),
     Scheduled(AppMenu.Workspace, "Scheduled"),
     Runtime(AppMenu.Settings, "Runtime"),

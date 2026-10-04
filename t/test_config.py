@@ -34,6 +34,29 @@ def test_default_config_is_valid_toml():
     assert parsed["plugins"]["max_managed_workers"] == 8
     assert parsed["api_service"]["enabled"] is False
     assert parsed["api_service"]["disabled_providers"] == []
+    assert parsed["health"] == {
+        "gpg_enabled": False,
+        "gpg_recipients": [],
+        "gpg_homedir": "",
+    }
+
+
+@pytest.mark.parametrize(
+    "health",
+    [
+        'gpg_enabled = "yes"',
+        'gpg_enabled = true\ngpg_recipients = []',
+        'gpg_recipients = ["duplicate", "duplicate"]',
+        'gpg_recipients = [1]',
+        'gpg_homedir = 12',
+    ],
+)
+def test_health_gpg_config_fails_closed(tmp_path, health):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(f'[tts]\nprovider = "qwen3"\n\n[health]\n{health}\n')
+
+    with pytest.raises(ConfigError, match="health"):
+        ZaraConfig(str(config_path))
 
 
 def test_plugin_config_is_isolated_by_plugin_name(tmp_path):

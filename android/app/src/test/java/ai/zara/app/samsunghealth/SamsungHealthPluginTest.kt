@@ -32,7 +32,11 @@ class SamsungHealthPluginTest {
         )
         assertEquals(null, SamsungHealthPrologCodec.decode("other_action(read_today(steps))"))
 
-        expectFailure { SamsungHealthPrologCodec.decode("samsung_health_action(read_today(blood_pressure))") }
+        assertEquals(
+            SamsungHealthAction.ReadToday(SamsungHealthMetric.BLOOD_PRESSURE),
+            SamsungHealthPrologCodec.decode("samsung_health_action(read_today(blood_pressure))"),
+        )
+        expectFailure { SamsungHealthPrologCodec.decode("samsung_health_action(read_today(shell))") }
         expectFailure { SamsungHealthPrologCodec.decode("samsung_health_action(read_today(steps), shell(x))") }
         expectFailure { SamsungHealthPrologCodec.decode("samsung_health_action(${"x".repeat(600)})") }
     }
@@ -139,6 +143,8 @@ class SamsungHealthPluginTest {
 
         override fun status(): SamsungHealthPlatformStatus =
             SamsungHealthPlatformStatus(SamsungHealthAvailability.READY)
+
+        override fun supportedMetrics(): Set<SamsungHealthMetric> = SamsungHealthMetric.entries.toSet()
 
         override fun grantedPermissions(): Set<SamsungHealthMetric> = granted
 

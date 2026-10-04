@@ -45,6 +45,8 @@ def test_each_master_push_builds_and_rolls_direct_latest_apks():
     assert "code_editor_apk=zara-code-editor-latest.apk" in workflow
     assert "code_editor_sha256=${code_editor_sha}" in workflow
     assert "zara-wear-latest.apk" in workflow
+    assert "zara-termux-bridge-latest.apk" in workflow
+    assert "zara-wear-voice-latest.apk" in workflow
     assert "android-latest" in workflow
     assert "mutable=true" in workflow
     assert "version_name=${VERSION}" in workflow
@@ -58,6 +60,8 @@ def test_release_assets_use_semver_name_and_record_provenance():
     assert "zara-android-${VERSION}.manifest.txt" in workflow
     assert "zara-code-editor-${VERSION}.apk" in workflow
     assert "zara-code-editor-${VERSION}.manifest.txt" in workflow
+    assert 'extra_modules=("termux-bridge" "wear" "wear-voice")' in workflow
+    assert 'extra_apk="dist/zara-${module}-${VERSION}.apk"' in workflow
     assert "source_sha=${GITHUB_SHA}" in workflow
     assert "version_name=${VERSION}" in workflow
     assert "version_code=${VERSION_CODE}" in workflow

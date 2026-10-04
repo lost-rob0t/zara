@@ -32,6 +32,14 @@ require(zaraAndroidVersionCode in 1..2100000000) {
 }
 
 val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
+val samsungHealthSensorAars = fileTree("libs") {
+    include("samsung-health-sensor-api-*.aar")
+}
+val samsungHealthSensorAarFiles = samsungHealthSensorAars.files
+require(samsungHealthSensorAarFiles.size <= 1) {
+    "Keep exactly one Samsung Health Sensor SDK AAR under android/wear-app/libs"
+}
+val hasSamsungHealthSensorSdk = samsungHealthSensorAarFiles.size == 1
 
 android {
     namespace = "ai.zara.wear"
@@ -44,10 +52,16 @@ android {
         targetSdk = 36
         versionCode = zaraAndroidVersionCode
         versionName = zaraVersionName
+        buildConfigField("boolean", "HAS_SAMSUNG_HEALTH_SENSOR_SDK", hasSamsungHealthSensorSdk.toString())
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
+    }
+
+    if (hasSamsungHealthSensorSdk) {
+        sourceSets.getByName("main").java.srcDir("src/samsungHealthSensorSdk/java")
     }
 
     signingConfigs {
@@ -83,6 +97,10 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.material3)
+    implementation(libs.wear.watchface.complications.data.source.ktx)
     implementation(libs.play.services.wearable)
+    if (hasSamsungHealthSensorSdk) {
+        implementation(samsungHealthSensorAars)
+    }
     testImplementation(libs.junit)
 }

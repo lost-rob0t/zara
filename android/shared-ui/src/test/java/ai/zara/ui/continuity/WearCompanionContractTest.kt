@@ -1,5 +1,7 @@
 package ai.zara.ui.continuity
 
+import ai.zara.ui.health.HealthGoalMetric
+import ai.zara.ui.health.HealthGoalTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -11,6 +13,10 @@ class WearCompanionContractTest {
         val provision = WearPhoneProvision(
             phoneName = "Pixel 9 Pro",
             snapshot = fixture(),
+            healthGoals = listOf(
+                HealthGoalTarget(HealthGoalMetric.STEPS, 12_000),
+                HealthGoalTarget(HealthGoalMetric.SLEEP, 510),
+            ),
         )
 
         val encoded = WearCompanionContract.encodeProvision(provision)
@@ -18,6 +24,7 @@ class WearCompanionContractTest {
 
         assertEquals(provision, decoded)
         assertTrue(encoded.size <= WearCompanionContract.MAX_PROVISION_WIRE_BYTES)
+        assertEquals(2, decoded.healthGoals.size)
     }
 
     @Test
@@ -32,6 +39,21 @@ class WearCompanionContractTest {
 
         assertEquals(provision, decoded)
         assertTrue(encoded.size <= WearCompanionContract.MAX_PROVISION_WIRE_BYTES)
+    }
+
+    @Test
+    fun legacyProvisionStillDecodesWithoutHealthGoals() {
+        val encoded = WearCompanionContract.encodeProvision(
+            WearPhoneProvision(phoneName = "Galaxy phone", snapshot = null),
+        )
+        val legacy = encoded.copyOf(encoded.size - 4).also { bytes ->
+            bytes["ZARA-WEAR-PROVISION/2".lastIndex] = '1'.code.toByte()
+        }
+
+        val decoded = WearCompanionContract.decodeProvision(legacy)
+
+        assertEquals("Galaxy phone", decoded.phoneName)
+        assertTrue(decoded.healthGoals.isEmpty())
     }
 
     @Test

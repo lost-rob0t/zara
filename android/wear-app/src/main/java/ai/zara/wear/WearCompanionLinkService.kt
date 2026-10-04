@@ -3,6 +3,7 @@ package ai.zara.wear
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import ai.zara.ui.continuity.WearCompanionContract
+import ai.zara.wear.health.ZaraHealthComplicationUpdater
 
 /** Feeds phone provisions into the shared [WearCompanionRuntime] and keeps it started. */
 class WearCompanionLinkService : WearableListenerService() {
@@ -12,5 +13,6 @@ class WearCompanionLinkService : WearableListenerService() {
             start()
             onProvisionReceived(event.sourceNodeId, event.data)
         }
+        ZaraHealthComplicationUpdater.requestAll(this)
     }
 }

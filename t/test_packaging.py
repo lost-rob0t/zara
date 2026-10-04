@@ -125,6 +125,7 @@ def test_wheel_declares_all_console_scripts(wheel_entry_points):
         "zara-org-todo = zara.desktop.org_app:main_todo",
         "zara-org-sync = zara.desktop.org_app:main_sync",
         "zara-org-notebook = zara.desktop.org_app:main_notebook",
+        "zara-health = zara.health_cli:main",
     }
     missing = [line for line in expected if line not in wheel_entry_points]
     assert not missing, (

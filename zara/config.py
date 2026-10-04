@@ -32,6 +32,15 @@ DEFAULT_CONFIG_TOML = """# Zarathushtra Configuration
 # Native desktop appearance. Unknown values fall back to Signal Cabin.
 theme = "signal-cabin"
 
+[health]
+# Health access is permission-gated in the Android and Wear apps. Desktop
+# OpenPGP at-rest/E2E protection is optional so Zara can start before keys are
+# configured. Add one or more fingerprints, key IDs, or recipient addresses to
+# enable interoperable GPG encryption for health Prolog facts and Org exports.
+gpg_enabled = false
+gpg_recipients = []
+gpg_homedir = ""
+
 [daemon]
 # ZARA/1 daemon service. Clients (wake listener, CLI, desktop) connect here.
 # Empty endpoint falls back to the owner-private IPC socket zara-server uses.
@@ -342,6 +351,32 @@ class ZaraConfig:
         desktop_theme = desktop_config.get("theme", "signal-cabin")
         if not isinstance(desktop_theme, str):
             raise ConfigError("desktop.theme must be a string")
+
+        health_config = config.get("health", {})
+        if not isinstance(health_config, dict):
+            raise ConfigError("Invalid [health] configuration: expected a TOML table")
+        gpg_enabled = health_config.get("gpg_enabled", False)
+        if not isinstance(gpg_enabled, bool):
+            raise ConfigError("health.gpg_enabled must be true or false")
+        recipients = health_config.get("gpg_recipients", [])
+        if (
+            not isinstance(recipients, list)
+            or len(recipients) > 32
+            or any(
+                not isinstance(recipient, str)
+                or not recipient
+                or len(recipient) > 256
+                or any(ord(character) < 32 or ord(character) == 127 for character in recipient)
+                for recipient in recipients
+            )
+            or len(set(recipients)) != len(recipients)
+        ):
+            raise ConfigError("health.gpg_recipients must be a unique list of up to 32 bounded strings")
+        if gpg_enabled and not recipients:
+            raise ConfigError("health.gpg_enabled requires at least one health.gpg_recipients entry")
+        homedir = health_config.get("gpg_homedir", "")
+        if not isinstance(homedir, str) or len(homedir) > 4096 or "\x00" in homedir:
+            raise ConfigError("health.gpg_homedir must be a bounded path string")
 
         tts_config = config.get("tts", {})
         if not isinstance(tts_config, dict):

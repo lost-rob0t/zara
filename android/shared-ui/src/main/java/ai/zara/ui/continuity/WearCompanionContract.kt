@@ -1,5 +1,7 @@
 package ai.zara.ui.continuity
 
+import ai.zara.ui.health.HealthGoalMetric
+import ai.zara.ui.health.HealthGoalTarget
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -17,6 +19,7 @@ import java.nio.charset.StandardCharsets
 data class WearPhoneProvision(
     val phoneName: String,
     val snapshot: SymbolicConversationEdgeSnapshot?,
+    val healthGoals: List<HealthGoalTarget> = emptyList(),
 )
 
 object WearCompanionContract {
@@ -27,12 +30,18 @@ object WearCompanionContract {
     const val MAX_PHONE_NAME_CHARS = 64
     const val MAX_PROVISION_WIRE_BYTES = 36 * 1024
 
-    private const val MAGIC = "ZARA-WEAR-PROVISION/1"
+    private const val MAGIC = "ZARA-WEAR-PROVISION/2"
+    private const val LEGACY_MAGIC = "ZARA-WEAR-PROVISION/1"
+    private const val MAX_HEALTH_GOALS = 16
 
     fun encodeProvision(provision: WearPhoneProvision): ByteArray {
         requireBoundedPhoneName(provision.phoneName)
         val snapshot = provision.snapshot
         snapshot?.assertPureSymbolic()
+        require(provision.healthGoals.size <= MAX_HEALTH_GOALS) { "too many Wear health goals" }
+        require(provision.healthGoals.map { it.metric }.distinct().size == provision.healthGoals.size) {
+            "duplicate Wear health goal"
+        }
         val snapshotWire = snapshot?.let(SymbolicConversationEdgeCodec::encode) ?: ByteArray(0)
         val bytes = ByteArrayOutputStream()
         DataOutputStream(bytes).use { output ->
@@ -41,6 +50,11 @@ object WearCompanionContract {
             output.writeInt(snapshotWire.size)
             output.write(snapshotWire)
             output.writeBoolean(snapshot != null)
+            output.writeInt(provision.healthGoals.size)
+            provision.healthGoals.forEach { goal ->
+                output.writeString(goal.metric.atom, 64)
+                output.writeInt(goal.target)
+            }
         }
         return bytes.toByteArray().also { encoded ->
             require(encoded.size in 1..MAX_PROVISION_WIRE_BYTES) {
@@ -57,7 +71,8 @@ object WearCompanionContract {
             DataInputStream(ByteArrayInputStream(encoded)).use { input ->
                 val magic = ByteArray(MAGIC.length)
                 input.readFully(magic)
-                require(String(magic, StandardCharsets.US_ASCII) == MAGIC) {
+                val version = String(magic, StandardCharsets.US_ASCII)
+                require(version == MAGIC || version == LEGACY_MAGIC) {
                     "wear phone provision magic is invalid"
                 }
                 val phoneName = input.readString(MAX_PHONE_NAME_CHARS)
@@ -68,10 +83,28 @@ object WearCompanionContract {
                 val snapshotWire = ByteArray(snapshotSize)
                 input.readFully(snapshotWire)
                 val snapshotPresent = input.readBoolean()
-                require(input.read() == -1) { "wear phone provision contains trailing bytes" }
                 require(snapshotPresent || snapshotSize == 0) {
                     "wear phone provision snapshot presence flag is invalid"
                 }
+                val goals = if (version == MAGIC) {
+                    val count = input.readInt()
+                    require(count in 0..MAX_HEALTH_GOALS) { "wear health goal count is invalid" }
+                    buildList {
+                        repeat(count) {
+                            val metric = requireNotNull(HealthGoalMetric.fromAtom(input.readString(64))) {
+                                "wear health goal metric is invalid"
+                            }
+                            add(HealthGoalTarget(metric, input.readInt()))
+                        }
+                    }.also { decoded ->
+                        require(decoded.map { it.metric }.distinct().size == decoded.size) {
+                            "duplicate Wear health goal"
+                        }
+                    }
+                } else {
+                    emptyList()
+                }
+                require(input.read() == -1) { "wear phone provision contains trailing bytes" }
                 return WearPhoneProvision(
                     phoneName = phoneName,
                     snapshot = if (snapshotPresent) {
@@ -79,6 +112,7 @@ object WearCompanionContract {
                     } else {
                         null
                     },
+                    healthGoals = goals,
                 )
             }
         } catch (error: IOException) {
