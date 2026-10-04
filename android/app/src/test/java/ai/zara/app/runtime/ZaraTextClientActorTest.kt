@@ -64,6 +64,10 @@ class ZaraTextClientActorTest {
         assertEquals(true, dealer.sent[0][1].decodeToString().contains("\"type\":\"hello\""))
         assertEquals(true, dealer.sent[1][1].decodeToString().contains("\"type\":\"capability.snapshot\""))
         assertEquals(true, dealer.sent[2][1].decodeToString().contains("\"type\":\"turn.submit\""))
+        assertEquals(
+            listOf(5_000, 5_000, 5_000, 30 * 60 * 1_000, 30 * 60 * 1_000, 30 * 60 * 1_000),
+            dealer.receiveTimeouts,
+        )
         client.close()
         assertEquals(true, dealer.closed)
     }
@@ -141,6 +145,7 @@ class ZaraTextClientActorTest {
 private class ScriptedTextDealer(responses: List<List<ByteArray>>) : TextDealer {
     private val responses = ArrayDeque(responses)
     val sent = mutableListOf<List<ByteArray>>()
+    val receiveTimeouts = mutableListOf<Int>()
     var closed = false
 
     override fun send(frames: List<ByteArray>) {
@@ -150,6 +155,7 @@ private class ScriptedTextDealer(responses: List<List<ByteArray>>) : TextDealer 
 
     override fun receive(timeoutMillis: Int): List<ByteArray>? {
         check(timeoutMillis > 0)
+        receiveTimeouts += timeoutMillis
         return if (responses.isEmpty()) null else responses.removeFirst()
     }
 
