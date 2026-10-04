@@ -130,6 +130,8 @@ data class LocalAiState(
     val generation: Long = 0,
     val model: LocalModelSpec? = null,
     val failure: String? = null,
+    val providerId: String = "embedded",
+    val modelName: String? = model?.id,
 )
 
 interface LocalGenerationListener {

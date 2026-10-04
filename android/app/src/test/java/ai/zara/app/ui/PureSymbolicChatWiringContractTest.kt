@@ -14,7 +14,9 @@ class PureSymbolicChatWiringContractTest {
 
         assertTrue(source.contains("ConversationExecutionPolicyStore("))
         assertTrue(source.contains("conversation-execution-policy.bin"))
-        assertTrue(source.contains("AndroidPureSymbolicConversationFactory.create(appSession)::submit"))
+        assertTrue(source.contains("pureSymbolicSubmit = appSession::submitPureSymbolicText"))
+        val session = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        assertTrue(session.contains("AndroidPureSymbolicConversationFactory.create(this)"))
         assertTrue(source.contains("ConversationExecutionPolicyController("))
     }
 
