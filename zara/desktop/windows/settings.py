@@ -439,10 +439,11 @@ class SettingsWindow(QWidget):
             "desktop.theme",
             "Theme",
             [(definition.label, key) for key, definition in THEME_REGISTRY.items()],
-            "signal-cabin",
+            "outrun",
         )
         swatches = QWidget()
         swatches.setMinimumHeight(84)
+        swatches.setMinimumWidth(max(120, len(THEME_REGISTRY) * 120))
         swatches_layout = QHBoxLayout(swatches)
         swatches_layout.setContentsMargins(0, 4, 0, 4)
         swatches_layout.setSpacing(8)
@@ -456,7 +457,14 @@ class SettingsWindow(QWidget):
             group.addButton(button)
             swatches_layout.addWidget(button)
             self.theme_buttons.append(button)
-        form.addRow("Preview", swatches)
+        theme_strip = QScrollArea()
+        theme_strip.setObjectName("zaraThemeStrip")
+        theme_strip.setFrameShape(QFrame.Shape.NoFrame)
+        theme_strip.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        theme_strip.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        theme_strip.setWidget(swatches)
+        theme_strip.setFixedHeight(96)
+        form.addRow("Preview", theme_strip)
         theme.currentIndexChanged.connect(lambda _index: self._sync_theme_buttons(str(theme.currentData())))
         theme.currentIndexChanged.connect(lambda _index: self._preview_theme(str(theme.currentData())))
         return page
@@ -617,7 +625,7 @@ class SettingsWindow(QWidget):
         self.prolog_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.prolog_highlighter = PrologHighlighter(
             self.prolog_editor.document(),
-            str(self._value("desktop.theme", "signal-cabin")),
+            str(self._value("desktop.theme", "outrun")),
         )
         self.save_prolog_button = QPushButton("Save source")
         self.save_prolog_button.setObjectName("zaraPrimaryAction")
@@ -718,7 +726,7 @@ class SettingsWindow(QWidget):
         except (OSError, SettingsValidationError) as error:
             self.feedback_label.setText(f"config.toml was not saved: {error}")
             return
-        theme = str(self.config.get("desktop", "theme", "signal-cabin"))
+        theme = str(self.config.get("desktop", "theme", "outrun"))
         self.setting_widgets["desktop.theme"].setCurrentIndex(
             self.setting_widgets["desktop.theme"].findData(theme)  # type: ignore[union-attr]
         )

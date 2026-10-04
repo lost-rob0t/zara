@@ -1,0 +1,47 @@
+#+title: Zara Desktop design
+
+* Authority
+
+Zara Desktop mirrors the Android app's visual language. The canonical token values live in =android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt=; =android/DESIGN.md= defines the product-level design direction. Desktop consumes those decisions through a deterministic projection in =zara/desktop/theme.py=.
+
+The concrete shared themes are Outrun, StarIntel, Midnight, Terminal, and Light. Outrun is the default for new desktop configuration and the fallback for an unknown theme key. Signal Cabin, Dotfiles Outrun, Nord, Dracula, and ChatGPT Neutral remain available for existing users.
+
+* Desktop projection
+
+Android semantic tokens map to the existing Qt roles through one queryable derivation table:
+
+| Desktop role | Android authority |
+|--------------+-------------------|
+| ground | background |
+| panel deep | surfaceInput |
+| panel | surface |
+| panel lift | surfaceElevated |
+| line | border |
+| strong line | borderActive |
+| text | text |
+| muted text | textMuted |
+| primary | primary |
+| primary hover | focus |
+| primary deep | ambientGlow |
+| active | warning |
+| danger | error |
+
+=on_primary= selects black or white by WCAG contrast. =danger_deep= mixes 18 percent =error= over =surfaceInput=. Tests compare every shared value directly with the Kotlin source and reject incomplete role mappings or raw text contrast below 4.5:1.
+
+* Component language
+
+- The near-black or light theme ground owns the window; content is not nested in generic cards.
+- Conversation history uses =surface=, the composer uses =surfaceInput=, and raised controls use =surfaceElevated=.
+- Active/focus borders use the theme's focus and primary family; running work uses warning and failures use error.
+- Primary controls and message accents use the Android primary color. Outrun therefore uses restrained magenta with cyan/violet support rather than an independent desktop palette.
+- Panels and the composer use the Android rounded hierarchy, while borders stay thin and informative.
+- Compact chat exposes History; expanded chat exposes Chat. The conversation title replaces a separate desktop wordmark so hierarchy matches the mobile shell.
+- Appearance previews scroll horizontally, keeping all shared and legacy themes reachable at the existing settings width.
+
+* Ownership boundary
+
+The desktop adapter is deterministic presentation infrastructure, not a second design authority. Reusable expert definitions or design knowledge belong in the dotfiles expert library under =.zara/experts/= and are consumed through Zara's normal expert infrastructure when available. This repository does not carry a parallel design-expert brain.
+
+* Verification
+
+The parity contract is covered by =t/test_desktop_mobile_parity.py=. The existing Copilot and Org fixture renderers emit exact-theme manifests using Outrun, and desktop settings tests cover live previews and reachability of all themes. Release acceptance still requires the repository's full Nix test, flake, build, and exact-head CI gates.

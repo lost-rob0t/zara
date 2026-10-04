@@ -1,12 +1,4 @@
-"""Signal Cabin visual system for Zara Desktop.
-
-THESIS: One conversation follows one visible route; the interface refuses generic AI-card chrome.
-OWN-WORLD: Charcoal enamel, warm ivory type, mint route lamps, amber activity, and signal red.
-STORY: Summon Zara, read the live route, work in place, then carry the same trace into Full Chat.
-FIRST VIEWPORT: A precise status rail anchors the top, conversation owns the field, and the composer forms the control bed.
-FORM: Railway signal cabin, second on the grounded list; seed 35e80c4d.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
-"""
+"""Zara Desktop theme system derived from the Android design authority."""
 
 from __future__ import annotations
 
@@ -19,6 +11,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 MIN_TEXT_CONTRAST = 4.5
+ANDROID_THEME_SOURCE = "android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt"
 
 
 @dataclass(frozen=True)
@@ -27,6 +20,202 @@ class ThemeDefinition:
     label: str
     description: str
     colors: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class RoleDerivation:
+    operation: str
+    source_tokens: tuple[str, ...]
+    weight: float | None = None
+
+
+ANDROID_THEME_TOKENS: Mapping[str, Mapping[str, str]] = MappingProxyType(
+    {
+        "outrun": MappingProxyType(
+            {
+                "background": "#02040B",
+                "surface": "#07101B",
+                "surfaceElevated": "#0A1324",
+                "surfaceInput": "#080F1E",
+                "border": "#1A2A49",
+                "borderActive": "#775CFF",
+                "primary": "#E21CF2",
+                "secondary": "#16D9FF",
+                "accentMagenta": "#F000FF",
+                "accentCyan": "#00D7FF",
+                "text": "#EAF2FF",
+                "textMuted": "#8D9DBA",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#B56DFF",
+                "ambientGlow": "#3A0D5E",
+            }
+        ),
+        "starintel": MappingProxyType(
+            {
+                "background": "#080807",
+                "surface": "#14130F",
+                "surfaceElevated": "#201D15",
+                "surfaceInput": "#10100D",
+                "border": "#4C4329",
+                "borderActive": "#E8C56A",
+                "primary": "#E8C56A",
+                "secondary": "#F1DA9A",
+                "accentMagenta": "#D4AF37",
+                "accentCyan": "#F1DA9A",
+                "text": "#F8F3E6",
+                "textMuted": "#BEB5A1",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#FFD971",
+                "ambientGlow": "#342A10",
+            }
+        ),
+        "midnight": MappingProxyType(
+            {
+                "background": "#080919",
+                "surface": "#11132A",
+                "surfaceElevated": "#1B1D3C",
+                "surfaceInput": "#0D1024",
+                "border": "#343B68",
+                "borderActive": "#9C92FF",
+                "primary": "#B3A4FF",
+                "secondary": "#8ABFFF",
+                "accentMagenta": "#B3A4FF",
+                "accentCyan": "#8ABFFF",
+                "text": "#EAF2FF",
+                "textMuted": "#8D9DBA",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#CEC4FF",
+                "ambientGlow": "#24204E",
+            }
+        ),
+        "terminal": MappingProxyType(
+            {
+                "background": "#030805",
+                "surface": "#08120C",
+                "surfaceElevated": "#102117",
+                "surfaceInput": "#050D08",
+                "border": "#294E36",
+                "borderActive": "#8EF0A8",
+                "primary": "#8EF0A8",
+                "secondary": "#ADEBC0",
+                "accentMagenta": "#8EF0A8",
+                "accentCyan": "#ADEBC0",
+                "text": "#E3F8E9",
+                "textMuted": "#9CBBA6",
+                "success": "#6CE7A6",
+                "warning": "#FFD166",
+                "error": "#FF6B8B",
+                "focus": "#BFFFCC",
+                "ambientGlow": "#12321D",
+            }
+        ),
+        "light": MappingProxyType(
+            {
+                "background": "#F7F7FA",
+                "surface": "#FFFFFF",
+                "surfaceElevated": "#ECECF3",
+                "surfaceInput": "#F2F2F7",
+                "border": "#B8BAC8",
+                "borderActive": "#6450A8",
+                "primary": "#7A247D",
+                "secondary": "#006478",
+                "accentMagenta": "#88258C",
+                "accentCyan": "#006478",
+                "text": "#1C2030",
+                "textMuted": "#555C70",
+                "success": "#17623B",
+                "warning": "#765100",
+                "error": "#AC2044",
+                "focus": "#6034A0",
+                "ambientGlow": "#EAE1F3",
+            }
+        ),
+    }
+)
+
+ANDROID_ROLE_DERIVATIONS: Mapping[str, RoleDerivation] = MappingProxyType(
+    {
+        "ground": RoleDerivation("direct", ("background",)),
+        "panel_deep": RoleDerivation("direct", ("surfaceInput",)),
+        "panel": RoleDerivation("direct", ("surface",)),
+        "panel_lift": RoleDerivation("direct", ("surfaceElevated",)),
+        "line": RoleDerivation("direct", ("border",)),
+        "line_strong": RoleDerivation("direct", ("borderActive",)),
+        "text": RoleDerivation("direct", ("text",)),
+        "text_muted": RoleDerivation("direct", ("textMuted",)),
+        "primary": RoleDerivation("direct", ("primary",)),
+        "primary_hover": RoleDerivation("direct", ("focus",)),
+        "primary_deep": RoleDerivation("direct", ("ambientGlow",)),
+        "on_primary": RoleDerivation("contrast_text", ("primary",)),
+        "active": RoleDerivation("direct", ("warning",)),
+        "danger": RoleDerivation("direct", ("error",)),
+        "danger_deep": RoleDerivation("mix", ("surfaceInput", "error"), 0.18),
+    }
+)
+
+
+def _hex_rgb(value: str) -> tuple[int, int, int]:
+    return tuple(int(value[index : index + 2], 16) for index in (1, 3, 5))
+
+
+def _hex_luminance(value: str) -> float:
+    channels = []
+    for channel in _hex_rgb(value):
+        normalized = channel / 255.0
+        channels.append(
+            normalized / 12.92
+            if normalized <= 0.04045
+            else ((normalized + 0.055) / 1.055) ** 2.4
+        )
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_text_hex(background: str) -> str:
+    background_luminance = _hex_luminance(background)
+    black_ratio = (background_luminance + 0.05) / 0.05
+    white_ratio = 1.05 / (background_luminance + 0.05)
+    if black_ratio >= white_ratio:
+        return "#000000"
+    return "#FFFFFF"
+
+
+def _mix_hex(base: str, overlay: str, weight: float) -> str:
+    base_rgb = _hex_rgb(base)
+    overlay_rgb = _hex_rgb(overlay)
+    channels = tuple(
+        round(base_channel * (1.0 - weight) + overlay_channel * weight)
+        for base_channel, overlay_channel in zip(base_rgb, overlay_rgb)
+    )
+    return "#" + "".join(f"{channel:02X}" for channel in channels)
+
+
+def _derive_role(tokens: Mapping[str, str], derivation: RoleDerivation) -> str:
+    if derivation.operation == "direct":
+        return tokens[derivation.source_tokens[0]]
+    if derivation.operation == "contrast_text":
+        return _contrast_text_hex(tokens[derivation.source_tokens[0]])
+    if derivation.operation == "mix" and derivation.weight is not None:
+        return _mix_hex(
+            tokens[derivation.source_tokens[0]],
+            tokens[derivation.source_tokens[1]],
+            derivation.weight,
+        )
+    raise ValueError(f"Unsupported desktop theme derivation: {derivation.operation}")
+
+
+def _android_theme(key: str, label: str, description: str) -> ThemeDefinition:
+    tokens = ANDROID_THEME_TOKENS[key]
+    colors = {
+        role: _derive_role(tokens, derivation)
+        for role, derivation in ANDROID_ROLE_DERIVATIONS.items()
+    }
+    return ThemeDefinition(key, label, description, MappingProxyType(colors))
 
 
 def _theme(
@@ -72,6 +261,31 @@ def _theme(
 
 THEME_REGISTRY: Mapping[str, ThemeDefinition] = MappingProxyType(
     {
+        "outrun": _android_theme(
+            "outrun",
+            "Outrun",
+            "Zara's neon magenta and cyan Android design language.",
+        ),
+        "starintel": _android_theme(
+            "starintel",
+            "StarIntel",
+            "Warm black and gold surfaces for StarIntel workflows.",
+        ),
+        "midnight": _android_theme(
+            "midnight",
+            "Midnight",
+            "Indigo night surfaces with cool violet controls.",
+        ),
+        "terminal": _android_theme(
+            "terminal",
+            "Terminal",
+            "Deep green terminal surfaces with quiet phosphor accents.",
+        ),
+        "light": _android_theme(
+            "light",
+            "Light",
+            "The Android light palette for bright desktop environments.",
+        ),
         "signal-cabin": _theme(
             "signal-cabin",
             "Signal Cabin",
@@ -293,10 +507,10 @@ def apply_readable_palette(
 
 def resolve_theme(theme_key: str | None) -> ThemeDefinition:
     """Return a known theme, falling back to the durable default."""
-    return THEME_REGISTRY.get(theme_key or "", THEME_REGISTRY["signal-cabin"])
+    return THEME_REGISTRY.get(theme_key or "", THEME_REGISTRY["outrun"])
 
 
-def build_theme_palette(theme_key: str = "signal-cabin") -> QPalette:
+def build_theme_palette(theme_key: str = "outrun") -> QPalette:
     """Build one accessible palette from the semantic desktop registry."""
     colors = resolve_theme(theme_key).colors
     palette = QPalette()
@@ -323,7 +537,7 @@ def build_signal_cabin_palette() -> QPalette:
     return build_theme_palette("signal-cabin")
 
 
-def desktop_stylesheet(theme_key: str = "signal-cabin") -> str:
+def desktop_stylesheet(theme_key: str = "outrun") -> str:
     """Return Zara Desktop's complete stylesheet for one theme."""
     colors = resolve_theme(theme_key).colors
     return f"""
@@ -372,14 +586,14 @@ QLabel#zaraConversationTitle,
 QLabel#zaraQuickTitle,
 QLabel#zaraTitle {{
     color: {colors["text"]};
-    font-family: "Nimbus Sans Narrow";
-    font-size: 23px;
+    font-family: "Adwaita Sans";
+    font-size: 20px;
     font-weight: 700;
 }}
 
 QFrame#zaraRuntimeRail {{
     background: {colors["panel"]};
-    border: none;
+    border: 1px solid {colors["line"]};
     border-radius: 12px;
 }}
 
@@ -425,9 +639,9 @@ QWidget#zaraConversationSidebar {{
 }}
 
 QWidget#zaraConversationHistoryPanel {{
-    background: {colors["panel_deep"]};
-    border: none;
-    border-radius: 16px;
+    background: {colors["panel"]};
+    border: 1px solid {colors["line"]};
+    border-radius: 20px;
 }}
 
 QLineEdit,
@@ -503,6 +717,7 @@ QListWidget#zaraFactList::item:selected {{
 }}
 
 QScrollArea#zaraConversationViewport,
+QScrollArea#zaraThemeStrip,
 QScrollArea#zaraConversationViewport > QWidget > QWidget {{
     background: transparent;
     border: none;
@@ -541,6 +756,7 @@ QFrame#zaraMessageBubble[messageRole="system"] {{
 QFrame#zaraMessageBubble[messageKind="activity"] {{
     background: {colors["panel_deep"]};
     border: 1px solid {colors["line"]};
+    border-left: 3px solid {colors["primary"]};
     border-radius: 12px;
 }}
 
@@ -589,7 +805,7 @@ QPlainTextEdit#zaraCodeEditor {{
 }}
 
 QFrame#zaraComposerShell {{
-    background: {colors["panel_lift"]};
+    background: {colors["panel_deep"]};
     border: 1px solid {colors["line"]};
     border-radius: 20px;
 }}
@@ -610,20 +826,20 @@ QFrame#zaraConversationEmptyState {{
 
 QLabel#zaraEmptyStateTitle {{
     color: {colors["text"]};
-    font-family: "Nimbus Sans Narrow";
-    font-size: 26px;
+    font-family: "Adwaita Sans";
+    font-size: 24px;
     font-weight: 700;
 }}
 
 QLabel#zaraEmptyStateDetail {{ color: {colors["text_muted"]}; }}
 
 QPushButton {{
-    min-height: 34px;
-    padding: 0 13px;
+    min-height: 36px;
+    padding: 0 14px;
     color: {colors["text"]};
     background: {colors["panel_lift"]};
     border: 1px solid {colors["line_strong"]};
-    border-radius: 9px;
+    border-radius: 12px;
     font-weight: 600;
 }}
 
@@ -805,7 +1021,7 @@ QToolTip {{
 """.strip()
 
 
-def apply_desktop_theme(app: QApplication, theme_key: str = "signal-cabin") -> QPalette:
+def apply_desktop_theme(app: QApplication, theme_key: str = "outrun") -> QPalette:
     """Install the complete visual system before desktop widgets are built."""
     app.setStyle("Fusion")
     theme = resolve_theme(theme_key)
@@ -825,9 +1041,13 @@ def refresh_dynamic_style(widget) -> None:
 
 
 __all__ = [
+    "ANDROID_ROLE_DERIVATIONS",
+    "ANDROID_THEME_SOURCE",
+    "ANDROID_THEME_TOKENS",
     "MIN_TEXT_CONTRAST",
     "SIGNAL_CABIN_COLORS",
     "THEME_REGISTRY",
+    "RoleDerivation",
     "ThemeDefinition",
     "apply_desktop_theme",
     "apply_readable_palette",

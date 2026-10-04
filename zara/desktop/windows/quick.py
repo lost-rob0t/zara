@@ -128,9 +128,10 @@ class QuickCopilotWindow(QWidget):
         self.setMinimumSize(480, 320)
         self.resize(_DEFAULT_SIZE)
 
-        self.brand_label = QLabel("ZARA")
+        self.brand_label = QLabel()
         self.brand_label.setObjectName("zaraBrandName")
-        self.title_label = QLabel("Quick Copilot")
+        self.brand_label.hide()
+        self.title_label = QLabel("New chat")
         self.title_label.setObjectName("zaraQuickTitle")
         self.provider_label = QLabel()
         self.provider_label.setObjectName("zaraQuickProvider")
@@ -138,7 +139,7 @@ class QuickCopilotWindow(QWidget):
         self.new_chat_button.setObjectName("zaraSecondaryAction")
         self.new_chat_button.setAccessibleName("Start a new chat")
         self.new_chat_button.setToolTip("Start a new chat")
-        self.expand_button = QPushButton("Full chat")
+        self.expand_button = QPushButton("History")
         self.expand_button.setObjectName("zaraSecondaryAction")
         self.expand_button.setAccessibleName("Change conversation view")
         self.settings_button = QPushButton("Settings")
@@ -424,7 +425,7 @@ class QuickCopilotWindow(QWidget):
 
     def _apply_header_density(self) -> None:
         narrow = self.width() < 560
-        self.brand_label.setVisible(not narrow)
+        self.brand_label.hide()
         self.runtime_status_label.setVisible(not narrow)
         self.new_chat_button.setText("New" if narrow else "New chat")
         self.settings_button.setText("..." if narrow else "Settings")
