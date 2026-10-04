@@ -5,6 +5,7 @@ on:
     paths:
       - 'nlp/gf/**'
       - 'modules/gf_frontend.pl'
+      - 'modules/symbolic_dialogue_turn.pl'
       - 'scripts/test-gf.sh'
       - 'scripts/gf-demo.py'
       - 'nix/gf-pilot.nix'
@@ -49,6 +50,29 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gf-pilot-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            .gf-build/Zara.pgf
+            .gf-build/*.log
+            .gf-build/provenance.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  gf-nix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+      - name: Build and test pinned developer shell
+        run: nix-shell nix/gf-pilot.nix --run 'bash scripts/test-gf.sh'
+      - name: Preserve Nix gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gf-nix-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             .gf-build/Zara.pgf
             .gf-build/*.log
