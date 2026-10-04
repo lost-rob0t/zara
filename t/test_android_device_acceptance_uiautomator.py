@@ -174,6 +174,7 @@ def test_tap_scrolls_clipped_action_inside_scroll_view_before_tapping(
 
     def fake_nodes():
         action = visible_action if swipes else clipped_action
+        scroll_view[:] = [action]
         return iter((scroll_view, action))
 
     def fake_adb(*arguments: str, **_kwargs):
@@ -195,6 +196,171 @@ def test_tap_scrolls_clipped_action_inside_scroll_view_before_tapping(
 
     assert swipes == 1
     assert taps == [("420", "986")]
+
+
+@pytest.mark.parametrize(
+    ("container_class", "initial_bounds", "visible_bounds", "horizontal"),
+    [
+        ("android.widget.ScrollView", "[89,450][751,500]", "[89,905][751,1067]", False),
+        ("android.widget.ScrollView", "[89,1600][751,1674]", "[89,905][751,1067]", False),
+        ("android.widget.HorizontalScrollView", "[790,600][890,680]", "[300,600][440,680]", True),
+        ("android.widget.ScrollView", "[89,1850][751,1950]", "[89,905][751,1067]", False),
+    ],
+)
+def test_tap_reveals_controls_in_their_own_scroll_viewport(
+    monkeypatch, tmp_path, container_class, initial_bounds, visible_bounds, horizontal,
+):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    swipes = []
+    taps = []
+
+    def fake_adb(*arguments, **_kwargs):
+        if arguments == ("shell", "wm", "size"):
+            return "Physical size: 840x1867"
+        if arguments[:3] == ("shell", "input", "swipe"):
+            swipes.append(tuple(map(int, arguments[3:7])))
+            return ""
+        if arguments[:3] == ("shell", "input", "tap"):
+            taps.append(tuple(map(int, arguments[3:])))
+            return ""
+        if arguments[:2] == ("shell", "cat"):
+            bounds = visible_bounds if swipes else initial_bounds
+            return (
+                '<hierarchy><node class="' + container_class + '" '
+                'bounds="[0,487][840,1611]" scrollable="true">'
+                '<node text="Choose APK" bounds="' + bounds + '" '
+                'clickable="true" enabled="true" /></node></hierarchy>'
+            )
+        if arguments[:3] in (("shell", "rm", "-f"), ("shell", "uiautomator", "dump")):
+            return ""
+        raise AssertionError(f"unexpected adb call: {arguments!r}")
+
+    monkeypatch.setattr(device, "adb", fake_adb)
+    if horizontal:
+        device.tap_tab("Choose APK")
+    else:
+        device.tap("Choose APK")
+
+    assert len(swipes) == 1
+    start_x, start_y, end_x, end_y = swipes[0]
+    assert 0 < start_x < 840 and 0 < end_x < 840
+    assert 487 < start_y < 1611 and 487 < end_y < 1611
+    if horizontal:
+        assert start_x > end_x
+        assert taps == [(370, 640)]
+    else:
+        assert (start_y < end_y) == (initial_bounds == "[89,450][751,500]")
+        assert taps == [(420, 986)]
+
+
+def test_tap_ignores_unrelated_scroll_view_and_rejects_layout_change(monkeypatch, tmp_path):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    unrelated = ET.fromstring(
+        '<node class="android.widget.ScrollView" bounds="[0,0][840,500]" />'
+    )
+    action = ET.fromstring('<node text="Choose APK" bounds="[89,905][751,1067]" />')
+    taps = []
+
+    def fake_adb(*arguments, **_kwargs):
+        if arguments == ("shell", "wm", "size"):
+            return "Physical size: 840x1867"
+        if arguments[:3] == ("shell", "input", "tap"):
+            taps.append(arguments[3:])
+            return ""
+        raise AssertionError(f"unexpected adb call: {arguments!r}")
+
+    monkeypatch.setattr(device, "nodes", lambda: iter((unrelated, action)))
+    monkeypatch.setattr(device, "adb", fake_adb)
+    device.tap("Choose APK")
+    assert taps == [("420", "986")]
+
+    action.set("bounds", "[89,1850][751,1950]")
+    with pytest.raises(AssertionError, match="visible"):
+        device._tap_found("Choose APK")
+    assert len(taps) == 1
+
+
+def test_bounds_preserves_negative_offscreen_coordinates():
+    module = _load_device_acceptance_module()
+    node = ET.fromstring('<node bounds="[-100,-80][40,20]" />')
+    assert module.Device.bounds(node) == (-100, -80, 40, 20)
+
+
+@pytest.mark.parametrize("visible_after", [None, 12])
+def test_reveal_has_bounded_retries_and_checks_the_last_swipe(monkeypatch, tmp_path, visible_after):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    calls = []
+    action = ET.fromstring('<node text="Choose APK" bounds="[100,100][300,200]" />')
+
+    def fake_nodes():
+        visible = visible_after is not None and len(calls) >= visible_after
+        return iter((action,) if visible else ())
+
+    def fake_adb(*arguments, **_kwargs):
+        if arguments == ("shell", "wm", "size"):
+            return "Physical size: 840x1867"
+        assert arguments[:3] == ("shell", "input", "swipe")
+        calls.append(arguments)
+        return ""
+
+    monkeypatch.setattr(device, "nodes", fake_nodes)
+    monkeypatch.setattr(device, "adb", fake_adb)
+    if visible_after is None:
+        with pytest.raises(AssertionError, match="not reachable after scrolling"):
+            device.reveal("Choose APK")
+    else:
+        device.reveal("Choose APK")
+    assert len(calls) == 12
+    assert int(calls[0][4]) > int(calls[0][6])
+    assert int(calls[-1][4]) < int(calls[-1][6])
+
+
+def test_nested_scroll_viewports_use_their_intersection_and_skip_clipped_duplicates(monkeypatch, tmp_path):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    hierarchy = ET.fromstring(
+        '<hierarchy><node class="android.widget.ScrollView" bounds="[0,200][840,1000]">'
+        '<node class="android.widget.ScrollView" bounds="[0,100][840,1600]">'
+        '<node text="Choose APK" bounds="[100,1100][300,1200]" />'
+        '</node></node><node text="Choose APK" bounds="[100,600][300,700]" /></hierarchy>'
+    )
+    monkeypatch.setattr(device, "nodes", lambda: hierarchy.iter("node"))
+    node, viewport = device._locate_control("Choose APK", 840, 1867)
+    assert device.bounds(node) == (100, 600, 300, 700)
+    assert viewport == (0, 0, 840, 1867)
+    hierarchy.remove(list(hierarchy)[-1])
+    node, viewport = device._locate_control("Choose APK", 840, 1867)
+    assert viewport == (0, 200, 840, 1000)
+    assert not device._center_visible(node, viewport)
+
+
+@pytest.mark.parametrize("bounds", ["[0,0][0,0]", "[10,10][5,5]"])
+def test_tap_rejects_empty_or_inverted_bounds(monkeypatch, tmp_path, bounds):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    action = ET.fromstring('<node text="Choose APK" bounds="' + bounds + '" />')
+    monkeypatch.setattr(device, "nodes", lambda: iter((action,)))
+    monkeypatch.setattr(device, "size", lambda: (840, 1867))
+    with pytest.raises(AssertionError, match="empty bounds"):
+        device._tap_found("Choose APK")
+
+
+def test_missing_tab_scrolls_the_tab_bar_in_both_directions(monkeypatch, tmp_path):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    swipes = []
+    monkeypatch.setattr(device, "nodes", lambda: iter(()))
+    monkeypatch.setattr(device, "size", lambda: (840, 1867))
+    monkeypatch.setattr(device, "adb", lambda *arguments: swipes.append(arguments))
+    with pytest.raises(AssertionError, match="not reachable after scrolling"):
+        device.reveal_horizontal("Plugins")
+    assert len(swipes) == 16
+    assert all(swipe[4] == swipe[6] == "233" for swipe in swipes)
+    assert int(swipes[0][3]) > int(swipes[0][5])
+    assert int(swipes[-1][3]) < int(swipes[-1][5])
 
 def test_await_label_dismisses_release_notes_that_appear_after_launch(
     monkeypatch: pytest.MonkeyPatch,
