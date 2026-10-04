@@ -95,6 +95,8 @@ The phone Health surface uses Zara's Outrun visual language with section cards, 
 
 The Wear surface uses circular target gauges and capability cards. Goals are projected from the paired phone through =ZARA-WEAR-PROVISION/2=; no health reading, credential, endpoint, transcript, or authority grant is carried in that provision envelope. Legacy =/1= provisioning still decodes with no goals.
 
+Zara also publishes separate step-goal and sleep-goal complication data sources for any compatible Wear OS watch face. They show only the configured target, never invented progress. A tap opens Zara Health, and a fresh phone provision requests an immediate complication refresh. If the watch has not received a valid goal provision, the provider returns =NoDataComplicationData= instead of a default posing as live data.
+
 Watch support is capability-based rather than model-name-based. The optional Samsung Health Sensor SDK v1.4.1 gateway asks the watch which tracker types are available and classifies each as available, update-required, or unsupported. The catalog covers accelerometer, EDA, heart rate/IBI, continuous and on-demand PPG, continuous and on-demand skin temperature, BIA, ECG, MF-BIA, SpO2, and sweat loss. Skin temperature requires Watch5-class hardware with Android 13/API 33 or newer; EDA and MF-BIA are reported only by newer capable watches. This is how Zara remains compatible with Watch5 Pro through later Watch generations without inventing a nonexistent model allow-list.
 
 The watch manifest declares the Sensor SDK's documented foreground measurement permissions, but Zara does not register a background health foreground service. Continuous measurement must therefore remain an explicit foreground interaction until a tested service lifecycle exists.
@@ -192,3 +194,4 @@ The same boundary applies to watch sensors: JVM tests prove catalogs, protocol, 
 - https://developer.samsung.com/health/data/guide/features/data-permission.html
 - https://developer.samsung.com/health/data/guide/hello-sdk/app-module.html
 - https://developer.samsung.com/health/data/guide/app-verification.html
+- https://developer.android.com/training/wearables/complications/exposing-data

@@ -16,7 +16,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
-- Zara Health adds a Samsung Health-inspired phone surface and modern Wear surface with runtime capability reporting for Galaxy Watch5-class devices and newer, encrypted step/sleep/activity/nutrition/water goals, phone-to-watch goal continuity, and explicit permission-gated health reads.
+- Zara Health adds a Samsung Health-inspired phone surface and modern Wear surface with runtime capability reporting for Galaxy Watch5-class devices and newer, encrypted step/sleep/activity/nutrition/water goals, phone-to-watch goal continuity, step and sleep goal complications, and explicit permission-gated health reads.
 - Android and desktop can create interoperable OpenPGP-encrypted, data-only Prolog health exports for one or many recipient keys. Desktop GPG storage and encrypted private Org summaries are opt-in; plaintext mode remains owner-only and is the default.
 - Android release automation now publishes every installable Zara APK—phone, Code Editor, Termux bridge, Wear, Wear Voice, and the full Org fleet—to both the rolling =android-latest= channel and immutable versioned releases with checksums and provenance manifests.
 

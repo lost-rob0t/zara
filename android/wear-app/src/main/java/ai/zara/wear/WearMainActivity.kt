@@ -52,7 +52,11 @@ class WearMainActivity : ComponentActivity() {
         healthController = WearHealthController(WearHealthGatewayLoader.create(applicationContext))
         runtime.start()
         setContent {
-            ZaraWearClient(runtime, healthController)
+            ZaraWearClient(
+                runtime,
+                healthController,
+                initialHealthOpen = intent?.getBooleanExtra(EXTRA_OPEN_HEALTH, false) == true,
+            )
         }
     }
 
@@ -63,10 +67,14 @@ class WearMainActivity : ComponentActivity() {
 }
 
 @Composable
-internal fun ZaraWearClient(runtime: WearCompanionRuntime, health: WearHealthController) {
+internal fun ZaraWearClient(
+    runtime: WearCompanionRuntime,
+    health: WearHealthController,
+    initialHealthOpen: Boolean = false,
+) {
     val tokens = themeTokens(ZaraTheme.Outrun, systemDark = true, reducedGlow = false)
     var linkState by remember { mutableStateOf<WearCompanionLinkState>(runtime.state()) }
-    var healthOpen by remember { mutableStateOf(false) }
+    var healthOpen by remember { mutableStateOf(initialHealthOpen) }
 
     DisposableEffect(runtime) {
         runtime.observe { state -> linkState = state }
@@ -157,6 +165,8 @@ internal fun ZaraWearClient(runtime: WearCompanionRuntime, health: WearHealthCon
         }
     }
 }
+
+const val EXTRA_OPEN_HEALTH = "ai.zara.wear.extra.OPEN_HEALTH"
 
 @Composable
 private fun ConversationCard(presentation: WearClientPresentation, act: String) {

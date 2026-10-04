@@ -69,4 +69,23 @@ class WearCompanionWiringContractTest {
         assertTrue(!health.contains("WearCompanionContract.PATH_PHONE_PROVISION"))
         assertTrue(!health.contains("sendMessage("))
     }
+
+    @Test
+    fun wearHealthPublishesStepAndSleepGoalComplications() {
+        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val build = File("build.gradle.kts").readText()
+        val catalog = File("../gradle/libs.versions.toml").readText()
+        val service = File(
+            "src/main/java/ai/zara/wear/health/ZaraHealthGoalComplicationService.kt",
+        ).readText()
+
+        assertTrue(build.contains("libs.wear.watchface.complications.data.source.ktx"))
+        assertTrue(catalog.contains("watchface-complications-data-source-ktx"))
+        assertTrue(manifest.contains("ZaraStepGoalComplicationService"))
+        assertTrue(manifest.contains("ZaraSleepGoalComplicationService"))
+        assertTrue(manifest.contains("BIND_COMPLICATION_PROVIDER"))
+        assertTrue(manifest.contains("ACTION_COMPLICATION_UPDATE_REQUEST"))
+        assertTrue(service.contains("NoDataComplicationData"))
+        assertTrue(service.contains("EXTRA_OPEN_HEALTH"))
+    }
 }
