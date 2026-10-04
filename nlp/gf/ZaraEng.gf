@@ -1,4 +1,4 @@
-concrete ZaraEng of Zara = open SyntaxEng, ParadigmsEng in {
+concrete ZaraEng of Zara = NumeralEng [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, D_3, D_4, D_5, D_6, D_7, D_8, D_9] ** open SyntaxEng, ParadigmsEng in {
   lincat
     Utterance, Request, Duration, Reply = {s : Str} ;
     Unit = N ;
@@ -20,7 +20,7 @@ concrete ZaraEng of Zara = open SyntaxEng, ParadigmsEng in {
     Followup duration = duration ;
     Correction duration = {s = "actually" ++ duration.s} ;
     OpenApp app = mkUtt (mkImp (mkVP (mkV2 (mkV "open")) app)) ;
-    DurationOf count unit = mkUtt (mkNP (mkDet (mkCard count.s)) unit) ;
+    DurationOf count unit = mkUtt (mkNP (mkDet (mkCard count)) unit) ;
     Seconds = mkN "second" ;
     Minutes = mkN "minute" ;
     Hours = mkN "hour" ;

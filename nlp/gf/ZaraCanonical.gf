@@ -1,6 +1,18 @@
-concrete ZaraCanonical of Zara = {
-  lincat Utterance, Request, Duration, Unit, App, Reply = {s : Str} ;
+concrete ZaraCanonical of Zara = open Prelude in {
+  lincat Utterance, Request, Duration, Unit, App, Reply, Dig, Digits = {s : Str} ;
   lin
+    IDig digit = digit ;
+    IIDig digit rest = {s = digit.s ++ BIND ++ rest.s} ;
+    D_0 = {s = "0"} ;
+    D_1 = {s = "1"} ;
+    D_2 = {s = "2"} ;
+    D_3 = {s = "3"} ;
+    D_4 = {s = "4"} ;
+    D_5 = {s = "5"} ;
+    D_6 = {s = "6"} ;
+    D_7 = {s = "7"} ;
+    D_8 = {s = "8"} ;
+    D_9 = {s = "9"} ;
     Say request = request ;
     Address request = request ;
     Polite request = request ;

@@ -53,4 +53,5 @@ jobs:
             .gf-build/Zara.pgf
             .gf-build/*.log
             .gf-build/provenance.json
+          include-hidden-files: true
           if-no-files-found: ignore

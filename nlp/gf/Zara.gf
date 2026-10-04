@@ -1,4 +1,4 @@
-abstract Zara = {
+abstract Zara = Numeral [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, D_3, D_4, D_5, D_6, D_7, D_8, D_9] ** {
   flags startcat = Utterance ;
   cat Utterance ; Request ; Duration ; Unit ; App ; Reply ;
   fun
@@ -7,7 +7,7 @@ abstract Zara = {
     TimerMissing, OpenMissing : Request ;
     SetTimer, Followup, Correction : Duration -> Request ;
     OpenApp : App -> Request ;
-    DurationOf : Int -> Unit -> Duration ;
+    DurationOf : Digits -> Unit -> Duration ;
     Seconds, Minutes, Hours : Unit ;
     Settings, Termux, Firefox : App ;
     GreetingReply, HelpReply, ThanksReply, AcknowledgedReply : Reply ;
