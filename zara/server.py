@@ -41,6 +41,7 @@ _SAFE_REMOTE_CAPABILITIES = frozenset(
         "turn.submit",
         "turn.cancel",
         "tool.approve",
+        "phone.send_sms",
     }
 )
 
