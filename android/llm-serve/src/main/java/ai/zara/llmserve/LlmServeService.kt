@@ -4,6 +4,7 @@ import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelFormat
 import ai.zara.app.localai.LocalModelMetadata
 import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalAiPhase
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -34,9 +35,23 @@ class LlmServeService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action ?: ACTION_START) {
-            ACTION_START -> startServer()
-            ACTION_STOP -> stopServerAndSelf()
+        when (intent?.action ?: ACTION_RESUME) {
+            ACTION_START -> {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_RESUME_ON_BOOT, true).apply()
+                startServer()
+            }
+            ACTION_RESUME -> {
+                if (!getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_RESUME_ON_BOOT, false)) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                startServer()
+            }
+            ACTION_STOP -> {
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_RESUME_ON_BOOT, false).apply()
+                stopServerAndSelf()
+                return START_NOT_STICKY
+            }
             ACTION_IMPORT_MODEL -> {
                 val importIntent = intent
                 if (importIntent == null) {
@@ -57,7 +72,9 @@ class LlmServeService : Service() {
         )
         worker.execute {
             try {
-                runCatching { engine.loadActiveModel() }
+                if (server.isRunning()) return@execute
+                val state = engine.loadActiveModel()
+                check(state.phase != LocalAiPhase.FAILED) { state.failure ?: "Local model load failed" }
                 server.start()
                 val active = engine.activeModel()
                 val model = if (active == null) {
@@ -66,7 +83,7 @@ class LlmServeService : Service() {
                     active.id + ":" + active.version
                 }
                 val status =
-                    "ready • http://" +
+                    (if (state.phase == LocalAiPhase.READY) "ready" else "waiting_for_model") + " • http://" +
                         OllamaLoopbackServer.LOOPBACK_HOST +
                         ":" +
                         OllamaLoopbackServer.DEFAULT_PORT +
@@ -99,6 +116,7 @@ class LlmServeService : Service() {
                     ?: throw IllegalArgumentException("Selected model cannot be opened")
                 input.use { engine.install(it, metadata) }
                 if (!server.isRunning()) server.start()
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_RESUME_ON_BOOT, true).apply()
                 val status =
                     "ready • imported " + metadata.id + ":" + metadata.version
                 persistStatus(status)
@@ -219,6 +237,7 @@ class LlmServeService : Service() {
 
     companion object {
         const val ACTION_START = "ai.zara.llmserve.START"
+        const val ACTION_RESUME = "ai.zara.llmserve.RESUME"
         const val ACTION_STOP = "ai.zara.llmserve.STOP"
         const val ACTION_IMPORT_MODEL = "ai.zara.llmserve.IMPORT_MODEL"
 
@@ -230,6 +249,7 @@ class LlmServeService : Service() {
 
         const val PREFS = "llm-serve-status"
         const val KEY_STATUS = "status"
+        const val KEY_RESUME_ON_BOOT = "resume-on-boot"
 
         private const val CHANNEL_ID = "zara-llm-serve"
         private const val NOTIFICATION_ID = 11434

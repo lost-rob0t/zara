@@ -68,3 +68,25 @@ def test_llm_serve_reuses_actor_runtime_instead_of_creating_second_inference_cor
     assert "LocalModelStore" in engine
     assert "Cannot replace the active model during generation" in engine
     assert "modelStore.activate(previous)" in engine
+
+
+def test_llm_serve_resumes_after_boot_only_when_user_started_it():
+    manifest = (ROOT / "android/llm-serve/src/main/AndroidManifest.xml").read_text()
+    receiver = ROOT / "android/llm-serve/src/main/java/ai/zara/llmserve/LlmServeBootReceiver.kt"
+    assert "android.permission.RECEIVE_BOOT_COMPLETED" in manifest
+    assert "android.intent.action.BOOT_COMPLETED" in manifest
+    assert receiver.is_file()
+    source = receiver.read_text()
+    assert "KEY_RESUME_ON_BOOT, false" in source
+    assert "startForegroundService" in source
+    service = (ROOT / "android/llm-serve/src/main/java/ai/zara/llmserve/LlmServeService.kt").read_text()
+    assert "putBoolean(KEY_RESUME_ON_BOOT, false)" in service
+    assert "putBoolean(KEY_RESUME_ON_BOOT, true)" in service
+    assert "START_NOT_STICKY" in service
+
+
+def test_llm_serve_missing_model_is_not_reported_as_ready():
+    service = (ROOT / "android/llm-serve/src/main/java/ai/zara/llmserve/LlmServeService.kt").read_text()
+    assert "waiting_for_model" in service
+    assert "LocalAiPhase.READY" in service
+    assert "runCatching { engine.loadActiveModel() }" not in service
