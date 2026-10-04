@@ -1,0 +1,19 @@
+* Observation session 2026-09-20 22:21–22:36 EDT — desktop resilience during zara-server restart
+- Start commit: 36e6d48f (master)
+- Method: ffmpeg x11grab screen recording (all 3 monitors, /tmp/opencode/zara-obs/desktop-600s.mp4), scrot captures every 20s, journalctl --user -u zara-server / -u zara-wake, latency.jsonl tail.
+- Findings: handshake_required banner with Ready pill mismatch; stuck "..." bubble for turn-0013 ("did it rain?"); ZMQ errno=113 audio.output.start route drop; recurring startup/shutdown warnings.
+- Issues filed:
+  - #1353 Desktop: "handshake required" error after zara-server restart; no auto re-handshake, status pill stays "Ready" — https://github.com/lost-rob0t/zara/issues/1353
+  - #1352 Desktop: turn in progress becomes a stuck "..." typing bubble when zara-server restarts mid-turn — https://github.com/lost-rob0t/zara/issues/1352
+  - #1351 Server: TTS route dropped with ZMQ errno=113 after client reconnection (audio.output.start lost) — https://github.com/lost-rob0t/zara/issues/1351
+  - #1350 zara-server startup/shutdown warning cluster (discontiguous kb_intents, Prolog thread stop failure, discord token failure noise, RunnableConfig typing) — https://github.com/lost-rob0t/zara/issues/1350
+- Follow-up: RAGE fix slice for handshake/reconnect UX planned in a worktree.
+** Owner follow-up (same day): desktop simple pairing missing (new issue #1354), retry button absent in both desktop and Android UIs, auto-retry required, reconnect/retry policy should go through the Prolog runtime, mirror mobile design.
+- Owner requirements grounded in code at 36e6d48f and posted to the issues: auto re-handshake with backoff + automatic resubmission (#1353), one-tap Retry in BOTH desktop chat and Android app after a turn goes terminal (#1352), route rebinding as prerequisite for audio restore (#1351).
+- Reference designs found in-repo: Android reconnect backoff 250ms→4s cap, maxReconnectAttempts=5, generation-guarded scheduler (RuntimeState.kt:59-63, :28; AndroidTextSessionController.kt:170-187); Android pairing = CURVE identity + server pin via EnrollmentRepository.kt (Unenrolled→AwaitingServerPin→Ready); desktop has no retry and only manual connection settings (zara/desktop/controller.py:152-154, zara/config.py:37-45); ZaraClient.reconnect() unimplemented (zara/client.py:76-80).
+- Pairing issue: #1354 https://github.com/lost-rob0t/zara/issues/1354 (label: bug).
+*** RAGE iteration 1 — issue #1353 (2026-09-20 ~23:59 EDT)
+- Consumed issue: https://github.com/lost-rob0t/zara/issues/1353 (desktop "handshake required" flashing banner, no auto re-handshake, Ready pill mismatch; owner requires auto-retry, Prolog-owned policy, mobile-mirrored backoff)
+- Start commit: 36e6d48f (master)
+- Worktree: /home/unseen/git/worktrees/zarathushtra-rage-1353-desktop-rehandshake (branch rage/1353-desktop-auto-rehandshake)
+- Scope guard: stuck-bubble terminal-state UX (#1352) and retry buttons stay OUT of this slice except marking the failed attempt terminal before resubmit.

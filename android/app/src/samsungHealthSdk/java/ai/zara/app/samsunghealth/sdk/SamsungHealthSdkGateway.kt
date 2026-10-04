@@ -41,6 +41,8 @@ class SamsungHealthSdkGateway(context: Context) : SamsungHealthGateway {
         SamsungHealthPlatformStatus(SamsungHealthAvailability.ERROR)
     }
 
+    override fun supportedMetrics(): Set<SamsungHealthMetric> = permissionMap().keys
+
     override fun grantedPermissions(): Set<SamsungHealthMetric> {
         val requested = permissionMap()
         val granted = runSuspendBlocking { store.getGrantedPermissions(requested.values.toSet()) }
@@ -79,6 +81,7 @@ class SamsungHealthSdkGateway(context: Context) : SamsungHealthGateway {
         SamsungHealthMetric.SLEEP -> readSleepToday()
         SamsungHealthMetric.HEART_RATE -> readHeartRateToday()
         SamsungHealthMetric.EXERCISE -> readExerciseToday()
+        else -> throw IllegalArgumentException("Samsung Health ${metric.atom} is not implemented by this adapter")
     }
 
     private fun readStepsToday(): SamsungHealthReading {

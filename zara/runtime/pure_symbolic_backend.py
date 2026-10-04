@@ -25,7 +25,7 @@ PURE_SYMBOLIC_RENDER_ERROR = (
     "I couldn't render that symbolic response. No model or provider was used."
 )
 _MAX_CONTEXT_TERM_CHARS = 8192
-_MAX_RESPONSE_ACT_TERM_CHARS = 4096
+_MAX_RESPONSE_ACT_TERM_CHARS = 8192
 _MAX_EXPERT_EVIDENCE_CHARS = 128
 _DIALOGUE_ACT_RE = re.compile(r"^([a-z][a-z0-9_.-]{0,127})(?:\(|$)")
 _EXPERT_ANSWER_RE = re.compile(r"^answer\(expert,")
@@ -41,7 +41,7 @@ class SymbolicProjectionPort(Protocol):
 
     def load_dialogue_context(self, conversation_id: str) -> tuple[str, int]: ...
 
-    def load_previous_response_act(self, conversation_id: str) -> Optional[str]: ...
+    def load_previous_response_act(self, conversation_id: str) -> str | None: ...
 
     def commit_turn(
         self,
@@ -99,14 +99,14 @@ def _bounded_context_term(value: object) -> str:
 
 def _bounded_response_act_term(value: object) -> str:
     if not isinstance(value, str):
-        raise TypeError("symbolic response act must be text")
+        raise TypeError("symbolic previous response act must be text")
     if not value or len(value) > _MAX_RESPONSE_ACT_TERM_CHARS:
         raise ValueError(
-            "symbolic response act must be "
+            "symbolic previous response act must be "
             f"1..{_MAX_RESPONSE_ACT_TERM_CHARS} characters"
         )
     if "\x00" in value:
-        raise ValueError("symbolic response act must not contain NUL")
+        raise ValueError("symbolic previous response act must not contain NUL")
     return value
 
 
@@ -202,7 +202,30 @@ def _resolve_turn(
             return discourse
 
     text_term = json.dumps(text, ensure_ascii=False)
-    context_text = json.dumps(_bounded_context_term(context_term), ensure_ascii=False)
+    bounded_context = _bounded_context_term(context_term)
+
+    if previous_act_term is not None:
+        previous_text = json.dumps(
+            _bounded_response_act_term(previous_act_term),
+            ensure_ascii=False,
+        )
+        follow_up_goal = (
+            f"term_string(PreviousAct, {previous_text}, [syntax_errors(error)]), "
+            "ground(PreviousAct), "
+            f"symbolic_dialogue:resolve_discourse({text_term}, PreviousAct, FollowAct), "
+            "FollowAct \\= unsupported, "
+            "symbolic_dialogue:render_response(FollowAct, FollowResponse), "
+            "term_string(FollowAct, FollowActTerm, [quoted(true)])"
+        )
+        follow_up_row = engine.query_once(follow_up_goal)
+        if follow_up_row is not None:
+            return PureSymbolicTurn(
+                response=_as_text(follow_up_row["FollowResponse"]),
+                act_term=_as_text(follow_up_row["FollowActTerm"]),
+                context_term=bounded_context,
+            )
+
+    context_text = json.dumps(bounded_context, ensure_ascii=False)
     goal = (
         f"term_string(Context0, {context_text}, [syntax_errors(error)]), "
         "ground(Context0), "
@@ -275,22 +298,25 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
 
         state_loader = getattr(adapter, "load_dialogue_state", None)
         if state_loader is not None:
-            context, response_act, generation = state_loader(conversation_id)
+            if not callable(state_loader):
+                raise RuntimeError("symbolic projection dialogue-state loader is invalid")
+            state = state_loader(conversation_id)
+            if not isinstance(state, tuple) or len(state) != 3:
+                raise RuntimeError("symbolic projection returned invalid dialogue state")
+            context, previous_act, generation = state
         else:
+            # Legacy/custom ports may supply only context. Do not compose a prior
+            # response act from a second projection read: that would permit a
+            # cross-generation follow-up snapshot.
             context, generation = adapter.load_dialogue_context(conversation_id)
-            response_loader = getattr(adapter, "load_previous_response_act", None)
-            response_act = (
-                response_loader(conversation_id) if response_loader is not None else None
-            )
+            previous_act = None
 
         if type(generation) is not int or generation < 0:
             raise RuntimeError("symbolic projection returned an invalid generation")
-        bounded_act = (
-            None
-            if response_act is None
-            else _bounded_response_act_term(response_act)
-        )
-        return _bounded_context_term(context), bounded_act, generation
+        if previous_act is not None:
+            previous_act = _bounded_response_act_term(previous_act)
+
+        return _bounded_context_term(context), previous_act, generation
 
     async def submit_turn(
         self,
@@ -315,7 +341,7 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
                 "task prompt context is not available in pure symbolic mode"
             )
 
-        context_term, previous_response_act, base_generation = self._load_dialogue_state(
+        context_term, previous_act_term, base_generation = self._load_dialogue_state(
             conversation_id
         )
         if self._uses_default_turn_resolver:
@@ -324,7 +350,7 @@ class PureSymbolicRuntimeBackend(RuntimeBackend):
                 self._engine,
                 text,
                 context_term,
-                previous_response_act,
+                previous_act_term,
             )
         else:
             symbolic = await asyncio.to_thread(self._turn_resolver, self._engine, text)

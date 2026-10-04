@@ -5,6 +5,10 @@ import org.junit.Test
 class AppNavigationTest {
     @Test fun threeMenus() = AppNavigationContract.threeMenus()
     @Test fun completeRouteInventory() = AppNavigationContract.completeRouteInventory()
+    @Test fun healthIsAFirstClassWorkspaceRoute() {
+        check(AppRoute.Health.menu == AppMenu.Workspace)
+        check(AppRoute.Health.surface() == AppSurface.Health)
+    }
     @Test fun everyRouteCanBeSelected() = AppNavigationContract.everyRouteCanBeSelected()
     @Test fun menuSelectionsAreIndependent() = AppNavigationContract.menuSelectionsAreIndependent()
     @Test fun savedStateRoundTrips() = AppNavigationContract.savedStateRoundTrips()

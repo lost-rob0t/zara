@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Termux bridge/Wear debug APKs + secret inspection.
+# Zara Android/Wear gate: semantic parity + JVM tests + stock secure-server interop + pinned native build + phone/Code/Termux bridge/Org/Wear debug APKs + secret inspection.
 # Run via: nix develop ./android -c bash scripts/test-android.sh
 set -euo pipefail
 
@@ -126,6 +126,18 @@ if ! gradle --no-daemon \
   :code-editor:testDebugUnitTest \
   :termux-bridge:testDebugUnitTest \
   :llm-serve:testDebugUnitTest \
+  :org-core:testDebugUnitTest \
+  :org-storage:testDebugUnitTest \
+  :org-sync-core:testDebugUnitTest \
+  :org-surfaces:testDebugUnitTest \
+  :org-app:testDebugUnitTest \
+  :org-editor:testDebugUnitTest \
+  :org-todo:testDebugUnitTest \
+  :org-reminder:testDebugUnitTest \
+  :org-timer:testDebugUnitTest \
+  :org-roam:testDebugUnitTest \
+  :org-graph:testDebugUnitTest \
+  :org-home:testDebugUnitTest \
   :wear-app:testDebugUnitTest \
   :wear-voice:testDebugUnitTest \
   :app:assembleDebug \
@@ -133,6 +145,14 @@ if ! gradle --no-daemon \
   :termux-bridge:assembleDebug \
   :llm-serve:assembleDebug \
   :llm-serve:assembleAdversary \
+  :org-app:assembleDebug \
+  :org-editor:assembleDebug \
+  :org-todo:assembleDebug \
+  :org-reminder:assembleDebug \
+  :org-timer:assembleDebug \
+  :org-roam:assembleDebug \
+  :org-graph:assembleDebug \
+  :org-home:assembleDebug \
   :wear-app:assembleDebug \
   :wear-voice:assembleDebug 2>&1 | tee "$gradle_log"; then
   diagnostics_dir="app/build/reports/semantic-parity"
@@ -141,7 +161,7 @@ if ! gradle --no-daemon \
   cp "$interop_log" "$diagnostics_dir/stock-zara-server.log"
   cp "$recovery_log" "$diagnostics_dir/remote-recovery-fixture.log" 2>/dev/null || true
   cat "$interop_log" >&2
-  echo "stock ZaraServer Android/Wear/Code/Termux interop gate failed" >&2
+  echo "stock ZaraServer Android/Wear/Code/Termux/Org interop gate failed" >&2
   exit 1
 fi
 rm -f "$gradle_log"
@@ -161,6 +181,14 @@ code_apk="code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 termux_bridge_apk="termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk"
 llm_serve_apk="llm-serve/build/outputs/apk/debug/llm-serve-debug.apk"
 llm_serve_adversary_apk="llm-serve/build/outputs/apk/adversary/llm-serve-adversary.apk"
+org_org_app_apk="org-app/build/outputs/apk/debug/org-app-debug.apk"
+org_org_editor_apk="org-editor/build/outputs/apk/debug/org-editor-debug.apk"
+org_org_todo_apk="org-todo/build/outputs/apk/debug/org-todo-debug.apk"
+org_org_reminder_apk="org-reminder/build/outputs/apk/debug/org-reminder-debug.apk"
+org_org_timer_apk="org-timer/build/outputs/apk/debug/org-timer-debug.apk"
+org_org_roam_apk="org-roam/build/outputs/apk/debug/org-roam-debug.apk"
+org_org_graph_apk="org-graph/build/outputs/apk/debug/org-graph-debug.apk"
+org_org_home_apk="org-home/build/outputs/apk/debug/org-home-debug.apk"
 wear_apk="wear-app/build/outputs/apk/debug/wear-app-debug.apk"
 voice_apk="wear-voice/build/outputs/apk/debug/wear-voice-debug.apk"
 test -f "$phone_apk"
@@ -168,6 +196,14 @@ test -f "$code_apk"
 test -f "$termux_bridge_apk"
 test -f "$llm_serve_apk"
 test -f "$llm_serve_adversary_apk"
+test -f "$org_org_app_apk"
+test -f "$org_org_editor_apk"
+test -f "$org_org_todo_apk"
+test -f "$org_org_reminder_apk"
+test -f "$org_org_timer_apk"
+test -f "$org_org_roam_apk"
+test -f "$org_org_graph_apk"
+test -f "$org_org_home_apk"
 test -f "$wear_apk"
 test -f "$voice_apk"
 
@@ -176,8 +212,20 @@ bash "$repo_root/scripts/check-android-apk-installable.sh" "$code_apk" "ai.zara.
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$termux_bridge_apk" "ai.zara.termux.bridge"
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$llm_serve_apk" "ai.zara.llmserve"
 bash "$repo_root/scripts/check-android-apk-installable.sh" "$llm_serve_adversary_apk" "ai.zara.llmserve.adversary"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_app_apk" "ai.zara.org.app"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_editor_apk" "ai.zara.org.editor"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_todo_apk" "ai.zara.org.todo"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_reminder_apk" "ai.zara.org.reminder"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_timer_apk" "ai.zara.org.timer"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_roam_apk" "ai.zara.org.roam"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_graph_apk" "ai.zara.org.graph"
+bash "$repo_root/scripts/check-android-apk-installable.sh" "$org_org_home_apk" "ai.zara.org.home"
 
-for apk in "$phone_apk" "$code_apk" "$termux_bridge_apk" "$llm_serve_apk" "$llm_serve_adversary_apk" "$wear_apk" "$voice_apk"; do
+for apk in "$phone_apk" "$code_apk" "$termux_bridge_apk" \
+  "$llm_serve_apk" "$llm_serve_adversary_apk" \
+  "$org_org_app_apk" "$org_org_editor_apk" "$org_org_todo_apk" "$org_org_reminder_apk" \
+  "$org_org_timer_apk" "$org_org_roam_apk" "$org_org_graph_apk" "$org_org_home_apk" \
+  "$wear_apk" "$voice_apk"; do
   if strings "$apk" | grep -Eq "BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|CURVE SECRET KEY|zara-server-secret|ZARA_CLIENT_SECRET"; then
     echo "APK secret-marker inspection FAILED: private/secret material found in $apk" >&2
     exit 1
@@ -254,4 +302,4 @@ mkdir -p "$(dirname "$signature_evidence")"
   printf 'adversary_distinct=true\n'
 } > "$signature_evidence"
 
-echo "android/wear/code/termux/llm-serve gate ok: $phone_apk $code_apk $termux_bridge_apk $llm_serve_apk $llm_serve_adversary_apk $wear_apk $voice_apk"
+echo "android/wear/code/termux/llm-serve/org-fleet gate ok: $phone_apk $code_apk $termux_bridge_apk $llm_serve_apk $llm_serve_adversary_apk $org_org_app_apk $org_org_editor_apk $org_org_todo_apk $org_org_reminder_apk $org_org_timer_apk $org_org_roam_apk $org_org_graph_apk $org_org_home_apk $wear_apk $voice_apk"

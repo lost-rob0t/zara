@@ -5,8 +5,10 @@
 :- use_module('modules/commands').
 :- use_module('modules/todo_schedule').
 :- use_module('modules/todo_expert').
+:- use_module('modules/health_reasoning').
 :- use_module('kb/config').          % shared semantic configuration
 :- use_module('kb/device_providers'). % Linux device provider configuration (desktop only)
+:- use_module('kb/android_control').  % typed Android ADB plans + vision policy
 :- use_module('kb/intents').
 :- use_module('modules/config_loader').
 :- use_module('modules/hooks_loader').

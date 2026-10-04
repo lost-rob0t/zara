@@ -7,3 +7,4 @@ captures/
 .externalNativeBuild/
 .cxx/
 app/libs/*.aar
+wear-app/libs/*.aar

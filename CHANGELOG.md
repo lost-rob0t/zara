@@ -4,22 +4,49 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
-- Android adds an explicit Symbolic-only mode that keeps Prolog/tools/KB active while forbidding local-model and remote-provider inference; Local mode remains Prolog-first with optional on-device LLM fallback.
+## 0.4.0-alpha
 
-- Android system-assistant invocation now requests the Assistant role through RoleManager and automatically attempts on-device speech recognition for the selected Symbolic/Local/Auto/Remote route, with the existing remote push-to-talk stream retained as fallback; the normal Voice surface is also local-first, and explicit Remote mode can use local STT/TTS around an enabled OpenRouter or OpenAI-compatible model profile when no Zara server session is active.
+### Changed
 
+- Android adds an explicit Symbolic-only mode that keeps Prolog, tools, and the KB active while forbidding local-model and remote-provider inference; Local mode remains Prolog-first with optional on-device LLM fallback.
+- Android system-assistant invocation now requests the Assistant role through RoleManager and automatically attempts on-device speech recognition for the selected Symbolic/Local/Auto/Remote route, with the existing remote push-to-talk stream retained as fallback; explicit Remote mode can use local STT/TTS around an enabled OpenRouter or OpenAI-compatible model profile when no Zara server session is active.
 - Runtime settings now configure OpenRouter or generic OpenAI-compatible HTTPS model APIs with explicit endpoint/model selection and Android-Keystore-wrapped credentials; remote model APIs are only used by explicit Remote routing.
-
 - CI now measures Python line, branch, and combined total coverage on every branch and pull request, publishes exact-head reports, and enforces the monotonic coverage ratchet through the same canonical evaluator used by the full repository gate.
+- The Org app fleet now renders on the canonical Zara semantic token layer: the Outrun theme's near-black ground with restrained magenta/cyan accents, thin luminous panel outlines, and small status lights for workspace connection, reminder urgency, and timer state. No Org surface hard-codes theme colors, so the whole fleet inherits the shared theme system (Outrun, StarIntel, Midnight, Terminal, Light, System) without divergent implementations.
 
-- Fixed a ZARA/1 wire-ordering race where runtime events for fast symbolically-resolved turns could overtake the `turn.accepted` reply, making every Android/Desktop remote turn fail with `protocol.unexpected_message` (expected turn.accepted). Turn events are now held per-route and flushed after the accepted reply, in order.
+### Fixed
 
+- Fixed ZARA/1 turn ownership under fast symbolic/runtime interleavings: runtime events cannot overtake `turn.accepted`, bounded pre-accept overflow fails closed without silent event loss, reconnect retries transfer an unsent acceptance barrier to one current route, stale gateway generations cannot erase a current stable-request owner, completed/disconnected turns are fenced without breaking legitimate conversation routing, runtime `AgentFailed` closes an accepted turn as `turn.completed(success=false)`, negotiated early PCM survives the acceptance barrier byte-for-byte while unnegotiated audio stays private, terminal turns retire only after `turn.completed` is written, approval ownership cannot outlive an evicted prompt, and a rotated CURVE device key supersedes its revoked route before connection quota is charged.
+
+### Added
+
+- Zara Health adds a Samsung Health-inspired phone surface and modern Wear surface with runtime capability reporting for Galaxy Watch5-class devices and newer, encrypted step/sleep/activity/nutrition/water goals, phone-to-watch goal continuity, step and sleep goal complications, and explicit permission-gated health reads.
+- Android and desktop can create interoperable OpenPGP-encrypted, data-only Prolog health exports for one or many recipient keys. Desktop GPG storage and encrypted private Org summaries are opt-in; plaintext mode remains owner-only and is the default.
+- Android release automation now publishes every installable Zara APK—phone, Code Editor, Termux bridge, Wear, Wear Voice, and the full Org fleet—to both the rolling =android-latest= channel and immutable versioned releases with checksums and provenance manifests.
+
+## 0.3.1-alpha
+
+### Fixed
+
+- The 0.3.0-alpha release ships with its matching changelog section embedded, so the first-launch What's-new overlay now shows the Org app fleet notes instead of finding no section for the running version. This patch republishes the same Org app fleet with the corrected in-app changelog and the CI dex-merge heap fix.
+
+## 0.3.0-alpha
+
+### Fixed
+
+- CI Android builds now give the Gradle daemon a larger heap, so building the full 13-APK fleet gate no longer dies mid dex-merge with an out-of-memory error.
+
+### Added
+
+- The Zara Android Org app fleet now ships as one installable APK per Org app system on the versioned release page: the full Org flagship plus focused Org Editor, Todo, Reminder, Timer, Roam, Graph, and Home apps. Every app works standalone over ordinary canonical Org files (its own SAF-selected directory or the optional shared Org Sync workspace), needs none of the other apps or the main Zara phone app installed, and keeps Todo/Roam/Daily/Reminder/Timer/Graph projections derived from the shared Org parser/storage stack with no per-app shadow database. The versioned release is now a full release so it serves as the latest release page, with per-app SHA-256 checksums and provenance manifests on both the release and the rolling `android-latest` channel.
+- The Zara Wear watch client now pairs with the phone automatically: the watch discovers the paired Android phone over the Wear Data Layer, requests provisioning with no watch-side code entry, and renders the canonical phone conversation (dialogue state, entities, open questions, verified outcomes) with truthful link states (`SEARCHING FOR PHONE`, `PAIRING VIA PHONE`, `PAIRED`, `LINK OFFLINE`). Pairing pins to the first phone and scope; later updates pass the canonical continuity gate, and stale/malformed/foreign updates never replace accepted truth. No credentials or transcripts travel to the watch, and the watch client launches the dedicated Zara Voice app directly.
 - Native Emacs integration now exposes the versioned `ZARA-EMACS/1` semantic bridge with opaque buffer/window identities, bounded buffer reads, live command/key introspection, revision-safe edit preview/apply/cancel, ordinary Emacs undo, typed window control, and a closed trusted command-adapter registry. Zara chat remains on the canonical Zara runtime rather than creating an Emacs-local agent loop.
 
 ### Fixed
 
 - Android local-model settings preserve the canonical session diagnostics, remote recovery telemetry, and actionable Retry/Reconnect/Diagnostics failure card.
 - Standalone LLM Serve APK builds now include the shared Kotlin inference sources through the Android plugin's Kotlin source set and guard nullable model-import intents before dispatch.
+- Android embedding preferences now use one application-owned path with recoverable storage errors. Existing directories no longer cause saves to fail, valid legacy settings remain active when migration cannot finish, and file-access or cleanup failures are reported instead of escaping to the UI as crashes.
 - Desktop pure-symbolic project switches now fence stale clarification, discourse, expert, and verified-fact context before the next turn, matching project-scoped Android semantics without enabling provider or model fallback.
 - Native Emacs symbolic replay now validates provider/model hard-zero state before replacing the live transcript, so a rejected replay leaves the visible presentation and cached symbolic status untouched.
 - Android remote sessions no longer break after a successful voice turn: the client now decodes the server's `voice.speech.started`/`voice.speech.ended` markers and the legal `turn.cancelled`/`runtime.error`/`runtime.stopped` lifecycle messages it previously rejected as protocol errors, and interleaved text frames no longer kill the voice stream.
@@ -33,6 +60,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - A standalone Zara LLM Serve APK provides loopback-only, bounded Ollama-compatible inference endpoints using Zara's existing local-model store and actor-owned inference runtime, with explicit model metadata and SHA-256-verified private imports.
 - Android Runtime & local AI settings can now import SHA-256-verified app-private LiteRT-LM models, list installed models, select/load them, unload model memory, and inspect the active model/backend/context without leaving Local mode.
 - Android Settings now uses a grouped overview with focused child screens instead of an eight-item horizontal tab strip, while Chat and Workspace retain their compact tab navigation.
+- Zara can now control an explicitly authorized Android ADB target from Desktop and Android through bounded Prolog actions; Desktop can capture PNG screenshots/UI hierarchies for multimodal observe→act→verify control, while all state-changing ADB tools remain typed and approval-gated instead of exposing arbitrary shell commands.
 - Android emits typed, correlation-aware telemetry events (`remote.*`, `protocol.*`, `voice.*`, `session.restore.*`) with monotonic sequences, generation fencing, and metadata-only protocol message records, so no connected-to-disconnected transition is unexplained.
 - `ZARA-LOCAL-DIAGNOSTICS/2` incident bundle (text + canonical JSON) with a retained primary-failure block, remote/protocol context, voice pipeline stage states with explicit `not_applicable` semantics, and a correlated ordered timeline; pasting it into a bug report or AI chat identifies the failed subsystem, operation, typed code, last-good step, and correlation ids.
 - CI now reproduces the reported remote voice → protocol failure → recovery class end to end: a deterministic failure-injecting ZARA/1 fixture drives the real Android client (JVM matrix: malformed frame, version mismatch, out-of-order, close mid-stream, stale generation after reconnect) and the installed APK on the emulator (text + real voice turn, injected failures, typed UI error, Diagnostics v2, reconnect, second turn, recreation fencing), with evidence retained on success and failure.
@@ -51,6 +79,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Service plugins can register owner-scoped programmable symbols with deterministic override precedence, introspection, and automatic restoration of previous definitions when a plugin unloads.
 - Android now includes a code editor for user-selected workspace roots with revision-fenced voice edits, so late speech results cannot overwrite newer editor changes.
 - Android now builds a separate Zara Termux Bridge APK that truthfully reports Termux installation and Run Command permission state without claiming the Linux worker runtime is ready before a real integration probe succeeds.
+- Android Org Daily now consumes an explicitly configured workspace-relative daily path template, date pattern, and timezone through the shared Org-home authority; arbitrary user roots stay intact, invalid or missing Daily configuration fails closed, and simply viewing Daily still does not invent or create a file.
+- Desktop Org now has named native Qt launch surfaces for the flagship workbench plus focused Editor, Todo, Sync, and Notebook modes. The shared shell opens only an explicitly selected Org root, recursively discovers ordinary `.org` files without inventing a default layout, and uses revision-fenced source saves so edits made concurrently by Emacs, Git, or another Zara process fail stale instead of being overwritten.
+- Android's flagship Org shell now exposes Todo, Org-roam, and Daily surfaces over the shared canonical Org repository/projection stack; it supports the shared workspace or an arbitrary SAF-selected directory, keeps ordinary Org files authoritative, and refuses to guess a Daily path, filename pattern, or timezone when canonical Daily configuration is unavailable.
+- Android's shared Org parser/storage/index foundation now honors multiple file-declared `#+TODO` / `#+SEQ_TODO` sequences and caller-supplied fallback TODO states, so custom parallel Org workflows parse, cycle within their declared sequence, and index the canonical corpus without inheriting an operator-specific state machine.
 - Android Git config templates now recognize the canonical dotfiles projection at `.config/zarathushtra/android` when a manifest omits explicit source paths, while keeping the existing manifest, validation, and data-only Prolog security boundary.
 - Android launcher actions now persist launchable apps, typed launch intents, and bounded success/failure observations in Zara's private Prolog workspace; secret memory is fingerprinted instead of copied into model recall.
 - Org automation definitions can now compile from canonical Org heading projections into deterministic, inspectable trigger/condition/action symbol references without granting execution authority or assuming a fixed Org root.
@@ -75,10 +107,16 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android Assistant voice now refuses Remote capture unless enrollment is ready, the connected transport belongs to the current runtime generation, and the authenticated session ID is nonblank; Auto falls back to Local when that remote authority is stale or incomplete.
 - Programmable package symbol, kind, and owner identifiers now reject control characters, whitespace, and non-ASCII tokens before registry mutation, keeping the portable namespace deterministic across Python, Prolog, and native app adapters.
 - Portable package-profile versions now reject path-shaped, control-character, and non-ASCII tokens before any registry mutation, keeping package pins deterministic across host platforms.
+- Android Org reminders and timer templates now respect each file's canonical TODO workflow instead of inheriting Doom done-state assumptions, so custom completed states do not schedule stale reminders or timers.
+- Android Org Git sync now treats its configured branch as authoritative and fails closed instead of pulling or pushing a different checked-out branch; incomplete JGit push statuses are no longer reported as successful syncs.
+- Android Org Daily now anchors its default continuous stream at the configured logical today, so pre-existing future daily files do not appear ahead of today's real file when scrolling backward through canonical dailies.
+- Desktop Org source saves now preserve each existing file's permission mode across atomic replacement, so editing from Zara does not silently turn a shared Emacs/Git Org file into a `0600` temp-file mode.
+- Desktop Org edits now restore an existing homogeneous CRLF or CR newline convention after Qt text normalization, so editing from Zara does not rewrite every line ending in an Emacs/Git shared Org file.
 - Org todo discovery now recursively scans configured directory roots, so nested ordinary `.org` files remain visible and editable without flattening a user's workspace or Git layout.
 - Android code-editor voice operations now fence cursor and selection changes as editor revisions, so a late transcript cannot apply to a different selection than the one active when listening started.
 - Android code-editor voice dictation now preserves spoken indentation, removes speech-only spacing around quoted text and Prolog commas, normalizes grouping punctuation without regex crashes, and builds against the current Compose layout API.
 - Android code-editor voice actions now handle backward text selections correctly, so replace, wrap, and explain operations use the selected range instead of rejecting or reversing it.
+- Android Org TODO state changes now preserve the source file's existing line endings and terminal-newline shape instead of rewriting unrelated formatting in canonical Org files.
 - Android release-evidence automation now tolerates the short Compose/UIAutomator semantics race where the release-notes title appears before its Continue button, while still failing if the button never becomes available.
 - Android voice transcripts no longer accept late updates after a final transcript, preventing stale stream events from overwriting a completed transcript.
 - Android's embedded Trealla bridge now honors the pinned Trealla `pl_query` success contract, restoring local Prolog queries; Local mode also runs a live query readiness probe before reporting READY and emits richer bounded query diagnostics on failure.

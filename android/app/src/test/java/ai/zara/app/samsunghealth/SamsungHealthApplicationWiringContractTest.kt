@@ -34,6 +34,18 @@ class SamsungHealthApplicationWiringContractTest {
         assertFalse(manifest.contains("com.sec.android.app.shealth"))
     }
 
+    @Test
+    fun androidHealthOpenPgpImportAndEncryptedShareAreUserInitiated() {
+        val activity = projectFile("app/src/main/java/ai/zara/app/MainActivity.kt").readText()
+        val manifest = projectFile("app/src/main/AndroidManifest.xml").readText()
+
+        assertTrue(activity.contains("ActivityResultContracts.OpenDocument"))
+        assertTrue(activity.contains("shareEncryptedHealthExport"))
+        assertTrue(activity.contains("application/pgp-encrypted"))
+        assertTrue(manifest.contains("androidx.core.content.FileProvider"))
+        assertTrue(manifest.contains("zara_file_paths"))
+    }
+
     private fun projectFile(path: String): File {
         var base: File? = File(System.getProperty("user.dir")).absoluteFile
         while (base != null) {

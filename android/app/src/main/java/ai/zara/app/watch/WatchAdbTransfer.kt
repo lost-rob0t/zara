@@ -6,6 +6,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.ByteArrayOutputStream
 
 object WatchAdbTransfer {
     private const val CHUNK = 64 * 1024
@@ -47,6 +48,33 @@ object WatchAdbTransfer {
                 else -> throw IOException("Unexpected sync reply '$id'")
             }
             runCatching { stream.sendHeader("QUIT", 0) }
+        }
+    }
+
+    fun exec(
+        manager: AbsAdbConnectionManager,
+        command: String,
+        maxBytes: Int,
+    ): ByteArray {
+        require(maxBytes in 1..(32 * 1024 * 1024)) { "ADB exec byte limit is invalid" }
+        manager.openStream("exec:$command").use { stream ->
+            val input = stream.openInputStream()
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val read = try {
+                    input.read(buffer)
+                } catch (_: IOException) {
+                    break
+                }
+                if (read < 0) break
+                if (read == 0) continue
+                if (output.size() + read > maxBytes) {
+                    throw IOException("ADB exec response exceeds byte limit")
+                }
+                output.write(buffer, 0, read)
+            }
+            return output.toByteArray()
         }
     }
 

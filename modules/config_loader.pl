@@ -118,6 +118,12 @@ write_default_config(Stream) :-
     writeln(Stream, '% timer_sound("/path/to/timer.wav").'),
     writeln(Stream, '% alarm_sound("/path/to/alarm.wav").'),
     writeln(Stream, ''),
+    writeln(Stream, '% ---- Android ADB Control ----'),
+    writeln(Stream, '% Typed plans only; Zara never exposes arbitrary adb shell through Prolog:'),
+    writeln(Stream, '% android_adb_plan(open_music, [open_app(music)]).'),
+    writeln(Stream, '% android_app_package(music, "com.google.android.apps.youtube.music").'),
+    writeln(Stream, '% android_vision_policy(confirm_each_action).'),
+    writeln(Stream, ''),
     writeln(Stream, '% ---- LLM Provider (for conversational queries) ----'),
     writeln(Stream, '% Choose provider: ollama (default, local) | openai | openrouter | anthropic'),
     writeln(Stream, '% llm_provider(ollama).'),
@@ -267,7 +273,7 @@ replace_user_config(Facts) :-
            )).
 
 validate_user_fact(Module:Term, Module, Fact) :-
-    memberchk(Module, [kb_config, kb_intents, kb_device_providers]),
+    memberchk(Module, [kb_config, kb_intents, kb_device_providers, kb_android_control]),
     validate_user_fact(Term, Module, Fact).
 validate_user_fact(app_mapping(Name, Command), kb_device_providers, app_mapping(Name, Command)) :-
     atom(Name),
@@ -280,6 +286,15 @@ validate_user_fact(timer_sound(Setting), kb_device_providers, timer_sound(Settin
     sound_setting(Setting).
 validate_user_fact(alarm_sound(Setting), kb_device_providers, alarm_sound(Setting)) :-
     sound_setting(Setting).
+validate_user_fact(android_adb_plan(Name, Actions), kb_android_control,
+                   android_adb_plan(Name, Actions)) :-
+    kb_android_control:valid_android_adb_plan(Name, Actions).
+validate_user_fact(android_app_package(Alias, Package), kb_android_control,
+                   android_app_package(Alias, Package)) :-
+    kb_android_control:valid_android_app_package(Alias, Package).
+validate_user_fact(android_vision_policy(Policy), kb_android_control,
+                   android_vision_policy(Policy)) :-
+    kb_android_control:valid_android_vision_policy(Policy).
 validate_user_fact(search_engine(Template), kb_config, search_engine(Template)) :-
     text_value(Template).
 validate_user_fact(project_name(Name), kb_config, project_name(Name)) :-
@@ -377,7 +392,8 @@ valid_intent(python(Skill)) :-
     atom(Skill).
 
 %% Server scope (issue #158): semantic + intent facts only. Device facts
-%% (app_mapping, direct_app, dictation_command, timer_sound, alarm_sound)
+%% (app_mapping, direct_app, dictation_command, timer_sound, alarm_sound,
+%% Android ADB plans/packages/vision policy)
 %% intentionally have no clause here, so a server boot fails loudly on
 %% server-inappropriate mappings instead of accepting shell commands.
 validate_server_user_fact(Module:Term, Module, Fact) :-

@@ -290,6 +290,30 @@ jobs:
           chmod 600 "$keystore"
           echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
+      - name: Load optional approved Samsung Health SDKs
+        shell: bash
+        env:
+          ZARA_SAMSUNG_HEALTH_DATA_AAR_B64: ${{ secrets.ZARA_SAMSUNG_HEALTH_DATA_AAR_B64 }}
+          ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256: ${{ secrets.ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256 }}
+          ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64: ${{ secrets.ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64 }}
+          ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256: ${{ secrets.ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256 }}
+        run: |
+          set -euo pipefail
+          install_sdk() {
+            local payload="$1" expected="$2" destination="$3"
+            if [[ -z "$payload" ]]; then
+              return 0
+            fi
+            test -n "$expected" || { echo "Samsung SDK checksum secret is required." >&2; exit 1; }
+            printf '%s' "$payload" | base64 --decode > "$destination"
+            chmod 600 "$destination"
+            printf '%s  %s\n' "$expected" "$destination" | sha256sum --check
+          }
+          install_sdk "$ZARA_SAMSUNG_HEALTH_DATA_AAR_B64" "$ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256" \
+            android/app/libs/samsung-health-data-api-1.1.0.aar
+          install_sdk "$ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64" "$ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256" \
+            android/wear-app/libs/samsung-health-sensor-api-1.4.1.aar
+
       - name: Run Android/Wear gate (unit tests + native Trealla + debug APKs + secret inspection)
         run: nix develop ./android -c bash scripts/test-android.sh
 

@@ -69,6 +69,7 @@ class AutomationActivity : ComponentActivity() {
             openUri = OpenUriAdapter(AndroidUriLauncher(this)),
             appSearch = AppSearchAdapter(AndroidAppSearchLauncher(this)),
             accessibility = AccessibilityAutomationAdapter(),
+            adb = AndroidAdbAutomationAdapter(this),
             accessGranted = accessBroker::isGranted,
         )
         refreshAccess()

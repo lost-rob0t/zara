@@ -23,10 +23,17 @@ object AndroidAutomationCatalog {
                 %   ui_set_text(Selector, "text")
                 %   ui_scroll_forward(Selector)
                 %   global_action(back|home|recents|notifications)
+                %   adb_tap(X, Y)
+                %   adb_swipe(X1, Y1, X2, Y2, DurationMs)
+                %   adb_text("bounded text")
+                %   adb_key(back|home|enter|recents|tab|escape|delete|up|down|left|right)
+                %   adb_wait(DurationMs)
                 %
                 % Text is represented as a Prolog string so Result round-trips preserve type.
                 % AppAlias is semantic data. Android owns package resolution.
                 % UI/global actions require the user-enabled Zara AccessibilityService.
+                % adb_* actions target the currently authorized Wireless debugging connection.
+                % ADB text is further restricted by the native adapter to shell-safe characters.
                 % Raw package names, Intents, shell commands and reflection are not actions.
 
                 automation(youtube_psytrance,
@@ -59,6 +66,11 @@ object AndroidAutomationCatalog {
                     actions([
                         ui_click(text("Search")),
                         ui_set_text(view_id("com.example:id/query"), "psytrance")
+                    ])).
+
+                automation(adb_home,
+                    actions([
+                        adb_key(home)
                     ])).
             """.trimIndent() + "\n",
             query = "automation(youtube_psytrance, Result)",

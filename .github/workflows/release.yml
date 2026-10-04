@@ -14,7 +14,17 @@ on:
       - android/app/build.gradle.kts
       - android/code-editor/build.gradle.kts
       - android/llm-serve/build.gradle.kts
+      - android/termux-bridge/build.gradle.kts
       - android/wear-app/build.gradle.kts
+      - android/wear-voice/build.gradle.kts
+      - android/org-app/build.gradle.kts
+      - android/org-editor/build.gradle.kts
+      - android/org-todo/build.gradle.kts
+      - android/org-reminder/build.gradle.kts
+      - android/org-timer/build.gradle.kts
+      - android/org-roam/build.gradle.kts
+      - android/org-graph/build.gradle.kts
+      - android/org-home/build.gradle.kts
       - .github/workflows/release.yml
 
 permissions:
@@ -104,6 +114,30 @@ jobs:
           chmod 600 "$keystore"
           echo "ZARA_ANDROID_DEBUG_KEYSTORE=$keystore" >> "$GITHUB_ENV"
 
+      - name: Load optional approved Samsung Health SDKs
+        shell: bash
+        env:
+          ZARA_SAMSUNG_HEALTH_DATA_AAR_B64: ${{ secrets.ZARA_SAMSUNG_HEALTH_DATA_AAR_B64 }}
+          ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256: ${{ secrets.ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256 }}
+          ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64: ${{ secrets.ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64 }}
+          ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256: ${{ secrets.ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256 }}
+        run: |
+          set -euo pipefail
+          install_sdk() {
+            local payload="$1" expected="$2" destination="$3"
+            if [[ -z "$payload" ]]; then
+              return 0
+            fi
+            test -n "$expected" || { echo "Samsung SDK checksum secret is required." >&2; exit 1; }
+            printf '%s' "$payload" | base64 --decode > "$destination"
+            chmod 600 "$destination"
+            printf '%s  %s\n' "$expected" "$destination" | sha256sum --check
+          }
+          install_sdk "$ZARA_SAMSUNG_HEALTH_DATA_AAR_B64" "$ZARA_SAMSUNG_HEALTH_DATA_AAR_SHA256" \
+            android/app/libs/samsung-health-data-api-1.1.0.aar
+          install_sdk "$ZARA_SAMSUNG_HEALTH_SENSOR_AAR_B64" "$ZARA_SAMSUNG_HEALTH_SENSOR_AAR_SHA256" \
+            android/wear-app/libs/samsung-health-sensor-api-1.4.1.aar
+
       - name: Run Android release gate
         run: nix develop ./android -c bash scripts/test-android-release.sh
 
@@ -149,6 +183,47 @@ jobs:
             echo "apk=$(basename "$llm_serve_apk")"
             echo "apk_sha256=$(sha256sum "$llm_serve_apk" | awk '{print $1}')"
           } > "dist/zara-llm-serve-${VERSION}.manifest.txt"
+
+          extra_modules=("termux-bridge" "wear" "wear-voice")
+          extra_sources=("termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk" "wear-app/build/outputs/apk/debug/wear-app-debug.apk" "wear-voice/build/outputs/apk/debug/wear-voice-debug.apk")
+          extra_application_ids=("ai.zara.termux.bridge" "ai.zara.app" "ai.zara.wear.voice")
+          for index in "${!extra_modules[@]}"; do
+            module="${extra_modules[$index]}"
+            source="${extra_sources[$index]}"
+            application_id="${extra_application_ids[$index]}"
+            extra_apk="dist/zara-${module}-${VERSION}.apk"
+            cp "android/${source}" "$extra_apk"
+            sha256sum "$extra_apk" > "${extra_apk}.sha256"
+            {
+              echo "schema=1"
+              echo "source_sha=${GITHUB_SHA}"
+              echo "version_name=${VERSION}"
+              echo "version_code=${VERSION_CODE}"
+              echo "application_id=${application_id}"
+              echo "apk=$(basename "$extra_apk")"
+              echo "apk_sha256=$(sha256sum "$extra_apk" | awk '{print $1}')"
+            } > "dist/zara-${module}-${VERSION}.manifest.txt"
+          done
+
+          org_modules=("org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home")
+          org_application_ids=("ai.zara.org.app" "ai.zara.org.editor" "ai.zara.org.todo" "ai.zara.org.reminder" "ai.zara.org.timer" "ai.zara.org.roam" "ai.zara.org.graph" "ai.zara.org.home")
+          for index in "${!org_modules[@]}"; do
+            module="${org_modules[$index]}"
+            application_id="${org_application_ids[$index]}"
+            org_apk="dist/zara-${module}-${VERSION}.apk"
+            cp "android/${module}/build/outputs/apk/debug/${module}-debug.apk" "$org_apk"
+            sha256sum "$org_apk" > "${org_apk}.sha256"
+            {
+              echo "schema=1"
+              echo "source_sha=${GITHUB_SHA}"
+              echo "version_name=${VERSION}"
+              echo "version_code=${VERSION_CODE}"
+              echo "application_id=${application_id}"
+              echo "apk=$(basename "$org_apk")"
+              echo "apk_sha256=$(sha256sum "$org_apk" | awk '{print $1}')"
+            } > "dist/zara-${module}-${VERSION}.manifest.txt"
+          done
+
           echo "apk=$apk" >> "$GITHUB_OUTPUT"
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
           echo "code_editor_apk=$code_editor_apk" >> "$GITHUB_OUTPUT"
@@ -165,6 +240,27 @@ jobs:
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$LLM_SERVE_APK"
+          for extra_apk in \
+            "dist/zara-termux-bridge-${{ needs.validate-version-context.outputs.version }}.apk" \
+            "dist/zara-wear-${{ needs.validate-version-context.outputs.version }}.apk" \
+            "dist/zara-wear-voice-${{ needs.validate-version-context.outputs.version }}.apk"; do
+            nix develop ./android -c bash scripts/check-android-apk-signer.sh "$extra_apk"
+          done
+          for org_apk in dist/zara-org-*-*.apk; do
+            case "$org_apk" in *.sha256) continue ;; esac
+            nix develop ./android -c bash scripts/check-android-apk-signer.sh "$org_apk"
+          done
+
+      - name: Verify fleet APKs are installable under their own identities
+        run: |
+          for entry in dist/zara-org-*-*.manifest.txt \
+            "dist/zara-termux-bridge-${{ needs.validate-version-context.outputs.version }}.manifest.txt" \
+            "dist/zara-wear-${{ needs.validate-version-context.outputs.version }}.manifest.txt" \
+            "dist/zara-wear-voice-${{ needs.validate-version-context.outputs.version }}.manifest.txt"; do
+            application_id="$(sed -n 's/^application_id=//p' "$entry")"
+            apk_name="$(sed -n 's/^apk=//p' "$entry")"
+            nix develop ./android -c bash scripts/check-android-apk-installable.sh "dist/$apk_name" "$application_id"
+          done
 
       - name: Publish GitHub prerelease
         env:
@@ -181,6 +277,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
+          org_modules=("org-app" "org-editor" "org-todo" "org-reminder" "org-timer" "org-roam" "org-graph" "org-home")
+          org_assets=()
+          for module in "${org_modules[@]}"; do
+            org_assets+=("dist/zara-${module}-${VERSION}.apk" "dist/zara-${module}-${VERSION}.apk.sha256" "dist/zara-${module}-${VERSION}.manifest.txt")
+          done
+          extra_modules=("termux-bridge" "wear" "wear-voice")
+          extra_assets=()
+          for module in "${extra_modules[@]}"; do
+            extra_assets+=("dist/zara-${module}-${VERSION}.apk" "dist/zara-${module}-${VERSION}.apk.sha256" "dist/zara-${module}-${VERSION}.manifest.txt")
+          done
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             if [[ "${GITHUB_REF_TYPE}" == "branch" ]]; then
@@ -200,7 +307,9 @@ jobs:
                 "$(basename "$CODE_EDITOR_MANIFEST")" \
                 "$(basename "$LLM_SERVE_APK")" \
                 "$(basename "${LLM_SERVE_APK}.sha256")" \
-                "$(basename "$LLM_SERVE_MANIFEST")"
+                "$(basename "$LLM_SERVE_MANIFEST")" \
+                "${extra_assets[@]##*/}" \
+                "${org_assets[@]##*/}"
               do
                 if ! grep -Fxq "$required" <<< "$assets"; then
                   echo "Release $TAG is missing required asset $required." >&2
@@ -212,52 +321,28 @@ jobs:
               mkdir -p "$existing_dir"
               gh release download "$TAG" \
                 --dir "$existing_dir" \
-                --pattern "$(basename "$MANIFEST")"
-              gh release download "$TAG" \
-                --dir "$existing_dir" \
-                --pattern "$(basename "$CODE_EDITOR_MANIFEST")"
-              gh release download "$TAG" \
-                --dir "$existing_dir" \
-                --pattern "$(basename "$LLM_SERVE_MANIFEST")"
-              existing_manifest="$existing_dir/$(basename "$MANIFEST")"
-              existing_code_editor_manifest="$existing_dir/$(basename "$CODE_EDITOR_MANIFEST")"
-              existing_llm_serve_manifest="$existing_dir/$(basename "$LLM_SERVE_MANIFEST")"
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
-                echo "Release $TAG manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_manifest" || {
-                echo "Release $TAG manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_manifest" || {
-                echo "Release $TAG manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_code_editor_manifest" || {
-                echo "Release $TAG Code Editor manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
-              grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_llm_serve_manifest" || {
-                echo "Release $TAG LLM Serve manifest source_sha does not match $GITHUB_SHA." >&2
-                exit 1
-              }
-              grep -Fxq "version_name=${VERSION}" "$existing_llm_serve_manifest" || {
-                echo "Release $TAG LLM Serve manifest version_name does not match $VERSION." >&2
-                exit 1
-              }
-              grep -Fxq "version_code=${VERSION_CODE}" "$existing_llm_serve_manifest" || {
-                echo "Release $TAG LLM Serve manifest version_code does not match $VERSION_CODE." >&2
-                exit 1
-              }
+                --pattern "*.manifest.txt"
+              for manifest_entry in \
+                "$(basename "$MANIFEST")" \
+                "$(basename "$CODE_EDITOR_MANIFEST")" \
+                "$(basename "$LLM_SERVE_MANIFEST")" \
+                "${extra_assets[@]##*/}" \
+                "${org_assets[@]##*/}"; do
+                case "$manifest_entry" in *.manifest.txt) ;; *) continue ;; esac
+                existing_manifest="$existing_dir/$manifest_entry"
+                grep -Fxq "source_sha=${GITHUB_SHA}" "$existing_manifest" || {
+                  echo "Release $TAG manifest $manifest_entry source_sha does not match $GITHUB_SHA." >&2
+                  exit 1
+                }
+                grep -Fxq "version_name=${VERSION}" "$existing_manifest" || {
+                  echo "Release $TAG manifest $manifest_entry version_name does not match $VERSION." >&2
+                  exit 1
+                }
+                grep -Fxq "version_code=${VERSION_CODE}" "$existing_manifest" || {
+                  echo "Release $TAG manifest $manifest_entry version_code does not match $VERSION_CODE." >&2
+                  exit 1
+                }
+              done
 
               echo "Release $TAG already exists and matches canonical promotion $GITHUB_SHA."
               exit 0
@@ -284,7 +369,8 @@ jobs:
             "$LLM_SERVE_APK" \
             "${LLM_SERVE_APK}.sha256" \
             "$LLM_SERVE_MANIFEST" \
+            "${extra_assets[@]}" \
+            "${org_assets[@]}" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
-            --prerelease \
-            --notes "Android alpha preview of Zara, Zara Code Editor, and Zara LLM Serve. These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Requires Android 10 (API 29) or newer. Verify each APK with its accompanying SHA-256 file. Source commit: $GITHUB_SHA"
+            --notes "Zara Android release containing every installable app: phone, Code Editor, LLM Serve, Termux bridge, Wear, Wear Voice, and one standalone APK per Org app system (Org flagship, Editor, Todo, Reminder, Timer, Roam, Graph, Home). These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Verify each APK with its accompanying SHA-256 file and provenance manifest. Source commit: $GITHUB_SHA"
