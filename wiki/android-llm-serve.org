@@ -53,3 +53,22 @@ another local process remains on this loopback service.
 - model bytes stay in app-private storage;
 - model output has no device-action authority;
 - API credentials are not stored in client profile tables.
+
+* Launch and reboot
+
+After importing a compatible verified model, choose =Start server= once.
+The foreground notification shows the local endpoint and active model.
+Zara LLM Serve remembers that choice and resumes after =BOOT_COMPLETED=
+(user unlock) and when its Activity is opened again. It does not start
+on a fresh install before the user has started or successfully imported a
+model. =Stop server= disables boot and sticky-process resumption. Android
+force-stop and OEM battery restrictions can still require reopening the app.
+
+The loopback listener can run with an empty model catalog, but the status
+then reads =waiting_for_model=. A model-load failure remains an explicit
+failure; it is never hidden behind a ready notification.
+
+In Zara Android's Runtime settings, select local Ollama and the exact
+model name from =/api/tags= (for example =zara-local:1=). The server's
+quantization metadata is exposed there, so the client does not require
+upstream Ollama's =/api/show= endpoint.
