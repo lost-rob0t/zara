@@ -21,7 +21,7 @@ from zara.desktop.state import (
 from zara.desktop.tray import ZaraTray
 from zara.desktop.theme import apply_desktop_theme
 from zara.desktop.windows import CopilotPresentation, CopilotWindow, SettingsWindow
-from zara.runtime.commands import CommandReceipt, RestartRuntime
+from zara.runtime.commands import CommandReceipt, RestartRuntime, RunPrologQuery
 
 
 class DesktopController(QObject):
@@ -52,7 +52,14 @@ class DesktopController(QObject):
         self.tray = tray_factory()
         self.quick_window: Optional[CopilotWindow] = None
         self.settings_window: Optional[object] = None
-        self._settings_factory = settings_factory or (lambda: SettingsWindow(get_config()))
+        self._settings_factory = settings_factory or (
+            lambda: SettingsWindow(
+                get_config(),
+                prolog_query=lambda goal, max_solutions: self.client.submit(
+                    RunPrologQuery(goal=goal, max_solutions=max_solutions)
+                ),
+            )
+        )
 
         if window_factory is None:
             self.conversation_service = conversation_service or ConversationService(ConversationStore())

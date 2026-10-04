@@ -10,7 +10,14 @@ import pytest
 from zara.runtime import bridge as runtime_bridge
 from zara.runtime import events
 from zara.runtime.backend import RuntimeBackend, RuntimeTurnResult, UnsupportedRuntimeCommand
-from zara.runtime.commands import CancelTurn, RestartRuntime, StartVoice, SubmitTurn
+from zara.runtime.commands import (
+    CancelTurn,
+    PrologQueryReceipt,
+    RestartRuntime,
+    RunPrologQuery,
+    StartVoice,
+    SubmitTurn,
+)
 from zara.runtime.host import RuntimeHost, RuntimeHostState, RuntimeNotReady
 
 
@@ -22,6 +29,7 @@ class ImmediateBackend(RuntimeBackend):
         self.stop_thread_id = None
         self.cancelled: list[str] = []
         self.committed: list[tuple[str | None, str, RuntimeTurnResult]] = []
+        self.prolog_queries: list[tuple[str, int]] = []
 
     async def start(self) -> None:
         self.start_thread_id = threading.get_ident()
@@ -49,6 +57,10 @@ class ImmediateBackend(RuntimeBackend):
 
     async def cancel_turn(self, turn_id: str) -> None:
         self.cancelled.append(turn_id)
+
+    async def query_prolog(self, goal: str, max_solutions: int):
+        self.prolog_queries.append((goal, max_solutions))
+        return ({"X": "alpha"}, {"X": "beta"})
 
     async def stop(self) -> None:
         self.stop_thread_id = threading.get_ident()
@@ -146,6 +158,25 @@ def test_runtime_host_executes_backend_off_caller_thread():
         assert committed_conversation == "conversation-1"
         assert committed_turn == receipt.turn_id
         assert committed_result.response == "done:hello"
+    finally:
+        stop_host(host)
+
+
+def test_runtime_host_runs_bounded_prolog_query_on_runtime_thread():
+    main_thread_id = threading.get_ident()
+    backend = ImmediateBackend()
+    host = RuntimeHost(lambda: backend)
+
+    try:
+        host.start().result(timeout=5)
+        receipt = host.submit(
+            RunPrologQuery(goal="member(X, [alpha,beta])", max_solutions=2)
+        ).result(timeout=5)
+
+        assert isinstance(receipt, PrologQueryReceipt)
+        assert receipt.solutions == ({"X": "alpha"}, {"X": "beta"})
+        assert backend.prolog_queries == [("member(X, [alpha,beta])", 2)]
+        assert host.thread_id != main_thread_id
     finally:
         stop_host(host)
 

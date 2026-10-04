@@ -11,6 +11,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import tempfile
 import threading
@@ -19,7 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QCloseEvent, QPainter, QPaintEvent, QPen
+from PySide6.QtGui import QColor, QCloseEvent, QPainter, QPaintEvent, QPen, QTextCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -57,6 +58,7 @@ from zara.desktop.prolog_studio import (
 )
 from zara.desktop.theme import THEME_REGISTRY
 from zara.pairing import PairingError, PairingClientProgress, pair_client
+from zara.runtime.commands import PrologQueryReceipt
 
 
 _CATEGORIES = (
@@ -65,7 +67,7 @@ _CATEGORIES = (
     "Connections",
     "Voice & Speech",
     "Tools & Privacy",
-    "Prolog",
+    "Prolog IDE",
     "Advanced",
 )
 
@@ -252,6 +254,7 @@ class SettingsWindow(QWidget):
     restart_requested = Signal()
     pairing_progress_observed = Signal(str, str)
     pairing_finished = Signal(str, str)
+    prolog_query_finished = Signal(int, object)
 
     def __init__(
         self,
@@ -259,6 +262,7 @@ class SettingsWindow(QWidget):
         *,
         repo_root: Path | None = None,
         prolog_reload: Callable[[], bool] | None = None,
+        prolog_query: Callable[[str, int], object] | None = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -275,6 +279,10 @@ class SettingsWindow(QWidget):
         self.fact_store = ManagedFactStore(self.user_prolog_config)
         self.source_repository = PrologSourceRepository(self.repo_root, self.user_prolog_config)
         self.prolog_reload = prolog_reload
+        self.prolog_query = prolog_query
+        self._prolog_query_generation = 0
+        self._prolog_saved_text = ""
+        self.prolog_query_finished.connect(self._finish_prolog_query)
         self._allow_close = False
         self.setting_widgets: dict[str, QWidget] = {}
         self.theme_buttons: list[ThemePreviewButton] = []
@@ -601,25 +609,67 @@ class SettingsWindow(QWidget):
     def _prolog_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(28, 24, 30, 28)
-        title = QLabel("Prolog")
+        layout.setContentsMargins(20, 18, 22, 20)
+        header = QHBoxLayout()
+        title = QLabel("Prolog IDE")
         title.setObjectName("zaraSectionTitle")
-        description = QLabel("Edit approved source with syntax highlighting, or add validated facts to the actual user config without writing Prolog.")
+        runtime_badge = QLabel("CANONICAL RUNTIME")
+        runtime_badge.setObjectName("zaraSettingsHint")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(runtime_badge)
+        description = QLabel(
+            "Navigate approved sources, validate edits, manage facts, and query Zara's running Prolog engine."
+        )
         description.setObjectName("zaraSectionDescription")
         description.setWordWrap(True)
-        layout.addWidget(title)
+        layout.addLayout(header)
         layout.addWidget(description)
-        layout.addSpacing(10)
+        layout.addSpacing(6)
 
-        splitter = QSplitter()
-        source = QWidget()
-        source_layout = QVBoxLayout(source)
-        source_layout.setContentsMargins(0, 0, 14, 0)
+        source_bar = QHBoxLayout()
         self.source_combo = QComboBox()
+        self.source_combo.setObjectName("zaraPrologSourceNavigator")
         for entry in self.source_repository.list():
             self.source_combo.addItem(entry.label, entry.id)
         self.source_status = QLabel()
         self.source_status.setObjectName("zaraSettingsHint")
+        self.save_prolog_button = QPushButton("Validate + save")
+        self.save_prolog_button.setObjectName("zaraPrimaryAction")
+        source_bar.addWidget(QLabel("Source"))
+        source_bar.addWidget(self.source_combo, 1)
+        source_bar.addWidget(self.save_prolog_button)
+        layout.addLayout(source_bar)
+        layout.addWidget(self.source_status)
+
+        find_bar = QHBoxLayout()
+        self.prolog_find_input = QLineEdit()
+        self.prolog_find_input.setObjectName("zaraPrologFind")
+        self.prolog_find_input.setPlaceholderText("Find")
+        self.prolog_replace_input = QLineEdit()
+        self.prolog_replace_input.setObjectName("zaraPrologReplace")
+        self.prolog_replace_input.setPlaceholderText("Replace")
+        self.prolog_find_button = QPushButton("Next")
+        self.prolog_replace_button = QPushButton("Replace")
+        self.prolog_replace_all_button = QPushButton("All")
+        self.prolog_find_status = QLabel()
+        self.prolog_find_status.setObjectName("zaraSettingsHint")
+        for widget in (
+            self.prolog_find_input,
+            self.prolog_replace_input,
+            self.prolog_find_button,
+            self.prolog_replace_button,
+            self.prolog_replace_all_button,
+            self.prolog_find_status,
+        ):
+            find_bar.addWidget(widget)
+        layout.addLayout(find_bar)
+
+        workspace = QSplitter(Qt.Orientation.Vertical)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        source = QWidget()
+        source_layout = QVBoxLayout(source)
+        source_layout.setContentsMargins(0, 0, 10, 0)
         self.prolog_editor = QPlainTextEdit()
         self.prolog_editor.setObjectName("zaraPrologEditor")
         self.prolog_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -627,17 +677,21 @@ class SettingsWindow(QWidget):
             self.prolog_editor.document(),
             str(self._value("desktop.theme", "outrun")),
         )
-        self.save_prolog_button = QPushButton("Save source")
-        self.save_prolog_button.setObjectName("zaraPrimaryAction")
-        source_layout.addWidget(self.source_combo)
-        source_layout.addWidget(self.source_status)
         source_layout.addWidget(self.prolog_editor, 1)
-        source_layout.addWidget(self.save_prolog_button, 0, Qt.AlignmentFlag.AlignRight)
+        editor_status = QHBoxLayout()
+        self.prolog_dirty_status = QLabel("Saved")
+        self.prolog_dirty_status.setObjectName("zaraSettingsHint")
+        self.prolog_cursor_status = QLabel("Ln 1, Col 1")
+        self.prolog_cursor_status.setObjectName("zaraSettingsHint")
+        editor_status.addWidget(self.prolog_dirty_status)
+        editor_status.addStretch(1)
+        editor_status.addWidget(self.prolog_cursor_status)
+        source_layout.addLayout(editor_status)
 
         facts = QWidget()
         facts.setObjectName("zaraKnowledgeStudioRail")
         facts_layout = QVBoxLayout(facts)
-        facts_layout.setContentsMargins(16, 0, 0, 0)
+        facts_layout.setContentsMargins(10, 0, 0, 0)
         facts_header = QHBoxLayout()
         facts_header.addWidget(QLabel("Managed facts"))
         facts_header.addStretch(1)
@@ -655,14 +709,67 @@ class SettingsWindow(QWidget):
         facts_layout.addLayout(facts_header)
         facts_layout.addWidget(self.fact_list, 1)
         facts_layout.addLayout(fact_actions)
+        diagnostics_header = QLabel("Diagnostics")
+        self.prolog_diagnostics = QListWidget()
+        self.prolog_diagnostics.setObjectName("zaraPrologDiagnostics")
+        self.prolog_diagnostics.setMaximumHeight(110)
+        facts_layout.addWidget(diagnostics_header)
+        facts_layout.addWidget(self.prolog_diagnostics)
 
         splitter.addWidget(source)
         splitter.addWidget(facts)
-        splitter.setSizes([620, 300])
-        layout.addWidget(splitter, 1)
+        splitter.setSizes([650, 240])
+        workspace.addWidget(splitter)
+
+        console = QWidget()
+        console.setObjectName("zaraPrologConsole")
+        console_layout = QVBoxLayout(console)
+        console_layout.setContentsMargins(0, 8, 0, 0)
+        query_bar = QHBoxLayout()
+        self.prolog_query_history = QComboBox()
+        self.prolog_query_history.setObjectName("zaraPrologQueryHistory")
+        self.prolog_query_history.setMinimumWidth(150)
+        self.prolog_query_history.addItem("History")
+        self.prolog_query_input = QLineEdit()
+        self.prolog_query_input.setObjectName("zaraPrologQueryInput")
+        self.prolog_query_input.setPlaceholderText("?- goal")
+        self.prolog_query_button = QPushButton("Run")
+        self.prolog_query_button.setObjectName("zaraPrimaryAction")
+        self.prolog_cancel_button = QPushButton("Cancel")
+        self.prolog_cancel_button.setEnabled(False)
+        query_bar.addWidget(QLabel("Console"))
+        query_bar.addWidget(self.prolog_query_history)
+        query_bar.addWidget(self.prolog_query_input, 1)
+        query_bar.addWidget(self.prolog_query_button)
+        query_bar.addWidget(self.prolog_cancel_button)
+        self.prolog_results = QPlainTextEdit()
+        self.prolog_results.setObjectName("zaraPrologResults")
+        self.prolog_results.setReadOnly(True)
+        self.prolog_results.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.prolog_query_status = QLabel(
+            "Ready" if self.prolog_query is not None else "Runtime query unavailable"
+        )
+        self.prolog_query_status.setObjectName("zaraSettingsHint")
+        console_layout.addLayout(query_bar)
+        console_layout.addWidget(self.prolog_results, 1)
+        console_layout.addWidget(self.prolog_query_status)
+        workspace.addWidget(console)
+        workspace.setSizes([390, 210])
+        layout.addWidget(workspace, 1)
 
         self.source_combo.currentIndexChanged.connect(self._load_selected_source)
         self.save_prolog_button.clicked.connect(self.save_prolog_source)
+        self.prolog_find_button.clicked.connect(self.find_next_prolog_match)
+        self.prolog_replace_button.clicked.connect(self.replace_prolog_match)
+        self.prolog_replace_all_button.clicked.connect(self.replace_all_prolog_matches)
+        self.prolog_find_input.returnPressed.connect(self.find_next_prolog_match)
+        self.prolog_editor.cursorPositionChanged.connect(self._sync_prolog_cursor_status)
+        self.prolog_editor.textChanged.connect(self._sync_prolog_dirty_status)
+        self.prolog_query_button.clicked.connect(self.run_prolog_query)
+        self.prolog_cancel_button.clicked.connect(self.cancel_prolog_query)
+        self.prolog_query_input.returnPressed.connect(self.run_prolog_query)
+        self.prolog_query_history.activated.connect(self._select_prolog_query_history)
+        self.prolog_diagnostics.itemActivated.connect(self._open_prolog_diagnostic)
         self.add_fact_button.clicked.connect(self._open_add_fact)
         self.edit_fact_button.clicked.connect(self._open_edit_fact)
         self.delete_fact_button.clicked.connect(self.delete_selected_fact)
@@ -732,6 +839,164 @@ class SettingsWindow(QWidget):
         )
         self.feedback_label.setText("config.toml saved. Restart Zara to apply runtime changes.")
 
+    def _sync_prolog_cursor_status(self) -> None:
+        cursor = self.prolog_editor.textCursor()
+        self.prolog_cursor_status.setText(
+            f"Ln {cursor.blockNumber() + 1}, Col {cursor.positionInBlock() + 1}"
+        )
+
+    def _sync_prolog_dirty_status(self) -> None:
+        modified = self.prolog_editor.toPlainText() != self._prolog_saved_text
+        self.prolog_dirty_status.setText("Modified" if modified else "Saved")
+
+    def find_next_prolog_match(self) -> None:
+        needle = self.prolog_find_input.text()
+        if not needle:
+            self.prolog_find_status.setText("Enter text to find")
+            return
+        if not self.prolog_editor.find(needle):
+            cursor = self.prolog_editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.prolog_editor.setTextCursor(cursor)
+            if not self.prolog_editor.find(needle):
+                self.prolog_find_status.setText("No matches")
+                return
+        self.prolog_find_status.setText("Match selected")
+
+    def replace_prolog_match(self) -> None:
+        needle = self.prolog_find_input.text()
+        if not needle:
+            self.prolog_find_status.setText("Enter text to find")
+            return
+        cursor = self.prolog_editor.textCursor()
+        if cursor.selectedText() != needle:
+            self.find_next_prolog_match()
+            cursor = self.prolog_editor.textCursor()
+        if cursor.selectedText() != needle:
+            return
+        cursor.insertText(self.prolog_replace_input.text())
+        self.prolog_find_status.setText("1 replacement")
+
+    def replace_all_prolog_matches(self) -> None:
+        needle = self.prolog_find_input.text()
+        if not needle:
+            self.prolog_find_status.setText("Enter text to find")
+            return
+        text = self.prolog_editor.toPlainText()
+        count = min(text.count(needle), 500)
+        if not count:
+            self.prolog_find_status.setText("No matches")
+            return
+        self.prolog_editor.setPlainText(
+            text.replace(needle, self.prolog_replace_input.text(), 500)
+        )
+        suffix = " · limit reached" if text.count(needle) > 500 else ""
+        self.prolog_find_status.setText(f"{count} replacements{suffix}")
+
+    def run_prolog_query(self) -> None:
+        goal = self.prolog_query_input.text().strip()
+        if not goal:
+            self.prolog_query_status.setText("Enter a goal")
+            return
+        if self.prolog_query is None:
+            self.prolog_query_status.setText("Runtime query unavailable")
+            return
+        self._prolog_query_generation += 1
+        generation = self._prolog_query_generation
+        self.prolog_query_button.setEnabled(False)
+        self.prolog_cancel_button.setEnabled(True)
+        self.prolog_query_status.setText("Running…")
+        existing = self.prolog_query_history.findText(goal)
+        if existing > 0:
+            self.prolog_query_history.removeItem(existing)
+        self.prolog_query_history.insertItem(1, goal)
+        while self.prolog_query_history.count() > 21:
+            self.prolog_query_history.removeItem(self.prolog_query_history.count() - 1)
+        self.prolog_query_history.setCurrentIndex(0)
+        try:
+            future = self.prolog_query(goal, 50)
+            future.add_done_callback(
+                lambda completed, token=generation: self.prolog_query_finished.emit(
+                    token,
+                    completed,
+                )
+            )
+        except Exception as error:
+            self._finish_prolog_query(generation, error)
+
+    def cancel_prolog_query(self) -> None:
+        if not self.prolog_cancel_button.isEnabled():
+            return
+        self._prolog_query_generation += 1
+        self.prolog_query_button.setEnabled(True)
+        self.prolog_cancel_button.setEnabled(False)
+        self.prolog_query_status.setText("Cancelled · late results will be discarded")
+
+    def _finish_prolog_query(self, generation: int, outcome: object) -> None:
+        if generation != self._prolog_query_generation:
+            return
+        self.prolog_query_button.setEnabled(True)
+        self.prolog_cancel_button.setEnabled(False)
+        try:
+            if isinstance(outcome, BaseException):
+                raise outcome
+            receipt = outcome.result()
+            if not isinstance(receipt, PrologQueryReceipt):
+                raise TypeError("runtime returned an invalid Prolog query receipt")
+        except BaseException as error:
+            self.prolog_results.setPlainText(f"ERROR\n{error}")
+            self.prolog_query_status.setText("Query failed")
+            return
+        lines = []
+        rendered_chars = 0
+        for index, solution in enumerate(receipt.solutions, start=1):
+            rendered = ", ".join(f"{key} = {value}" for key, value in solution.items())
+            line = f"{index:>2}  {rendered or 'true'}"
+            if len(line) > 2_000:
+                line = f"{line[:1_999]}…"
+            if rendered_chars + len(line) > 64_000:
+                lines.append("… output truncated at 64,000 characters")
+                break
+            lines.append(line)
+            rendered_chars += len(line) + 1
+        self.prolog_results.setPlainText("\n".join(lines) if lines else "false")
+        count = len(receipt.solutions)
+        self.prolog_query_status.setText(
+            f"{count} solution" if count == 1 else f"{count} solutions"
+        )
+
+    def _select_prolog_query_history(self, index: int) -> None:
+        if index > 0:
+            self.prolog_query_input.setText(self.prolog_query_history.itemText(index))
+
+    def _show_prolog_diagnostic(self, message: str) -> None:
+        self.prolog_diagnostics.clear()
+        item = QListWidgetItem(message)
+        location = re.search(r":(\d+)(?::(\d+))?(?::|\s)", message)
+        if location is not None:
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                (int(location.group(1)), int(location.group(2) or 1)),
+            )
+        self.prolog_diagnostics.addItem(item)
+
+    def _open_prolog_diagnostic(self, item: QListWidgetItem) -> None:
+        location = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(location, tuple) or len(location) != 2:
+            return
+        line, column = location
+        block = self.prolog_editor.document().findBlockByNumber(max(0, line - 1))
+        if not block.isValid():
+            return
+        cursor = QTextCursor(block)
+        cursor.movePosition(
+            QTextCursor.MoveOperation.Right,
+            QTextCursor.MoveMode.MoveAnchor,
+            max(0, column - 1),
+        )
+        self.prolog_editor.setTextCursor(cursor)
+        self.prolog_editor.setFocus()
+
     def _load_selected_source(self) -> None:
         source_id = str(self.source_combo.currentData() or "")
         try:
@@ -744,6 +1009,9 @@ class SettingsWindow(QWidget):
             self.source_status.setText(str(error))
             return
         self.prolog_editor.setPlainText(text)
+        self._prolog_saved_text = text
+        self.prolog_editor.document().setModified(False)
+        self._sync_prolog_dirty_status()
         self.prolog_editor.setReadOnly(not source.writable)
         self.save_prolog_button.setEnabled(source.writable)
         self.source_status.setText(str(source.path) + ("" if source.writable else " · read-only"))
@@ -766,8 +1034,14 @@ class SettingsWindow(QWidget):
                 self._load_selected_source()
                 return
         except (OSError, PrologStudioError) as error:
+            self._show_prolog_diagnostic(str(error))
             self.feedback_label.setText(f"Prolog source was not saved: {error}")
             return
+        self.prolog_editor.document().setModified(False)
+        self._prolog_saved_text = self.prolog_editor.toPlainText()
+        self._sync_prolog_dirty_status()
+        self.prolog_diagnostics.clear()
+        self.prolog_diagnostics.addItem("No syntax errors")
         if source_id == "user-config" and self.prolog_reload is None:
             self.feedback_label.setText("config.pl saved. Restart Zara to load the new Prolog source.")
         else:

@@ -18,6 +18,7 @@ from zara.runtime.commands import (
     ApproveTool,
     CancelTurn,
     RejectTool,
+    RunPrologQuery,
     RuntimeCommand,
     SubmitTurn,
 )
@@ -141,6 +142,21 @@ def command_from_message(message: ProtocolMessage) -> RuntimeCommand:
             tool_run_id=tool_run_id,
             reason=reason,
         )
+
+    if message.type == "prolog.query":
+        body = _closed_body(
+            message,
+            allowed=frozenset({"goal", "max_solutions"}),
+            required=frozenset({"goal", "max_solutions"}),
+        )
+        try:
+            return RunPrologQuery(
+                request_id=message.id,
+                goal=body["goal"],
+                max_solutions=body["max_solutions"],
+            )
+        except (TypeError, ValueError) as error:
+            raise RuntimeCodecError(str(error)) from error
 
     raise RuntimeCodecError("unsupported runtime command message")
 
