@@ -4,6 +4,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Changed
+
+- Zara Desktop now mirrors the Android app's design language: Outrun is the default, the Android Outrun, StarIntel, Midnight, Terminal, and Light themes are available in desktop settings, and chat, history, composer, status, tool activity, and Org surfaces share the same semantic colors, borders, spacing, and rounded hierarchy. Existing desktop themes remain selectable.
+
 ### Fixed
 
 - Security management with an explicit state directory now targets that directory's live Zara daemon instead of an unrelated daemon on the default runtime socket.

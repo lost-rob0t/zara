@@ -8,3 +8,11 @@ desktop_visual_environment(x11, display_8_supported_with_qt_xcb).
 desktop_ui_regression_test('t/test_adaptive_copilot.py').
 desktop_ui_regression_test('t/test_desktop_theme.py').
 desktop_ui_regression_test('t/test_copilot_screenshot_fixtures.py').
+desktop_design_authority(android, 'android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt').
+desktop_android_theme(outrun, default).
+desktop_android_theme(starintel, available).
+desktop_android_theme(midnight, available).
+desktop_android_theme(terminal, available).
+desktop_android_theme(light, available).
+desktop_theme_projection('zara/desktop/theme.py', deterministic_semantic_roles).
+desktop_ui_regression_test('t/test_desktop_mobile_parity.py').

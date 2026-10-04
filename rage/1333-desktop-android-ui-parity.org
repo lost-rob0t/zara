@@ -1,0 +1,41 @@
+* Run identity
+- Consumed issue :: #1333
+- Branch :: =rage/1333-desktop-android-ui-parity=
+- RAGE start commit :: =a0b661ffacb885607d972ac8eeddcdcfa4777866=
+
+* Control-plane discovery
+- Canonical workflow :: root =AGENTS.md=, repository =skills/rage/SKILL.md=, and append-only =rage/= evidence.
+- Mode :: Auto-RAGE from =.rage.toml=; research, design, adversarial review, decision, TDD realization, and exact-head verification are autonomous and recorded.
+
+* Iteration 2
+** Analyze
+- Research :: =rage/1333-desktop-android-ui-parity-research.org=.
+- Preserved prior attempt :: =origin/rage/1333-desktop-mobile-parity-20260920= at =9f37976710d9e8e47cd7ab93c48fec1514f9d557=.
+- Contradictions :: prior attempt mixed #89 into #1333 and placed reusable expert knowledge inside Zara, contrary to current ownership policy.
+
+** Design and adversarial review
+- Design :: =rage/1333-desktop-android-ui-parity-design.org=.
+- Selected boundary :: Android-authoritative deterministic token projection, existing Qt renderer, Outrun default, legacy-key compatibility, raw contrast gate, scrollable settings previews, and Outrun screenshot evidence.
+
+** Decision gate
+- Auto-RAGE decision :: =ACCEPT REALIZATION=.
+- Excluded :: tool approval behavior, runtime/protocol changes, Android rewrites, and a Zara-local design expert.
+
+** Realize / TDD
+- RED 1 :: =prolog-verify observe -- nix develop -c pytest -q t/test_desktop_mobile_parity.py t/test_desktop_theme.py t/test_desktop_preferences.py t/test_desktop_settings_window.py t/test_copilot_screenshot_fixtures.py= failed during collection because =ANDROID_ROLE_DERIVATIONS= did not exist in =zara.desktop.theme=. This is the expected missing-contract failure; no production code had changed.
+- GREEN 1 :: =prolog-verify observe -- nix develop -c pytest -q t/test_desktop_mobile_parity.py t/test_desktop_theme.py t/test_desktop_preferences.py t/test_desktop_settings_window.py t/test_copilot_screenshot_fixtures.py t/test_org_desktop_screenshot_fixtures.py= passed 38 tests. The Android token contract, raw contrast, default/fallback, settings strip, mobile-first header, and both screenshot renderers are covered.
+- Implementation :: Five Android-authoritative themes now project into every desktop role with queryable derivation metadata. Outrun is the default; legacy theme keys remain available. Desktop surfaces use Android surface/input/border/radius vocabulary and compact/expanded navigation says History/Chat.
+- Scope guard :: No tool-approval behavior, protocol/runtime behavior, Android source, or repository-local expert implementation changed.
+- Render review :: Generated and inspected Outrun fixtures for empty compact chat, expanded history, active tool execution, and Org Editor. Surface hierarchy, text contrast, mobile-first navigation labels, input well, primary accents, and activity state were visually coherent; no clipping or hidden controls were observed.
+
+** Evaluate
+- Full repository gate :: =prolog-verify observe -- nix develop -c bash scripts/test-all.sh= passed. The suite completed Python, Prolog, protocol, runtime, packaging, and desktop derivation checks with exit 0.
+- Flake gate :: =prolog-verify observe -- nix flake check= passed all 11 flake checks. Nix reported only existing metadata/unknown-output warnings and the intentionally omitted incompatible =aarch64-linux= system.
+- Build gate :: =prolog-verify observe -- nix build= built the =zarathushtra-full= derivation successfully.
+- Diff hygiene :: =git diff --check= passed. The implementation remains limited to desktop presentation/config/tests/evidence, changelog/wiki, and durable desktop UI KB facts.
+- Verification gate :: =prolog-verify check= passed at the reconciled working-tree digest.
+- Candidate CI :: pending commit and push; exact-head GitHub Actions evidence is required before merge.
+
+** Outcome
+- Local acceptance :: passed.
+- Remote outcome :: pending exact-head GitHub Actions success; Forgejo SSH was unavailable at iteration start, so GitHub is the documented fallback control plane for this iteration.

@@ -14,7 +14,7 @@ from zara.desktop.org_app import OrgLaunchMode, build_org_window
 from zara.desktop.org_evidence import validate_org_evidence
 from zara.desktop.theme import apply_desktop_theme
 
-_THEME = "signal-cabin"
+_THEME = "outrun"
 _SIZE = (1100, 760)
 _FIXTURES: tuple[tuple[OrgLaunchMode, str, str], ...] = (
     (OrgLaunchMode.EDITOR, "notes.org", "org-editor.png"),
