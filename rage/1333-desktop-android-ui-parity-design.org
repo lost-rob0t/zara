@@ -1,0 +1,47 @@
+#+title: RAGE 1333 Iteration 2 design - desktop Android design parity
+
+* Boundary
+Project Android's canonical semantic colors and component language into the existing PySide6 desktop renderer. Preserve the existing adaptive Copilot, conversation service, settings model, theme live-preview path, legacy theme keys, and Qt toolkit.
+
+* Architecture
+- Add immutable =ANDROID_THEME_TOKENS= for the five concrete Android themes and verify it directly against =ZaraTheme.kt=.
+- Add one immutable 15-role derivation table with source-token provenance. Direct roles copy one Android token; =on_primary= chooses the higher-contrast black/white foreground; =danger_deep= is an 18 percent error mix over =surfaceInput=.
+- Build the five Android themes through one derivation function, register them before legacy themes, and make =outrun= the fallback/default.
+- Keep System out of the desktop registry because its Android meaning depends on Android system-dark state. Desktop's unknown-value fallback is Outrun.
+- Express surface hierarchy through the existing scoped QSS: input/sunken wells use =surfaceInput=, panels use =surface=, lifted controls use =surfaceElevated=, focus/active/error use the corresponding semantic roles.
+- Make the Appearance swatches horizontally scrollable so all parity and legacy themes remain reachable without widening the settings window.
+- Render deterministic Copilot and Org desktop evidence using Outrun.
+
+* Compatibility and migration
+- Existing configured keys =signal-cabin=, =dotfiles-outrun=, =nord=, =dracula=, and =chatgpt-neutral= remain valid.
+- Existing unknown theme values continue to load and fall back visually; only the fallback changes from Signal Cabin to Outrun.
+- No config migration rewrites user files. New files default to Outrun.
+- No Android source or runtime behavior changes.
+
+* Adversarial review
+- Drift attack :: a test parses every canonical Kotlin token and compares all five concrete theme maps; missing or changed tokens fail closed.
+- Partial-mapping attack :: the derivation table must produce exactly all 15 desktop roles, with provenance for every role.
+- Contrast attack :: raw projected themes must meet 4.5:1 for the text/background pairs before =repair_palette=; the fixer cannot hide an invalid projection.
+- Packaging attack :: application startup uses shipped Python data and never opens repository Kotlin source.
+- Legacy-config attack :: all prior theme keys remain registered.
+- Layout attack :: ten swatches use a bounded horizontal scroll area; they cannot compress below the existing preview size.
+- Scope attack :: no approval commands, tool-card behavior, runtime protocol, reusable expert KB, or Android UI code enters this iteration.
+
+* Acceptance mapped to tests
+1. Kotlin token parity :: new =t/test_desktop_mobile_parity.py= parses =ZaraTheme.kt= and compares all 17 values for all five concrete themes.
+2. Complete role projection :: the same test asserts all 15 roles and provenance/derivation semantics.
+3. Default and compatibility :: theme/config/preferences tests assert Outrun default/fallback and preserved legacy keys.
+4. Accessibility :: raw parity colors pass the unchanged =MIN_TEXT_CONTRAST= gate for text, muted text, and primary actions.
+5. Component vocabulary :: QSS assertions cover Android surface wells, elevated panels, active borders, and compact density.
+6. Settings :: Qt smoke tests assert parity theme order, ten reachable preview cards, and horizontal scrolling.
+7. Visual evidence :: screenshot fixture tests assert Outrun provenance and render the existing state matrix.
+8. Documentation :: =wiki/desktop-design.org= and =CHANGELOG.md= describe the user-visible parity and ownership boundary.
+
+* Exact gate
+- Focused red/green: desktop mobile parity, theme, preferences, settings, adaptive Copilot, and screenshot fixtures.
+- Full: =nix develop -c bash scripts/test-all.sh=, =nix flake check=, and =nix build=.
+- Final =prolog-verify check= at the candidate worktree digest.
+- Push/PR/merge requires exact-head GitHub Actions green; Forgejo remains preferred but was unavailable at iteration start.
+
+* Auto-RAGE decision
+=ACCEPT REALIZATION=. The design keeps Android authoritative, removes the prior ownership/scope violations, preserves compatibility, and has deterministic tests for every reachable behavior in scope.

@@ -43,6 +43,7 @@ def test_org_fixture_renderer_emits_exact_head_manifest_and_priority_surfaces(tm
 
     for entry in entries:
         assert entry["source_commit"] == "0123456789abcdef0123456789abcdef01234567"
+        assert entry["theme"] == "outrun"
         assert entry["width"] > 0
         assert entry["height"] > 0
         path = output_dir / Path(entry["path"]).name

@@ -52,7 +52,7 @@ def test_copilot_fixture_renderer_emits_bounded_manifest_and_required_pngs(tmp_p
 
     for entry in entries:
         assert entry["source_commit"] == "0123456789abcdef0123456789abcdef01234567"
-        assert isinstance(entry["theme"], str) and entry["theme"]
+        assert entry["theme"] == "outrun"
         assert entry["width"] > 0
         assert entry["height"] > 0
         path = output_dir / Path(entry["path"]).name

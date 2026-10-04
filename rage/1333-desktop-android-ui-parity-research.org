@@ -1,0 +1,45 @@
+#+title: RAGE 1333 Iteration 2 research - desktop Android design parity
+
+* Identity
+- Issue :: #1333
+- Branch :: =rage/1333-desktop-android-ui-parity=
+- Immutable start :: =a0b661ffacb885607d972ac8eeddcdcfa4777866=
+- Mode :: Auto-RAGE selected by =.rage.toml=.
+
+* Current authority
+- =android/DESIGN.md= freezes Outrun as the default and requires one semantic component hierarchy for Outrun, StarIntel, Midnight, Terminal, Light, and the Android-only System resolver.
+- =android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt= owns 17 concrete semantic tokens. Outrun is the base; four named themes override a subset; System resolves to Outrun or Light.
+- Desktop currently owns five unrelated palettes in =zara/desktop/theme.py= and falls back to Signal Cabin. Its screenshot fixtures also force Signal Cabin. The runtime and conversation renderer are already canonical and do not need replacement.
+- Qt recommends semantic =QPalette= color roles. Qt's own documentation notes that style sheets are more reliable than palette-only customization for fully styled widgets. The existing palette plus scoped QSS split is therefore retained.
+- WCAG 2.1 SC 1.4.3 defines 4.5:1 as the minimum normal-text contrast ratio. The existing =MIN_TEXT_CONTRAST = 4.5= remains unchanged and parity themes must pass before palette repair.
+
+* Prior attempt evidence
+- =origin/rage/1333-desktop-mobile-parity-20260920= is preserved at =9f37976710d9e8e47cd7ab93c48fec1514f9d557= with no PR. It is 609 commits behind and 31 commits ahead of current master.
+- It proved a viable 17-token to 15-role projection and Android-styled QSS, but its RAGE log never recorded red/green or exact-head completion.
+- It mixed #89 tool approval behavior into #1333, violating the one-issue iteration boundary.
+- It added =kb/desktop_design.pl= and =modules/desktop_design_expert.pl=. Current repository policy assigns reusable expert knowledge to dotfiles under =.zara/experts/=, so that ownership is no longer valid.
+
+* Ownership conclusion
+- Android remains the token authority.
+- Zara Desktop owns only a deterministic consumer projection, Qt component styling, settings selection, and parity verification.
+- Queryable derivation metadata belongs beside the Python projection because it describes an adapter, not an expert brain.
+- No tool lifecycle, Android implementation, Qt toolkit replacement, or dotfiles expert is in scope.
+
+* Alternatives
+** Parse Kotlin at desktop runtime
+Rejected. Installed Python packages cannot assume the Android source tree is present, and source parsing belongs in conformance tests rather than application startup.
+
+** Check in a second hand-maintained theme registry without parity tests
+Rejected. It recreates the drift #1333 exists to remove.
+
+** Copy the prior Prolog design expert into Zara
+Rejected. It violates current canonical expert ownership and creates a second authority for deterministic adapter data.
+
+** Deterministic Python projection with source-parity tests
+Selected. Desktop ships bounded token/derivation data, tests parse the authoritative Kotlin source byte-for-byte, and the renderer consumes only the resulting existing =ThemeDefinition= contract.
+
+* Research sources
+- Local Android design and Kotlin token authority at start SHA.
+- GitHub issue #1333 and preserved prior branch =9f379767=.
+- Qt =QPalette= and Qt Style Sheets official documentation, retrieved through =prolog-verify brave= on 2026-10-04.
+- W3C WCAG 2.1 contrast documentation, retrieved through =prolog-verify brave= on 2026-10-04.
