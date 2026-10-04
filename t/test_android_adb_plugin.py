@@ -25,6 +25,35 @@ class FakeRunner:
         return subprocess.CompletedProcess(argv, returncode, stdout, stderr)
 
 
+class PrologTerm:
+    def __init__(self, name, *args):
+        self.name = name
+        self.args = args
+
+
+class RecordingTransport:
+    def __init__(self):
+        self.calls = []
+
+    def tap(self, *args):
+        self.calls.append(("tap", *args))
+
+    def swipe(self, *args):
+        self.calls.append(("swipe", *args))
+
+    def type_text(self, *args):
+        self.calls.append(("text", *args))
+
+    def key(self, *args):
+        self.calls.append(("key", *args))
+
+    def wait(self, *args):
+        self.calls.append(("wait", *args))
+
+    def open_package(self, *args):
+        self.calls.append(("open_package", *args))
+
+
 def test_transport_selects_only_connected_device():
     runner = FakeRunner()
     runner.queue(b"List of devices attached\nSERIAL\tdevice product:x model:y\n")
@@ -79,3 +108,42 @@ def test_vision_policy_fails_closed_without_explicit_policy():
 
     with pytest.raises(PermissionError, match="observe_only"):
         plugin._require_vision_mutation()
+
+
+def test_prolog_plan_executes_every_typed_adb_action_in_order():
+    transport = RecordingTransport()
+
+    class Engine:
+        def query_once(self, goal):
+            if goal == "kb_android_control:android_adb_plan(daily_check, Actions)":
+                return {
+                    "Actions": [
+                        PrologTerm("tap", 10, 20),
+                        PrologTerm("swipe", 10, 20, 30, 40, 300),
+                        PrologTerm("text", b"hello world"),
+                        PrologTerm("key", "home"),
+                        PrologTerm("wait", 250),
+                        PrologTerm("open_app", "zara"),
+                    ]
+                }
+            if goal == "kb_android_control:android_app_package(zara, Package)":
+                return {"Package": "ai.zara.app"}
+            raise AssertionError(goal)
+
+    plugin = AndroidAdbPlugin()
+    plugin._transport = transport
+    plugin._engine = Engine()
+
+    assert plugin.android_adb_run_plan("daily_check") == {
+        "plan": "daily_check",
+        "actions": 6,
+        "completed": True,
+    }
+    assert transport.calls == [
+        ("tap", 10, 20),
+        ("swipe", 10, 20, 30, 40, 300),
+        ("text", "hello world"),
+        ("key", "home"),
+        ("wait", 250),
+        ("open_package", "ai.zara.app"),
+    ]
