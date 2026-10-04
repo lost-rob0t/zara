@@ -1,0 +1,81 @@
+name: GF language pilot
+
+on:
+  pull_request:
+    paths:
+      - 'nlp/gf/**'
+      - 'modules/gf_frontend.pl'
+      - 'modules/symbolic_dialogue_turn.pl'
+      - 'scripts/test-gf.sh'
+      - 'scripts/gf-demo.py'
+      - 'nix/gf-pilot.nix'
+      - '.github/workflows/gf-pilot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gf-pilot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Install pinned GF compiler and native runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o /tmp/gf.deb https://github.com/GrammaticalFramework/gf-core/releases/download/release-3.12/gf-3.12-ubuntu-24.04.deb
+          echo '17aa5452b713f1e00a0755a1bad998a926acbffb96eefde2c3800ca72536b4d8  /tmp/gf.deb' | sha256sum --check
+          sudo apt-get update -qq
+          sudo apt-get install -y /tmp/gf.deb swi-prolog-nox pkg-config
+          sudo ldconfig
+          gf --version
+          dpkg -L gf | grep -E 'libpgf|libgu|pgf.h|bin/gf' || true
+      - uses: actions/checkout@v4
+        with:
+          repository: GrammaticalFramework/gf-rgl
+          ref: caaa5ab8716b74bb7c043ec5efc5ae37c025db9e
+          path: .gf-rgl
+          persist-credentials: false
+      - name: Real grammar, native runtime, and canonical Prolog gate
+        env:
+          GF_RGL_ROOT: ${{ github.workspace }}/.gf-rgl
+        run: bash scripts/test-gf.sh
+      - name: Preserve compiled grammar and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gf-pilot-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            .gf-build/Zara.pgf
+            .gf-build/*.log
+            .gf-build/provenance.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  gf-nix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: cachix/install-nix-action@v31
+      - name: Build and test pinned developer shell
+        run: nix-shell nix/gf-pilot.nix --run 'bash scripts/test-gf.sh'
+      - name: Preserve Nix gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gf-nix-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            .gf-build/Zara.pgf
+            .gf-build/*.log
+            .gf-build/provenance.json
+          include-hidden-files: true
+          if-no-files-found: ignore

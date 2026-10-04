@@ -20,13 +20,24 @@
 
 dialogue_turn(Text, _State, Context0, turn([Frame], Act, Context1)) :-
     conversation_vocabulary_frame(Text, Frame),
-    symbolic_dialogue:response_act(frame(Frame), Act),
+    conversation_response_act(Frame, Act),
     preserve_dialogue_context(Context0, Context1),
     !.
 dialogue_turn(Text, State, Context0, turn(Frames, Act, Context1)) :-
     dialogue_frames(Text, State, Context0, Frames),
     turn_response(Frames, Context0, Act, Context1),
     !.
+
+% Identity uses an existing response-act variant rather than inventing a new
+% wire kind. It describes the symbolic engine, not live device/network state.
+conversation_response_act(frame(intent(ns(conversation), name(identity)), [], complete), Act) :-
+    !,
+    symbolic_dialogue:response_act(
+        expert_result(summary('I am a symbolic assistant powered by Prolog.'),
+                      evidence('builtin-identity/v1')),
+        Act).
+conversation_response_act(Frame, Act) :-
+    symbolic_dialogue:response_act(frame(Frame), Act).
 
 % The frozen IntentFrame API only accepts [] or partial_frame/2. To correct a
 % completed prior frame we reuse that canonical correction parser internally,
@@ -58,6 +69,12 @@ conversation_vocabulary_frame(Text, Frame) :-
     conversation_vocabulary_tokens(Tokens, Intent),
     Frame = frame(intent(ns(conversation), name(Intent)), [], complete).
 
+% Whole-turn matches only: a greeting must not swallow an addressed request.
+conversation_vocabulary_tokens([hello], greet).
+conversation_vocabulary_tokens([hi], greet).
+conversation_vocabulary_tokens([hey], greet).
+conversation_vocabulary_tokens([who, are, you], identity).
+conversation_vocabulary_tokens([what, are, you], identity).
 conversation_vocabulary_tokens([help], help).
 conversation_vocabulary_tokens([help, me], help).
 conversation_vocabulary_tokens([what, can, you, do], help).
