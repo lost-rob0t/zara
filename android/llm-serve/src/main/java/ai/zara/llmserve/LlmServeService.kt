@@ -66,6 +66,7 @@ class LlmServeService : Service() {
     }
 
     private fun startServer() {
+        if (server.isRunning()) return
         startForeground(
             NOTIFICATION_ID,
             notification("Starting local LLM server"),

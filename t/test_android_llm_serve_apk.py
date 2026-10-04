@@ -90,3 +90,9 @@ def test_llm_serve_missing_model_is_not_reported_as_ready():
     assert "waiting_for_model" in service
     assert "LocalAiPhase.READY" in service
     assert "runCatching { engine.loadActiveModel() }" not in service
+
+
+def test_reopening_running_server_does_not_replace_ready_notification_with_starting():
+    source = (ROOT / "android/llm-serve/src/main/java/ai/zara/llmserve/LlmServeService.kt").read_text()
+    start = source.split("private fun startServer() {", 1)[1].split("private fun importModel", 1)[0]
+    assert start.index("if (server.isRunning()) return") < start.index("startForeground(")
