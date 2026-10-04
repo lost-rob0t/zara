@@ -39,8 +39,17 @@ test(parity_not_parallel_semantics) :-
          gf_canonical_turn(Text, passive, [], gf_turn(Actual, _, _)),
          assertion(Actual == Expected))).
 
-test(identity_is_not_a_greeting_or_a_fake_capability) :-
-    gf_canonical_turn('who are you', passive, [], gf_turn(turn([], unsupported, []), 'UnsupportedReply', _)).
+test(identity_uses_existing_evidenced_answer_act) :-
+    gf_canonical_turn('who are you', passive, [],
+        gf_turn(turn([frame(intent(ns(conversation), name(identity)), [], complete)],
+                     answer(expert, 'I am a symbolic assistant powered by Prolog.',
+                            evidence('builtin-identity/v1')), []),
+                'IdentityReply', _)).
+
+test(identity_preserves_clarification_context) :-
+    gf_canonical_turn(timer, passive, [], gf_turn(turn(_, _, Context), _, _)),
+    gf_canonical_turn('who are you', passive, Context,
+        gf_turn(turn(_, _, Context), 'IdentityReply', _)).
 
 test(empty_input, [fail]) :- gf_canonical_turn('', passive, [], _).
 test(non_text_input, [fail]) :- gf_canonical_turn(shell(id), passive, [], _).

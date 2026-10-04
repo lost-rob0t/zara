@@ -10,6 +10,6 @@ abstract Zara = Numeral [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, D_3, D_4, D_5,
     DurationOf : Digits -> Unit -> Duration ;
     Seconds, Minutes, Hours : Unit ;
     Settings, Termux, Firefox : App ;
-    GreetingReply, HelpReply, ThanksReply, AcknowledgedReply : Reply ;
+    GreetingReply, IdentityReply, HelpReply, ThanksReply, AcknowledgedReply : Reply ;
     CancelledReply, DurationReply, TargetReply, PendingReply, UnsupportedReply : Reply ;
 }

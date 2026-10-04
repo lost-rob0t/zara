@@ -37,6 +37,7 @@ concrete ZaraCanonical of Zara = open Prelude in {
     Termux = {s = "termux"} ;
     Firefox = {s = "firefox"} ;
     GreetingReply = {s = "greeting"} ;
+    IdentityReply = {s = "identity"} ;
     HelpReply = {s = "help"} ;
     ThanksReply = {s = "thanks"} ;
     AcknowledgedReply = {s = "acknowledged"} ;

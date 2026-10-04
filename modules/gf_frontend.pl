@@ -17,6 +17,7 @@ gf_canonical_turn(Canonical, State, Context, Result) :-
         evidence(frontend('gf-pilot/v1'), model_calls(0), provider_calls(0))).
 
 gf_reply_tree(greeting, 'GreetingReply') :- !.
+gf_reply_tree(answer(expert, _, evidence('builtin-identity/v1')), 'IdentityReply') :- !.
 gf_reply_tree(help, 'HelpReply') :- !.
 gf_reply_tree(acknowledgement(thanks), 'ThanksReply') :- !.
 gf_reply_tree(acknowledgement(acknowledged), 'AcknowledgedReply') :- !.

@@ -28,6 +28,7 @@ concrete ZaraEng of Zara = NumeralEng [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, 
     Termux = mkNP (mkPN "termux") ;
     Firefox = mkNP (mkPN "firefox") ;
     GreetingReply = {s = "Hello. What would you like to do?"} ;
+    IdentityReply = {s = "I am a symbolic assistant powered by Prolog."} ;
     HelpReply = {s = "I can help with timers and opening apps. What would you like to do?"} ;
     ThanksReply = {s = "You are welcome."} ;
     AcknowledgedReply = {s = "Understood."} ;
