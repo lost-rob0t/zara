@@ -47,4 +47,3 @@ interface LocalAiProvider : AutoCloseable {
 
     fun unloadModel(): CompletableFuture<LocalAiState>
 }
-
