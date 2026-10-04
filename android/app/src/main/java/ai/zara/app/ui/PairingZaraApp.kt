@@ -1,5 +1,7 @@
 package ai.zara.app.ui
 
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelSelection
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.projects.ProjectContext
@@ -114,6 +116,12 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    executionPolicy: ConversationExecutionPolicy = ConversationExecutionPolicy.STANDARD,
+    localModelSelection: LocalModelSelection = LocalModelSelection(),
+    localModelState: LocalAiState = LocalAiState(),
+    onSelectExecutionPolicy: (ConversationExecutionPolicy) -> Unit = {},
+    onSelectLocalModel: (LocalModelSelection) -> Unit = {},
+    onOpenLocalModelApp: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -139,6 +147,12 @@ fun ZaraApp(
                 changelogText = changelogText,
                 showChangelog = showChangelog,
                 runtimeMode = runtimeMode,
+                executionPolicy = executionPolicy,
+                localModelSelection = localModelSelection,
+                localModelState = localModelState,
+                onSelectExecutionPolicy = onSelectExecutionPolicy,
+                onSelectLocalModel = onSelectLocalModel,
+                onOpenLocalModelApp = onOpenLocalModelApp,
                 localEmbedding = localEmbedding,
                 projectState = projectState,
                 healthState = healthState,

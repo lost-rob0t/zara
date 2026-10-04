@@ -16,7 +16,7 @@ Tabs scroll horizontally. Selecting a menu restores that menu's last tab. Logic 
 
 * Settings organization
 
-Runtime contains the existing local-server status, Auto/Local/Remote routing selection, and on-device embedding toggle. It does not change provider or model selection implicitly.
+Runtime contains local-server status, Auto/Local/Remote routing selection, a separate pure-symbolic execution policy, the on-device embedding toggle, and explicit embedded/Ollama local model selection. Opening the tab does not change the selected policy or model. The local model app launcher opens the separately installed Zara LLM Serve APK.
 
 Connection contains client identity creation, public-key enrollment guidance, trusted-server pinning/replacement, endpoint entry, and Connect in one place. Previously these controls were split between Settings and Remote. Existing trust validation, connection lifecycle gates, and explicit user actions are unchanged.
 

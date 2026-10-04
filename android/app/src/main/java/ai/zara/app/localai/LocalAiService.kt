@@ -37,7 +37,6 @@ class LocalAiService : Service() {
         )
         tts = ttsRegistry.default()
         tts.initialize()
-        loadActiveModel()
     }
 
     override fun onBind(intent: Intent?): IBinder = binder

@@ -56,7 +56,8 @@ class LocalAiProviderContractTest {
         assertTrue(client.contains("offlineOnly = true"))
         assertTrue(client.contains("modelFormats = setOf(LocalModelFormat.LITERT_LM)"))
         assertTrue(client.contains("accelerators = LocalModelBackend.entries.toSet()"))
-        assertTrue(provider.contains("Speech is a separate"))
+        val contracts = File("src/main/java/ai/zara/app/localai/LocalAiProviderContracts.kt").readText()
+        assertTrue(contracts.contains("Speech is a separate"))
         assertTrue(service.contains("metadata.format == LocalModelFormat.LITERT_LM"))
     }
 
