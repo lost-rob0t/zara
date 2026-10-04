@@ -4,6 +4,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Fixed
+
+- Security management with an explicit state directory now targets that directory's live Zara daemon instead of an unrelated daemon on the default runtime socket.
+
 ## 0.4.0-alpha
 
 ### Changed
@@ -11,7 +15,6 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Android adds an explicit Symbolic-only mode that keeps Prolog, tools, and the KB active while forbidding local-model and remote-provider inference; Local mode remains Prolog-first with optional on-device LLM fallback.
 - Android system-assistant invocation now requests the Assistant role through RoleManager and automatically attempts on-device speech recognition for the selected Symbolic/Local/Auto/Remote route, with the existing remote push-to-talk stream retained as fallback; explicit Remote mode can use local STT/TTS around an enabled OpenRouter or OpenAI-compatible model profile when no Zara server session is active.
 - Runtime settings now configure OpenRouter or generic OpenAI-compatible HTTPS model APIs with explicit endpoint/model selection and Android-Keystore-wrapped credentials; remote model APIs are only used by explicit Remote routing.
-- CI now measures Python line, branch, and combined total coverage on every branch and pull request, publishes exact-head reports, and enforces the monotonic coverage ratchet through the same canonical evaluator used by the full repository gate.
 - The Org app fleet now renders on the canonical Zara semantic token layer: the Outrun theme's near-black ground with restrained magenta/cyan accents, thin luminous panel outlines, and small status lights for workspace connection, reminder urgency, and timer state. No Org surface hard-codes theme colors, so the whole fleet inherits the shared theme system (Outrun, StarIntel, Midnight, Terminal, Light, System) without divergent implementations.
 
 ### Fixed
