@@ -1,4 +1,4 @@
-concrete ZaraEng of Zara = NumeralEng [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, D_3, D_4, D_5, D_6, D_7, D_8, D_9] ** open SyntaxEng, ParadigmsEng in {
+concrete ZaraEng of Zara = NumeralEng [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, D_3, D_4, D_5, D_6, D_7, D_8, D_9] ** open SyntaxEng, ParadigmsEng, Prelude in {
   lincat
     Utterance, Request, Duration, Reply = {s : Str} ;
     Unit = N ;
@@ -27,6 +27,7 @@ concrete ZaraEng of Zara = NumeralEng [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, 
     Settings = mkNP (mkPN "settings") ;
     Termux = mkNP (mkPN "termux") ;
     Firefox = mkNP (mkPN "firefox") ;
+    TimerPendingReply duration = {s = "I understood a timer for" ++ duration.s ++ BIND ++ "." ++ "It has not been started."} ;
     GreetingReply = {s = "Hello. What would you like to do?"} ;
     IdentityReply = {s = "I am a symbolic assistant powered by Prolog."} ;
     HelpReply = {s = "I can help with timers and opening apps. What would you like to do?"} ;

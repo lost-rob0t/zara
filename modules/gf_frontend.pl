@@ -24,5 +24,35 @@ gf_reply_tree(acknowledgement(acknowledged), 'AcknowledgedReply') :- !.
 gf_reply_tree(cancelled, 'CancelledReply') :- !.
 gf_reply_tree(clarify(slot(duration)), 'DurationReply') :- !.
 gf_reply_tree(clarify(slot(target)), 'TargetReply') :- !.
+gf_reply_tree(dispatch_required(frame(intent(ns(device), name('timer.set')), Slots, complete)), Tree) :-
+    member(slot(name(duration), value(duration(Seconds)), _), Slots),
+    integer(Seconds), Seconds >= 0, Seconds =< 604800,
+    gf_duration_unit(Seconds, Count, Unit),
+    number_codes(Count, Codes),
+    gf_digits_tree(Codes, Digits),
+    atomic_list_concat(['TimerPendingReply (DurationOf (', Digits, ') ', Unit, ')'], Tree),
+    !.
 gf_reply_tree(dispatch_required(_), 'PendingReply') :- !.
 gf_reply_tree(_, 'UnsupportedReply').
+
+% Render a verified semantic quantity, never infer execution from parsing.
+gf_duration_unit(Seconds, Count, 'Hours') :-
+    Seconds > 0, 0 is Seconds mod 3600, !, Count is Seconds // 3600.
+gf_duration_unit(Seconds, Count, 'Minutes') :-
+    Seconds > 0, 0 is Seconds mod 60, !, Count is Seconds // 60.
+gf_duration_unit(Seconds, Seconds, 'Seconds').
+
+% Only decimal digits from a bounded nonnegative integer become constructors.
+% Arbitrary user text is never parsed as a GF expression or Prolog goal.
+gf_digits_tree([Code], Tree) :-
+    gf_digit_constructor(Code, Digit),
+    atom_concat('IDig ', Digit, Tree), !.
+gf_digits_tree([Code|Codes], Tree) :-
+    gf_digit_constructor(Code, Digit),
+    gf_digits_tree(Codes, Tail),
+    atomic_list_concat(['IIDig ', Digit, ' (', Tail, ')'], Tree).
+
+gf_digit_constructor(Code, Digit) :-
+    integer(Code), Code >= 48, Code =< 57,
+    atom_codes(Character, [Code]),
+    atom_concat('D_', Character, Digit).

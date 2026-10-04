@@ -8,6 +8,7 @@ for tool in gf cc pkg-config python3 swipl; do
 done
 mkdir -p .gf-build/gfo
 build="$root/.gf-build"
+rm -f "$build/Zara.pgf" "$build/pgf-probe" "$build/provenance.json"
 gf --version | tee "$build/compiler.log"
 grep -q 'version 3.12.0' "$build/compiler.log" || { echo 'GF 3.12.0 required' >&2; exit 1; }
 rgl_revision="${GF_RGL_REV:-$(git -C "$GF_RGL_ROOT" rev-parse HEAD)}"
@@ -26,6 +27,9 @@ cc -std=c11 -Wall -Wextra -Werror -O2 "${cflags[@]}" \
     nlp/gf/pgf_probe.c "${libs[@]}" -o "$build/pgf-probe" 2>&1 | tee "$build/native.log"
 python3 -m unittest discover -s nlp/gf -p 'test_*.py' -v 2>&1 | tee "$build/corpus.log"
 swipl -q -s nlp/gf/test_frontend.pl -g 'run_tests,halt' -t 'halt(1)' 2>&1 | tee "$build/prolog.log"
+python3 scripts/gf-demo.py \
+    'Hey Zara, who are you?' 'Set a timer.' '15 minutes' \
+    'Actually 5 minutes' 'Cancel that.' 2>&1 | tee "$build/demo.log"
 python3 - <<'PY'
 import hashlib, json, pathlib, subprocess
 root = pathlib.Path.cwd()

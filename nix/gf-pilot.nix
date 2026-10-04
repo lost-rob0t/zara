@@ -17,8 +17,14 @@ let
     buildInputs = [ pkgs.gmp pkgs.libffi pkgs.ncurses ];
     unpackPhase = "dpkg-deb -x $src unpacked";
     installPhase = ''
-      mkdir -p $out
-      cp -r unpacked/usr/* $out/
+      # The Debian distribution also contains a GHC development library and
+      # a Python 3.12 extension. Neither belongs in this CLI/C-runtime shell.
+      mkdir -p $out/bin $out/lib/pkgconfig $out/include $out/share
+      cp unpacked/usr/bin/gf $out/bin/
+      cp -a unpacked/usr/lib/libpgf.so* unpacked/usr/lib/libgu.so* $out/lib/
+      cp -a unpacked/usr/include/pgf unpacked/usr/include/gu $out/include/
+      cp unpacked/usr/lib/pkgconfig/libpgf.pc unpacked/usr/lib/pkgconfig/libgu.pc $out/lib/pkgconfig/
+      cp -a unpacked/usr/share/. $out/share/
       for pc in $out/lib/pkgconfig/*.pc; do
         substituteInPlace "$pc" --replace-fail 'prefix=/usr' "prefix=$out"
       done

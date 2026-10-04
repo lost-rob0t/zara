@@ -12,7 +12,7 @@ test(greeting_preserves_existing_context) :-
     gf_canonical_turn(hello, passive, Context, gf_turn(turn(_, greeting, Context), 'GreetingReply', _)).
 
 test(timer_is_not_execution_success) :-
-    gf_canonical_turn('timer 2 minutes', passive, [], gf_turn(turn([Frame], dispatch_required(Frame), completed_frame(Frame)), 'PendingReply', _)),
+    gf_canonical_turn('timer 2 minutes', passive, [], gf_turn(turn([Frame], dispatch_required(Frame), completed_frame(Frame)), 'TimerPendingReply (DurationOf (IDig D_2) Minutes)', _)),
     Frame = frame(intent(ns(device), name('timer.set')),
         [slot(name(duration), value(duration(120)), origin(utterance))], complete).
 
@@ -21,12 +21,12 @@ test(missing_timer_duration) :-
 
 test(followup_reuses_canonical_owner) :-
     gf_canonical_turn(timer, passive, [], gf_turn(turn(_, _, Context), _, _)),
-    gf_canonical_turn('5 minutes', passive, Context, gf_turn(turn([Frame], _, _), 'PendingReply', _)),
+    gf_canonical_turn('5 minutes', passive, Context, gf_turn(turn([Frame], _, _), 'TimerPendingReply (DurationOf (IDig D_5) Minutes)', _)),
     Frame = frame(_, [slot(name(duration), value(duration(300)), origin(follow_up))], complete).
 
 test(correction_keeps_origin) :-
     gf_canonical_turn(timer, passive, [], gf_turn(turn(_, _, Context), _, _)),
-    gf_canonical_turn('actually 5 minutes', passive, Context, gf_turn(turn([Frame], _, _), 'PendingReply', _)),
+    gf_canonical_turn('actually 5 minutes', passive, Context, gf_turn(turn([Frame], _, _), 'TimerPendingReply (DurationOf (IDig D_5) Minutes)', _)),
     Frame = frame(_, [slot(name(duration), value(duration(300)), origin(correction))], complete).
 
 test(cancel_closes_context) :-
@@ -59,4 +59,10 @@ test(oversized_input, [fail]) :-
 test(unverified_actions_never_render_done) :-
     gf_reply_tree(dispatch_required(anything), 'PendingReply'),
     gf_reply_tree(verified('Done', evidence), 'UnsupportedReply').
+test(zero_duration_is_not_silently_changed) :-
+    gf_canonical_turn('timer 0 seconds', passive, [],
+        gf_turn(_, 'TimerPendingReply (DurationOf (IDig D_0) Seconds)', _)).
+
+test(reply_quantity_budget_has_honest_fallback) :-
+    gf_canonical_turn('timer 604801 seconds', passive, [], gf_turn(_, 'PendingReply', _)).
 :- end_tests(gf_frontend).

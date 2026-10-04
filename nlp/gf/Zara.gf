@@ -7,6 +7,7 @@ abstract Zara = Numeral [Digits, Dig, IDig, IIDig, D_0, D_1, D_2, D_3, D_4, D_5,
     TimerMissing, OpenMissing : Request ;
     SetTimer, Followup, Correction : Duration -> Request ;
     OpenApp : App -> Request ;
+    TimerPendingReply : Duration -> Reply ;
     DurationOf : Digits -> Unit -> Duration ;
     Seconds, Minutes, Hours : Unit ;
     Settings, Termux, Firefox : App ;

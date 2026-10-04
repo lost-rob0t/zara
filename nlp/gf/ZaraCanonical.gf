@@ -29,6 +29,7 @@ concrete ZaraCanonical of Zara = open Prelude in {
     Followup duration = duration ;
     Correction duration = {s = "actually" ++ duration.s} ;
     OpenApp app = {s = "open" ++ app.s} ;
+    TimerPendingReply duration = {s = "pending_timer" ++ duration.s} ;
     DurationOf count unit = {s = count.s ++ unit.s} ;
     Seconds = {s = "seconds"} ;
     Minutes = {s = "minutes"} ;
