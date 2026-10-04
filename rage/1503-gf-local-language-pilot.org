@@ -1,0 +1,23 @@
+#+title: GF local language pilot — issue 1503
+
+* Start
+- Consumed issue: #1503 (user-approved implementation, not release promotion).
+- Immutable base: 69f16070ecba35c12a7d4df6503c3a3f30bf9e1e.
+- Branch: feat/gf-local-language-pilot.
+- No deployment, default backend change, or automatic merge authorized by this pilot.
+
+* Research and design
+- GF 3.12 compiler release: https://github.com/GrammaticalFramework/gf-core/releases/tag/release-3.12
+- Upstream temporarily dropped Java bindings. Old Android Java documentation is not an acceptance test.
+- Test the C PGF runtime and compiled application grammar, with RGL English morphology.
+- RGL source pin: caaa5ab8716b74bb7c043ec5efc5ae37c025db9e.
+- GF produces canonical input for existing symbolic_dialogue_turn:dialogue_turn/4; that owner retains frame/context semantics.
+- Human output comes from response acts, never from treating parse success as action success.
+- Prototype stays opt-in and does not introduce a second state store or LLM fallback.
+- Bound input, parse candidates and subprocess time; retain negation and reject uncovered language rather than guessing.
+- Local container has no network DNS, GF, Nix or SWI. Kotlin/JDK are available. Use repository CI for the real compiler/runtime gate; do not fabricate local execution evidence.
+
+* Iteration 1 — tests before implementation
+- Corpus tests specify addressed help/identity, compositional timer units, app aliases, social replies, unknown input and negation.
+- First commit intentionally precedes the implementation and compiler runner.
+- Red/green outputs and exact-head CI must be recorded after execution.
