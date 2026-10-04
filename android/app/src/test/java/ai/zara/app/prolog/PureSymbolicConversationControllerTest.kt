@@ -163,6 +163,60 @@ class PureSymbolicConversationControllerTest {
     }
 
     @Test
+    fun `conversation-only symbolic voice rejects explicit prolog without executing it`() {
+        var queryCalls = 0
+        var resolveCalls = 0
+        val controller = PureSymbolicConversationController(
+            catalog = { emptyCatalog },
+            query = {
+                queryCalls += 1
+                CompletableFuture.completedFuture(LocalQueryResult(it, listOf("unexpected"), 1))
+            },
+            resolve = {
+                resolveCalls += 1
+                CompletableFuture.completedFuture(LocalQueryResult(it, listOf("unexpected"), 1))
+            },
+            turnIds = listOf("turn-voice-blocked").iterator(),
+        )
+
+        val result = controller.submitConversationOnly("?- true.", "voice-a").get()
+
+        assertEquals(0, queryCalls)
+        assertEquals(0, resolveCalls)
+        assertFalse(result.turn.success)
+        assertEquals(
+            "Explicit Prolog commands are disabled in symbolic voice.",
+            result.turn.text,
+        )
+        assertEquals(0, result.modelCalls)
+        assertEquals(0, result.providerCalls)
+    }
+
+    @Test
+    fun `conversation-only symbolic voice still resolves ordinary speech symbolically`() {
+        val resolves = mutableListOf<String>()
+        val controller = PureSymbolicConversationController(
+            catalog = { emptyCatalog },
+            query = { error("query path must not run") },
+            resolve = { text ->
+                resolves += text
+                CompletableFuture.completedFuture(
+                    LocalQueryResult(text, listOf("response_act(greeting)"), 1),
+                )
+            },
+            turnIds = listOf("turn-voice-chat").iterator(),
+        )
+
+        val result = controller.submitConversationOnly("hello", "voice-a").get()
+
+        assertEquals(listOf("hello"), resolves)
+        assertTrue(result.turn.success)
+        assertEquals("response_act(greeting)", result.turn.text)
+        assertEquals(0, result.modelCalls)
+        assertEquals(0, result.providerCalls)
+    }
+
+    @Test
     fun `blank input is rejected before symbolic execution`() {
         val controller = PureSymbolicConversationController(
             catalog = { emptyCatalog },
