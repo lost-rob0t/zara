@@ -33,6 +33,7 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "turn.cancel",
         "tool.approve",
         "tool.reject",
+        "prolog.query",
         "capability.snapshot",
         "device.action.accepted",
         "device.action.result",
@@ -53,6 +54,7 @@ SERVER_MESSAGE_TYPES = frozenset(
         "turn.cancelled",
         "tool.approve.accepted",
         "tool.reject.accepted",
+        "prolog.query.completed",
         "tool.queued",
         "tool.waiting",
         "tool.started",
@@ -597,6 +599,65 @@ def _validate_capability_snapshot(body: Mapping[str, Any]) -> None:
         seen.add(capability)
 
 
+def _validate_prolog_envelope(message: ProtocolMessage) -> None:
+    if message.type == "prolog.query":
+        if message.session_id is None or message.reply_to is not None:
+            raise ProtocolValidationError("prolog.query requires only session correlation")
+        if any(
+            value is not None
+            for value in (
+                message.conversation_id,
+                message.turn_id,
+                message.stream_id,
+                message.seq,
+                message.trace_id,
+                message.content_type,
+            )
+        ) or message.flags or message.payload_count != 0:
+            raise ProtocolValidationError("prolog.query has invalid fields")
+        body = dict(message.body or {})
+        if set(body) != {"goal", "max_solutions"}:
+            raise ProtocolValidationError("prolog.query body has invalid fields")
+        goal = body["goal"]
+        if (
+            not isinstance(goal, str)
+            or not goal.strip()
+            or "\x00" in goal
+            or len(goal.encode("utf-8")) > 4096
+        ):
+            raise ProtocolValidationError("prolog.query goal is invalid")
+        limit = body["max_solutions"]
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ProtocolValidationError("prolog.query max_solutions is invalid")
+        return
+
+    if message.type == "prolog.query.completed":
+        if message.session_id is None or message.reply_to is None:
+            raise ProtocolValidationError(
+                "prolog.query.completed requires reply and session correlation"
+            )
+        if any(
+            value is not None
+            for value in (
+                message.conversation_id,
+                message.turn_id,
+                message.stream_id,
+                message.seq,
+                message.trace_id,
+                message.content_type,
+            )
+        ) or message.flags or message.payload_count != 0:
+            raise ProtocolValidationError("prolog.query.completed has invalid fields")
+        body = dict(message.body or {})
+        solutions = body.get("solutions")
+        if set(body) != {"solutions"} or not isinstance(solutions, list):
+            raise ProtocolValidationError("prolog.query.completed body is invalid")
+        if len(solutions) > 100 or any(
+            not isinstance(solution, dict) for solution in solutions
+        ):
+            raise ProtocolValidationError("prolog.query.completed solutions are invalid")
+
+
 def _validate_device_action_args(capability: str, value: Any) -> None:
     if not isinstance(value, dict):
         raise ProtocolValidationError("device action args must be an object")
@@ -768,6 +829,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     _validate_audio_output_envelope(message)
     _validate_visible_stt_envelope(message)
     _validate_tool_envelope(message)
+    _validate_prolog_envelope(message)
     _validate_device_envelope(message)
     return message
 

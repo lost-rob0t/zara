@@ -43,8 +43,10 @@ from zara.runtime.commands import (
     ApproveTool,
     CancelTurn,
     CommandReceipt,
+    PrologQueryReceipt,
     RejectTool,
     RuntimeCommand,
+    RunPrologQuery,
     SubmitTurn,
 )
 from zara.security_transport import CurveClientConfig, configure_curve_client_socket
@@ -871,7 +873,13 @@ class ZaraZmqGateway:
         }:
             self._handle_audio_input(socket, route, state, message, decoded.payloads)
             return
-        if message.type in {"turn.submit", "turn.cancel", "tool.approve", "tool.reject"}:
+        if message.type in {
+            "turn.submit",
+            "turn.cancel",
+            "tool.approve",
+            "tool.reject",
+            "prolog.query",
+        }:
             self._dispatch_runtime(socket, route, state, message)
             return
         self._send(
@@ -1366,7 +1374,11 @@ class ZaraZmqGateway:
                     "turn.cancel": "turn.cancel.accepted",
                     "tool.approve": "tool.approve.accepted",
                     "tool.reject": "tool.reject.accepted",
+                    "prolog.query": "prolog.query.completed",
                 }
+                response_body = None
+                if isinstance(receipt, PrologQueryReceipt):
+                    response_body = {"solutions": list(receipt.solutions)}
                 response = ProtocolMessage(
                     type=response_types[message.type],
                     id=_message_id(),
@@ -1375,6 +1387,7 @@ class ZaraZmqGateway:
                     turn_id=receipt.turn_id,
                     timestamp_ns=_now_ns(),
                     payload_count=0,
+                    body=response_body,
                 )
             except BaseException:
                 response = _protocol_error(
@@ -2160,12 +2173,29 @@ class ZmqZaraClient(ZaraClient):
                 "turn.cancel.accepted",
                 "tool.approve.accepted",
                 "tool.reject.accepted",
+                "prolog.query.completed",
             }:
                 pending.future.set_exception(ProtocolValidationError("invalid command response"))
             else:
-                pending.future.set_result(
-                    CommandReceipt(request_id=message.reply_to or "", turn_id=message.turn_id)
-                )
+                if message.type == "prolog.query.completed":
+                    solutions = (message.body or {}).get("solutions")
+                    if not isinstance(solutions, list) or any(
+                        not isinstance(solution, dict) for solution in solutions
+                    ):
+                        pending.future.set_exception(
+                            ProtocolValidationError("invalid Prolog query response")
+                        )
+                    else:
+                        pending.future.set_result(
+                            PrologQueryReceipt(
+                                request_id=message.reply_to or "",
+                                solutions=tuple(solutions),
+                            )
+                        )
+                else:
+                    pending.future.set_result(
+                        CommandReceipt(request_id=message.reply_to or "", turn_id=message.turn_id)
+                    )
             return
         if pending.kind is _PendingKind.AUDIO:
             if message.type not in {
@@ -2475,9 +2505,21 @@ class ZmqZaraClient(ZaraClient):
                 payload_count=0,
                 body={"tool_run_id": command.tool_run_id, "reason": command.reason},
             )
+        elif isinstance(command, RunPrologQuery):
+            message = ProtocolMessage(
+                type="prolog.query",
+                id=command.request_id,
+                session_id=self._session_id,
+                timestamp_ns=_now_ns(),
+                payload_count=0,
+                body={
+                    "goal": command.goal,
+                    "max_solutions": command.max_solutions,
+                },
+            )
         else:
             raise TypeError(
-                "ZmqZaraClient supports turn and tool-decision commands in ZARA/1 v1"
+                "ZmqZaraClient does not support this runtime command in ZARA/1 v1"
             )
         return self._request(message, _PendingKind.COMMAND)
 

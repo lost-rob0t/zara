@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 
 MAX_CONTEXT_IDS = 32
@@ -115,6 +115,20 @@ class ShutdownRuntime(RuntimeCommand):
     reason: str = "user-requested shutdown"
 
 
+@dataclass(frozen=True, kw_only=True)
+class RunPrologQuery(RuntimeCommand):
+    goal: str
+    max_solutions: int = 50
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.goal, str) or not self.goal.strip():
+            raise ValueError("Prolog goal must be non-empty text")
+        if "\x00" in self.goal or len(self.goal.encode("utf-8")) > 4096:
+            raise ValueError("Prolog goal exceeds the 4096-byte limit")
+        if type(self.max_solutions) is not int or not 1 <= self.max_solutions <= 100:
+            raise ValueError("max_solutions must be between 1 and 100")
+
+
 @dataclass(frozen=True)
 class CommandReceipt:
     """Immediate acknowledgement that a runtime command was accepted."""
@@ -122,3 +136,8 @@ class CommandReceipt:
     request_id: str
     turn_id: Optional[str] = None
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class PrologQueryReceipt(CommandReceipt):
+    solutions: tuple[dict[str, Any], ...] = ()

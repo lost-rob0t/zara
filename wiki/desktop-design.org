@@ -42,6 +42,14 @@ Android semantic tokens map to the existing Qt roles through one queryable deriv
 
 The desktop adapter is deterministic presentation infrastructure, not a second design authority. Reusable expert definitions or design knowledge belong in the dotfiles expert library under =.zara/experts/= and are consumed through Zara's normal expert infrastructure when available. This repository does not carry a parallel design-expert brain.
 
+* Prolog IDE
+
+The settings rail exposes a full =Prolog IDE= workspace over Zara's approved source repository. It combines source selection, syntax highlighting, cursor and dirty state, bounded find/replace, syntax diagnostics, and the existing guided managed-fact editor. Source writes retain the atomic parse-before-replace boundary; an invalid program never replaces the last readable file.
+
+The console submits =RunPrologQuery= through the existing =ZaraClient= and =RuntimeHost=. =LangGraphRuntimeBackend= runs the bounded goal against =AgentManager.prolog_engine= on the runtime thread, so Desktop neither constructs a second PySWIP runtime nor runs Prolog on Qt's main thread. Local daemon transport carries =prolog.query= and =prolog.query.completed= as explicitly validated ZARA/1 messages. Authenticated remote use requires =daemon.admin= rather than inheriting ordinary turn-submit authority.
+
+The console retains at most twenty goals, requests no more than one hundred solutions (the UI requests fifty), and truncates rendered output at 64,000 characters. Cancel fences the UI generation and discards a late receipt; it does not claim to interrupt a query already executing inside SWI-Prolog.
+
 * Verification
 
-The parity contract is covered by =t/test_desktop_mobile_parity.py=. The existing Copilot and Org fixture renderers emit exact-theme manifests using Outrun, and desktop settings tests cover live previews and reachability of all themes. Release acceptance still requires the repository's full Nix test, flake, build, and exact-head CI gates.
+The parity contract is covered by =t/test_desktop_mobile_parity.py=. The existing Copilot and Org fixture renderers emit exact-theme manifests using Outrun, and desktop settings tests cover live previews, IDE editor/console behavior, and reachability of all themes. Runtime and transport tests prove bounded Prolog queries stay on the canonical runtime boundary. Release acceptance still requires the repository's full Nix test, flake, build, and exact-head CI gates.

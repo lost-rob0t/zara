@@ -154,6 +154,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
             return Capability.TURN_CANCEL
         if message_type in {"tool.approve", "tool.reject"}:
             return Capability.TOOL_APPROVE
+        if message_type == "prolog.query":
+            return Capability.DAEMON_ADMIN
         raise AuthorizationDenied("unknown daemon message capability")
 
     def _ensure_principal_subscription(self, principal: PrincipalContext) -> None:
@@ -672,7 +674,8 @@ class SecureZaraZmqGateway(ZaraZmqGateway):
         replay_key = (principal_id, message.id)
         with self._lock:
             runtime_pending = (
-                message.type in {"turn.submit", "turn.cancel", "tool.approve", "tool.reject"}
+                message.type
+                in {"turn.submit", "turn.cancel", "tool.approve", "tool.reject", "prolog.query"}
                 and replay_key in self._inflight
             )
             if runtime_pending:

@@ -11,7 +11,13 @@ from zara.protocol_runtime import (
 )
 from zara.runtime import events
 from zara.runtime.bridge import EventEnvelope
-from zara.runtime.commands import ApproveTool, CancelTurn, RejectTool, SubmitTurn
+from zara.runtime.commands import (
+    ApproveTool,
+    CancelTurn,
+    RejectTool,
+    RunPrologQuery,
+    SubmitTurn,
+)
 
 
 def protocol_message(message_type: str, **overrides) -> ProtocolMessage:
@@ -58,6 +64,21 @@ def test_turn_cancel_preserves_canonical_turn_id():
     )
 
 
+def test_prolog_query_maps_to_bounded_runtime_command():
+    command = command_from_message(
+        protocol_message(
+            "prolog.query",
+            body={"goal": "member(X, [a,b])", "max_solutions": 12},
+        )
+    )
+
+    assert command == RunPrologQuery(
+        request_id="req-123",
+        goal="member(X, [a,b])",
+        max_solutions=12,
+    )
+
+
 @pytest.mark.parametrize(
     ("message_type", "body", "expected"),
     [
@@ -94,6 +115,9 @@ def test_tool_decisions_map_to_existing_runtime_commands(message_type, body, exp
         protocol_message("turn.submit", body={"text": "ok", "context_ids": "ctx"}),
         protocol_message("turn.submit", body={"text": "ok", "context_ids": ["ctx", 3]}),
         protocol_message("turn.cancel"),
+        protocol_message("prolog.query", body={"goal": "", "max_solutions": 1}),
+        protocol_message("prolog.query", body={"goal": "true", "max_solutions": 0}),
+        protocol_message("prolog.query", body={"goal": "true", "max_solutions": 101}),
     ],
 )
 def test_runtime_command_codec_fails_closed_on_unsupported_or_invalid_messages(message):

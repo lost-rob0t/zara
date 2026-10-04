@@ -141,6 +141,13 @@ class RuntimeBackend:
     async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
         raise UnsupportedRuntimeCommand("tool rejection is not available in this runtime backend")
 
+    async def query_prolog(
+        self,
+        goal: str,
+        max_solutions: int,
+    ) -> tuple[dict[str, Any], ...]:
+        raise UnsupportedRuntimeCommand("Prolog queries are not available in this runtime backend")
+
     async def stop(self) -> None:
         pass
 
@@ -396,6 +403,18 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             raise UnsupportedRuntimeCommand("tool rejection is not available in this runtime backend")
         await reject(tool_run_id, reason)
 
+    async def query_prolog(
+        self,
+        goal: str,
+        max_solutions: int,
+    ) -> tuple[dict[str, Any], ...]:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        engine = getattr(self._manager, "prolog_engine", None)
+        if engine is None:
+            raise UnsupportedRuntimeCommand("the running Zara backend has no Prolog engine")
+        return tuple(engine.query_all(goal, max_solutions=max_solutions))
+
     def register_tools(self, tools) -> None:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
@@ -614,6 +633,13 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     async def reject_tool(self, tool_run_id: str, reason: str = "") -> None:
         await self._delegate.reject_tool(tool_run_id, reason)
+
+    async def query_prolog(
+        self,
+        goal: str,
+        max_solutions: int,
+    ) -> tuple[dict[str, Any], ...]:
+        return await self._delegate.query_prolog(goal, max_solutions)
 
     async def stop(self) -> None:
         await self._delegate.stop()

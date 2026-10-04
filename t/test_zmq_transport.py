@@ -16,7 +16,9 @@ from zara.runtime.commands import (
     ApproveTool,
     CancelTurn,
     CommandReceipt,
+    PrologQueryReceipt,
     RejectTool,
+    RunPrologQuery,
     SubmitTurn,
 )
 from zara.server import PrincipalContext, ServerState
@@ -45,6 +47,13 @@ class FakeSupervisor:
             future.set_result(CommandReceipt(request_id=command.request_id, turn_id=command.turn_id))
         elif isinstance(command, (ApproveTool, RejectTool)):
             future.set_result(CommandReceipt(request_id=command.request_id))
+        elif isinstance(command, RunPrologQuery):
+            future.set_result(
+                PrologQueryReceipt(
+                    request_id=command.request_id,
+                    solutions=({"X": "alpha"}, {"X": "beta"}),
+                )
+            )
         else:
             future.set_exception(AssertionError(f"unexpected command: {command!r}"))
         return future
@@ -239,6 +248,18 @@ def test_client_handshake_ping_conversation_submit_cancel_and_runtime_event(
         request_id="request-cancel",
         turn_id="turn-canonical",
     )
+
+    query = RunPrologQuery(
+        request_id="request-query",
+        goal="member(X, [alpha,beta])",
+        max_solutions=2,
+    )
+    query_receipt = client.submit(query).result(timeout=1.0)
+    assert query_receipt == PrologQueryReceipt(
+        request_id="request-query",
+        solutions=({"X": "alpha"}, {"X": "beta"}),
+    )
+    assert supervisor.commands[-1] == (principal, query)
 
     supervisor.bus.publish(
         events.ResponseText(

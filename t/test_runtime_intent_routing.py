@@ -120,3 +120,19 @@ async def test_command_fails_closed_when_semantic_router_is_absent():
     assert result.response == DETERMINISTIC_COMMAND_UNAVAILABLE
     assert result.metadata["route"] == "deterministic_unavailable"
     manager.process_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ide_query_uses_manager_owned_prolog_engine():
+    manager = build_manager()
+    manager.prolog_engine.query_all.return_value = [{"X": "alpha"}, {"X": "beta"}]
+    backend = AgentRuntimeBackend(lambda: manager)
+    await backend.start()
+
+    solutions = await backend.query_prolog("member(X, [alpha,beta])", 2)
+
+    assert solutions == ({"X": "alpha"}, {"X": "beta"})
+    manager.prolog_engine.query_all.assert_called_once_with(
+        "member(X, [alpha,beta])",
+        max_solutions=2,
+    )

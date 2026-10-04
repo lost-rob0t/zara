@@ -31,9 +31,11 @@ from .commands import (
     CancelTurn,
     CommandReceipt,
     MuteSpeech,
+    PrologQueryReceipt,
     RejectTool,
     RestartRuntime,
     RuntimeCommand,
+    RunPrologQuery,
     ShutdownRuntime,
     StartVoice,
     StopVoice,
@@ -703,6 +705,16 @@ class RuntimeHost:
             if isinstance(command, RejectTool):
                 await self._require_backend().reject_tool(command.tool_run_id, command.reason)
                 return CommandReceipt(request_id=command.request_id, detail="tool rejected")
+            if isinstance(command, RunPrologQuery):
+                solutions = await self._require_backend().query_prolog(
+                    command.goal,
+                    command.max_solutions,
+                )
+                return PrologQueryReceipt(
+                    request_id=command.request_id,
+                    detail=f"{len(solutions)} solutions",
+                    solutions=solutions,
+                )
             if isinstance(command, RestartRuntime):
                 return await self._restart(command)
             if isinstance(command, ShutdownRuntime):
@@ -712,9 +724,12 @@ class RuntimeHost:
             raise
         except Exception as error:
             if not isinstance(command, SubmitTurn):
+                reason = str(error)
+                if isinstance(command, RunPrologQuery):
+                    reason = "Prolog query failed"
                 self._publisher(
                     events.RuntimeError(
-                        reason=str(error),
+                        reason=reason,
                         fatal=False,
                         label=type(command).__name__,
                     )
