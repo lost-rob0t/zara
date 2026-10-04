@@ -23,6 +23,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" tools:node="remove" />
 
     <queries>
+        <package android:name="ai.zara.llmserve" />
         <package android:name="com.sec.android.app.sbrowser" />
         <package android:name="com.android.chrome" />
         <package android:name="com.brave.browser" />
@@ -33,6 +34,9 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
     </queries>
 
     <application
@@ -41,6 +45,7 @@
         android:label="Zara"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+        android:networkSecurityConfig="@xml/local_network_security"
         android:allowBackup="false">
 
         <meta-data

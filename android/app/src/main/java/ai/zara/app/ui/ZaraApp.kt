@@ -1,6 +1,10 @@
 package ai.zara.app.ui
 
 import ai.zara.app.BuildConfig
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelProvider
+import ai.zara.app.localai.LocalModelSelection
+import ai.zara.app.localai.validOllamaModelName
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
@@ -207,6 +211,12 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    executionPolicy: ConversationExecutionPolicy = ConversationExecutionPolicy.STANDARD,
+    localModelSelection: LocalModelSelection = LocalModelSelection(),
+    localModelState: LocalAiState = LocalAiState(),
+    onSelectExecutionPolicy: (ConversationExecutionPolicy) -> Unit = {},
+    onSelectLocalModel: (LocalModelSelection) -> Unit = {},
+    onOpenLocalModelApp: () -> Unit = {},
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
         mutableStateOf(AppNavigation())
@@ -400,6 +410,12 @@ fun ZaraApp(
                                                 localServerState = localServerState,
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
+                                                executionPolicy = executionPolicy,
+                                                localModelSelection = localModelSelection,
+                                                localModelState = localModelState,
+                                                onSelectExecutionPolicy = onSelectExecutionPolicy,
+                                                onSelectLocalModel = onSelectLocalModel,
+                                                onOpenLocalModelApp = onOpenLocalModelApp,
                                                 localEmbedding = localEmbedding,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
@@ -1270,17 +1286,40 @@ private fun SettingsSurface(
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
+    executionPolicy: ConversationExecutionPolicy,
+    localModelSelection: LocalModelSelection,
+    localModelState: LocalAiState,
+    onSelectExecutionPolicy: (ConversationExecutionPolicy) -> Unit,
+    onSelectLocalModel: (LocalModelSelection) -> Unit,
+    onOpenLocalModelApp: () -> Unit,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
     var replacementServerPin by rememberSaveable { mutableStateOf("") }
     var showServerPinReplacement by rememberSaveable { mutableStateOf(false) }
     var showAssistantHelp by rememberSaveable { mutableStateOf(false) }
+    var ollamaModel by rememberSaveable(localModelSelection.modelName) {
+        mutableStateOf(localModelSelection.modelName)
+    }
     val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
         ScreenTitle(section.label, "Settings")
         when (section) {
             AppRoute.Runtime -> {
+                SectionCard("CONVERSATION MODE") {
+                    ConversationExecutionPolicy.entries.forEach { policy ->
+                        TextButton(
+                            onClick = { onSelectExecutionPolicy(policy) },
+                            enabled = !operationBusy,
+                        ) {
+                            Text((if (executionPolicy == policy) "● " else "○ ") +
+                                if (policy == ConversationExecutionPolicy.PURE_SYMBOLIC) {
+                                    "Pure symbolic · experts and Prolog only"
+                                } else "Standard · Prolog first, optional model")
+                        }
+                    }
+                    MutedNotice("Pure symbolic uses no language model or cloud provider. Android speech remains available through an installed offline TTS voice.")
+                }
                 SectionCard("LOCAL ZARA SERVER") {
                     KeyValueRow("state", localServerState.phase.name.lowercase())
                     KeyValueRow("generation", localServerState.generation.toString())
@@ -1329,6 +1368,27 @@ private fun SettingsSurface(
                     KeyValueRow("model", localEmbedding.modelVersion)
                     KeyValueRow("dimensions", localEmbedding.dimensions.toString())
                     MutedNotice("Runs fully on-device. Disabling it returns no vectors and prevents local semantic indexing.")
+                }
+                SectionCard("LOCAL LANGUAGE MODEL") {
+                    PrimaryAction("Open Zara LLM Serve", !operationBusy, onOpenLocalModelApp)
+                    KeyValueRow("selected", if (localModelSelection.provider == LocalModelProvider.OLLAMA) "Ollama on this device" else "Embedded LiteRT-LM")
+                    KeyValueRow("state", if (!executionPolicy.providersEnabled) "disabled by symbolic mode" else localModelState.phase.name.lowercase())
+                    localModelState.modelName?.let { KeyValueRow("model", it) }
+                    PrimaryAction("Use embedded model", !operationBusy) {
+                        onSelectLocalModel(LocalModelSelection())
+                    }
+                    OutlinedTextField(
+                        value = ollamaModel,
+                        onValueChange = { ollamaModel = it.take(256) },
+                        label = { Text("Installed Ollama model, e.g. gemma3:1b") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    PrimaryAction("Use Ollama on this device", !operationBusy && validOllamaModelName(ollamaModel.trim())) {
+                        onSelectLocalModel(LocalModelSelection(LocalModelProvider.OLLAMA, ollamaModel.trim()))
+                    }
+                    MutedNotice("Start a local Ollama service in its hosting app first. Zara connects only to 127.0.0.1:11434 and restores this selection on launch. The model must already be installed; Zara never downloads or sends this request to a cloud model.")
+                    localModelState.failure?.let { ErrorBanner(it) }
                 }
             }
             AppRoute.Permissions -> {

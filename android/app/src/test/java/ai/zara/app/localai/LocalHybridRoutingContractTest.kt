@@ -11,7 +11,8 @@ class LocalHybridRoutingContractTest {
 
         assertTrue(session.contains("LocalAiServiceClient"))
         assertTrue(session.contains("result.terms.isNotEmpty()"))
-        assertTrue(session.contains("localAi.generate"))
+        assertTrue(session.contains("val provider = selectedLocalProvider()"))
+        assertTrue(session.contains("provider.generate("))
         assertTrue(session.contains("LocalGenerationRequest"))
     }
 

@@ -21,6 +21,17 @@ import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
 import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.localai.LocalAiProviderRegistry
+import ai.zara.app.localai.LocalModelPreferenceStore
+import ai.zara.app.localai.LocalModelProvider
+import ai.zara.app.localai.LocalModelSelection
+import ai.zara.app.localai.OllamaLocalAiProvider
+import ai.zara.app.runtime.RuntimeStartupPolicy
+import ai.zara.app.ui.RuntimeModePreferenceStore
+import ai.zara.app.ui.ConversationExecutionPolicy
+import ai.zara.app.ui.ConversationExecutionPolicyStore
+import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
+import ai.zara.app.prolog.PureSymbolicTurnResult
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
@@ -108,13 +119,24 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     )
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
+    private val ollama = OllamaLocalAiProvider()
+    private val localProviders = LocalAiProviderRegistry(listOf(localAi, ollama))
+    private val localModelStore = LocalModelPreferenceStore(File(context.filesDir, "local-model.bin"))
+    @Volatile private var localModelSelection = localModelStore.load()
+    @Volatile private var startupLocalModel: CompletableFuture<LocalAiState>? = null
+    @Volatile private var executionPolicy = ConversationExecutionPolicyStore(
+        File(context.filesDir, "conversation-execution-policy.bin"),
+    ).load()
+    private val pureSymbolic by lazy { AndroidPureSymbolicConversationFactory.create(this) }
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
     @Volatile private var voiceStreamObserver: ((VoiceStreamState?, String?) -> Unit)? = null
     @Volatile private var runtimeStateObserver: ((RuntimeState) -> Unit)? = null
     @Volatile private var playbackRuntimeSessionId: String? = null
-    @Volatile private var runtimeMode: RuntimeMode = RuntimeMode.Auto
+    @Volatile private var runtimeMode: RuntimeMode = RuntimeModePreferenceStore(
+        File(context.filesDir, "runtime-mode.bin"),
+    ).load()
     private val telemetry = SessionTelemetry()
     @Volatile private var lastObservedRuntimeState: RuntimeState? = null
     private val voiceExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
@@ -257,9 +279,15 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         actor.setVoiceStreamFailureObserver(::reportVoiceStreamFailure)
         controller.setStateObserver(::observeRuntimeState)
         restoreRemoteSession(restored?.profile)
+        if (RuntimeStartupPolicy(runtimeMode, executionPolicy).loadLocalModel) {
+            startupLocalModel = prepareLocalModel().whenComplete { _, error ->
+                if (error != null) diagnostics.record("local_model.startup.unavailable", emptyMap(), error)
+            }
+        }
     }
 
     private fun restoreRemoteSession(profile: ServerProfile?) {
+        if (!RuntimeStartupPolicy(runtimeMode, executionPolicy).restoreRemote) return
         if (profile == null) return
         if (state().enrollment != EnrollmentReadiness.Ready) return
         telemetry.journal().record(
@@ -345,17 +373,52 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
     }
 
+    fun setExecutionPolicy(policy: ConversationExecutionPolicy) {
+        executionPolicy = policy
+        if (!policy.providersEnabled) {
+            controller.suspendRemoteForLocalMode()
+            localAi.cancelGeneration()
+            ollama.cancelGeneration()
+        }
+    }
+
+    fun submitPureSymbolicText(text: String, conversationId: String): CompletableFuture<PureSymbolicTurnResult> =
+        pureSymbolic.submit(text, conversationId)
+
+    fun localModelSelection(): LocalModelSelection = localModelSelection
+
+    fun selectLocalModel(selection: LocalModelSelection): CompletableFuture<LocalAiState> {
+        localAi.cancelGeneration()
+        ollama.cancelGeneration()
+        localModelStore.save(selection)
+        localModelSelection = selection
+        if (!executionPolicy.providersEnabled || runtimeMode == RuntimeMode.Remote) return localAiState()
+        return prepareLocalModel()
+    }
+
+    fun prepareLocalModel(): CompletableFuture<LocalAiState> = when (localModelSelection.provider) {
+        LocalModelProvider.EMBEDDED -> localAi.loadActiveModel()
+        LocalModelProvider.OLLAMA -> ollama.selectModel(localModelSelection.modelName, "")
+    }
+
+    private fun selectedLocalProvider() = localProviders.provider(
+        if (localModelSelection.provider == LocalModelProvider.OLLAMA) "ollama" else "embedded",
+    )
+
     fun localServerState(): LocalServerState = localServer.state()
 
     fun setLocalServerObserver(observer: ((LocalServerState) -> Unit)?) {
         localServer.setStateObserver(observer)
     }
 
-    fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
+    fun localAiState(): CompletableFuture<LocalAiState> {
+        val startup = startupLocalModel ?: return selectedLocalProvider().state()
+        return startup.handle { _, _ -> Unit }.thenCompose { selectedLocalProvider().state() }
+    }
 
     fun exportDiagnostics(): String {
         val server = localServer.state()
-        val aiFuture = localAi.state()
+        val aiFuture = localAiState()
         val aiState = if (
             aiFuture.isDone &&
             !aiFuture.isCompletedExceptionally &&
@@ -398,7 +461,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             localAiPhase = localAiPhase,
             localAiNote = localAiNote,
             localAiGeneration = if (runtimeMode == RuntimeMode.Remote) null else (aiState?.generation ?: -1),
-            localAiModel = aiState?.model?.let { "${it.id}@${it.version}" },
+            localAiModel = aiState?.model?.let { "${it.id}@${it.version}" } ?: aiState?.modelName,
             localServerPhase = server.phase.name.lowercase(),
             localServerGeneration = server.generation,
             localServerFailure = server.failure,
@@ -609,6 +672,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         localConversationId: String = "local-device",
         remoteConversationId: String? = null,
     ): CompletableFuture<TextTurnResult> {
+        if (!executionPolicy.providersEnabled) return submitPureSymbolicText(text, localConversationId).thenApply { it.turn }
         val remoteConnected = state().server is ServerConnection.Connected
         diagnostics.record(
             "text.submit",
@@ -712,6 +776,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         require(normalizedProjectId.isNotEmpty()) { "Project id is required" }
         require(normalizedProjectId.length <= 128) { "Project id is too long" }
         require(normalizedProjectId.none(Char::isISOControl)) { "Project id contains control characters" }
+        if (!executionPolicy.providersEnabled) return submitPureSymbolicText(text, localConversationId).thenApply { it.turn }
         val remoteConnected = state().server is ServerConnection.Connected
         return when (runtimeMode) {
             RuntimeMode.Local -> submitLocalText(text, localConversationId)
@@ -737,6 +802,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         text: String,
         conversationId: String = "local-device",
     ): CompletableFuture<TextTurnResult> {
+        if (!executionPolicy.providersEnabled) return submitPureSymbolicText(text, conversationId).thenApply { it.turn }
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic =
@@ -840,9 +906,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                 "local_server_phase" to localServer.state().phase.name.lowercase(),
             ),
         )
-        return localAi.generate(
+        val provider = selectedLocalProvider()
+        val ready = if (localModelSelection.provider == LocalModelProvider.OLLAMA &&
+            provider.state().getNow(LocalAiState()).phase != ai.zara.app.localai.LocalAiPhase.READY) {
+            prepareLocalModel()
+        } else CompletableFuture.completedFuture(LocalAiState())
+        return ready.thenCompose { provider.generate(
             LocalGenerationRequest(query, maxOutputTokens = 256),
-        ).handle { generated, error ->
+        ) }.handle { generated, error ->
             if (error != null || generated == null) {
                 val failure = error ?: IllegalStateException("Local model returned no generation result")
                 diagnostics.record(
@@ -1052,7 +1123,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             }
         }
         localServer.close()
-        localAi.close()
+        localProviders.close()
         if (routeFailure != null) throw routeFailure
     }
 }

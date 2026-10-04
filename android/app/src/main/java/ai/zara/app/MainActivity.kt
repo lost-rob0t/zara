@@ -4,7 +4,8 @@ import ai.zara.app.auth.PairingProgress
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStore
-import ai.zara.app.prolog.AndroidPureSymbolicConversationFactory
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelSelection
 import ai.zara.app.projects.ProjectContextStore
 import ai.zara.app.ui.ConversationExecutionPolicy
 import ai.zara.app.ui.ConversationExecutionPolicyController
@@ -158,8 +159,14 @@ class MainActivity : ComponentActivity() {
             store = ConversationExecutionPolicyStore(
                 File(filesDir, "conversation-execution-policy.bin"),
             ),
-            pureSymbolicSubmit = AndroidPureSymbolicConversationFactory.create(appSession)::submit,
+            pureSymbolicSubmit = appSession::submitPureSymbolicText,
         )
+        var executionPolicy by mutableStateOf(executionPolicyController.policy())
+        var localModelSelection by mutableStateOf(appSession.localModelSelection())
+        var localModelState by mutableStateOf(LocalAiState())
+        appSession.localAiState().whenComplete { state, _ ->
+            if (state != null) runOnUiThread { localModelState = state }
+        }
         if (conversationState.loadFailure == null && conversationState.selectedConversation == null) {
             try {
                 conversationStore.create(projectState.selectedProjectId)
@@ -235,6 +242,8 @@ class MainActivity : ComponentActivity() {
                         }
                         if (requestedPolicy != null) {
                             executionPolicyController.select(requestedPolicy)
+                            appSession.setExecutionPolicy(requestedPolicy)
+                            executionPolicy = requestedPolicy
                             val enabled = requestedPolicy == ConversationExecutionPolicy.PURE_SYMBOLIC
                             conversationState = conversationStore.completeTurn(
                                 conversationId = conversationId,
@@ -326,6 +335,41 @@ class MainActivity : ComponentActivity() {
                 changelogText = currentChangelog,
                 showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
+                executionPolicy = executionPolicy,
+                localModelSelection = localModelSelection,
+                localModelState = localModelState,
+                onOpenLocalModelApp = {
+                    val launch = packageManager.getLaunchIntentForPackage("ai.zara.llmserve")
+                    if (launch == null) {
+                        operationError = "Install Zara LLM Serve to manage an on-device model."
+                    } else startActivity(launch)
+                },
+                onSelectExecutionPolicy = { policy ->
+                    try {
+                        executionPolicyController.select(policy)
+                        appSession.setExecutionPolicy(policy)
+                        executionPolicy = policy
+                    } catch (error: Exception) {
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
+                onSelectLocalModel = { selection ->
+                    operationBusy = true
+                    operationError = null
+                    try {
+                        appSession.selectLocalModel(selection).whenComplete { state, error ->
+                            runOnUiThread {
+                                localModelSelection = appSession.localModelSelection()
+                                operationBusy = false
+                                if (state != null) localModelState = state
+                                if (error != null) operationError = "Local model unavailable. Start Ollama on this device or import a verified embedded model."
+                            }
+                        }
+                    } catch (error: Exception) {
+                        operationBusy = false
+                        operationError = UiOperationFailure.summarize(error)
+                    }
+                },
                 localEmbedding = localEmbedding,
                 projectState = projectState,
                 healthState = samsungHealthState,

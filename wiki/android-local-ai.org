@@ -124,3 +124,29 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 - Google LiteRT-LM Web API: https://developers.google.com/edge/litert-lm/js
 - Android =Voice.isNetworkConnectionRequired=: https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired()
 - sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
+
+* Local Ollama-compatible app
+
+Zara can also connect to an Ollama-compatible service on the same device at
+=http://127.0.0.1:11434=. Settings > Runtime exposes an installed model name
+and persists the selected local backend across launch and process restart.
+The connector refuses remote hosts, redirects, credentials in URLs, malformed
+model metadata and incomplete streams. It never downloads a model or falls
+back to a cloud provider. Model installation is owned by the app hosting the
+service, not by Zara's imported-model catalog.
+
+The separate =ai.zara.llmserve= APK is developed in PR #1404 on
+=release/0.3.0-alpha-llm-serve=. It reuses LiteRT-LM and serves an
+Ollama-compatible API; it is not upstream Ollama. Its =/api/tags= response
+includes explicit quantization metadata, which Zara accepts without requiring
+upstream Ollama's =/api/show= endpoint. Runtime's =Open Zara LLM Serve=
+action opens that installed app to import a verified =.litertlm= model and
+start its foreground service. Use the exact model name shown by its catalog,
+such as =zara-local:1=.
+
+Local mode does not restore a saved remote session. Pure symbolic execution
+is selectable in Runtime settings as well as through =/symbolic on= and
+=/symbolic off=. It routes typed chat, project chat and local assistant voice
+through the same zero-model Prolog controller. TTS remains the independent
+Android offline speech provider. Missing local models or a stopped local
+service produce a bounded unavailable response; Prolog remains usable.
