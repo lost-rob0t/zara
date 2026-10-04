@@ -99,6 +99,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Zara LLM Serve remembers an explicitly started local server and resumes it after device reboot or app relaunch. Stop disables automatic restart. A missing model now reports `waiting_for_model` instead of ready.
 - The active release line is `0.2.2-alpha`; immutable publication remains gated on exact-head CI, signing, provenance, and version promotion.
 - A validated `version.properties` promotion on `master` can publish the matching immutable alpha release, and an existing tag is accepted only when its source SHA and release manifest match the promoted build exactly.
 - Mutable `android-latest` remains a rolling test channel and is not treated as an immutable semantic release.

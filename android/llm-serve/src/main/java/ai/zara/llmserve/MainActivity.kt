@@ -24,6 +24,12 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         render()
+        if (getSharedPreferences(LlmServeService.PREFS, MODE_PRIVATE)
+            .getBoolean(LlmServeService.KEY_RESUME_ON_BOOT, false)) {
+            startForegroundService(Intent(this, LlmServeService::class.java).apply {
+                action = LlmServeService.ACTION_RESUME
+            })
+        }
     }
 
     override fun onResume() {
@@ -151,7 +157,7 @@ class MainActivity : Activity() {
 
         layout.addView(
             Button(this).apply {
-                text = "Start server"
+                text = "Start server · resume after reboot"
                 setOnClickListener {
                     startForegroundService(
                         Intent(
