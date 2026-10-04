@@ -441,6 +441,14 @@ class PrologEngine:
                         except Exception as error:
                             raise PrologQueryError(goal, error) from error
 
+    def resolve_voice_agent(self, input_text: str) -> Optional[Dict[str, Any]]:
+        """Classify a finalized utterance as data, never as an executable goal."""
+        if not isinstance(input_text, str) or not 0 < len(input_text) <= 12000:
+            raise ValueError("voice input must be a bounded non-empty string")
+        return self.query_once(
+            f"voice_agent:route({_prolog_string(input_text)}, Route, Argument)"
+        )
+
     def execute_command(self, input_text: str) -> bool:
         """Execute command_loop:handle_command/1."""
         goal = f"command_loop:handle_command({_prolog_string(input_text)})"

@@ -447,6 +447,9 @@ class RuntimeHost:
                 publisher=self._publisher,
                 principal_id=self._require_backend().principal_id,
                 max_concurrent=tasks_config["max_concurrent"],
+                max_queued=tasks_config.get("max_queued", 32),
+                max_subagents=tasks_config.get("max_subagents", 8),
+                max_depth=tasks_config.get("max_depth", 2),
                 default_max_task_steps=tasks_config["max_task_steps"],
                 wall_clock_seconds=tasks_config["wall_clock_minutes"] * 60.0,
                 step_log_chars=tasks_config["step_log_chars"],
@@ -455,6 +458,8 @@ class RuntimeHost:
             backend = self._require_backend()
             backend.register_tools(build_task_tools(runner))
             backend.bind_event_publisher(runner.observing_publisher(self._publisher))
+            if tasks_config.get("voice_agent", True):
+                backend.bind_task_runner(runner)
             self._task_runner = runner
             logger.info("[TaskRunner] started (max_concurrent=%d)", tasks_config["max_concurrent"])
         except Exception as error:
@@ -477,6 +482,7 @@ class RuntimeHost:
             from zara.agent.tools.builtin_tools import TASK_TOOL_NAMES
             backend = self._backend
             if backend is not None:
+                backend.bind_task_runner(None)
                 backend.unregister_tools(list(TASK_TOOL_NAMES))
                 backend.bind_event_publisher(self._publisher)
         except Exception:
@@ -513,6 +519,8 @@ class RuntimeHost:
         return reply.turn_id
 
     async def _cancel_task_turn(self, turn_id: str) -> None:
+        self._invalidate_turn_capability_lease(turn_id)
+        self._cancel_plugin_capability_turn(turn_id)
         try:
             await self._coordinator_ask(ActorCancelTurn(turn_id=turn_id))
         except Exception:
@@ -521,8 +529,6 @@ class RuntimeHost:
                 turn_id,
                 exc_info=True,
             )
-        self._invalidate_turn_capability_lease(turn_id)
-        self._cancel_plugin_capability_turn(turn_id)
         backend = self._backend
         if backend is not None:
             try:

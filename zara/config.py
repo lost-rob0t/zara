@@ -191,7 +191,11 @@ max_pending = 8
 [tasks]
 # Long-horizon agent tasks executed as bounded conversation turns.
 enabled = false
+voice_agent = true
 max_concurrent = 2
+max_queued = 32
+max_subagents = 8
+max_depth = 2
 max_task_steps = 20
 wall_clock_minutes = 30.0
 step_log_chars = 2000
@@ -466,6 +470,12 @@ class ZaraConfig:
             raise ConfigError("Invalid [tasks] configuration: expected a TOML table")
         if not isinstance(tasks_config.get("enabled", False), bool):
             raise ConfigError("tasks.enabled must be true or false")
+        if not isinstance(tasks_config.get("voice_agent", True), bool):
+            raise ConfigError("tasks.voice_agent must be true or false")
+        for key, default, maximum in (("max_queued", 32, 1024), ("max_subagents", 8, 64), ("max_depth", 2, 8)):
+            value = tasks_config.get(key, default)
+            if type(value) is not int or not 1 <= value <= maximum:
+                raise ConfigError(f"tasks.{key} must be an integer from 1 to {maximum}")
         max_concurrent = tasks_config.get("max_concurrent", 2)
         if (
             isinstance(max_concurrent, bool)
@@ -797,7 +807,11 @@ class ZaraConfig:
         tasks_config = self.get_section("tasks")
         return {
             "enabled": bool(tasks_config.get("enabled", False)),
+            "voice_agent": bool(tasks_config.get("voice_agent", True)),
             "max_concurrent": int(tasks_config.get("max_concurrent", 2)),
+            "max_queued": int(tasks_config.get("max_queued", 32)),
+            "max_subagents": int(tasks_config.get("max_subagents", 8)),
+            "max_depth": int(tasks_config.get("max_depth", 2)),
             "max_task_steps": int(tasks_config.get("max_task_steps", 20)),
             "wall_clock_minutes": float(tasks_config.get("wall_clock_minutes", 30.0)),
             "step_log_chars": int(tasks_config.get("step_log_chars", 2000)),
