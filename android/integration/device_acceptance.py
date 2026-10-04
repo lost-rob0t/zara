@@ -113,52 +113,83 @@ class Device:
 
     @staticmethod
     def bounds(node) -> tuple[int, int, int, int]:
-        values = [int(value) for value in re.findall(r"\d+", node.attrib["bounds"])]
+        values = [int(value) for value in re.findall(r"-?\d+", node.attrib["bounds"])]
         if len(values) != 4:
             raise AssertionError(f"Malformed bounds: {node.attrib.get('bounds')}")
         return tuple(values)
 
-    def reveal(self, label: str) -> None:
+    def _locate_control(self, label: str, width: int, height: int):
+        nodes = list(self.nodes())
+        clipped = (None, (0, 0, width, height))
+        for node in nodes:
+            if label not in (node.get("text"), node.get("content-desc")):
+                continue
+            left, top, right, bottom = 0, 0, width, height
+            for container in nodes:
+                is_scroll_view = container.get("class") in (
+                    "android.widget.ScrollView", "android.widget.HorizontalScrollView",
+                ) or container.get("scrollable") == "true"
+                if not is_scroll_view or container is node:
+                    continue
+                if not any(child is node for child in container.iter("node")):
+                    continue
+                scroll_left, scroll_top, scroll_right, scroll_bottom = self.bounds(container)
+                left, top = max(left, scroll_left), max(top, scroll_top)
+                right, bottom = min(right, scroll_right), min(bottom, scroll_bottom)
+            viewport = (left, top, right, bottom)
+            if self._center_visible(node, viewport):
+                return node, viewport
+            if clipped[0] is None:
+                clipped = (node, viewport)
+        return clipped
+
+    @classmethod
+    def _center_visible(cls, node, viewport) -> bool:
+        left, top, right, bottom = cls.bounds(node)
+        x, y = (left + right) // 2, (top + bottom) // 2
+        view_left, view_top, view_right, view_bottom = viewport
+        return (
+            right > left and bottom > top
+            and view_left < x < view_right and view_top < y < view_bottom
+        )
+
+    def _reveal_control(self, label: str, *, horizontal: bool) -> None:
         width, height = self.size()
-        for direction in (1, -1):
-            for _ in range(6):
-                if self.find(label) is not None:
-                    return
-                start, end = (height * 3 // 4, height // 3)
-                if direction < 0:
-                    start, end = end, start
-                self.adb(
-                    "shell",
-                    "input",
-                    "swipe",
-                    str(width // 3),
-                    str(start),
-                    str(width // 3),
-                    str(end),
-                    "250",
-                )
+        max_swipes = 16 if horizontal else 12
+        for attempt in range(max_swipes + 1):
+            node, viewport = self._locate_control(label, width, height)
+            if node is not None and self._center_visible(node, viewport):
+                return
+            if attempt == max_swipes:
+                break
+            left, top, right, bottom = viewport
+            if right <= left or bottom <= top:
+                raise AssertionError(f"Control has no visible scroll viewport: {label}")
+            direction = 1 if attempt < max_swipes // 2 else -1
+            if node is not None:
+                node_left, node_top, node_right, node_bottom = self.bounds(node)
+                center = (node_left + node_right) // 2 if horizontal else (node_top + node_bottom) // 2
+                edge = left if horizontal else top
+                direction = -1 if center <= edge else 1
+            if horizontal:
+                start, end = left + (right - left) * 4 // 5, left + (right - left) // 5
+                y = top + (bottom - top) // 2 if node is not None else max(120, height // 8)
+                coordinates = (start, y, end, y)
+            else:
+                start, end = top + (bottom - top) * 3 // 4, top + (bottom - top) // 3
+                x = left + (right - left) // 3
+                coordinates = (x, start, x, end)
+            if direction < 0:
+                coordinates = (*coordinates[2:], *coordinates[:2])
+            duration = "220" if horizontal else "250"
+            self.adb("shell", "input", "swipe", *(str(value) for value in coordinates), duration)
         raise AssertionError(f"Control is not reachable after scrolling: {label}")
 
+    def reveal(self, label: str) -> None:
+        self._reveal_control(label, horizontal=False)
+
     def reveal_horizontal(self, label: str) -> None:
-        width, height = self.size()
-        for direction in (1, -1):
-            for _ in range(8):
-                if self.find(label) is not None:
-                    return
-                start, end = (width * 4 // 5, width // 5)
-                if direction < 0:
-                    start, end = end, start
-                self.adb(
-                    "shell",
-                    "input",
-                    "swipe",
-                    str(start),
-                    str(max(120, height // 8)),
-                    str(end),
-                    str(max(120, height // 8)),
-                    "220",
-                )
-        raise AssertionError(f"Tab is not reachable after horizontal scrolling: {label}")
+        self._reveal_control(label, horizontal=True)
 
     def tap(self, label: str) -> None:
         self.reveal(label)
@@ -169,12 +200,15 @@ class Device:
         self._tap_found(label)
 
     def _tap_found(self, label: str) -> None:
-        node = self.find(label)
+        width, height = self.size()
+        node, viewport = self._locate_control(label, width, height)
         if node is None:
             raise AssertionError(f"Control is not reachable: {label}")
         left, top, right, bottom = self.bounds(node)
         if right <= left or bottom <= top:
             raise AssertionError(f"Control has empty bounds: {label}")
+        if not self._center_visible(node, viewport):
+            raise AssertionError(f"Control is no longer visible: {label}")
         self.adb(
             "shell",
             "input",
