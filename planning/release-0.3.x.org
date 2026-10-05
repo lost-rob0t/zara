@@ -1,0 +1,129 @@
+#+title: Zara 0.3.x Release Train
+#+startup: overview
+
+* Freeze
+- branch :: =release/0.3.x=
+- frozen_from :: =master@4a7ad7673910e901a09a9e79c81e60bd2aeed8aa=
+- frozen_at :: 2026-09-21
+- source_version :: =0.2.2-alpha=
+- android_version_code :: =4=
+- release_target_at_freeze :: =0.2.2-alpha=
+- release_target_android_code_at_freeze :: =4=
+- policy :: Integration/stabilization first. Do not promote version context until the integrated candidate is exact-head green.
+
+* Selection rules
+1. Only PRs in the frozen slate merge to =release/0.3.x= without an explicit release-blocker justification.
+2. Every candidate rebases/merges the frozen branch before final review.
+3. Focused red/green tests precede the full repository gate.
+4. Exact candidate SHA must pass required GitHub Actions. Stale green runs do not count.
+5. User-visible changes update =CHANGELOG.md= in the same PR.
+6. No immutable tag or release publication until the integrated candidate is approved and version context is promoted.
+7. Feature expansion outside the slate stays on =master= unless it becomes a release blocker.
+
+* AGENTIC-15 lanes
+
+** Lane 01 — Runtime spine [HIGH RISK]
+- PR :: #1049
+- title :: feat(runtime): backend-neutral runtime + optional Prolog-RLM
+- goal :: establish the 0.3.x backend-neutral runtime contract without breaking Python/plugin fallback paths.
+- gate :: focused runtime/Prolog tests, full suite, exact-head CI.
+
+** Lane 02 — Android symbolic dialogue [HIGH RISK]
+- PR :: #1282
+- title :: feat(android): run natural turns through canonical symbolic dialogue
+- goal :: make Android natural turns use canonical symbolic dialogue and preserve cross-client semantics.
+- gate :: Android symbolic fixtures, lifecycle/restart cases, full suite, exact-head CI.
+
+** Lane 03 — Local semantic core
+- PR :: #1384
+- title :: fix(android): make Local natural-language mode use portable semantic core
+- goal :: make local natural-language mode portable and model-optional.
+
+** Lane 04 — Local LLM controls
+- PR :: #1381
+- title :: Android: fix Settings UX and land full local LLM controls
+- goal :: expose honest local model/runtime controls and degraded state.
+
+** Lane 05 — Plugin UX
+- PR :: #1387
+- title :: feat(android): wire Plugins settings catalog and APK install UI
+- goal :: ship the Android plugin catalog/install surface with explicit state and permissions.
+
+** Lane 06 — Voice authority
+- PR :: #1383
+- title :: Voice Expert: Prolog voice authority + yt-dlp/Qwen3 tools
+- goal :: preserve Prolog-first voice authority and bounded model/tool use.
+
+** Lane 07 — Turn ordering
+- PR :: #1397
+- title :: fix(transport): flush turn events only after turn.accepted reaches the wire
+- goal :: make turn acceptance ordering deterministic across transports.
+
+** Lane 08 — Edge symbolic restart continuity
+- PR :: #1405
+- title :: fix(edge): keep repeated symbolic refs readable after restart
+- goal :: keep symbolic references stable/readable across restart.
+
+** Lane 09 — Emacs replay atomicity
+- PR :: #1399
+- title :: fix(emacs): make symbolic replay rejection presentation-atomic
+- goal :: keep native Emacs symbolic replay presentation atomic on rejection.
+
+** Lane 10 — Android toolchain reproducibility
+- PR :: #1271
+- title :: fix(android): project the pinned CI android toolchain shell into the root flake
+- goal :: make the root dev shell and CI use the same pinned Android toolchain.
+
+** Lane 11 — Android visual regression gate
+- PR :: #1328
+- title :: fix(android): catch blank conversation overflow surfaces in CI
+- goal :: catch blank/overflow conversation regressions before merge.
+
+** Lane 12 — Coverage ratchet
+- PR :: #1307
+- title :: ci: ratchet line, branch, and total coverage on every branch
+- goal :: prevent 0.3.x integration from silently losing tested behavior.
+
+** Lane 13 — Verification protocol
+- PR :: #1336
+- title :: feat(verify): ZARA-VERIFY/1 spec, verifier expert and mandatory OpenCode gate
+- goal :: bind implementation claims to machine-checkable verification evidence.
+
+** Lane 14 — Versioned release verification
+- PR :: #1407
+- supersedes :: #1060 (auto-merge was removed because its exact head CI failed)
+- title :: [0.3.x lane 14] verify every versioned release and canonical changelog
+- goal :: prove immutable release provenance and canonical changelog generation.
+
+** Lane 15 — Android updater
+- PR :: #943
+- title :: Android updater: version picker + verified green-master updates
+- goal :: make update selection explicit and provenance-aware without conflating =android-latest= with immutable releases.
+
+* Explicitly outside the initial freeze
+These remain on =master= unless they become blockers:
+- #1393 Prolog-governed Android ADB + vision control
+- #1401 philosophy KB and addressable agent profiles
+- #1382 commerce/preference policy
+- #1378 StarFunds/Renko finance work
+- #1375 autonomous Zara fork foundation
+- #1326 standalone version bump (superseded by integrated-candidate version promotion discipline)
+
+* Merge order
+1. Toolchain/test/verification gates: #1271 #1328 #1307 #1336
+2. Runtime/transport correctness: #1397 #1405 #1399 #1049
+3. Android semantic/local stack: #1384 #1282 #1381
+4. Product surfaces: #1387 #1383
+5. Release/update path: #1407 #943
+6. Resolve strict version context, promote target/current version on the integrated candidate, rerun every exact-head release gate, then consider tagging.
+
+* Release gate
+At the final integrated head, run the repository-prescribed gates:
+- =nix develop -c bash scripts/test-all.sh=
+- =nix flake check=
+- =nix build=
+- =nix develop ./android -c bash scripts/test-android-release.sh=
+- exact-head GitHub Actions green
+- unresolved review threads = 0
+- release candidate changelog section present
+- downloaded artifact provenance/signing checks pass before hardware acceptance

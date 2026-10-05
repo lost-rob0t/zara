@@ -13,6 +13,7 @@ on:
       - setup.py
       - android/app/build.gradle.kts
       - android/code-editor/build.gradle.kts
+      - android/llm-serve/build.gradle.kts
       - android/termux-bridge/build.gradle.kts
       - android/wear-app/build.gradle.kts
       - android/wear-voice/build.gradle.kts
@@ -151,10 +152,13 @@ jobs:
           mkdir -p dist
           apk="dist/zara-android-${VERSION}.apk"
           code_editor_apk="dist/zara-code-editor-${VERSION}.apk"
+          llm_serve_apk="dist/zara-llm-serve-${VERSION}.apk"
           cp android/app/build/outputs/apk/debug/app-debug.apk "$apk"
           cp android/code-editor/build/outputs/apk/debug/code-editor-debug.apk "$code_editor_apk"
+          cp android/llm-serve/build/outputs/apk/debug/llm-serve-debug.apk "$llm_serve_apk"
           sha256sum "$apk" > "${apk}.sha256"
           sha256sum "$code_editor_apk" > "${code_editor_apk}.sha256"
+          sha256sum "$llm_serve_apk" > "${llm_serve_apk}.sha256"
           {
             echo "schema=1"
             echo "source_sha=${GITHUB_SHA}"
@@ -171,6 +175,14 @@ jobs:
             echo "apk=$(basename "$code_editor_apk")"
             echo "apk_sha256=$(sha256sum "$code_editor_apk" | awk '{print $1}')"
           } > "dist/zara-code-editor-${VERSION}.manifest.txt"
+          {
+            echo "schema=1"
+            echo "source_sha=${GITHUB_SHA}"
+            echo "version_name=${VERSION}"
+            echo "version_code=${VERSION_CODE}"
+            echo "apk=$(basename "$llm_serve_apk")"
+            echo "apk_sha256=$(sha256sum "$llm_serve_apk" | awk '{print $1}')"
+          } > "dist/zara-llm-serve-${VERSION}.manifest.txt"
 
           extra_modules=("termux-bridge" "wear" "wear-voice")
           extra_sources=("termux-bridge/build/outputs/apk/debug/termux-bridge-debug.apk" "wear-app/build/outputs/apk/debug/wear-app-debug.apk" "wear-voice/build/outputs/apk/debug/wear-voice-debug.apk")
@@ -216,14 +228,18 @@ jobs:
           echo "manifest=dist/zara-android-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
           echo "code_editor_apk=$code_editor_apk" >> "$GITHUB_OUTPUT"
           echo "code_editor_manifest=dist/zara-code-editor-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
+          echo "llm_serve_apk=$llm_serve_apk" >> "$GITHUB_OUTPUT"
+          echo "llm_serve_manifest=dist/zara-llm-serve-${VERSION}.manifest.txt" >> "$GITHUB_OUTPUT"
 
       - name: Verify update-compatible Android signing certificates
         env:
           APK: ${{ steps.artifact.outputs.apk }}
           CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
+          LLM_SERVE_APK: ${{ steps.artifact.outputs.llm_serve_apk }}
         run: |
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$APK"
           nix develop ./android -c bash scripts/check-android-apk-signer.sh "$CODE_EDITOR_APK"
+          nix develop ./android -c bash scripts/check-android-apk-signer.sh "$LLM_SERVE_APK"
           for extra_apk in \
             "dist/zara-termux-bridge-${{ needs.validate-version-context.outputs.version }}.apk" \
             "dist/zara-wear-${{ needs.validate-version-context.outputs.version }}.apk" \
@@ -256,6 +272,8 @@ jobs:
           MANIFEST: ${{ steps.artifact.outputs.manifest }}
           CODE_EDITOR_APK: ${{ steps.artifact.outputs.code_editor_apk }}
           CODE_EDITOR_MANIFEST: ${{ steps.artifact.outputs.code_editor_manifest }}
+          LLM_SERVE_APK: ${{ steps.artifact.outputs.llm_serve_apk }}
+          LLM_SERVE_MANIFEST: ${{ steps.artifact.outputs.llm_serve_manifest }}
         shell: bash
         run: |
           set -euo pipefail
@@ -287,6 +305,9 @@ jobs:
                 "$(basename "$CODE_EDITOR_APK")" \
                 "$(basename "${CODE_EDITOR_APK}.sha256")" \
                 "$(basename "$CODE_EDITOR_MANIFEST")" \
+                "$(basename "$LLM_SERVE_APK")" \
+                "$(basename "${LLM_SERVE_APK}.sha256")" \
+                "$(basename "$LLM_SERVE_MANIFEST")" \
                 "${extra_assets[@]##*/}" \
                 "${org_assets[@]##*/}"
               do
@@ -304,6 +325,7 @@ jobs:
               for manifest_entry in \
                 "$(basename "$MANIFEST")" \
                 "$(basename "$CODE_EDITOR_MANIFEST")" \
+                "$(basename "$LLM_SERVE_MANIFEST")" \
                 "${extra_assets[@]##*/}" \
                 "${org_assets[@]##*/}"; do
                 case "$manifest_entry" in *.manifest.txt) ;; *) continue ;; esac
@@ -344,8 +366,11 @@ jobs:
             "$CODE_EDITOR_APK" \
             "${CODE_EDITOR_APK}.sha256" \
             "$CODE_EDITOR_MANIFEST" \
+            "$LLM_SERVE_APK" \
+            "${LLM_SERVE_APK}.sha256" \
+            "$LLM_SERVE_MANIFEST" \
             "${extra_assets[@]}" \
             "${org_assets[@]}" \
             --target "$GITHUB_SHA" \
             --title "Zara $TAG" \
-            --notes "Zara Android release containing every installable app: phone, Code Editor, Termux bridge, Wear, Wear Voice, and one standalone APK per Org app system (Org flagship, Editor, Todo, Reminder, Timer, Roam, Graph, Home). These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Verify each APK with its accompanying SHA-256 file and provenance manifest. Source commit: $GITHUB_SHA"
+            --notes "Zara Android release containing every installable app: phone, Code Editor, LLM Serve, Termux bridge, Wear, Wear Voice, and one standalone APK per Org app system (Org flagship, Editor, Todo, Reminder, Timer, Roam, Graph, Home). These are debug-signed APKs intended for direct sideloading/testing, not production Play Store builds. Verify each APK with its accompanying SHA-256 file and provenance manifest. Source commit: $GITHUB_SHA"

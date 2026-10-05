@@ -29,6 +29,8 @@ class AndroidPrologStudioContractTest {
             .substringBefore("private fun submitLocalText")
 
         assertTrue(session.contains("LocalZaraServer("))
+        assertTrue(submit.contains("RuntimeMode.Symbolic -> return submitLocalText("))
+        assertTrue(submit.contains("allowModelFallback = false"))
         assertTrue(submit.contains("RuntimeMode.Local -> return submitLocalText(text, localConversationId)"))
         assertTrue(submit.contains("RuntimeMode.Auto -> return submitAutoRemoteFirst("))
         assertTrue(submit.contains("localConversationId = localConversationId"))

@@ -82,7 +82,44 @@ class ZaraVoiceInteractionSession(
         super.onShow(args, showFlags)
         invocationGate.show()
         appSession.assessAssistantRole()
-        updateStatus("Hold to talk to Zara")
+        beginAutomaticCapture()
+    }
+
+    private fun beginAutomaticCapture() {
+        val permissionGranted =
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        when (
+            val plan = planAssistantCapture(
+                mode = appSession.runtimeMode(),
+                localState = appSession.localServerState(),
+                runtimeState = appSession.state(),
+                remoteModelReady = appSession.cloudModelReady(),
+            )
+        ) {
+            AssistantCapturePlan.Local -> {
+                captureBackend = CaptureBackend.Local
+                try {
+                    localVoice.start(permissionGranted)
+                    updateStatus("Listening locally…")
+                } catch (error: Throwable) {
+                    captureBackend = null
+                    updateStatus("Voice unavailable: ${UiOperationFailure.summarize(error)}")
+                }
+            }
+            AssistantCapturePlan.Remote -> {
+                captureBackend = CaptureBackend.Local
+                try {
+                    localVoice.start(permissionGranted)
+                    updateStatus("Listening locally…")
+                } catch (_: Throwable) {
+                    captureBackend = null
+                    updateStatus("Hold to talk to Zara")
+                }
+            }
+            is AssistantCapturePlan.Reject ->
+                updateStatus("Voice unavailable: ${plan.reason}")
+        }
     }
 
     override fun onHide() {
@@ -111,6 +148,7 @@ class ZaraVoiceInteractionSession(
                 mode = appSession.runtimeMode(),
                 localState = appSession.localServerState(),
                 runtimeState = appSession.state(),
+                remoteModelReady = appSession.cloudModelReady(),
             )
         ) {
             AssistantCapturePlan.Local -> beginLocalPushToTalk(permissionGranted)

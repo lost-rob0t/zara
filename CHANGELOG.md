@@ -9,10 +9,17 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - Zara Desktop now includes a full Prolog IDE workspace with approved-source navigation, syntax highlighting, dirty and cursor state, bounded find/replace, validation diagnostics, guided fact management, and a query console with history, bounded results, and honest stale-result cancellation. IDE queries use the canonical runtime through an admin-gated ZARA/1 command instead of creating a second Prolog engine or blocking Qt's main thread.
 - Zara Desktop now mirrors the Android app's design language: Outrun is the default, the Android Outrun, StarIntel, Midnight, Terminal, and Light themes are available in desktop settings, and chat, history, composer, status, tool activity, and Org surfaces share the same semantic colors, borders, spacing, and rounded hierarchy. Existing desktop themes remain selectable.
 
+### Fixed
+
+- Security management with an explicit state directory now targets that directory's live Zara daemon instead of an unrelated daemon on the default runtime socket.
+
 ## 0.4.0-alpha
 
 ### Changed
 
+- Android adds an explicit Symbolic-only mode that keeps Prolog, tools, and the KB active while forbidding local-model and remote-provider inference; Local mode remains Prolog-first with optional on-device LLM fallback.
+- Android system-assistant invocation now requests the Assistant role through RoleManager and automatically attempts on-device speech recognition for the selected Symbolic/Local/Auto/Remote route, with the existing remote push-to-talk stream retained as fallback; explicit Remote mode can use local STT/TTS around an enabled OpenRouter or OpenAI-compatible model profile when no Zara server session is active.
+- Runtime settings now configure OpenRouter or generic OpenAI-compatible HTTPS model APIs with explicit endpoint/model selection and Android-Keystore-wrapped credentials; remote model APIs are only used by explicit Remote routing.
 - The Org app fleet now renders on the canonical Zara semantic token layer: the Outrun theme's near-black ground with restrained magenta/cyan accents, thin luminous panel outlines, and small status lights for workspace connection, reminder urgency, and timer state. No Org surface hard-codes theme colors, so the whole fleet inherits the shared theme system (Outrun, StarIntel, Midnight, Terminal, Light, System) without divergent implementations.
 
 ### Fixed
@@ -45,8 +52,11 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android local-model settings preserve the canonical session diagnostics, remote recovery telemetry, and actionable Retry/Reconnect/Diagnostics failure card.
+- Standalone LLM Serve APK builds now include the shared Kotlin inference sources through the Android plugin's Kotlin source set and guard nullable model-import intents before dispatch.
 - Android embedding preferences now use one application-owned path with recoverable storage errors. Existing directories no longer cause saves to fail, valid legacy settings remain active when migration cannot finish, and file-access or cleanup failures are reported instead of escaping to the UI as crashes.
 - Desktop pure-symbolic project switches now fence stale clarification, discourse, expert, and verified-fact context before the next turn, matching project-scoped Android semantics without enabling provider or model fallback.
+- Native Emacs symbolic replay now validates provider/model hard-zero state before replacing the live transcript, so a rejected replay leaves the visible presentation and cached symbolic status untouched.
 - Android remote sessions no longer break after a successful voice turn: the client now decodes the server's `voice.speech.started`/`voice.speech.ended` markers and the legal `turn.cancelled`/`runtime.error`/`runtime.stopped` lifecycle messages it previously rejected as protocol errors, and interleaved text frames no longer kill the voice stream.
 - A failed remote frame can no longer leave Android in a fake-connected state: voice pump death and session-desyncing protocol/transport failures now collapse the connection with a typed reason and drive the existing bounded reconnect.
 - Android restores a persisted remote session on launch with `session.restore` telemetry instead of silently staying disconnected after process recreation.
@@ -55,6 +65,9 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- A standalone Zara LLM Serve APK provides loopback-only, bounded Ollama-compatible inference endpoints using Zara's existing local-model store and actor-owned inference runtime, with explicit model metadata and SHA-256-verified private imports.
+- Android Runtime & local AI settings can now import SHA-256-verified app-private LiteRT-LM models, list installed models, select/load them, unload model memory, and inspect the active model/backend/context without leaving Local mode.
+- Android Settings now uses a grouped overview with focused child screens instead of an eight-item horizontal tab strip, while Chat and Workspace retain their compact tab navigation.
 - Zara can now control an explicitly authorized Android ADB target from Desktop and Android through bounded Prolog actions; Desktop can capture PNG screenshots/UI hierarchies for multimodal observe→act→verify control, while all state-changing ADB tools remain typed and approval-gated instead of exposing arbitrary shell commands.
 - Android emits typed, correlation-aware telemetry events (`remote.*`, `protocol.*`, `voice.*`, `session.restore.*`) with monotonic sequences, generation fencing, and metadata-only protocol message records, so no connected-to-disconnected transition is unexplained.
 - `ZARA-LOCAL-DIAGNOSTICS/2` incident bundle (text + canonical JSON) with a retained primary-failure block, remote/protocol context, voice pipeline stage states with explicit `not_applicable` semantics, and a correlated ordered timeline; pasting it into a bug report or AI chat identifies the failed subsystem, operation, typed code, last-good step, and correlation ids.

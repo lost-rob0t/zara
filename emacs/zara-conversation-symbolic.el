@@ -181,6 +181,19 @@ persisted projection while any present non-null value is validated strictly."
          nil
        (zara-conversation-symbolic--validate-projection projection)))))
 
+(defun zara-conversation-symbolic--validate-before-replay-render (payload)
+  "Validate PAYLOAD's symbolic projection before transcript presentation mutates.
+
+Validation reuses the canonical replay-adoption contract but restores the
+current ephemeral projection on every path.  The real adoption still happens
+after a successful transcript render, so this guard adds no competing state
+owner and invalid pure-symbolic state fails before visible replay changes."
+  (let ((previous zara-conversation-symbolic-projection))
+    (unwind-protect
+        (zara-conversation-symbolic--adopt-replay-payload
+         payload (zara-conversation--current-id))
+      (setq-local zara-conversation-symbolic-projection previous))))
+
 (defun zara-conversation-symbolic--projection-value (key)
   "Return KEY from the cached projection, normalizing JSON null to nil."
   (when zara-conversation-symbolic-projection
@@ -319,17 +332,36 @@ model, expert, effect executor, or alternate history/state owner."
 
 ;;;###autoload
 (defun zara-conversation-symbolic-replay ()
-  "Replay canonical transcript, then refresh persisted symbolic presentation state."
+  "Replay one canonical transcript/symbolic snapshot into the Emacs surface.
+
+`zara-conversation-replay' already validates and adopts the symbolic projection
+from the same canonical replay payload after rendering.  Reuse that adopted
+projection instead of issuing a second store read that could race a newer turn
+or project generation and make transcript and symbolic status disagree."
   (interactive)
   (zara-conversation-replay)
-  (zara-conversation-symbolic-refresh-status))
+  zara-conversation-symbolic-projection)
 
 (defun zara-conversation-symbolic--clear-after-switch (&rest _ignored)
   "Fence cached project/discourse status after a conversation switch."
   (setq-local zara-conversation-symbolic-projection nil))
 
+(defun zara-conversation-symbolic--clear-context-after-replay (&rest _ignored)
+  "Fence ephemeral context refs after a successful canonical replay.
+
+A replay may adopt a newer transcript/symbolic snapshot for the same canonical
+conversation.  Context refs are presentation-local selectors, so keeping refs
+from the prior snapshot could make the next follow-up target stale evidence.
+This :after advice runs only when replay returns successfully; failed replay
+leaves the current presentation refs untouched."
+  (setq-local zara-conversation-context-ids nil))
+
+(advice-add 'zara-conversation--render-replay :before
+            #'zara-conversation-symbolic--validate-before-replay-render)
 (advice-add 'zara-conversation-switch :after
             #'zara-conversation-symbolic--clear-after-switch)
+(advice-add 'zara-conversation-replay :after
+            #'zara-conversation-symbolic--clear-context-after-replay)
 
 (provide 'zara-conversation-symbolic)
 ;;; zara-conversation-symbolic.el ends here

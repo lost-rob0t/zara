@@ -294,7 +294,6 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
         registry,
         allowed=("provider.read",),
         invoker=invoke,
-        lifecycle_timeout=0.1,
     )
     await manager.start()
     handle = manager._resolve_capability("consumer", "provider.read")
@@ -312,6 +311,10 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
     invocation = asyncio.create_task(asyncio.to_thread(invoke_bound))
     assert await asyncio.to_thread(invocation_started.wait, 1.0)
 
+    # Startup uses the normal lifecycle budget. This assertion targets only the
+    # stop/drain deadline; shrinking the budget before start made plugin tool
+    # registration scheduler-sensitive under the adversarial hash-seed jobs.
+    manager._lifecycle_timeout = 0.1
     stop_task = asyncio.create_task(manager.stop())
     try:
         await asyncio.wait_for(asyncio.shield(stop_task), timeout=0.5)
@@ -331,6 +334,7 @@ async def test_stop_times_out_blocking_composed_invocation_and_fences_late_resul
     release_invocation.set()
     with pytest.raises(RuntimeError, match="cancelled|stale"):
         await invocation
+
 
 @pytest.mark.asyncio
 async def test_turn_cancellation_signals_cancellable_composed_tool_before_stale_fence(tmp_path):

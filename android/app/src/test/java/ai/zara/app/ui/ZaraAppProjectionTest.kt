@@ -49,7 +49,15 @@ class ZaraAppProjectionTest {
             ),
         )
         assertEquals(
-            "LOCAL  •  SYMBOLIC  •  PRIVATE",
+            "SYMBOLIC ONLY  •  PRIVATE  •  NO MODEL",
+            chatFooter(
+                mode = RuntimeMode.Symbolic,
+                server = ServerConnection.Connected(1),
+                enrollment = EnrollmentReadiness.Ready,
+            ),
+        )
+        assertEquals(
+            "LOCAL AI  •  SYMBOLIC FIRST  •  PRIVATE",
             chatFooter(
                 mode = RuntimeMode.Local,
                 server = ServerConnection.Connected(1),
@@ -159,24 +167,58 @@ class ZaraAppProjectionTest {
     }
 
     @Test
-    fun manualVoiceRequiresPermissionAndCanonicalAuthenticatedSession() {
+    fun manualVoiceFollowsTheSelectedLocalOrRemoteRuntime() {
         val connected = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Ready,
             server = ServerConnection.Connected(4),
             sessionId = "session-1",
         )
-        assertTrue(canStartManualVoice(connected, microphonePermissionGranted = true))
-        assertFalse(canStartManualVoice(connected, microphonePermissionGranted = false))
-        assertFalse(
+        val disconnected = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertTrue(
             canStartManualVoice(
-                connected.copy(sessionId = null),
-                microphonePermissionGranted = true,
+                connected, true, RuntimeMode.Remote,
+                localServerReady = false, cloudModelReady = false,
             )
         )
         assertFalse(
             canStartManualVoice(
-                connected.copy(server = ServerConnection.Reconnecting(5, 1), sessionId = null),
-                microphonePermissionGranted = true,
+                connected, false, RuntimeMode.Remote,
+                localServerReady = true, cloudModelReady = true,
+            )
+        )
+        assertTrue(
+            canStartManualVoice(
+                disconnected, true, RuntimeMode.Symbolic,
+                localServerReady = true, cloudModelReady = false,
+            )
+        )
+        assertTrue(
+            canStartManualVoice(
+                disconnected, true, RuntimeMode.Local,
+                localServerReady = true, cloudModelReady = false,
+            )
+        )
+        assertTrue(
+            canStartManualVoice(
+                disconnected, true, RuntimeMode.Remote,
+                localServerReady = true, cloudModelReady = true,
+            )
+        )
+        assertFalse(
+            canStartManualVoice(
+                disconnected, true, RuntimeMode.Remote,
+                localServerReady = true, cloudModelReady = false,
+            )
+        )
+        assertTrue(
+            canStartManualVoice(
+                disconnected, true, RuntimeMode.Auto,
+                localServerReady = true, cloudModelReady = false,
             )
         )
     }

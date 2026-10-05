@@ -25,6 +25,18 @@ class RuntimeModePreferenceStoreTest {
     }
 
     @Test
+    fun `versioned symbolic preference remains explicit`() {
+        val root = Files.createTempDirectory("zara-runtime-mode").toFile()
+        val file = File(root, "runtime-mode.bin")
+        val store = RuntimeModePreferenceStore(file)
+
+        store.save(RuntimeMode.Symbolic)
+
+        assertEquals(RuntimeMode.Symbolic, store.load())
+        assertEquals("v2:Symbolic", file.readText())
+    }
+
+    @Test
     fun `versioned remote preference remains explicit`() {
         val root = Files.createTempDirectory("zara-runtime-mode").toFile()
         val file = File(root, "runtime-mode.bin")

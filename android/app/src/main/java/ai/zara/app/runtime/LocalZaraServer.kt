@@ -135,7 +135,7 @@ class LocalZaraServer(
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
-        val query = "resolve_frames(\"$escaped\", passive, [], Frames), member(Result, Frames)"
+        val query = "zara_portable_semantic_core:resolve_frames(\"$escaped\", passive, [], Frames), member(Result, Frames)"
         return submit {
             check(current.phase == LocalServerPhase.READY) { "Local Zara server is not ready" }
             diagnostics(

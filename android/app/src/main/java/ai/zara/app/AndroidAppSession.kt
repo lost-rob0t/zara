@@ -20,7 +20,13 @@ import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalGenerationRequest
+import ai.zara.app.localai.LocalModelMetadata
+import ai.zara.app.localai.LocalModelSpec
 import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.model.AndroidCloudModelStorage
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelPurpose
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.AudioOutputFormat
@@ -86,6 +92,7 @@ import ai.zara.app.voice.VoiceStreamState
 import android.content.Context
 import android.content.Intent
 import java.io.File
+import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
@@ -108,6 +115,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     )
     private val localServer: LocalZaraServer
     private val localAi = LocalAiServiceClient(context)
+    private val cloudAi = AndroidCloudModelStorage.coordinator(
+        File(context.noBackupFilesDir, "zara/cloud-model"),
+    )
     @Volatile private var latestVoiceStreamState: VoiceStreamState? = null
     @Volatile private var latestVoiceStreamFailure: String? = null
     @Volatile private var latestAudioRoute: AudioRouteSnapshot? = null
@@ -335,9 +345,26 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun setRuntimeMode(mode: RuntimeMode) {
         val previous = runtimeMode
-        if (mode == RuntimeMode.Local && previous != RuntimeMode.Local) {
+        if (previous == mode) return
+
+        val enteringStrictLocal =
+            mode in setOf(RuntimeMode.Symbolic, RuntimeMode.Local) &&
+                previous !in setOf(RuntimeMode.Symbolic, RuntimeMode.Local)
+        if (enteringStrictLocal) {
             controller.suspendRemoteForLocalMode()
         }
+        if (previous == RuntimeMode.Remote && mode != RuntimeMode.Remote) {
+            cloudAi.cancelActive()
+        }
+        if (previous == RuntimeMode.Local && mode != RuntimeMode.Local) {
+            localAi.cancelGeneration()
+        }
+        if (enteringStrictLocal && voice.state() is ManualVoiceState.Capturing) {
+            runCatching { voice.cancel() }
+                .onFailure { diagnostics.record("runtime_mode.voice_cancel.failed", emptyMap(), it) }
+            assistantVoiceGuard.onCaptureStopped()
+        }
+
         runtimeMode = mode
         diagnostics.record(
             "runtime_mode.changed",
@@ -352,6 +379,59 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     }
 
     fun localAiState(): CompletableFuture<LocalAiState> = localAi.state()
+
+    fun localAiModels(): CompletableFuture<List<LocalModelSpec>> = localAi.models()
+
+    fun installLocalModel(
+        source: InputStream,
+        metadata: LocalModelMetadata,
+    ): CompletableFuture<LocalModelSpec> = localAi.installModel(source, metadata)
+
+    fun selectLocalModel(
+        id: String,
+        version: String,
+    ): CompletableFuture<LocalAiState> = localAi.selectModel(id, version)
+
+    fun unloadLocalModel(): CompletableFuture<LocalAiState> = localAi.unloadModel()
+
+    fun cloudModelState(): CloudModelState = cloudAi.state()
+
+    fun cloudModelReady(): Boolean =
+        cloudAi.state().let { it.config.enabled && it.apiKeyConfigured }
+
+    fun configureCloudModel(
+        config: CloudModelConfig,
+        apiKey: String? = null,
+    ): CloudModelState {
+        val previous = cloudAi.state().config
+        if (previous.provider != config.provider || previous.endpoint != config.endpoint) {
+            cloudAi.clearApiKey()
+        }
+        var state = cloudAi.configure(config)
+        apiKey?.trim()?.takeIf(String::isNotEmpty)?.let {
+            state = cloudAi.setApiKey(it)
+        }
+        diagnostics.record(
+            "cloud_model.configured",
+            mapOf(
+                "enabled" to state.config.enabled,
+                "provider" to state.config.provider.wireName,
+                "endpoint" to state.config.endpoint,
+                "model" to state.config.model,
+                "api_key_configured" to state.apiKeyConfigured,
+            ),
+        )
+        return state
+    }
+
+    fun clearCloudModelApiKey(): CloudModelState {
+        val state = cloudAi.clearApiKey()
+        diagnostics.record(
+            "cloud_model.api_key_cleared",
+            mapOf("provider" to state.config.provider.wireName),
+        )
+        return state
+    }
 
     fun exportDiagnostics(): String {
         val server = localServer.state()
@@ -374,14 +454,14 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
         val runtimeState = state()
         val localAiPhase = when {
-            runtimeMode == RuntimeMode.Remote -> "not_applicable"
+            runtimeMode == RuntimeMode.Remote || runtimeMode == RuntimeMode.Symbolic -> "not_applicable"
             aiState != null -> aiState.phase.name.lowercase()
             else -> "unknown"
         }
-        val localAiNote = if (runtimeMode == RuntimeMode.Remote) {
-            "remote-only mode never starts the local model"
-        } else {
-            null
+        val localAiNote = when (runtimeMode) {
+            RuntimeMode.Remote -> "remote-only mode never starts the local model"
+            RuntimeMode.Symbolic -> "symbolic-only mode forbids all model inference"
+            else -> null
         }
         val snapshot = DiagnosticsSnapshot(
             version = BuildConfig.VERSION_NAME,
@@ -397,7 +477,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             voiceStages = telemetry.voiceStages().values.toList(),
             localAiPhase = localAiPhase,
             localAiNote = localAiNote,
-            localAiGeneration = if (runtimeMode == RuntimeMode.Remote) null else (aiState?.generation ?: -1),
+            localAiGeneration = if (
+                runtimeMode == RuntimeMode.Remote || runtimeMode == RuntimeMode.Symbolic
+            ) null else (aiState?.generation ?: -1),
             localAiModel = aiState?.model?.let { "${it.id}@${it.version}" },
             localServerPhase = server.phase.name.lowercase(),
             localServerGeneration = server.generation,
@@ -610,24 +692,34 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         remoteConversationId: String? = null,
     ): CompletableFuture<TextTurnResult> {
         val remoteConnected = state().server is ServerConnection.Connected
+        val cloudEnabled = cloudAi.state().config.enabled
         diagnostics.record(
             "text.submit",
             mapOf(
                 "length" to text.length,
                 "mode" to runtimeMode.name.lowercase(),
                 "remote_connected" to remoteConnected,
+                "cloud_provider_enabled" to cloudEnabled,
                 "local_server_phase" to localServer.state().phase.name.lowercase(),
             ),
         )
         when (runtimeMode) {
+            RuntimeMode.Symbolic -> return submitLocalText(
+                text,
+                localConversationId,
+                allowModelFallback = false,
+            )
             RuntimeMode.Local -> return submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> {
-                if (!remoteConnected) {
-                    val failure = RemoteUnavailableException()
-                    recordRemotePreconditionFailure(failure)
-                    return CompletableFuture.failedFuture(failure)
+                if (remoteConnected) {
+                    return submitRemoteText(text, remoteConversationId)
                 }
-                return submitRemoteText(text, remoteConversationId)
+                if (cloudEnabled) {
+                    return submitCloudModelText(text, localConversationId)
+                }
+                val failure = RemoteUnavailableException()
+                recordRemotePreconditionFailure(failure)
+                return CompletableFuture.failedFuture(failure)
             }
             RuntimeMode.Auto -> return submitAutoRemoteFirst(
                 text = text,
@@ -668,6 +760,41 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             mapOf("remote_connected" to false),
         )
         return submitLocalText(text, localConversationId)
+    }
+
+    private fun submitCloudModelText(
+        text: String,
+        conversationId: String = "cloud-model",
+    ): CompletableFuture<TextTurnResult> {
+        val state = cloudAi.state()
+        diagnostics.record(
+            "cloud_model.generate.begin",
+            mapOf(
+                "provider" to state.config.provider.wireName,
+                "model" to state.config.model,
+                "prompt_length" to text.length,
+            ),
+        )
+        return cloudAi.generate(
+            prompt = text,
+            purpose = CloudModelPurpose.GENERAL,
+        ).thenApply { generated ->
+            diagnostics.record(
+                "cloud_model.generate.complete",
+                mapOf(
+                    "provider" to generated.identity.provider.wireName,
+                    "model" to generated.identity.model,
+                    "elapsed_ms" to generated.elapsedMs,
+                    "output_length" to generated.text.length,
+                ),
+            )
+            TextTurnResult(
+                conversationId = conversationId,
+                turnId = UUID.randomUUID().toString(),
+                text = generated.text,
+                success = generated.text.isNotBlank(),
+            )
+        }
     }
 
     private fun recordRemotePreconditionFailure(error: Throwable) {
@@ -713,15 +840,21 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         require(normalizedProjectId.length <= 128) { "Project id is too long" }
         require(normalizedProjectId.none(Char::isISOControl)) { "Project id contains control characters" }
         val remoteConnected = state().server is ServerConnection.Connected
+        val cloudEnabled = cloudAi.state().config.enabled
         return when (runtimeMode) {
+            RuntimeMode.Symbolic -> submitLocalText(
+                text,
+                localConversationId,
+                allowModelFallback = false,
+            )
             RuntimeMode.Local -> submitLocalText(text, localConversationId)
-            RuntimeMode.Remote -> {
-                if (!remoteConnected) {
+            RuntimeMode.Remote -> when {
+                remoteConnected -> submitRemoteText(text, conversationId)
+                cloudEnabled -> submitCloudModelText(text, localConversationId)
+                else -> {
                     val failure = RemoteUnavailableException()
                     recordRemotePreconditionFailure(failure)
                     CompletableFuture.failedFuture(failure)
-                } else {
-                    submitRemoteText(text, conversationId)
                 }
             }
             RuntimeMode.Auto -> submitAutoRemoteFirst(
@@ -736,6 +869,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     internal fun submitLocalText(
         text: String,
         conversationId: String = "local-device",
+        allowModelFallback: Boolean = true,
     ): CompletableFuture<TextTurnResult> {
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
@@ -818,11 +952,33 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                         mapOf("route" to route),
                     )
                 }
-                generateLocalModelTurn(
-                    query = query,
-                    symbolicFailure = error,
-                    conversationId = conversationId,
-                )
+                if (!allowModelFallback) {
+                    diagnostics.record(
+                        "local_symbolic.model_fallback_forbidden",
+                        mapOf(
+                            "route" to route,
+                            "symbolic_failure" to (error != null),
+                        ),
+                    )
+                    CompletableFuture.completedFuture(
+                        TextTurnResult(
+                            conversationId = conversationId,
+                            turnId = UUID.randomUUID().toString(),
+                            text = if (error != null) {
+                                "The local symbolic runtime failed in Symbolic mode. No model fallback was attempted."
+                            } else {
+                                "No deterministic local rule matched in Symbolic mode. No model fallback was attempted."
+                            },
+                            success = false,
+                        )
+                    )
+                } else {
+                    generateLocalModelTurn(
+                        query = query,
+                        symbolicFailure = error,
+                        conversationId = conversationId,
+                    )
+                }
             },
         )
     }
@@ -1053,6 +1209,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         }
         localServer.close()
         localAi.close()
+        cloudAi.close()
         if (routeFailure != null) throw routeFailure
     }
 }

@@ -4,19 +4,19 @@
 
 Issue [[https://github.com/lost-rob0t/zara/issues/934][#934]] reorganizes the existing Android shell. This is a navigation change, not a new runtime or a claim that every planned feature is implemented.
 
-| Left menu | Tabs |
-|-----------+------|
-| Chat | Chat, Voice |
-| Workspace | Logic, Projects, Scheduled |
-| Settings | Runtime, Connection, Permissions, Appearance, Plugins, Updates, Diagnostics, About |
+| Left menu | Child navigation |
+|-----------+------------------|
+| Chat | Chat, Voice tabs |
+| Workspace | Logic, Projects, Scheduled tabs |
+| Settings | Grouped overview -> Runtime & local AI, Connection, Permissions, Appearance, Plugins, Updates, Diagnostics, About |
 
 On a compact window, open the menu button at the upper left. The drawer has exactly three primary entries; conversation-history placeholders and local/remote status remain below them. At an available window width of at least 600dp, the same three entries appear in a persistent left rail. The menu button still opens the history drawer. There is no bottom navigation bar competing with the composer.
 
-Tabs scroll horizontally. Selecting a menu restores that menu's last tab. Logic is Workspace's first tab, not hidden in advanced settings.
+Chat and Workspace tabs scroll horizontally. Settings does not use a horizontal tab strip: selecting Settings opens a grouped overview list and each row opens one focused child screen. Selecting a menu restores that menu's last route. Logic is Workspace's first tab, not hidden in advanced settings.
 
 * Settings organization
 
-Runtime contains the existing local-server status, Auto/Local/Remote routing selection, and on-device embedding toggle. It does not change provider or model selection implicitly.
+Runtime & local AI contains local symbolic-server status, Auto/Local/Remote routing selection, the on-device embedding toggle, and the embedded Local AI model manager. The model manager lists verified installed models, selects/loads one explicitly, can unload it from memory, and imports a =.litertlm= payload with explicit id/version/quantization/context/backend metadata. Android computes and verifies SHA-256 while copying the file into app-private storage. Opening the screen does not change routing or model selection implicitly.
 
 Connection contains client identity creation, public-key enrollment guidance, trusted-server pinning/replacement, endpoint entry, and Connect in one place. Previously these controls were split between Settings and Remote. Existing trust validation, connection lifecycle gates, and explicit user actions are unchanged.
 
@@ -30,7 +30,7 @@ Appearance uses the existing shared semantic theme previews. Plugins preserves i
 
 The shell's route-keyed =SaveableStateHolder= preserves existing =rememberSaveable= form values, chat drafts, and scroll state while routes are off-screen. This is Android UI saved state, not a new durable conversation database, a promise to retain unbounded documents, or a change to the Prolog editor's persistence contract. Recreation and large-draft behavior still require Android interaction evidence.
 
-Back closes an open drawer before changing routes. Otherwise it returns from a secondary tab to that menu's first tab, then from Workspace/Settings to Chat. Back at the Chat root is handled by Android. Tab changes do not restart or replace the runtime.
+Back closes an open drawer before changing routes. Otherwise it returns from a secondary route to that menu's root, then from Workspace/Settings to Chat. Back at the Chat root is handled by Android. Route changes do not restart or replace the runtime.
 
 * Feature truth
 
@@ -40,12 +40,12 @@ At the implementation base =e8e8382ddea3a48b1b67de9146e5e8ae6d17645f=, Projects,
 
 The dependency-free navigation contracts execute the actual =AppNavigation.kt= source: all route transitions, exhaustive saved-state combinations, invalid restoration, invalid construction, menu memory, Back convergence, and the 600dp breakpoint. The existing JUnit gate invokes those same contracts.
 
-Additional source-wiring contracts check the saved-state holder, menu/rail inventory, scrollable tab wiring, separated Settings sections, insets, and menu accessibility label. These checks do not render Compose.
+Additional source-wiring contracts check the saved-state holder, menu/rail inventory, Chat/Workspace tab wiring, the Settings overview/child split, insets, and menu accessibility label. These checks do not render Compose.
 
 Before merge/release, exact-head repository and Android/Wear/native/APK CI must pass. Capture and inspect actual Android screenshots and interactions for:
 
-- three-item drawer and all three menu/tab bars;
-- every Settings tab, including scroll to About;
+- three-item drawer plus Chat/Workspace tab bars;
+- the Settings overview and every Settings child screen, including About;
 - 320dp compact width, 600dp rail threshold, landscape, and split-window resizing;
 - Outrun and Light, normal and increased font scale, labeled focus/TalkBack targets;
 - chat draft and connection form switching, rotation/recreation, Back, and IME-visible composer;

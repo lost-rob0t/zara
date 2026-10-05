@@ -13,7 +13,8 @@ enum class AppRoute(val menu: AppMenu, val label: String) {
     Health(AppMenu.Workspace, "Health"),
     Projects(AppMenu.Workspace, "Projects"),
     Scheduled(AppMenu.Workspace, "Scheduled"),
-    Runtime(AppMenu.Settings, "Runtime"),
+    Settings(AppMenu.Settings, "Settings"),
+    Runtime(AppMenu.Settings, "Runtime & local AI"),
     Connection(AppMenu.Settings, "Connection"),
     Permissions(AppMenu.Settings, "Permissions"),
     Appearance(AppMenu.Settings, "Appearance"),
@@ -32,7 +33,7 @@ data class AppNavigation(
     val menu: AppMenu = AppMenu.Chat,
     val chat: AppRoute = AppRoute.Chat,
     val workspace: AppRoute = AppRoute.Logic,
-    val settings: AppRoute = AppRoute.Runtime,
+    val settings: AppRoute = AppRoute.Settings,
 ) {
     init {
         require(chat.menu == AppMenu.Chat)
