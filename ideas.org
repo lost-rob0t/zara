@@ -34,3 +34,10 @@
 - Why deferred: XR should consume the shared Geo protocol after the server/map contracts exist.
 - Next proof: Sideloadable fixture build that selects a geo anchor and resolves its canonical StarIntel document.
 - Promoted issue: lost-rob0t/zara#1205
+
+** IDEA Full Lost-Rob0t Discord changelog roundup
+- Captured: 2026-09-19 00:23 America/New_York
+- Source: chat request; lost-rob0t/starintel-discord-reporting#26
+- Why deferred: Promoted immediately into the reporting implementation; this inbox entry preserves the original idea.
+- Next proof: A verified-delivered Discord receipt for the first full owner-wide roundup.
+- Promoted issue: lost-rob0t/starintel-discord-reporting#26
