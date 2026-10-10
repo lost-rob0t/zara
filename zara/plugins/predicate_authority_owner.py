@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
+import signal
 import threading
 import time
 from dataclasses import dataclass
@@ -28,6 +30,7 @@ from zara.plugins.predicate_authority import (
 
 MAX_AUTHORITY_FRAME_BYTES = 64 * 1024
 _MAX_REPLAY_IDS = 4096
+_AUTHORITY_STARTUP_TIMEOUT_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,39 @@ class PredicateExecutor(Protocol):
     ) -> PredicateExecutionOutcome: ...
 
 
+class _AuthorityLifecycle:
+    """One generation's process and descendant-lifetime owner."""
+
+    def __init__(
+        self,
+        process: multiprocessing.Process,
+        *,
+        process_group_id: int | None,
+    ) -> None:
+        self._process = process
+        self._process_group_id = process_group_id
+        self._terminated = False
+        self._lock = threading.Lock()
+
+    @property
+    def pid(self) -> int | None:
+        return self._process.pid
+
+    def is_alive(self) -> bool:
+        return self._process.is_alive()
+
+    def terminate(self, *, timeout: float) -> None:
+        with self._lock:
+            if self._terminated:
+                return
+            self._terminated = True
+            _terminate_authority_generation(
+                self._process,
+                process_group_id=self._process_group_id,
+                timeout=timeout,
+            )
+
+
 class PredicateAuthorityClient:
     """Caller-facing inert request client.
 
@@ -88,15 +124,15 @@ class PredicateAuthorityClient:
     transport does not recover executable predicate authority.
     """
 
-    def __init__(self, transport: Connection, process: multiprocessing.Process) -> None:
+    def __init__(self, transport: Connection, lifecycle: _AuthorityLifecycle) -> None:
         self._transport = transport
-        self._process = process
+        self._lifecycle = lifecycle
         self._lock = threading.Lock()
 
     def invoke(self, request: PredicateInvocationRequest) -> PredicateInvocationResult:
         frame = _encode_request(request)
         with self._lock:
-            if not self._process.is_alive():
+            if not self._lifecycle.is_alive():
                 return _unavailable()
             try:
                 self._transport.send_bytes(frame)
@@ -120,11 +156,7 @@ class PredicateAuthorityClient:
 
     def _kill_worker_after_timeout(self) -> None:
         try:
-            self._process.terminate()
-            self._process.join(0.25)
-            if self._process.is_alive():
-                self._process.kill()
-                self._process.join(0.25)
+            self._lifecycle.terminate(timeout=0.25)
         finally:
             try:
                 self._transport.close()
@@ -149,10 +181,10 @@ class PredicateAuthorityProcess:
     def __init__(
         self,
         *,
-        process: multiprocessing.Process,
+        lifecycle: _AuthorityLifecycle,
         client: PredicateAuthorityClient,
     ) -> None:
-        self._process = process
+        self._lifecycle = lifecycle
         self.client = client
 
     @classmethod
@@ -176,21 +208,127 @@ class PredicateAuthorityProcess:
         )
         process.start()
         child.close()
-        client = PredicateAuthorityClient(parent, process)
-        return cls(process=process, client=client)
+        try:
+            process_group_id = _await_worker_ready(parent, process)
+        except Exception:
+            try:
+                parent.close()
+            finally:
+                _terminate_worker_only(process, timeout=0.25)
+            raise
+        lifecycle = _AuthorityLifecycle(
+            process,
+            process_group_id=process_group_id,
+        )
+        client = PredicateAuthorityClient(parent, lifecycle)
+        return cls(lifecycle=lifecycle, client=client)
 
     def stop(self, *, timeout: float = 1.0) -> None:
         self.client.close()
-        if self._process.is_alive():
-            self._process.terminate()
-        self._process.join(timeout)
-        if self._process.is_alive():
-            self._process.kill()
-            self._process.join(timeout)
+        self._lifecycle.terminate(timeout=timeout)
 
     @property
     def pid(self) -> int | None:
-        return self._process.pid
+        return self._lifecycle.pid
+
+
+def _await_worker_ready(
+    transport: Connection,
+    process: multiprocessing.Process,
+) -> int | None:
+    if not transport.poll(_AUTHORITY_STARTUP_TIMEOUT_SECONDS):
+        raise PredicateAuthorityError("predicate-authority worker startup timed out")
+    try:
+        payload = transport.recv_bytes(MAX_AUTHORITY_FRAME_BYTES)
+    except (EOFError, OSError) as exc:
+        raise PredicateAuthorityError("predicate-authority worker failed during startup") from exc
+    raw = _decode_json(payload)
+    if set(raw) != {"kind", "pid", "process_group_id"} or raw["kind"] != "ready":
+        raise PredicateAuthorityError("invalid predicate-authority startup frame")
+    pid = raw["pid"]
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid != process.pid:
+        raise PredicateAuthorityError("predicate-authority startup pid mismatch")
+
+    process_group_id = raw["process_group_id"]
+    if os.name != "posix":
+        if process_group_id is not None:
+            raise PredicateAuthorityError("unexpected predicate-authority process group")
+        return None
+    if (
+        not isinstance(process_group_id, int)
+        or isinstance(process_group_id, bool)
+        or process_group_id != pid
+    ):
+        raise PredicateAuthorityError("invalid predicate-authority process group")
+    try:
+        if os.getsid(pid) != pid or os.getpgid(pid) != process_group_id:
+            raise PredicateAuthorityError("predicate-authority private session not established")
+    except ProcessLookupError as exc:
+        raise PredicateAuthorityError("predicate-authority worker exited during startup") from exc
+    return process_group_id
+
+
+def _terminate_authority_generation(
+    process: multiprocessing.Process,
+    *,
+    process_group_id: int | None,
+    timeout: float,
+) -> None:
+    wait_seconds = max(0.0, float(timeout))
+    if os.name == "posix" and process_group_id is not None:
+        _terminate_process_group(
+            process,
+            process_group_id=process_group_id,
+            timeout=wait_seconds,
+        )
+        return
+    _terminate_worker_only(process, timeout=wait_seconds)
+
+
+def _terminate_process_group(
+    process: multiprocessing.Process,
+    *,
+    process_group_id: int,
+    timeout: float,
+) -> None:
+    if process_group_id <= 1 or process_group_id == os.getpgrp():
+        raise PredicateAuthorityError("refusing unsafe predicate-authority process group")
+
+    _signal_process_group(process_group_id, signal.SIGTERM)
+    process.join(timeout)
+    if _process_group_exists(process_group_id):
+        _signal_process_group(process_group_id, signal.SIGKILL)
+    process.join(timeout)
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _signal_process_group(process_group_id: int, signum: int) -> None:
+    try:
+        os.killpg(process_group_id, signum)
+    except ProcessLookupError:
+        pass
+
+
+def _terminate_worker_only(
+    process: multiprocessing.Process,
+    *,
+    timeout: float,
+) -> None:
+    if process.is_alive():
+        process.terminate()
+    process.join(timeout)
+    if process.is_alive():
+        process.kill()
+        process.join(timeout)
 
 
 def _normalize_bindings(
@@ -335,6 +473,27 @@ def _authority_worker(
     bindings: Mapping[str, RegisteredPredicateBinding],
     executor: PredicateExecutor,
 ) -> None:
+    process_group_id = None
+    if os.name == "posix":
+        os.setsid()
+        process_group_id = os.getpgrp()
+    try:
+        transport.send_bytes(
+            _encode_json(
+                {
+                    "kind": "ready",
+                    "pid": os.getpid(),
+                    "process_group_id": process_group_id,
+                }
+            )
+        )
+    except (BrokenPipeError, EOFError, OSError):
+        try:
+            transport.close()
+        except OSError:
+            pass
+        return
+
     replay_ids: set[str] = set()
     try:
         while True:
