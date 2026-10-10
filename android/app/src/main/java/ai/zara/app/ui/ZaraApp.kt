@@ -10,6 +10,7 @@ import ai.zara.app.runtime.AssistantRole
 import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.runtime.RuntimeMode
+import ai.zara.app.runtime.RuntimeRegistrySnapshot
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerPhase
 import ai.zara.app.runtime.LocalServerState
@@ -137,6 +138,7 @@ private fun tokensColorScheme(tokens: ZaraSemanticTokens) = darkColorScheme(
 @Composable
 fun ZaraApp(
     runtimeState: RuntimeState,
+    runtimeSnapshot: RuntimeRegistrySnapshot,
     sourceSha: String,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
@@ -163,6 +165,7 @@ fun ZaraApp(
     healthGoals: List<HealthGoalTarget>,
     healthGpgRecipientCount: Int,
     onSelectTheme: (ZaraTheme) -> Unit,
+    onSelectRuntime: (String) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onCreateIdentity: () -> Unit,
@@ -400,6 +403,7 @@ fun ZaraApp(
                                                 localServerState = localServerState,
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
+                                                runtimeSnapshot = runtimeSnapshot,
                                                 localEmbedding = localEmbedding,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
@@ -413,6 +417,7 @@ fun ZaraApp(
                                                 onSelectUpdate = onSelectUpdate,
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
+                                                onSelectRuntime = onSelectRuntime,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                                                 padding = padding,
@@ -1254,6 +1259,7 @@ private fun SettingsSurface(
     localServerState: LocalServerState,
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
+    runtimeSnapshot: RuntimeRegistrySnapshot,
     localEmbedding: LocalEmbeddingConfiguration,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
@@ -1267,6 +1273,7 @@ private fun SettingsSurface(
     onSelectUpdate: (String) -> Unit,
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onSelectRuntime: (String) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     padding: PaddingValues,
@@ -1281,6 +1288,10 @@ private fun SettingsSurface(
         ScreenTitle(section.label, "Settings")
         when (section) {
             AppRoute.Runtime -> {
+                RuntimeSettingsRuntimeList(
+                    snapshot = runtimeSnapshot,
+                    onSelectRuntime = onSelectRuntime,
+                )
                 SectionCard("LOCAL ZARA SERVER") {
                     KeyValueRow("state", localServerState.phase.name.lowercase())
                     KeyValueRow("generation", localServerState.generation.toString())

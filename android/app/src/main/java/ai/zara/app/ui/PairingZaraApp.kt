@@ -10,6 +10,7 @@ import ai.zara.app.runtime.EnrollmentReadiness
 import ai.zara.app.runtime.LocalQueryResult
 import ai.zara.app.runtime.LocalServerState
 import ai.zara.app.runtime.RuntimeMode
+import ai.zara.app.runtime.RuntimeRegistrySnapshot
 import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.samsunghealth.SamsungHealthMetric
 import ai.zara.app.samsunghealth.SamsungHealthUiState
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ZaraApp(
     runtimeState: RuntimeState,
+    runtimeSnapshot: RuntimeRegistrySnapshot,
     sourceSha: String,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
@@ -69,6 +71,7 @@ fun ZaraApp(
     healthGoals: List<HealthGoalTarget>,
     healthGpgRecipientCount: Int,
     onSelectTheme: (ZaraTheme) -> Unit,
+    onSelectRuntime: (String) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
     onScanPairingQr: () -> Unit,
@@ -119,6 +122,7 @@ fun ZaraApp(
         Box(Modifier.weight(1f).fillMaxWidth()) {
             ZaraApp(
                 runtimeState = runtimeState,
+                runtimeSnapshot = runtimeSnapshot,
                 sourceSha = sourceSha,
                 enrollmentPublicKey = enrollmentPublicKey,
                 pinnedServerPublicKey = pinnedServerPublicKey,
@@ -145,6 +149,7 @@ fun ZaraApp(
                 healthGoals = healthGoals,
                 healthGpgRecipientCount = healthGpgRecipientCount,
                 onSelectTheme = onSelectTheme,
+                onSelectRuntime = onSelectRuntime,
                 onSelectRuntimeMode = onSelectRuntimeMode,
                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
                 onCreateIdentity = onCreateIdentity,
