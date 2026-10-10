@@ -1,0 +1,60 @@
+name: Common Lisp SDK
+
+on:
+  push:
+    paths:
+      - "lisp/**"
+      - "scripts/test-common-lisp.sh"
+      - "t/test_common_lisp_dependency_pin_contract.py"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/common-lisp.yml"
+  pull_request:
+    paths:
+      - "lisp/**"
+      - "scripts/test-common-lisp.sh"
+      - "t/test_common_lisp_dependency_pin_contract.py"
+      - "flake.nix"
+      - "flake.lock"
+      - ".github/workflows/common-lisp.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: common-lisp-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sbcl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+
+      - name: Verify exact source checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Run FiveAM with pinned Lisp closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/test-common-lisp.sh
+
+      - name: Smoke packaged Zara server from Lisp
+        shell: bash
+        run: |
+          set -euo pipefail
+          server_out="$(nix build .#zara-server --no-link --print-out-paths)"
+          test -x "$server_out/bin/zara-server"
+          export PATH="$server_out/bin:$PATH"
+          export ZARA_LISP_INTEGRATION=1
+          bash scripts/test-common-lisp.sh
