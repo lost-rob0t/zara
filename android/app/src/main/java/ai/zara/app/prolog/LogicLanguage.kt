@@ -135,7 +135,12 @@ data class PrologWorkspaceCatalog(
             val schemas = sources.flatMap { source ->
                 schemaPattern.findAll(source.text).map { PredicateRef(it.groupValues[1], it.groupValues[2].toInt()) }.toList()
             }.distinctBy { it.indicator }.sortedBy { it.indicator }
-            val experts = rules.filter { it.arity == 2 && it.name.endsWith("_explain") }
+            val experts = (facts + rules)
+                .filter { ref ->
+                    ref.arity == 2 && (ref.name.endsWith("_explain") || ref.name.endsWith("_decision"))
+                }
+                .distinctBy { it.indicator }
+                .sortedBy { it.indicator }
             val activations = sources.flatMap { source ->
                 activationPattern.findAll(source.text).map { it.groupValues[2] to it.groupValues[1] }.toList()
             }.groupBy({ it.first }, { it.second }).mapValues { (_, expertsForWord) ->
@@ -153,8 +158,10 @@ object LocalNaturalLanguageExpertRouter {
     fun query(text: String, catalog: PrologWorkspaceCatalog): String? {
         val match = utterance.matchEntire(text.trim().lowercase()) ?: return null
         val expert = catalog.activations[match.groupValues[1]] ?: return null
-        val predicate = PredicateRef("${expert}_explain", 2)
-        if (predicate !in catalog.experts) return null
+        val predicate = listOf(
+            PredicateRef("${expert}_explain", 2),
+            PredicateRef("${expert}_decision", 2),
+        ).firstOrNull { it in catalog.experts } ?: return null
         return "${predicate.name}(${match.groupValues[2]}, Result)"
     }
 }
@@ -353,19 +360,35 @@ object PrologSchemaValidator {
 
 object PrologCompletionEngine {
     private val builtIns = listOf(
-        PrologCompletion("zara_schema/3", "zara_schema(\${1:name}, \${2:arity}, [\${3:types}])", "Zara predicate schema"),
-        PrologCompletion("member/2", "member(\${1:Element}, \${2:List})", "ISO list membership"),
-        PrologCompletion("length/2", "length(\${1:List}, \${2:Length})", "List length"),
-        PrologCompletion("append/3", "append(\${1:Left}, \${2:Right}, \${3:Result})", "List append"),
-        PrologCompletion("findall/3", "findall(\${1:Template}, \${2:Goal}, \${3:Results})", "Collect solutions"),
+        PrologCompletion("zara_schema/3", "zara_schema(\${1:name}, \${2:arity}, [\${3:types}])", "name:atom, arity:integer, types:list · Zara schema"),
+        PrologCompletion("member/2", "member(\${1:Element}, \${2:List})", "element:term, list:list · ISO builtin"),
+        PrologCompletion("length/2", "length(\${1:List}, \${2:Length})", "list:list, length:integer · ISO builtin"),
+        PrologCompletion("append/3", "append(\${1:Left}, \${2:Right}, \${3:Result})", "left:list, right:list, result:list · ISO builtin"),
+        PrologCompletion("findall/3", "findall(\${1:Template}, \${2:Goal}, \${3:Results})", "template:term, goal:term, results:list · ISO builtin"),
     )
 
     fun complete(text: String, cursor: Int, documents: List<PrologDocument>): List<PrologCompletion> {
         val prefix = text.take(cursor.coerceIn(0, text.length)).takeLastWhile { it.isLetterOrDigit() || it == '_' }
-        val workspace = documents.flatMap { it.clauses }.map { it.predicate }.distinctBy { it.indicator }.map { ref ->
-            val variables = (1..ref.arity).joinToString(", ") { index -> "\${" + index + ":Arg" + index + "}" }
-            PrologCompletion(ref.indicator, "${ref.name}($variables)", "Workspace predicate")
-        }
+        val signatures = PrologSignatureCatalog.from(documents)
+        val workspace = documents
+            .flatMap { it.clauses }
+            .map { it.predicate }
+            .distinctBy { it.indicator }
+            .map { ref ->
+                val signature = signatures[ref]
+                val variables = if (signature == null) {
+                    (1..ref.arity).joinToString(", ") { index -> "\${" + index + ":Arg" + index + "}" }
+                } else {
+                    signature.arguments.mapIndexed { index, argument ->
+                        "\${" + (index + 1) + ":" + argument.variable + "}"
+                    }.joinToString(", ")
+                }
+                PrologCompletion(
+                    ref.indicator,
+                    if (ref.arity == 0) ref.name else "${ref.name}($variables)",
+                    signature?.detail ?: "Workspace predicate",
+                )
+            }
         return (workspace + builtIns)
             .distinctBy { it.label }
             .filter { prefix.isBlank() || it.label.startsWith(prefix, ignoreCase = true) }

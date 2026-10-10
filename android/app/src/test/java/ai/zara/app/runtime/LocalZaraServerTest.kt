@@ -62,6 +62,21 @@ class LocalZaraServerTest {
     }
 
     @Test
+    fun resolveUsesCanonicalPortableSemanticModule() {
+        val bridge = RecordingTreallaBridge()
+        val server = LocalZaraServer(
+            bridge,
+            "/private/core.pl",
+            PrologWorkspace(temporary.newFolder("qualified-resolve")),
+        )
+        server.start().get(2, TimeUnit.SECONDS)
+
+        server.resolve("hello").get(2, TimeUnit.SECONDS)
+
+        assertTrue(bridge.queries.last().startsWith("zara_portable_semantic_core:resolve_frames("))
+        server.close()
+    }
+    @Test
     fun reloadRecreatesRuntimeSoEditedFactsDoNotAccumulate() {
         val bridge = RecordingTreallaBridge()
         val workspace = PrologWorkspace(temporary.newFolder("reload"))
