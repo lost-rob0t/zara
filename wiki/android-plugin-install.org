@@ -1,0 +1,109 @@
+#+title: Android plugin installation
+#+date: 2026-09-17
+
+* Navigation placement
+
+Open Settings, select the Plugins tab, and choose an APK. General remains the
+initial Settings tab, with its existing runtime, identity, assistant and update
+controls unchanged. There is no separate Plugins item in the main drawer and no
+plugin-install shortcut on Chat. A restored legacy Plugins route opens
+Settings / Plugins instead of the old placeholder.
+
+This user-requested placement supersedes the standalone Plugins drawer entry in
+=android/DESIGN.md=. The rest of that document's semantic-token and chat-first
+visual contract still applies. This change does not implement a broader drawer
+reorganization.
+
+* Install a plugin APK
+
+1. Open Settings / Plugins / Choose APK and select a standalone Android APK.
+2. Review its package name, version, size, APK SHA-256 and signer SHA-256.
+3. Tap Install APK. When Android requires it, enable installation from Zara in
+   Android's per-app install-source settings, return, then tap Install APK again.
+4. Confirm or cancel in Android's package installer.
+
+A successful Android activity result is reported as installed. Cancellation and
+unconfirmed results are not reported as success. Discard APK removes the staged
+selection. The file picker does not request broad filesystem access.
+
+This installs Android packages only, not desktop Python/Nix plugins, plugin ZIP
+bundles or split APK sets. Obtain APKs from publishers you trust. A displayed
+fingerprint is an identity for the selected bytes/certificate, not an endorsement
+of the publisher or proof of Zara protocol compatibility.
+
+* Installation is not activation
+
+This is the package-installation slice of #655. It neither closes nor implements
+#924's plugin-host discovery, binding, trust, capability or health-state contract.
+It does not execute plugin code in Zara, register tools, alter Prolog policy or
+automatically enable a plugin. Companion, Screen Vision, Notes and third-party
+capability APKs remain subject to that host's compatibility and permission gates.
+The installer does not maintain a competing registry or accept model-initiated
+install commands.
+
+* File and lifecycle boundaries
+
+- Only explicit =content:= selections from Android's document picker are staged.
+- Streaming copy rejects empty input, zero-progress reads and input larger than
+  256 MiB. Cancellation is checked between reads; a blocked third-party provider
+  read is not proven to obey a hard deadline.
+- Copies use unique names in app-private =cache/plugin-install/=, never the
+  self-update cache. Package metadata/signers are inspected before review.
+- Host-package replacement, unsupported minimum SDK, split metadata and malformed
+  or excessively large identity fields are rejected.
+- Before handoff, the staged file is rehashed and its identity compared with the
+  reviewed snapshot. Android still performs final package/signature validation.
+- A private FileProvider exposes only this cache subdirectory, with a transient
+  read grant to an explicitly resolved system installer. It never grants writes.
+- Finishing, cancelling or discarding revokes the URI grant and removes the
+  staged file. Failed staging removes the incomplete file. Abrupt process death
+  can leave orphan cache files for Android to reclaim; no background sweeper is
+  introduced here.
+- Activity-result launchers and selection state live at the ZaraApp root, outside
+  the tab/destination branch. Switching tabs/routes does not unregister them.
+  The small reviewed snapshot and installer-awaiting flag use saved instance
+  state; copying is not resumed automatically after recreation.
+
+The existing =REQUEST_INSTALL_PACKAGES= permission is reused. No runtime,
+scheduler, network downloader, plugin marketplace or silent-install path is
+introduced. The existing self-updater is untouched.
+
+The implementation uses =ACTION_INSTALL_PACKAGE= with =EXTRA_RETURN_RESULT= for
+foreground Android confirmation. That Android API is deprecated; use here is
+intentional for the bounded activity-result flow, not a claim that this is a
+PackageInstaller session implementation. Verify behavior on supported devices
+before release.
+
+Reference APIs:
+- https://developer.android.com/reference/android/content/Intent#ACTION_INSTALL_PACKAGE
+- https://developer.android.com/reference/android/provider/Settings#ACTION_MANAGE_UNKNOWN_APP_SOURCES
+- https://developer.android.com/training/secure-file-sharing/setup-sharing
+
+* Verification evidence and remaining gate
+
+The pure Kotlin policy has 12 deterministic checks covering valid third-party
+identity, host replacement, malformed package/signers, SDK/splits, bounded version
+labels, exact-limit copy/hash, overflow, empty input, invalid limits, read failure,
+cancellation, zero-progress reads and changed-file digest detection. Its initial
+compile failed with the missing policy/types; the same test bodies then passed
+using the installed Kotlin compiler and a temporary JUnit-free runner.
+
+Five pytest source/manifest checks cover private cache sharing, narrow installer
+visibility, nested/legacy navigation, root-owned callbacks and verified read-only
+handoff. Manifest tests were confirmed failing before the provider/query entries
+were added, then passed. Source-contract checks are not Compose interaction tests.
+
+Run the repository's complete gate before merge:
+
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+The implementation environment did not have Nix, Gradle, the Android SDK or an
+emulator. Full Android compilation, exact-head Android/full-repository CI,
+deterministic screenshots and real-device installation are still release gates.
+The following device paths need explicit evidence: permission denial/return,
+installer success/cancel/failure, provider failure, tab/route switches during
+staging, rotation/recreation while the picker or installer is open, missing cache
+restoration, large fonts, minimum-width layout and an alternate theme. Do not
+claim visual completion or publish an APK based solely on the local checks.
