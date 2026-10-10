@@ -1,0 +1,32 @@
+#+TITLE: Android protocol failure evidence
+
+* Scope
+This additive ZARA-LOCAL-DIAGNOSTICS/2 extension records failure-time evidence for Android remote connection handshakes and text turns. It does not change the protocol, accept out-of-order messages, add a socket reader, select a different model/provider, or claim to repair the reported remote submit failure.
+
+The source investigation starts at f94da1289ede13ec4d58cefb73bc0b86648bb65e. A report containing only =expected turn.accepted= cannot establish which message arrived instead. The =turn.started= test fixture is a synthetic regression scenario, not a diagnosis of the operator's server.
+
+* Ownership and retention
+=ProtocolFailureTrace= is mutated only by the existing socket-owning ZaraTextClientActor executor. It retains at most 16 metadata summaries and counts evictions. It stores no raw frames, envelopes, prompt text, response text, audio, credentials, endpoint URLs, or device-action parameters. Protocol identifiers are restricted to bounded ASCII token characters; unsuitable identifiers are omitted.
+
+Before error observers or future completion can trigger reconnect, the actor attaches an immutable metadata snapshot as a stackless suppressed exception to the original Throwable. The exception identity/type remains unchanged. Bounded causal traversal recovers the same snapshot through CompletionException/ExecutionException wrappers. Reclassification therefore does not erase the failing generation/request/phase or replace it with the newly connected generation.
+
+Typed ZaraWireException classification stops before its lower-level cause. In particular malformed UTF-8 must remain =protocol.malformed=, not become =transport.closed= because MalformedInputException is an IOException.
+
+* Export contract
+The current transport/session fields continue to describe export-time state. New =primary_failure.context_scope=at_failure= fields describe the captured operation:
+- connection generation, session, request and accepted turn;
+- expected message and pending acknowledgement count (0 or 1, not actor mailbox depth);
+- monotonic phase duration in milliseconds;
+- last RX/TX metadata, received reply-to/turn/session/sequence, frame count and byte sizes;
+- bounded trace count and dropped-frame count.
+
+Text exports contain a separate =failure protocol trace (at_failure)= section. JSON exports contain =failure_protocol_trace= as an ordered array of metadata objects. Existing v2 keys remain compatible. An undecodable frame is explicitly =undecoded= / =decode_failed=; no message type is guessed from payload bytes.
+
+* Verification and limits
+The focused classifier regression was executed against the unchanged original and failed as expected: =Expected protocol.malformed, got transport.closed=. Ten focused JVM tests exercise cause preservation, reconnect/reclassification retention, bounded/detached history, identifier/payload exclusion, acknowledgement versus active-turn state, text/JSON exports, and the actual actor's unexpected-message/malformed-frame/hello-timeout paths.
+
+Local compilation uses Kotlin 1.9/JDK 21 with dependency test doubles and a minimal JUnit API shim. These doubles are not committed. This is not Android/Gradle, actual wire-codec, native runtime, full Nix/repository, emulator or physical-device validation. The committed JUnit tests are intended to run against real repository dependencies in the Android gate. Exact-head CI must be terminal green before merge.
+
+This slice does not wire continuous live =remote.last_rx_*= telemetry, deduplicate all journal events, add retry counters/backoff, persist incidents across process death, change connection/readiness labels, or instrument every voice-command/background-pump frame. It preserves failure evidence for the reported path without pretending those broader gaps are solved.
+
+Before merging, add to the canonical CHANGELOG.md Unreleased section while preserving concurrent entries: Android remote failures now retain expected/received protocol metadata and request/session context across reconnects; malformed-message errors keep their protocol classification.
