@@ -493,6 +493,24 @@
                 bash scripts/test-latency-metrics.sh
               '';
 
+            # Native Emacs bridge acceptance must be a first-class flake check,
+            # not only a phase hidden inside scripts/test-all.sh. Use the same
+            # repository-pinned nixpkgs input as every other flake dependency.
+            emacs-client = pkgs.runCommand "zara-check-emacs-client"
+              {
+                nativeBuildInputs = [ pkgs.emacs-nox ];
+                src = ./.;
+              }
+              ''
+                export HOME=$(mktemp -d)
+                cd $src
+                emacs -Q --batch \
+                  -L "$src/emacs" \
+                  -l "$src/emacs/zara-test.el" \
+                  -f ert-run-tests-batch-and-exit
+                touch $out
+              '';
+
             # Exercise the installed Nix wrappers with isolated HOME and
             # mocked hardware so the package layout is verified end-to-end.
             wrappers = pkgs.runCommand "zara-check-wrappers"
