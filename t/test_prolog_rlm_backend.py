@@ -145,3 +145,15 @@ def test_runtime_host_starts_with_rlm_but_exposes_no_unbridged_host_tools(sideca
     finally:
         host.shutdown("test cleanup").result(timeout=10)
         host.join(timeout=10)
+
+
+def test_rlm_config_rejects_non_loopback_endpoint(tmp_path):
+    from zara.config import ConfigError, ZaraConfig
+
+    path = tmp_path / "config.toml"
+    path.write_text(
+        '[agent]\nbackend = "prolog_rlm"\n'
+        'prolog_rlm_endpoint = "http://example.com:18765/zara-runtime/v1"\n'
+    )
+    with pytest.raises(ConfigError, match="prolog_rlm_endpoint"):
+        ZaraConfig(str(path))
