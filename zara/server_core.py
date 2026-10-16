@@ -192,8 +192,17 @@ class RuntimeSupervisor:
                 prolog_engine=prolog_engine,
             )
 
+        backend_name = str(config.get("agent", "backend", "langgraph")).strip().lower()
+        if backend_name in {"prolog_rlm", "prolog-rlm"}:
+            from zara.runtime.prolog_rlm import PrologRLMRuntimeBackend
+
+            endpoint = str(config.get("agent", "prolog_rlm_endpoint", "http://127.0.0.1:18765/zara-runtime/v1"))
+            backend_factory = lambda: PrologRLMRuntimeBackend(endpoint, principal_id=principal.principal_id)
+        else:
+            backend_factory = lambda: AgentRuntimeBackend(manager_factory, router=router)
+
         return RuntimeHost(
-            backend_factory=lambda: AgentRuntimeBackend(manager_factory, router=router),
+            backend_factory=backend_factory,
             publisher=bus.publish,
             subscriber=bus.subscribe,
             shutdown_timeout=self._shutdown_timeout,

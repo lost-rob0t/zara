@@ -140,6 +140,9 @@ history_limit = 20
 
 [agent]
 # Conversational agent settings
+backend = "langgraph"
+# Native Prolog-RLM sidecar (when backend = "prolog_rlm").
+prolog_rlm_endpoint = "http://127.0.0.1:18765/zara-runtime/v1"
 conversation_timeout = 3600  # seconds (60 minutes grace window)
 # Short grace period after TTS playback completes before the listener
 # returns to passive mode. Keep small so the user can respond quickly.
@@ -345,6 +348,21 @@ class ZaraConfig:
         return config
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
+        agent_config = config.get("agent", {})
+        if not isinstance(agent_config, dict):
+            raise ConfigError("Invalid [agent] configuration: expected a TOML table")
+        if agent_config.get("backend", "langgraph") not in {"langgraph", "prolog_rlm", "prolog-rlm"}:
+            raise ConfigError("agent.backend must be langgraph or prolog_rlm")
+        if agent_config.get("backend", "langgraph") in {"prolog_rlm", "prolog-rlm"}:
+            from zara.runtime.prolog_rlm import PrologRLMRuntimeBackend
+
+            try:
+                PrologRLMRuntimeBackend(
+                    agent_config.get("prolog_rlm_endpoint", "http://127.0.0.1:18765/zara-runtime/v1"),
+                    principal_id="user:validation",
+                )
+            except (TypeError, ValueError) as error:
+                raise ConfigError(f"Invalid agent.prolog_rlm_endpoint: {error}") from error
         desktop_config = config.get("desktop", {})
         if not isinstance(desktop_config, dict):
             raise ConfigError("Invalid [desktop] configuration: expected a TOML table")
