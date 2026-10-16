@@ -259,6 +259,14 @@ instantiating the config manager.
 - =[memory].summary_max_chars= bounds stored session summaries and transcripts. Raw session capture is stored as =transcript=; only caller-supplied summaries are stored as =summary=.
 
 ** Wake audio sample rate
+- The whisper.cpp worker logs its backend, device, PID, and launch arguments.
+  Its state is kept in =$XDG_RUNTIME_DIR/zara/whisper-worker.json= (or
+  =~/.local/state/zara/whisper-worker.json= when the runtime directory is
+  unavailable). A live prior worker blocks another launch, including CPU
+  fallback. After a reported Vulkan device loss, new GPU launches remain
+  disabled until the state is cleared; select CPU and remove the state file only after
+  confirming the old worker has exited and the GPU has recovered. A process
+  stuck in kernel D state cannot be removed by Zara's shutdown timeout.
 - =wake.sample_rate= sets the target rate for transcription.
 - If the input device does not support that rate, Zarathushtra falls back to the
   device default and resamples audio to the target.
