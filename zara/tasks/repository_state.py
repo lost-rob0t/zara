@@ -39,6 +39,17 @@ class RepositoryTaskState:
                 raise ValueError("task state files must not be symlinks")
         state_dir.mkdir(mode=0o700, exist_ok=True)
         os.chmod(state_dir, 0o700)
+        ignore = state_dir / ".gitignore"
+        if ignore.is_symlink():
+            raise ValueError("task state ignore file must not be a symlink")
+        ignore_rules = {"/task-state.sqlite3*", "/task-state.lock", "/tasks/", "/.gitignore"}
+        existing = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+        missing = sorted(ignore_rules - set(existing.splitlines()))
+        if missing:
+            with ignore.open("a", encoding="utf-8") as file:
+                if existing and not existing.endswith("\n"):
+                    file.write("\n")
+                file.write("\n".join(missing) + "\n")
         self._projection_dir = state_dir / "tasks"
         if self._projection_dir.is_symlink():
             raise ValueError("task projection directory must not be a symlink")

@@ -58,3 +58,14 @@ def test_projection_is_principal_scoped(tmp_path):
     assert [item["task_id"] for item in alice_state["tasks"]] == [alice.task_id]
     assert [item["task_id"] for item in bob_state["tasks"]] == [bob.task_id]
     assert state.path_for("user:alice") != state.path_for("user:bob")
+
+
+def test_task_state_files_are_git_ignored(tmp_path):
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    state = RepositoryTaskState(tmp_path)
+    state.create("user:alice", "code", "Local task")
+    result = subprocess.run(
+        ["git", "-C", str(tmp_path), "status", "--short", "--untracked-files=all"],
+        capture_output=True, text=True, check=True,
+    )
+    assert result.stdout == ""
