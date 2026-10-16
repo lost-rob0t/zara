@@ -9,7 +9,11 @@ chunk selected for transcription.
 from __future__ import annotations
 
 import atexit
+from contextlib import contextmanager
+import fcntl
 import io
+import json
+import logging
 import os
 import shutil
 import socket
@@ -59,6 +63,53 @@ WHISPER_CPP_MODELS = {
 }
 MODEL_BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 DOWNLOAD_REPORT_BYTES = 64 * 1024 * 1024
+logger = logging.getLogger(__name__)
+DEVICE_LOSS_MARKERS = ("device lost", "vk_error_device_lost", "gpu recovery failed")
+
+
+def _worker_state_path() -> Path:
+    runtime = os.getenv("XDG_RUNTIME_DIR")
+    root = Path(runtime) if runtime else Path.home() / ".local" / "state"
+    return root / "zara" / "whisper-worker.json"
+
+
+def _worker_identity(pid: int) -> str | None:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except (OSError, ValueError):
+        return None
+    return stat.rsplit(") ", 1)[1].split()[19]
+
+
+@contextmanager
+def _locked_worker_state():
+    path = _worker_state_path()
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    with os.fdopen(descriptor, "r+") as state_file:
+        fcntl.flock(state_file, fcntl.LOCK_EX)
+        try:
+            contents = state_file.read()
+            try:
+                state = json.loads(contents) if contents else {}
+            except ValueError as error:
+                raise RuntimeError("whisper.cpp worker state unreadable") from error
+            if not isinstance(state, dict):
+                raise RuntimeError("whisper.cpp worker state unreadable")
+            original = state.copy()
+            yield state
+            if state != original:
+                state_file.seek(0)
+                json.dump(state, state_file)
+                state_file.truncate()
+                state_file.flush()
+                os.fsync(state_file.fileno())
+        finally:
+            fcntl.flock(state_file, fcntl.LOCK_UN)
+
+
+def _device_lost(detail: str) -> bool:
+    return any(marker in detail.lower() for marker in DEVICE_LOSS_MARKERS)
 
 
 def _mono_float32(audio) -> np.ndarray:
@@ -230,7 +281,12 @@ class WhisperCppModel:
         self._client = httpx.Client(timeout=httpx.Timeout(120.0, connect=5.0))
         self._log = tempfile.TemporaryFile(mode="w+t")
         self._process: subprocess.Popen | None = None
-        self._start_server()
+        try:
+            self._start_server()
+        except Exception:
+            self._client.close()
+            self._log.close()
+            raise
         atexit.register(self.close)
 
     def _command(self) -> list[str]:
@@ -251,12 +307,32 @@ class WhisperCppModel:
         return command
 
     def _start_server(self) -> None:
-        self._process = subprocess.Popen(
-            self._command(),
-            stdin=subprocess.DEVNULL,
-            stdout=self._log,
-            stderr=subprocess.STDOUT,
-            text=True,
+        command = self._command()
+        with _locked_worker_state() as state:
+            pid = state.get("pid")
+            identity = state.get("identity")
+            if pid and identity and _worker_identity(pid) == identity:
+                raise RuntimeError(
+                    f"whisper.cpp worker PID {pid} remains alive; "
+                    "speech transcription degraded until it exits"
+                )
+            if self.device == "vulkan" and state.get("gpu_disabled"):
+                raise RuntimeError(
+                    "Vulkan device lost; whisper.cpp GPU worker disabled "
+                    "until worker state is cleared after recovery (select CPU meanwhile)"
+                )
+            self._process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=self._log,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            state["pid"] = self._process.pid
+            state["identity"] = _worker_identity(self._process.pid)
+        logger.info(
+            "[WhisperCpp] worker start backend=whisper.cpp device=%s pid=%s argv=%r",
+            self.device, self._process.pid, command,
         )
 
         timeout = float(os.getenv("ZARA_WHISPER_CPP_START_TIMEOUT", "120"))
@@ -265,9 +341,13 @@ class WhisperCppModel:
 
         while time.monotonic() < deadline:
             if self._process.poll() is not None:
-                raise RuntimeError(self._startup_failure())
+                detail = self._startup_failure()
+                self._record_device_loss(detail)
+                self._clear_worker_state()
+                self._process = None
+                raise RuntimeError(detail)
             try:
-                response = self._client.get(f"{self.endpoint}/")
+                response = self._client.get(f"{self.endpoint}/", timeout=2.0)
                 if response.status_code < 500:
                     return
             except httpx.HTTPError as error:
@@ -277,8 +357,24 @@ class WhisperCppModel:
         detail = self._startup_failure()
         if last_error:
             detail = f"{detail}; last HTTP error: {last_error}"
-        self.close()
+        self._record_device_loss(detail)
+        try:
+            self.close()
+        except RuntimeError as error:
+            detail = f"{detail}; {error}"
         raise RuntimeError(detail)
+
+    def _clear_worker_state(self) -> None:
+        with _locked_worker_state() as state:
+            if state.get("pid") == self._process.pid:
+                state.pop("pid", None)
+                state.pop("identity", None)
+
+    def _record_device_loss(self, detail: str) -> None:
+        if self.device == "vulkan" and _device_lost(detail):
+            with _locked_worker_state() as state:
+                state["gpu_disabled"] = True
+            logger.error("[WhisperCpp] Vulkan device loss; GPU worker disabled: %s", detail)
 
     def _startup_failure(self) -> str:
         self._log.flush()
@@ -288,6 +384,12 @@ class WhisperCppModel:
         return f"whisper.cpp {self.device} server failed to start{suffix}"
 
     def transcribe(self, audio, **kwargs):
+        if self.device == "vulkan":
+            with _locked_worker_state() as state:
+                if state.get("gpu_disabled"):
+                    raise RuntimeError(
+                        "Vulkan device lost; whisper.cpp GPU worker disabled"
+                    )
         data = {
             "response_format": "json",
             "temperature": "0.0",
@@ -309,12 +411,17 @@ class WhisperCppModel:
 
         files = {"file": ("audio.wav", _wav_bytes(audio), "audio/wav")}
         with self._request_lock:
-            response = self._client.post(
-                f"{self.endpoint}/inference",
-                data=data,
-                files=files,
-            )
-        response.raise_for_status()
+            try:
+                response = self._client.post(
+                    f"{self.endpoint}/inference",
+                    data=data,
+                    files=files,
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as error:
+                detail = f"{error}; {self._startup_failure()}"
+                self._record_device_loss(detail)
+                raise RuntimeError(detail) from error
 
         content_type = response.headers.get("content-type", "")
         if "json" in content_type:
@@ -325,14 +432,31 @@ class WhisperCppModel:
 
     def close(self) -> None:
         process = self._process
-        self._process = None
         if process is not None and process.poll() is None:
-            process.terminate()
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
             try:
                 process.wait(timeout=2.0)
             except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2.0)
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=2.0)
+                except subprocess.TimeoutExpired as error:
+                    logger.error(
+                        "[WhisperCpp] worker PID %s remains alive after SIGKILL; "
+                        "speech transcription degraded", process.pid,
+                    )
+                    raise RuntimeError(
+                        f"whisper.cpp worker PID {process.pid} remains alive after SIGKILL"
+                    ) from error
+        if process is not None:
+            self._clear_worker_state()
+            self._process = None
 
         try:
             self._client.close()

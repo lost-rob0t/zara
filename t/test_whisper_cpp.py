@@ -1,4 +1,7 @@
 from pathlib import Path
+import subprocess
+import threading
+from unittest.mock import Mock
 
 import pytest
 
@@ -11,6 +14,8 @@ from zara.stt_backends import (
 from zara.whisper_cpp import (
     WhisperCppModel,
     _normalize_backend_device,
+    _worker_identity,
+    _worker_state_path,
     resolve_whisper_cpp_model,
 )
 
@@ -121,3 +126,179 @@ def test_cpu_server_command_disables_gpu():
     command = _bare_model(device="cpu")._command()
 
     assert "--no-gpu" in command
+
+
+def test_start_refuses_prior_live_worker(monkeypatch, tmp_path):
+    import json
+    import os
+    import zara.whisper_cpp as whisper_cpp
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    state = _worker_state_path()
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text(json.dumps({"pid": os.getpid(), "identity": _worker_identity(os.getpid())}))
+    model = _bare_model(device="cpu")
+    model._client = Mock()
+    model._log = Mock()
+    model._process = None
+    popen = Mock()
+    monkeypatch.setattr(whisper_cpp.subprocess, "Popen", popen)
+
+    with pytest.raises(RuntimeError, match="remains alive"):
+        model._start_server()
+    popen.assert_not_called()
+
+
+def test_unresponsive_shutdown_is_bounded_and_keeps_worker_reference(monkeypatch):
+    import zara.whisper_cpp as whisper_cpp
+
+    model = _bare_model(device="vulkan")
+    process = Mock(pid=12345)
+    process.poll.return_value = None
+    process.wait.side_effect = subprocess.TimeoutExpired("whisper-server", 2)
+    model._process = process
+    model._client = Mock()
+    model._log = Mock()
+    monkeypatch.setattr(whisper_cpp, "_worker_identity", lambda pid: "test-worker")
+
+    with pytest.raises(RuntimeError, match="remains alive"):
+        model.close()
+    assert model._process is process
+    process.terminate.assert_called_once()
+    process.kill.assert_called_once()
+    assert process.wait.call_count == 2
+
+
+def test_startup_timeout_stops_child_and_reports_backend(monkeypatch, tmp_path):
+    import zara.whisper_cpp as whisper_cpp
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    monkeypatch.setenv("ZARA_WHISPER_CPP_START_TIMEOUT", "1")
+    model = _bare_model(device="vulkan")
+    model.endpoint = "http://127.0.0.1:18234"
+    model._client = Mock()
+    model._client.get.side_effect = whisper_cpp.httpx.ConnectError("not ready")
+    model._log = tmp_path.joinpath("worker.log").open("w+")
+    process = Mock(pid=12345)
+    process.poll.return_value = None
+    process.wait.return_value = 0
+    monkeypatch.setattr(whisper_cpp.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(whisper_cpp, "_worker_identity", lambda pid: "test-worker")
+    ticks = iter([0, 0, 2])
+    monkeypatch.setattr(whisper_cpp.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(whisper_cpp.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(RuntimeError, match="vulkan server failed to start"):
+        model._start_server()
+    process.terminate.assert_called_once()
+    assert model._process is None
+
+
+def test_device_loss_disables_later_vulkan_start_but_allows_cpu(monkeypatch, tmp_path):
+    import json
+    import zara.whisper_cpp as whisper_cpp
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    model = _bare_model(device="vulkan")
+    model._record_device_loss("VK_ERROR_DEVICE_LOST")
+    assert json.loads(_worker_state_path().read_text())["gpu_disabled"] is True
+    model._client = Mock()
+    model._log = Mock()
+    model._process = None
+    popen = Mock()
+    monkeypatch.setattr(whisper_cpp.subprocess, "Popen", popen)
+    with pytest.raises(RuntimeError, match="GPU worker disabled"):
+        model._start_server()
+    popen.assert_not_called()
+
+
+def test_stale_worker_record_does_not_block_restart(monkeypatch, tmp_path):
+    import json
+    import zara.whisper_cpp as whisper_cpp
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    state = _worker_state_path()
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text(json.dumps({"pid": 99999999, "identity": "old"}))
+    model = _bare_model(device="cpu")
+    model.endpoint = "http://127.0.0.1:18234"
+    model._client = Mock()
+    model._client.get.return_value.status_code = 200
+    model._log = Mock()
+    process = Mock(pid=12345)
+    process.poll.return_value = None
+    monkeypatch.setattr(whisper_cpp.subprocess, "Popen", Mock(return_value=process))
+    monkeypatch.setattr(whisper_cpp, "_worker_identity", lambda pid: "new" if pid == 12345 else None)
+
+    model._start_server()
+    assert json.loads(state.read_text()) == {"pid": 12345, "identity": "new"}
+    model._client.get.assert_called_once_with(f"{model.endpoint}/", timeout=2.0)
+
+
+def test_failed_startup_closes_client_and_log(monkeypatch, tmp_path):
+    import zara.whisper_cpp as whisper_cpp
+
+    model_path = tmp_path / "ggml-small.bin"
+    model_path.write_bytes(b"model")
+    client = Mock()
+    log = Mock()
+    monkeypatch.setattr(whisper_cpp, "_server_binary", lambda: "whisper-server")
+    monkeypatch.setattr(whisper_cpp, "_free_local_port", lambda: 18234)
+    monkeypatch.setattr(whisper_cpp.httpx, "Client", Mock(return_value=client))
+    monkeypatch.setattr(whisper_cpp.tempfile, "TemporaryFile", Mock(return_value=log))
+    monkeypatch.setattr(
+        WhisperCppModel, "_start_server", Mock(side_effect=RuntimeError("startup failed"))
+    )
+
+    with pytest.raises(RuntimeError, match="startup failed"):
+        WhisperCppModel(str(model_path))
+    client.close.assert_called_once()
+    log.close.assert_called_once()
+
+
+def test_device_loss_rejects_later_requests_on_existing_model(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    model = _bare_model(device="vulkan")
+    model.endpoint = "http://127.0.0.1:18234"
+    model._request_lock = threading.Lock()
+    model._client = Mock()
+    model._record_device_loss("VK_ERROR_DEVICE_LOST")
+
+    with pytest.raises(RuntimeError, match="GPU worker disabled"):
+        model.transcribe([0.0])
+    model._client.post.assert_not_called()
+
+
+def test_corrupt_worker_state_fails_closed(monkeypatch, tmp_path):
+    import zara.whisper_cpp as whisper_cpp
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    state = _worker_state_path()
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text('{"pid":')
+    model = _bare_model(device="cpu")
+    model._client = Mock()
+    model._log = Mock()
+    model._process = None
+    popen = Mock()
+    monkeypatch.setattr(whisper_cpp.subprocess, "Popen", popen)
+
+    with pytest.raises(RuntimeError, match="worker state unreadable"):
+        model._start_server()
+    popen.assert_not_called()
+
+
+def test_shutdown_handles_child_exit_between_poll_and_signal(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    model = _bare_model(device="cpu")
+    process = Mock(pid=12345)
+    process.poll.return_value = None
+    process.terminate.side_effect = ProcessLookupError
+    model._process = process
+    model._client = Mock()
+    model._log = Mock()
+
+    model.close()
+    assert model._process is None
+    model._client.close.assert_called_once()
+    model._log.close.assert_called_once()
