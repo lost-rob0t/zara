@@ -36,9 +36,14 @@ backend = "prolog_rlm"
 prolog_rlm_endpoint = "http://127.0.0.1:18765/zara-runtime/v1"
 #+end_src
 
-The current sidecar advertises =supports_host_tools=false=. Zara's file and
-code tools are therefore available through the default =langgraph= backend;
-selecting =prolog_rlm= currently provides conversation generation only.
+When file tools are enabled, Zara resolves the selected Git worktree through
+=file_repository/2= and =file_skill_resolver:resolved_tool/2=. It registers
+=file_read= with the native sidecar over loopback using
+=ZARA_RUNTIME_HOST_TOKEN= from both processes. The callback accepts reads only
+for the active RuntimeHost turn and applies the configured file roots and size
+limit. Keep the token in protected process configuration outside Git. Startup
+fails if the sidecar lacks the authenticated =ZARA-RUNTIME/1= host-tool
+protocol. File writes and code tasks are not yet exposed through this bridge.
 
 * User-owned customization files
 Mutable user customization belongs in the user's Zara configuration directory, outside Git and the Nix store. Zara/Home Manager may provision directories or immutable defaults, but must not overwrite mutable private user state.

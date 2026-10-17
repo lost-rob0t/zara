@@ -197,7 +197,25 @@ class RuntimeSupervisor:
             from zara.runtime.prolog_rlm import PrologRLMRuntimeBackend
 
             endpoint = str(config.get("agent", "prolog_rlm_endpoint", "http://127.0.0.1:18765/zara-runtime/v1"))
-            backend_factory = lambda: PrologRLMRuntimeBackend(endpoint, principal_id=principal.principal_id)
+
+            def backend_factory():
+                read_tooling = None
+                if config.get_tool_config().get("file_tools", False):
+                    from zara.agent.tools.file_tools import FileTooling, FileToolingConfig, resolve_writable_repo
+
+                    alias = config.get_section("file_tools").get("repository", "default")
+                    repo_root = resolve_writable_repo(prolog_engine, alias)
+                    skills = prolog_engine.query_all("file_skill_resolver:resolved_tool(Skill, Tool)")
+                    if not any(row.get("Tool") == "read_file" for row in skills):
+                        raise RuntimeError("Prolog file read skill is unavailable")
+                    file_config = config.get_file_tool_config(repo_root)
+                    read_tooling = FileTooling(FileToolingConfig(**file_config))
+                return PrologRLMRuntimeBackend(
+                    endpoint,
+                    principal_id=principal.principal_id,
+                    read_tooling=read_tooling,
+                    host_token=os.environ.get("ZARA_RUNTIME_HOST_TOKEN") if read_tooling else None,
+                )
         else:
             backend_factory = lambda: AgentRuntimeBackend(manager_factory, router=router)
 

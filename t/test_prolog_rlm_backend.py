@@ -8,22 +8,30 @@ from threading import Thread
 import pytest
 
 from zara.runtime.prolog_rlm import PrologRLMRuntimeBackend
+from zara.runtime.turn_context import TurnCapabilityLease, bind_turn_capability_lease
+from zara.agent.tools.file_tools import FileTooling, FileToolingConfig
 
 
 class Handler(BaseHTTPRequestHandler):
     requests = []
+    authorizations = []
+    configured = False
 
     def log_message(self, *_args):
         pass
 
     def do_GET(self):
-        body = {"runtimes": [{"id": "prolog-rlm", "protocol": "ZARA-RUNTIME/1", "available": True, "installed": True, "health": "ready", "supports_cancel": True}]}
+        body = {"runtimes": [{"id": "prolog-rlm", "protocol": "ZARA-RUNTIME/1", "available": True, "installed": True, "health": "ready", "supports_cancel": True, "supports_host_tools": self.configured}]}
         self.reply(body)
 
     def do_POST(self):
         payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         self.requests.append((self.path, payload))
-        if self.path.endswith("cancel"):
+        self.authorizations.append(self.headers.get("Authorization"))
+        if self.path.endswith("host-config"):
+            type(self).configured = True
+            self.reply({"protocol": "ZARA-RUNTIME/1", "status": "configured", "generation": payload["generation"]})
+        elif self.path.endswith("cancel"):
             self.reply({"protocol": "ZARA-RUNTIME/1", "runtime_id": "prolog-rlm", "request_id": payload["request_id"], "status": "cancel_requested"})
         else:
             self.reply({"protocol": "ZARA-RUNTIME/1", "runtime_id": "prolog-rlm", "request_id": payload["request_id"], "status": "completed", "text": "from prolog"})
@@ -40,6 +48,8 @@ class Handler(BaseHTTPRequestHandler):
 @pytest.fixture
 def sidecar():
     Handler.requests = []
+    Handler.authorizations = []
+    Handler.configured = False
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -66,6 +76,29 @@ def test_loopback_protocol_turn_and_cancel(sidecar):
     assert request["inline_context"] == "Use code"
     assert request["mode"] == "rlm"
     assert Handler.requests[1][0].endswith("cancel")
+
+
+def test_read_tool_bootstrap_and_turn_fence(sidecar, tmp_path):
+    (tmp_path / "note.txt").write_text("hello")
+    tooling = FileTooling(FileToolingConfig(base_dir=tmp_path))
+
+    async def run():
+        backend = PrologRLMRuntimeBackend(
+            sidecar, principal_id="user:alice", read_tooling=tooling, host_token="test-secret"
+        )
+        await backend.start()
+        lease = TurnCapabilityLease("turn-read")
+        with bind_turn_capability_lease(lease):
+            await backend.submit_turn("read note", turn_id="turn-read")
+        await backend.stop()
+
+    asyncio.run(run())
+    config_path, config = Handler.requests[0]
+    assert config_path.endswith("host-config")
+    assert config["endpoint"].startswith("http://127.0.0.1:")
+    assert config["tools"][0]["name"] == "file_read"
+    assert Handler.requests[1][1]["host_tools"] == ["file_read"]
+    assert Handler.authorizations == ["Bearer test-secret", "Bearer test-secret"]
 
 
 def test_sidecar_requires_loopback():

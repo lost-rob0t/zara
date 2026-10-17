@@ -9,6 +9,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 - An opt-in code environment can run coding tasks in parallel, isolated Git worktrees and return persistent task status and results to Zara.
 - File skills can use a Prolog-declared repository to limit reading and writing to an operator-selected worktree.
 - Zara can use a local Prolog-RLM sidecar for conversation turns, with bounded conversation history and turn cancellation.
+- The Prolog-RLM sidecar can read files from a Prolog-declared repository through an authenticated, turn-scoped callback when file tools are enabled.
 - Zara Desktop now includes a full Prolog IDE workspace with approved-source navigation, syntax highlighting, dirty and cursor state, bounded find/replace, validation diagnostics, guided fact management, and a query console with history, bounded results, and honest stale-result cancellation. IDE queries use the canonical runtime through an admin-gated ZARA/1 command instead of creating a second Prolog engine or blocking Qt's main thread.
 - Zara Desktop now mirrors the Android app's design language: Outrun is the default, the Android Outrun, StarIntel, Midnight, Terminal, and Light themes are available in desktop settings, and chat, history, composer, status, tool activity, and Org surfaces share the same semantic colors, borders, spacing, and rounded hierarchy. Existing desktop themes remain selectable.
 

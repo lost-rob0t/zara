@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
+import secrets
 from typing import Optional
 from urllib.parse import urlsplit
 
 from .backend import RuntimeBackend, RuntimeTurnResult
+from .host_read_callback import HostReadCallbackServer
+from .turn_context import current_turn_capability_lease
 
 
 class PrologRLMRuntimeBackend(RuntimeBackend):
-    def __init__(self, endpoint: str, *, principal_id: str, timeout: float = 120.0) -> None:
+    def __init__(self, endpoint: str, *, principal_id: str, timeout: float = 120.0, read_tooling=None, host_token: Optional[str] = None) -> None:
         parsed = urlsplit(endpoint)
         if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/zara-runtime/v1":
             raise ValueError("Prolog-RLM endpoint must use 127.0.0.1 and ZARA-RUNTIME/1 HTTP")
@@ -26,6 +29,14 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         self._timeout = timeout
         self._started = False
         self._history: dict[str, list[tuple[str, str]]] = {}
+        if read_tooling is not None and not host_token:
+            raise ValueError("Prolog-RLM host token is required for file tools")
+        self._host_token = host_token
+        self._callback = (
+            HostReadCallbackServer(read_tooling, token=host_token, generation=secrets.randbits(63) or 1)
+            if read_tooling is not None else None
+        )
+        self._generation = self._callback.generation if self._callback else None
 
     @property
     def principal_id(self) -> str:
@@ -35,11 +46,14 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         connection = http.client.HTTPConnection(self._host, self._port, timeout=self._timeout)
         try:
+            headers = {"Content-Type": "application/json"} if body is not None else {}
+            if self._host_token:
+                headers["Authorization"] = f"Bearer {self._host_token}"
             connection.request(
                 "POST" if body is not None else "GET",
                 f"/zara-runtime/v1/{route}",
                 body=body,
-                headers={"Content-Type": "application/json"} if body is not None else {},
+                headers=headers,
             )
             response = connection.getresponse()
             if response.status != 200 or response.getheader("Content-Type", "").split(";", 1)[0].strip() != "application/json":
@@ -55,17 +69,43 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         return result
 
     async def start(self) -> None:
-        discovery = await asyncio.to_thread(self._request, "discover")
-        descriptors = discovery.get("runtimes", [])
-        if not isinstance(descriptors, list) or len(descriptors) != 1:
-            raise RuntimeError("Prolog-RLM discovery returned invalid runtimes")
-        descriptor = descriptors[0]
-        if not isinstance(descriptor, dict) or descriptor.get("id") != "prolog-rlm":
-            raise RuntimeError("Prolog-RLM discovery returned an unexpected runtime")
-        if descriptor.get("protocol") != "ZARA-RUNTIME/1":
-            raise RuntimeError("Prolog-RLM protocol is incompatible")
-        if descriptor.get("installed") is not True or descriptor.get("available") is not True or descriptor.get("health") not in {"ready", "busy"}:
-            raise RuntimeError("Prolog-RLM runtime is unavailable")
+        if self._callback is not None:
+            self._callback.start()
+            try:
+                configured = await asyncio.to_thread(self._request, "host-config", {
+                    "protocol": "ZARA-RUNTIME/1",
+                    "endpoint": self._callback.endpoint,
+                    "generation": self._generation,
+                    "tools": [{
+                        "name": "file_read",
+                        "description": "Read UTF-8 text in the configured repository",
+                        "arguments": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+                        "result": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]},
+                    }],
+                })
+                if configured != {"protocol": "ZARA-RUNTIME/1", "status": "configured", "generation": self._generation}:
+                    raise RuntimeError("Prolog-RLM host tool configuration was rejected")
+            except BaseException:
+                self._callback.stop()
+                raise
+        try:
+            discovery = await asyncio.to_thread(self._request, "discover")
+            descriptors = discovery.get("runtimes", [])
+            if not isinstance(descriptors, list) or len(descriptors) != 1:
+                raise RuntimeError("Prolog-RLM discovery returned invalid runtimes")
+            descriptor = descriptors[0]
+            if not isinstance(descriptor, dict) or descriptor.get("id") != "prolog-rlm":
+                raise RuntimeError("Prolog-RLM discovery returned an unexpected runtime")
+            if descriptor.get("protocol") != "ZARA-RUNTIME/1":
+                raise RuntimeError("Prolog-RLM protocol is incompatible")
+            if descriptor.get("installed") is not True or descriptor.get("available") is not True or descriptor.get("health") not in {"ready", "busy"}:
+                raise RuntimeError("Prolog-RLM runtime is unavailable")
+            if self._callback is not None and descriptor.get("supports_host_tools") is not True:
+                raise RuntimeError("Prolog-RLM host tools are unavailable")
+        except BaseException:
+            if self._callback is not None:
+                self._callback.stop()
+            raise
         self._started = True
 
     async def submit_turn(
@@ -97,7 +137,14 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         if len(context) > 262144:
             raise ValueError("Prolog-RLM inline context exceeds size limit")
         request = {"protocol": "ZARA-RUNTIME/1", "request_id": turn_id, "mode": "rlm", "prompt": text, "inline_context": context}
-        response = await asyncio.to_thread(self._request, "generate", request)
+        if self._callback is not None:
+            self._callback.register_turn(turn_id, current_turn_capability_lease())
+            request["host_tools"] = ["file_read"]
+        try:
+            response = await asyncio.to_thread(self._request, "generate", request)
+        finally:
+            if self._callback is not None:
+                self._callback.unregister_turn(turn_id)
         if response.get("protocol") != "ZARA-RUNTIME/1" or response.get("runtime_id") != "prolog-rlm" or response.get("request_id") != turn_id:
             raise RuntimeError("Prolog-RLM response identity mismatch")
         if response.get("status") != "completed":
@@ -140,3 +187,5 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
     async def stop(self) -> None:
         self._started = False
         self._history.clear()
+        if self._callback is not None:
+            await asyncio.to_thread(self._callback.stop)
