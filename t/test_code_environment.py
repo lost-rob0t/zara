@@ -227,6 +227,47 @@ def test_sandbox_keeps_approved_worktree_under_passwd_home_writable(tmp_path, mo
         plugin.stop()
 
 
+def test_sandbox_reads_linked_worktree_git_status_and_diff(tmp_path, monkeypatch):
+    sandbox_binary = shutil.which("bwrap")
+    if sandbox_binary is None:
+        pytest.skip("Bubblewrap unavailable")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    actual_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    with tempfile.TemporaryDirectory(prefix="zara-code-git-", dir=actual_home) as directory:
+        base = Path(directory) / "source"
+        worktree = Path(directory) / "linked"
+        base.mkdir()
+        subprocess.run(["git", "init", "-q", str(base)], check=True)
+        (base / "tracked.txt").write_text("before\n")
+        subprocess.run(["git", "-C", str(base), "add", "tracked.txt"], check=True)
+        subprocess.run([
+            "git", "-C", str(base), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", "initial",
+        ], check=True)
+        subprocess.run(["git", "-C", str(base), "worktree", "add", "-qb", "linked", str(worktree)], check=True)
+        (worktree / ".zara").mkdir()
+        (worktree / "tracked.txt").write_text("after\n")
+        hidden = Path(directory) / "hidden"
+        hidden.write_text("private")
+        plugin = configured_plugin(tmp_path, monkeypatch, projects={"alpha": str(worktree)})
+        plugin._sandbox_binary = sandbox_binary
+        command = plugin._sandbox_command("alpha", [
+            "/bin/sh", "-c",
+            "git status --short && git diff -- tracked.txt && "
+            f"test ! -e {shlex.quote(str(hidden))}",
+        ])
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+        assert " M tracked.txt" in result.stdout
+        assert "+after" in result.stdout
+        denied = subprocess.run(plugin._sandbox_command("alpha", [
+            "/bin/sh", "-c", f"echo denied > {shlex.quote(str(base / '.git' / 'config'))}",
+        ]), capture_output=True, text=True, check=False)
+        assert denied.returncode != 0
+        assert "denied" not in (base / ".git" / "config").read_text()
+        plugin.stop()
+
+
 def test_second_start_cannot_overlap_same_worktree(tmp_path, monkeypatch):
     (tmp_path / "alpha").mkdir()
     plugin = configured_plugin(tmp_path, monkeypatch, projects={"alpha": str(tmp_path / "alpha")})

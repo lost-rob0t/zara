@@ -492,6 +492,7 @@ class CodeEnvironmentPlugin(ServicePlugin):
             "--dev-bind", "/dev", "/dev",
             "--proc", "/proc",
             "--bind", root, root,
+            *self._git_metadata_mounts(self._projects[project]),
             "--tmpfs", str(self._projects[project] / ".zara"),
             "--setenv", "HOME", "/tmp",
             "--setenv", "XDG_CONFIG_HOME", "/tmp/.config",
@@ -500,6 +501,29 @@ class CodeEnvironmentPlugin(ServicePlugin):
             "--",
             *command,
         ]
+
+    @staticmethod
+    def _git_metadata_mounts(root: Path) -> list[str]:
+        git_entry = root / ".git"
+        if not git_entry.is_file() and not git_entry.is_dir():
+            return []
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+            capture_output=True, text=True, check=False,
+        )
+        if result.returncode != 0:
+            raise ValueError("code worktree Git metadata is unavailable")
+        paths = sorted({Path(line).resolve() for line in result.stdout.splitlines()}, key=lambda path: len(path.parts))
+        mounts: list[str] = []
+        covered = [root]
+        for path in paths:
+            if not path.is_dir():
+                raise ValueError("code worktree Git metadata is unavailable")
+            if any(path == parent or parent in path.parents for parent in covered):
+                continue
+            mounts.extend(("--ro-bind", str(path), str(path)))
+            covered.append(path)
+        return mounts
 
     @staticmethod
     def _terminate(process: subprocess.Popen) -> None:

@@ -8,3 +8,4 @@ code_environment_worker_sandbox(bubblewrap, writable_repository_mount).
 code_environment_worker_sandbox(bubblewrap, private_task_state_overlay).
 code_environment_worker_lease(worktree, cross_process_flock).
 code_environment_cancellation_invariant(cancelled, worker_process_exited).
+code_environment_git_metadata(linked_worktree, read_only_mount).
