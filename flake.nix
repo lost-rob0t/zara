@@ -282,6 +282,8 @@
 
                 # Copy the zara Python module
                 cp -r $src/zara $out/lib/python/
+                mkdir -p $out/share/zarathushtra
+                cp -r $src/skills $out/share/zarathushtra/
 
                 ${if withProlog then ''
                   # Copy canonical runtime resources with structure intact.
@@ -357,6 +359,7 @@
               cp -r $src/contracts $out/share/zarathushtra/
               cp -r $src/scripts $out/share/zarathushtra/
               cp -r $src/zara $out/share/zarathushtra/
+              cp -r $src/skills $out/share/zarathushtra/
               cp -r $src/assets $out/share/zarathushtra/
               cp -r $src/browser-addon $out/share/zarathushtra/
 
@@ -530,6 +533,8 @@
                 # the complete canonical contract tree survives installation.
                 diff -r $src/contracts ${zara-cli}/share/zarathushtra/contracts
                 diff -r $src/contracts ${zara-prolog}/share/zarathushtra/contracts
+                diff -r $src/skills ${zara-cli}/share/zarathushtra/skills
+                diff -r $src/skills ${zara-prolog}/share/zarathushtra/skills
                 touch $out
               '';
           };

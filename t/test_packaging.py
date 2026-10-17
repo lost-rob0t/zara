@@ -110,6 +110,19 @@ def test_wheel_includes_browser_addon(wheel_names):
         assert matches, f"{rel} missing from wheel"
 
 
+def test_wheel_ships_discoverable_builtin_skill_tree(wheel_path, tmp_path):
+    from zara.agent.skills import SkillRegistry
+
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(tmp_path)
+    roots = list(tmp_path.glob("*.data/data/share/zarathushtra/skills"))
+    assert len(roots) == 1
+    registry = SkillRegistry(roots)
+    names = {skill.name for skill in registry.discover()}
+    assert {"rage", "zara-android-release", "python-runtime", "prolog-modules", "python-prolog"} <= names
+    assert len(registry.browser_entries()) == len(names)
+
+
 def test_wheel_declares_all_console_scripts(wheel_entry_points):
     expected = {
         "zara = zara.__main__:main",

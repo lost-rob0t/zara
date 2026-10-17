@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Awaitable, Callable, Optional
 
 
@@ -30,6 +30,8 @@ class HookRegistration:
     priority: int
     sequence: int
     callback: HookCallback
+    enabled: bool = True
+    policy_gated: bool = True
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,8 @@ class HookDiagnostic:
     owner: str
     priority: int
     sequence: int
+    enabled: bool
+    policy_gated: bool
 
 
 class AgentLoopAdviceRegistry:
@@ -55,8 +59,17 @@ class AgentLoopAdviceRegistry:
         owner: str,
         priority: int,
         callback: HookCallback,
+        *,
+        enabled: bool = True,
+        policy_gated: bool = True,
     ) -> int:
-        self._validate_registration(kind, owner, priority, callback)
+        self._validate_registration(
+            kind,
+            owner,
+            priority,
+            callback,
+            policy_gated=policy_gated,
+        )
 
         registration_id = self._next_registration_id
         sequence = self._next_sequence
@@ -69,13 +82,48 @@ class AgentLoopAdviceRegistry:
             priority=priority,
             sequence=sequence,
             callback=callback,
+            enabled=bool(enabled),
+            policy_gated=bool(policy_gated),
         )
         return registration_id
+
+    def register_core(
+        self,
+        kind: str,
+        owner: str,
+        priority: int,
+        callback: HookCallback,
+        *,
+        enabled: bool = True,
+    ) -> int:
+        if kind == "override":
+            raise HookRegistrationError("core hooks may not replace the canonical agent loop")
+        return self.register(
+            kind,
+            owner,
+            priority,
+            callback,
+            enabled=enabled,
+            policy_gated=False,
+        )
 
     def unregister(self, registration_id: Optional[int]) -> bool:
         if registration_id is None:
             return False
         return self._registrations.pop(registration_id, None) is not None
+
+    def set_enabled(self, registration_id: int, enabled: bool) -> bool:
+        registration = self._registrations.get(registration_id)
+        if registration is None:
+            return False
+        self._registrations[registration_id] = replace(
+            registration,
+            enabled=bool(enabled),
+        )
+        return True
+
+    def set_customization_enabled(self, enabled: bool) -> None:
+        self.enabled = bool(enabled)
 
     def clear_owner(self, owner: str) -> int:
         registration_ids = [
@@ -98,6 +146,8 @@ class AgentLoopAdviceRegistry:
                 owner=registration.owner,
                 priority=registration.priority,
                 sequence=registration.sequence,
+                enabled=registration.enabled,
+                policy_gated=registration.policy_gated,
             )
             for registration in self._snapshot()
         )
@@ -105,10 +155,8 @@ class AgentLoopAdviceRegistry:
     async def invoke(self, base_callable: BaseCallable, *args: Any, **kwargs: Any) -> Any:
         if not callable(base_callable):
             raise HookInvocationError("base callable must be callable")
-        if not self.enabled:
-            return await self._call(base_callable, *args, **kwargs)
 
-        snapshot = self._snapshot()
+        snapshot = self._active_snapshot()
         overrides = [registration for registration in snapshot if registration.kind == "override"]
         if len(overrides) > 1:
             raise HookInvocationError("multiple active override hooks are ambiguous")
@@ -154,6 +202,13 @@ class AgentLoopAdviceRegistry:
 
         return continuation
 
+    def _active_snapshot(self) -> list[HookRegistration]:
+        return [
+            registration
+            for registration in self._snapshot()
+            if registration.enabled and (self.enabled or not registration.policy_gated)
+        ]
+
     def _snapshot(self) -> list[HookRegistration]:
         return sorted(
             self._registrations.values(),
@@ -166,6 +221,8 @@ class AgentLoopAdviceRegistry:
         owner: str,
         priority: int,
         callback: HookCallback,
+        *,
+        policy_gated: bool,
     ) -> None:
         if kind not in _ALLOWED_KINDS:
             raise HookRegistrationError(f"unknown hook kind: {kind!r}")
@@ -177,7 +234,7 @@ class AgentLoopAdviceRegistry:
             raise HookRegistrationError("priority is outside the supported range")
         if not callable(callback):
             raise HookRegistrationError("callback must be callable")
-        if kind in _OVERRIDE_CAPABLE_KINDS and not (
+        if policy_gated and kind in _OVERRIDE_CAPABLE_KINDS and not (
             self.enabled and self.allow_override
         ):
             raise HookRegistrationError(

@@ -322,11 +322,9 @@ async def test_memory_context_is_transient_across_turns(monkeypatch):
     await manager.process_async("second")
 
     persisted = manager.conversation_manager.conversation_history
-    assert sum(isinstance(message, SystemMessage) for message in persisted) == 1
-    assert isinstance(persisted[0], SystemMessage)
+    assert not any(isinstance(message, SystemMessage) for message in persisted)
     assert all("Relevant memories:" not in str(message.content) for message in persisted)
     assert [type(message) for message in persisted] == [
-        SystemMessage,
         HumanMessage,
         AIMessage,
         HumanMessage,

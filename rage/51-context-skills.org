@@ -1,0 +1,27 @@
+#+title: RAGE #51 — Context management and declarative skills
+
+* Iteration 1
+** Control plane
+- Consumed issue :: #51 — ZARA-031 Build extensible context management and Python/Prolog skill files
+- Immutable RAGE start commit :: 7a9c25cf31c4088568e2b50e49f47ce05a0a0172
+- Branch :: feat/zara-031-context-management
+- Operator priority :: The user explicitly requested a Zara RAGE loop for first-class skills and MCP-server composition. Issue #51 is the existing roadmap owner for declarative skill-file context and all declared dependencies are closed. Existing MCP support is treated as shipped prior art and must be reused rather than duplicated.
+- Auto-RAGE :: research, design, adversarial review, decision gate, TDD realization, exact-head verification enabled by .rage.toml
+
+** Current scope
+- Build the #51 ContextManager ownership boundary.
+- Add a versioned declarative SKILL.md protocol and registry/selector with bounded context injection.
+- Keep skill context transient and out of persisted transcript history.
+- Preserve one canonical base system prompt and provider-valid tool-call/result grouping.
+- Compose with existing MCP dynamic capability context rather than creating a second MCP subsystem.
+- Do not add or revive Prolog-RLM.
+
+** Evidence ledger
+- Start commit recorded before research/design/tests/implementation.
+- Research commit :: deef1560cb454871b431204d9831a58b95044675
+- Design commit :: fcaf01fac44ce0fc1aca061be87f24ce00a187e4
+- Tests-only head :: 9b7b8490c7a2598b3e3c8e76e3523705b2c1a46a
+- Draft PR :: #262
+- TDD red workflow :: CI run 615 / workflow run 33471220878
+- TDD red result :: test job failed in full =scripts/test-all.sh= pytest phase exactly because the new production modules do not yet exist. JUnit reports two collection errors and zero test failures: =ModuleNotFoundError: zara.agent.context= and =ModuleNotFoundError: zara.agent.skills=. Shared-mic jobs were independently green. This is the expected contract-first red.
+- Local-execution limitation :: connector environment cannot clone/run the Nix repository locally; executable evidence is therefore captured from GitHub Actions at exact commit heads. This does not relax the repository gate.

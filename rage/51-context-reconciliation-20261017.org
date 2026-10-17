@@ -1,0 +1,154 @@
+#+title: #51 Context and skills reconciliation
+
+* Iteration 1: consume existing context-management issue
+- Consumed issue: https://github.com/lost-rob0t/zara/issues/51
+- Exact immutable start: 27be64a11862bff664c786ccb3cbbcfac92dffcc
+- Branch: codex/51-context-reconciliation
+- Operator order: independently review #1514/#1515, then #51, then retained
+  #654 scheduler work. #1513 remains held. No deployment or credential changes.
+- Starting dependency stack: #1514 at 3169bc1774f2c52fb3b526acdd4128fa17706165;
+  #1515 at the start SHA above. Both independently reviewed without blocking
+  findings; exact-head CI still running. No context merge before prerequisites.
+- Existing #51 declared dependencies ZARA-008/009/016/021 are historical shipped
+  foundations; current #1 names #51 as a live lane. Retain canonical RuntimeHost,
+  principal, conversation storage, tool authority and #260 advice ownership.
+
+* Prior audit evidence, recorded before this RAGE iteration
+- Original implementation: b9d3d5d308bbed1e73fc21bc99cba11dd7bb6a47.
+- Existing attachment/hooks implementation: fea098984043f4a956f512c894c06e507a47b03a.
+- Existing RED recovery tests: d1e42d0cf51b9b194838a45c9f9be99f50a5d892.
+- Original context/skills integration suite: 36 passed on the original head.
+- Two selected existing recovery tests fail: missing ContextManager.compact and
+  SkillRegistry.browser_entries. These are unfinished contracts, not permission
+  to revive old PR #262 wholesale. Detached audit worktree is unchanged.
+- Issue discussion requires existing #260 hooks, scoped typed attachments,
+  safe browser metadata, and typed manual compaction. #961/#1478 and #1045 own
+  UI/projection work; do not duplicate their Compose surfaces in this slice.
+- Public backlog: https://github.com/lost-rob0t/zara/issues/1#issuecomment-6242008005
+
+* Research and design gate
+To append before implementation: recovered-source compatibility findings,
+upstream message/token/counting semantics, alternatives, exact bounded slice,
+failure analysis and acceptance-to-test mapping. Recover old contracts and
+tests; preserve current provider deferral, task context isolation and advice.
+
+** Recovered-source findings and bounded design
+- Existing ContextManager mutates history once per compression/truncation step.
+  A later failed summary or impossible budget can therefore leave a partially
+  destroyed prefix. Stage all destructive changes locally and publish once only
+  after full success plus active generation/revision checks.
+- Existing message counter ignores tool-call arguments. Count complete serialized
+  provider-visible message payloads (including tool calls), with a conservative
+  local fallback and injectable provider/token counter. Do not label an estimate
+  a measured provider-token count. No tokenizer dependency or model change.
+- LangChain primary reference: https://reference.langchain.com/python/langchain-core/messages/utils/trim_messages
+  documents preserving a leading system message, a valid human-start history,
+  and matching tool-result ordering. Generic message slicing cannot provide our
+  complete-turn transactions or stale generation semantics; retain recovered
+  complete Human/assistant/tool turn grouping and current validation helpers.
+- First recovery slice: existing context/skill modules, shipped skill packaging,
+  current AgentManager integration through the existing #260 advice registry,
+  explicit manual compact API/audit and metadata-only browser projection. Keep
+  current memory-provider deferral and canonical backend memory persistence.
+- Supplied task history uses an isolated ephemeral ContextManager; it cannot
+  replace interactive context or persist its transient task system context.
+- Context remains active inference state; durable raw conversations and derived
+  memory remain owned by existing stores. No alternate scheduler or database.
+- ConversationManager exposes a compatibility history projection backed by the
+  context owner; all production mutations route through ContextManager.
+- Typed attachment lifetime/principal reconciliation and Android/desktop UI
+  projection stay explicit remaining #51 work before extending #654. Recover
+  existing advice toggles now; do not import the old process-global unscoped
+  attachment store or treat attachment context as task identity.
+- Rejected: blindly merge all old agent orchestration (loses backend/hook/task
+  and provider changes); new hook engine; new tokenization dependency; browser
+  entries containing instruction bodies; replacing existing packaging wholesale.
+
+** Acceptance to regression mapping before implementation
+| Contract | Planned deterministic coverage |
+|----------+--------------------------------|
+| Existing complete-turn and transient invariants | original context/agent integration tests |
+| Manual compact/no-op/one summary/stale/cancel | existing recovery tests plus cancellation |
+| All-or-nothing multi-step compression/truncation | new later-summary/budget-failure tests |
+| Metadata-only registry + shipped skills | existing RED browser/shipped-skill tests |
+| Bounded payload incl tool args and invalid config | new counter and type-boundary tests |
+| Tasks cannot mutate interactive history | existing task-turn tests + failure case |
+| Hooks/backends/provider compatibility | existing advice/customization/provider suites |
+| Skill resources survive install layout | original packaging/skill tests plus Nix CI |
+
+** Harness compatibility
+The later recovery helper's summary budget defaults to 10 even in tests with a
+total budget of 5/7. Bound that fixture sub-budget to total so failures express
+the intended compaction behavior. Bound event waits so a missing API cannot hang
+the suite. Preserve assertions; record these as harness fixes, not production fixes.
+
+* Verification gate
+- RED-first focused existing/recovery/regression tests, then adjacent agent,
+  runtime, tasks, memory/provider, hooks, configuration and packaging tests.
+- Required local commands: nix develop -c bash scripts/test-all.sh;
+  nix flake check; nix build. Nix is absent locally; record failed execution and
+  require exact-head CI, which runs these commands, before merge.
+- Independent latest-head review plus all applicable exact-head CI terminal
+  green. No skipped/cancelled/pending gate counts as success.
+- No real model/device/audio is needed for deterministic context semantics;
+  installed Android UI/runtime acceptance remains with its existing owner.
+
+* Implementation and RED/GREEN receipts
+- Recovered original modules/tests/skills and original append-only research/design
+  logs rather than rewriting the subsystem. Root RAGE skill body is byte-preserved
+  under added frontmatter. Nix/wheel/sdist resource ownership stays canonical.
+- Current-master recovery RED: three collection failures (missing context/skills).
+  With original primitives restored: seven known missing Compact/browser failures,
+  34 passed. These existing recovery failures now pass without weakened assertions.
+- Added RED tests reproduced partial multi-summary destruction, destructive failed
+  truncation, missing cancellation/deadline behavior, ignored tool-argument size,
+  unbounded final history, stale explicit cancellation, duplicate tool-call IDs,
+  unenforced skill sub-budget, incorrect identical-summary revision and missing
+  installed Nix resource discovery. Late cancellation-suppressing summaries are
+  rejected; arbitrary callback code cannot be forcibly terminated.
+- Staged automatic retention commits only with the accepted turn. Manual compact
+  swaps once after success and returns a metadata-only revision/count/group audit.
+  Provider checks use task-local scope, outside serializable graph state.
+- Existing memory regression now asserts zero persisted SystemMessages: canonical
+  base prompt and transient memory are regenerated, not raw transcript history.
+  Existing task history equality/isolation assertions are retained.
+- Original MCP integration's prepared-registry proxy assertion was reconciled to
+  preserve the current original-registry identity contract; an explicit prepared
+  marker prevents double preparation/injection in the real canonical graph.
+- Diagnostic context script: 88 passed (five existing RunnableConfig warnings).
+- The later rendered skill sub-budget check exposed five real adjacent approval/
+  task failures (588 passed). Selection was still using approximate body counts
+  instead of the complete rendered context count. Added a RED selection test,
+  supplied the same owner counter to selection and assembly, and omitted whole
+  lower-priority skills. The 39-test registry/approval/task rerun passed without
+  relaxed assertions. This was a counter integration bug, not an environment
+  disconnect or justification to disable the limit.
+- Packaging/layout: 25 passed, one unrelated entrypoint test excluded after the
+  full packaging attempt exposed missing host PortAudio. No test assertion was
+  removed; exact-head pinned CI must run the full suite including that entrypoint.
+- Nix develop full gate, nix flake check and nix build were each executed locally
+  and each failed with exit127 because Nix is absent. No local full-gate claim.
+- Diagnostic tools installed only in /tmp: MCP, setuptools and wheel added to the
+  existing temporary venv. No production dependency or credential changes.
+- Prerequisite #1514 was independently reviewed and passed all eight exact-head
+  jobs, then merged with expected-head protection as
+  d8fdbed9d1fb466c0ce3d700f9fb9a9f5665e731. #1515 remains exact 27be64a1,
+  retargeted to master with preserved ancestry and terminal CI still pending.
+
+* Remaining consumed-issue scope
+#51 remains open: reconcile typed attachment ownership/lifetimes and memory
+capture advice without duplicate backend writes, then RuntimeHost/UI projections
+through existing #961/#1478/#1045 owners. Do not consume #654 until its required
+context contracts are fulfilled. #1513 stays held. No device/live-model claim.
+
+* Candidate freeze
+- Final expanded agent/runtime/task/plugin/memory/context/skills/streaming/MCP/
+  configuration/resource-packaging regression: 596 passed, 26 existing
+  RunnableConfig warnings, 18.43 seconds. Commands/logs retained in task evidence.
+- Production manual compaction path is exercised through AgentManager, its
+  canonical graph, real retention/summary adapter, and a deterministic fake LLM.
+  A missing canonical summary-request marker was reproduced RED and repaired.
+- Every owned graph provider step now rejects malformed/incomplete tool groups
+  and duplicate base prompts before invocation, in addition to budget checks.
+- No unresolved known RED remains in this slice. Full pinned repository/Nix/
+  Android/screenshot checks and independent exact-head review remain merge gates.

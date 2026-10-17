@@ -340,14 +340,15 @@ def create_agent_node(llm_client, tool_registry, stream_publisher=None, latency_
 
         turn_id = state.get("turn_id")
         conversation_id = state.get("conversation_id")
+        msgs = state.get("messages", [])
+        assert isinstance(msgs, list), "state['messages'] must be a list"
+        from .context import check_provider_context
+        check_provider_context(msgs)
         runtime_bridge.model_started(
             label="llm",
             turn_id=turn_id,
             conversation_id=conversation_id,
         )
-
-        msgs = state.get("messages", [])
-        assert isinstance(msgs, list), "state['messages'] must be a list"
 
         # NOTE: history is cleaned in AgentManager; we keep logging here light.
         logger.info("[AgentNode] Calling LLM with %d messages", len(msgs))
@@ -714,11 +715,12 @@ async def run_conversation_loop(
     Dynamic capability providers are prepared before the graph is compiled so
     their tools are bound exactly like native Zara tools for this turn.
     """
-    prepare = getattr(tool_registry, "prepare_async", None)
+    context_prepared = state.get("_zara_context_prepared", False)
+    prepare = None if context_prepared else getattr(tool_registry, "prepare_async", None)
     if prepare is not None:
         await prepare()
 
-    dynamic_context = getattr(tool_registry, "dynamic_system_context", lambda: None)()
+    dynamic_context = None if context_prepared else getattr(tool_registry, "dynamic_system_context", lambda: None)()
     if dynamic_context:
         messages = list(state.get("messages", []))
         messages = [
@@ -739,6 +741,9 @@ async def run_conversation_loop(
     # graph channel, or the checkpointer serializes a lock-bearing object
     # after every superstep (#249).
     state = dict(state)
+    for key in tuple(state):
+        if key.startswith("_zara_context_") or key == "_zara_skill_context":
+            state.pop(key)
     latency_trace = state.pop("latency_trace", None)
 
     saver = InMemorySaver()
