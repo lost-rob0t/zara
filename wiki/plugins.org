@@ -241,6 +241,8 @@ user's home directory, and overlays =.zara/= with private temporary storage so
 workers cannot modify persisted task state. Only named
 credential environment variables and minimal process settings reach the
 worker. Model credentials belong in a protected runtime environment file.
+The plugin checks that Bubblewrap can start at startup and refuses to enable
+code tasks when the host denies user namespaces.
 For linked worktrees, the resolved Git metadata directory is mounted read-only
 so workers can inspect status and diffs while unrelated home files stay hidden.
 =implement= may use Pi edit/write tools; =review= and =plan= use read-only

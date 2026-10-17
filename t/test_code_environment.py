@@ -14,9 +14,30 @@ import pytest
 from zara.plugins.builtin.code_environment import CodeEnvironmentPlugin
 
 
+def _require_bwrap():
+    binary = shutil.which("bwrap")
+    if binary is None:
+        pytest.skip("Bubblewrap unavailable")
+    probe = subprocess.run(
+        [binary, "--ro-bind", "/", "/", "--", "/bin/true"],
+        capture_output=True, text=True, check=False, timeout=5,
+    )
+    if probe.returncode:
+        detail = probe.stderr.lower()
+        if any(message in detail for message in (
+            "setting up uid map: permission denied",
+            "no permissions to create new namespace",
+            "creating new namespace failed: operation not permitted",
+        )):
+            pytest.skip("Bubblewrap user namespaces unavailable")
+        pytest.fail(f"Bubblewrap prerequisite probe failed: {probe.stderr}")
+    return binary
+
+
 def configured_plugin(tmp_path, monkeypatch, *, projects=None, max_concurrent=2):
     monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/pi")
     plugin = CodeEnvironmentPlugin()
+    monkeypatch.setattr(plugin, "_probe_sandbox", lambda _binary: True, raising=False)
     roots = projects or {"alpha": str(tmp_path / "alpha"), "beta": str(tmp_path / "beta")}
     for root in roots.values():
         (Path(root) / ".zara").mkdir(exist_ok=True)
@@ -171,14 +192,38 @@ def test_code_requires_runtime_principal(tmp_path, monkeypatch):
         plugin.start(SimpleNamespace(configuration={"projects": ["alpha"]}))
 
 
+def test_code_rejects_sandbox_without_user_namespaces(tmp_path, monkeypatch):
+    (tmp_path / "alpha").mkdir()
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/pi")
+    plugin = CodeEnvironmentPlugin()
+    monkeypatch.setattr(plugin, "_probe_sandbox", lambda _binary: False, raising=False)
+    monkeypatch.setattr(plugin, "_resolve_project", lambda alias: tmp_path / "alpha")
+    monkeypatch.setattr(plugin, "_state_for_project", lambda alias: SimpleNamespace(recover_interrupted=lambda _: 0))
+    with pytest.raises(ValueError, match="filesystem sandbox is unavailable"):
+        plugin.start(SimpleNamespace(configuration={"projects": ["alpha"]}, principal_id="user:test"))
+
+
+@pytest.mark.parametrize("stderr,skips", [
+    ("bwrap: setting up uid map: Permission denied", True),
+    ("bwrap: unexpected mount failure", False),
+])
+def test_bwrap_test_prerequisite_only_skips_namespace_denial(monkeypatch, stderr, skips):
+    monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/bwrap")
+    monkeypatch.setattr("subprocess.run", lambda *args, **kwargs: SimpleNamespace(returncode=1, stderr=stderr))
+    if skips:
+        with pytest.raises(pytest.skip.Exception, match="user namespaces unavailable"):
+            _require_bwrap()
+    else:
+        with pytest.raises(pytest.fail.Exception, match="unexpected mount failure"):
+            _require_bwrap()
+
+
 def test_sandbox_allows_repo_write_and_denies_outside_and_symlink(tmp_path, monkeypatch):
     actual_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
     isolated_home = tmp_path / "harness-home"
     isolated_home.mkdir()
     monkeypatch.setenv("HOME", str(isolated_home))
-    sandbox_binary = shutil.which("bwrap")
-    if sandbox_binary is None:
-        pytest.skip("bubblewrap unavailable")
+    sandbox_binary = _require_bwrap()
     root = tmp_path / "alpha"
     root.mkdir()
     (root / ".zara").mkdir()
@@ -204,9 +249,7 @@ def test_sandbox_allows_repo_write_and_denies_outside_and_symlink(tmp_path, monk
 
 
 def test_sandbox_keeps_approved_worktree_under_passwd_home_writable(tmp_path, monkeypatch):
-    sandbox_binary = shutil.which("bwrap")
-    if sandbox_binary is None:
-        pytest.skip("Bubblewrap unavailable")
+    sandbox_binary = _require_bwrap()
     actual_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
     monkeypatch.setenv("HOME", str(tmp_path))
     with tempfile.TemporaryDirectory(prefix="zara-code-sandbox-", dir=actual_home) as directory:
@@ -228,9 +271,7 @@ def test_sandbox_keeps_approved_worktree_under_passwd_home_writable(tmp_path, mo
 
 
 def test_sandbox_reads_linked_worktree_git_status_and_diff(tmp_path, monkeypatch):
-    sandbox_binary = shutil.which("bwrap")
-    if sandbox_binary is None:
-        pytest.skip("Bubblewrap unavailable")
+    sandbox_binary = _require_bwrap()
     monkeypatch.setenv("HOME", str(tmp_path))
     actual_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
     with tempfile.TemporaryDirectory(prefix="zara-code-git-", dir=actual_home) as directory:
@@ -342,9 +383,7 @@ def test_packaged_pi_accepts_worker_flags():
 
 
 def test_sandboxed_worker_runs_end_to_end(tmp_path, monkeypatch):
-    sandbox_binary = shutil.which("bwrap")
-    if sandbox_binary is None:
-        pytest.skip("Bubblewrap unavailable")
+    sandbox_binary = _require_bwrap()
     root = tmp_path / "alpha"
     root.mkdir()
     worker = root / "worker"

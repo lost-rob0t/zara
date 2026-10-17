@@ -129,6 +129,8 @@ class CodeEnvironmentPlugin(ServicePlugin):
         principal_id = getattr(runtime, "principal_id", None)
         if not isinstance(principal_id, str) or not principal_id.strip():
             raise ValueError("code requires a runtime principal")
+        if not self._probe_sandbox(sandbox_binary):
+            raise ValueError("code worker filesystem sandbox is unavailable")
         with self._lock:
             self._binary = resolved_binary
             self._sandbox_binary = sandbox_binary
@@ -479,6 +481,18 @@ class CodeEnvironmentPlugin(ServicePlugin):
         allowed = {"PATH", "LANG", "LC_ALL", "SSL_CERT_FILE", "NIX_SSL_CERT_FILE"}
         allowed.update(self._credential_env_vars)
         return {name: value for name, value in os.environ.items() if name in allowed}
+
+    @staticmethod
+    def _probe_sandbox(binary: str) -> bool:
+        try:
+            result = subprocess.run(
+                [binary, "--ro-bind", "/", "/", "--", "/bin/true"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                check=False, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
 
     def _sandbox_command(self, project: str, command: list[str]) -> list[str]:
         root = str(self._projects[project])
