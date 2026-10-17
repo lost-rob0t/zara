@@ -1,0 +1,138 @@
+#+title: Standalone capture-to-memory ingestion
+
+Tracking: https://github.com/lost-rob0t/zara/issues/1512
+Audit base: =69f16070ecba35c12a7d4df6503c3a3f30bf9e1e= (master).
+
+* Implemented boundary
+
+=OrgTranscriptCapture.render= validates finalized timestamped transcript spans and
+exact-quote note/todo proposals, then emits ordinary Org. =OrgRepository.saveTranscriptCapture=
+uses the existing configured Org repository; no server, model, permission, plugin,
+database, executor or scheduler is created by ingestion. Existing =OrgParser.parse=
+finds generated todos and =OrgRoam.build/search= indexes transcript/note headings.
+
+This is an ingestion API, not an installed microphone-to-memory user flow. It does
+not transcribe audio or infer commitments. A future extractor supplies proposals;
+the boundary requires each proposal's exact quote and UTF-16 character range to
+match one known transcript span. That proves textual provenance, not that speech
+is true or that a proposed todo should be executed. Recorded instructions never
+become runtime commands or external actions here. Proposal review state is explicit.
+
+IDs are caller-supplied stable capture IDs plus span IDs and quote ranges/kinds.
+Namespace separators cannot occur in input IDs. Original text and quotes are
+preserved as UTF-8 Base64 properties (encoding, not encryption); display text
+flattens line breaks and neutralizes Org links, timestamps and tag syntax.
+Transcript/note headings cannot accidentally introduce TODO state. No generated
+source blocks, Babel calls or executable links are emitted.
+
+Limits: 30 minutes per capture, 256 ordered nonoverlapping spans, 4,096 UTF-16
+code units per span, 65,536 total, 64 extracts, 300 code units per extract, and
+128 capture documents under =memory/captures/=. Existing identical retries remain
+allowed at capacity. The caller can review/delete files through the normal Org
+workflow; ingestion never silently evicts data. There is no audio retention here.
+
+The process-wide ingestion lock prevents concurrent ingress from this API from
+duplicating writes, including separate repository adapters in the same process.
+Existing content must match the complete deterministic document byte-for-byte;
+changed capture payloads or user edits cause a visible conflict and no overwrite.
+Write failures propagate; readback detects short writes. An uncertain partial
+document remains a conflict on retry and needs explicit repair/deletion.
+
+The existing SAF/shared provider write contract is NOT atomic create-if-absent.
+Other processes and external editors do not share the ingestion lock. Do not wire
+multiple independent capture workers to it until the owning provider supplies an
+atomic conditional-create boundary. No cross-process exactly-once guarantee,
+power-loss durability, SAF device acceptance or automatic partial-write repair
+is claimed by this slice.
+
+* Source-backed gap matrix and collision audit
+
+| Area | Existing authority/evidence | Remaining work |
+| Standalone | [[https://github.com/lost-rob0t/zara/issues/622][#622]], =android/app/.../runtime/LocalZaraServer.kt=, =prolog/TreallaSemanticRuntime.kt= | Trealla JNI exists; execute pinned ABI smoke before asserting installed runtime acceptance. No embedded Python dependency/config found in current Gradle/native sources. |
+| Phone audio | Old open [[https://github.com/lost-rob0t/zara/issues/175][#175]] and [[https://github.com/lost-rob0t/zara/issues/203][#203]], =voice/AndroidPcmRecorder.kt=, =assistant/LocalAssistantVoiceController.kt= | Manual PCM and bounded on-device recognition exist; no durable ambient capture-to-transcript-memory worker found. |
+| Watch | [[https://github.com/lost-rob0t/zara/issues/866][#866]]/[[https://github.com/lost-rob0t/zara/issues/867][#867]], =wear-voice/.../WearVoiceActivity.kt= | Explicit SharedRuntimePending/bootstrap UI. Permission is not microphone capture or transport proof. |
+| Memory | =org-core/OrgRoam.kt=, =OrgCore.kt=, =org-storage/OrgHome.kt= and =OrgTreeRepository.kt= | This slice adds validated ingestion. Capture UI, automatic extractor and transcription remain unwired. |
+| Plugins | Old open [[https://github.com/lost-rob0t/zara/issues/655][#655]], =zara/plugins/api.py= and =manager.py=, [[https://github.com/lost-rob0t/zara/pull/1387][PR #1387]] | Desktop ServicePlugin start/stop, bounded subscriptions and managed workers exist. Project those owners; APK catalog/installer does not prove executable Python or service activation on Android. |
+| Scheduling | Old open [[https://github.com/lost-rob0t/zara/issues/654][#654]], =zara/plugins/builtin/agent_mode.py=, [[https://github.com/lost-rob0t/zara/pull/1150][PR #1150]] | Agent-mode uses stable agent-mode:task IDs and advances due times before dispatch. This alone does not establish fresh context/nonoverlap/crash-safe idempotency. #1150 already owns the canonical scheduled-store recurrence work on #1058. |
+| UI | =android/app/.../ui/ZaraApp.kt= still routes Scheduled/Plugins through GatedSurface on audit master | Preserve [[https://github.com/lost-rob0t/zara/pull/1387][#1387]] and [[https://github.com/lost-rob0t/zara/pull/1058][#1058]] work rather than building another UI owner. |
+
+Other active overlap preserved: [[https://github.com/lost-rob0t/zara/pull/1413][#1413]] local voice/model/providers;
+[[https://github.com/lost-rob0t/zara/pull/1508][#1508]], [[https://github.com/lost-rob0t/zara/pull/1510][#1510]], [[https://github.com/lost-rob0t/zara/pull/1511][#1511]] Studio/model lifecycle;
+[[https://github.com/lost-rob0t/zara/pull/1496][#1496]] Org UI;
+[[https://github.com/lost-rob0t/zara/pull/873][#873]]/[[https://github.com/lost-rob0t/zara/pull/1474][#1474]] Wear surfaces.
+GitHub connector PR search and focused PR reads were used; old issue presence
+does not mean all its original implementation is still missing.
+
+* Next independent slices
+
+1. User-started phone capture: normal RECORD_AUDIO request, microphone foreground
+   service, visible pause/stop notification and UI, bounded durable chunks and
+   explicit interrupted state after process death. Never auto-start microphone on
+   boot. Test permission denial/revoke, calls, screen-off, pause/stop and storage
+   exhaustion using synthetic audio/emulator injection.
+2. Local transcription and proposals: benchmark an embedded file/chunk engine,
+   verify actual local model availability, attach timestamped spans, bound offline
+   backlog/retries and idempotent processing; remote processing is an explicit
+   user choice. Connect proposals through this ingestion boundary. Test synthetic
+   audio end-to-end, duplicate chunks and recovery; no audio test ran in this slice.
+3. Runtime packaging: prove embedded executable Python against the pinned Android
+   toolchain and ABIs, and native Trealla consult/query/restart. Python metadata,
+   Termux or remote proxies are insufficient. Reuse canonical ServicePlugin
+   lifecycle, bounded worker/subscription queues, cancellation/resource policy and
+   explicit unavailable/degraded state; test disable/re-enable and restart recovery.
+4. Scheduled memory maintenance: reconcile #1150 with one stable display chat ID
+   per job and separately assembled fresh bounded per-run context. Persist occurrence
+   identity and execution claim through the canonical scheduled store, fence
+   overlapping runs and ambiguous crash outcomes, and test two sequential runs,
+   context isolation, concurrent claims, restart and retry. Project #654 afterward.
+5. Watch: implement/measure real microphone ownership and transport on #866/#867.
+   Use numbered bounded chunks, acknowledgments, reconnect/dedup and phone-side
+   transcription. Measure actual device drain and background restrictions; no
+   battery or physical-device acceptance estimate is asserted.
+
+* Platform research
+
+The [[https://www.omi.me/][Omi reference]] describes capture, transcripts, summaries, tasks and searchable
+memory. It is a product reference, not evidence of Zara capability.
+[[https://developer.android.com/develop/background-work/services/fgs/service-types][Android microphone foreground service rules]] require visible user-authorized microphone
+ownership; background/boot start restrictions still apply.
+[[https://developer.android.com/reference/android/speech/SpeechRecognizer][SpeechRecognizer]] is not intended for continuous recognition; on-device availability
+and language/model readiness must be checked.
+[[https://developer.android.com/training/wearables/data/client-types][Wear Data Layer ChannelClient]] supplies connection-oriented transport without persistence.
+[[https://developer.android.com/reference/androidx/work/PeriodicWorkRequest][WorkManager periodic jobs]] have a 15-minute minimum and can be delayed.
+[[https://docs.python.org/3.15/using/android.html][CPython Android embedding]] and [[https://chaquo.com/chaquopy/doc/current/android.html][Chaquopy]] are packaging research paths, not
+implemented Zara Android runtimes. Preserve Zara's existing Trealla dialect/authority.
+
+* Executed validation and pending gates
+
+RED-first evidence: new core/storage APIs were absent and focused compilation
+failed on their unresolved symbols. A later executable test exposed accidental
+TODO-state promotion; a further RED test exposed malformed Unicode acceptance.
+Each was corrected before broader test execution.
+
+Host validation uses Kotlin compiler 2.3.21 (matching the repository), JDK 21
+targeting JVM 17, kotlin-stdlib 2.3.21, JUnit 4.13.2/Hamcrest 1.3. All production
+core/storage sources compile against Robolectric android-all API 29 plus the
+existing DocumentFile 1.1.0 API. These temporary host tools are not product deps.
+JUnit execution excludes android-all entirely: the tests need no Android runtime.
+All 40 core/storage JUnit tests passed, including 13 new ingestion tests.
+The file-backed ingestion tests exercise real temporary filesystem reopen,
+conflicts, failed/short writes, retention and two-thread duplicates through the
+same injectable storage operations used by the OrgRepository adapter. The adapter
+is compiled but Android SAF/shared provider behavior is not executed.
+
+Normal gate commands attempted:
+#+begin_example
+nix develop -c bash scripts/test-all.sh
+  BLOCKED: nix: command not found
+nix develop ./android -c bash scripts/test-android.sh
+  BLOCKED: nix: command not found
+bash scripts/test-android.sh
+  BLOCKED: ANDROID_HOME must be set by the nix android dev shell
+#+end_example
+
+Nix, SDK/NDK, Gradle, emulator, ADB and Zara device wrappers are absent from the
+selected workspace. No installed APK, Python/Trealla Android execution, audio,
+screen-off/permission/call test or dual Android/desktop screenshot evidence was
+produced. Full repository/Android/CI gates remain pending. Keep the PR draft;
+host tests do not establish completion of #1512 or the overall capture workflow.
