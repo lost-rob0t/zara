@@ -22,6 +22,24 @@ backend = "langgraph"
 - =[agent].backend= names a backend in the canonical agent-loop registry. =langgraph= remains the built-in default.
 - Unknown backend names fail explicitly; Zara does not silently fall back to another implementation after an explicit invalid selection.
 
+* Local Prolog-RLM runtime
+
+The built-in =prolog_rlm= selection uses a separately started Prolog-RLM
+=ZARA-RUNTIME/1= sidecar. Its endpoint must be the local IPv4 loopback address;
+Zara checks the sidecar descriptor before accepting turns. The sidecar owns
+model calls and cancellation. Zara keeps bounded conversation context and
+commits it only after a turn remains current.
+
+#+begin_src toml
+[agent]
+backend = "prolog_rlm"
+prolog_rlm_endpoint = "http://127.0.0.1:18765/zara-runtime/v1"
+#+end_src
+
+The current sidecar advertises =supports_host_tools=false=. Zara's file and
+code tools are therefore available through the default =langgraph= backend;
+selecting =prolog_rlm= currently provides conversation generation only.
+
 * User-owned customization files
 Mutable user customization belongs in the user's Zara configuration directory, outside Git and the Nix store. Zara/Home Manager may provision directories or immutable defaults, but must not overwrite mutable private user state.
 
