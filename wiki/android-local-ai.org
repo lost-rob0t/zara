@@ -112,6 +112,7 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 - Provider capabilities are explicit; Zara does not claim an engine can execute a format it cannot.
 - No network fallback occurs merely because local inference fails.
 - One actor owns model load/generate/unload ordering.
+- LiteRT-LM terminal callbacks release the native conversation off the callback pool before the actor accepts another turn.
 - Provider selection never grants model output device-action authority.
 - A cancelled LiteRT-LM conversation is discarded rather than reused.
 - Activity recreation does not create another model owner.

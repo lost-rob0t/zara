@@ -12,6 +12,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Fixed
 
 - Prolog Studio no longer shows autocomplete suggestions until a predicate name is being typed.
+- Android Local AI now completes on-device LiteRT-LM chat turns without hanging while the model conversation closes.
 - Security management with an explicit state directory now targets that directory's live Zara daemon instead of an unrelated daemon on the default runtime socket.
 
 ## 0.4.0-alpha
