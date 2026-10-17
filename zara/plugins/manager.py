@@ -454,6 +454,28 @@ class PluginManager:
         record.runtime = runtime
 
         try:
+            start_method = getattr(record.instance, "start", None)
+            if not callable(start_method):
+                raise TypeError("service plugin must define start(runtime)")
+            record.start_called = True
+            start_result = await self._call_lifecycle(start_method, runtime)
+            if isinstance(start_result, StartupUnavailable):
+                with self._lock:
+                    already_failed = record.state is PluginState.FAILED
+                if already_failed:
+                    await self._stop_record(record, preserve_failure=True)
+                else:
+                    self._mark_unavailable(record, start_result.reason)
+                    runtime._shutdown()
+                return
+            if start_result is not None:
+                raise TypeError("start() must return None or StartupUnavailable")
+            with self._lock:
+                already_failed = record.state is PluginState.FAILED
+            if already_failed:
+                await self._stop_record(record, preserve_failure=True)
+                return
+
             tools_method = getattr(record.instance, "tools", None)
             tools = (
                 tuple(await self._call_plugin(tools_method))
@@ -466,38 +488,18 @@ class PluginManager:
                 self._tool_registrar(tools)
                 record.tool_names = tuple(tool.name for tool in tools)
 
-            start_method = getattr(record.instance, "start", None)
-            if not callable(start_method):
-                raise TypeError("service plugin must define start(runtime)")
-            record.start_called = True
-            start_result = await self._call_lifecycle(start_method, runtime)
         except Exception as error:
             self._mark_failed(record, f"startup failed: {error}")
             await self._stop_record(record, preserve_failure=True)
             return
 
-        if isinstance(start_result, StartupUnavailable):
-            with self._lock:
-                already_failed = record.state is PluginState.FAILED
-            if not already_failed:
-                self._mark_unavailable(record, start_result.reason)
-            self._remove_tools(record)
-            if record.runtime is not None:
-                record.runtime._shutdown()
-            return
-
-        if start_result is not None:
-            self._mark_failed(
-                record,
-                "startup failed: start() must return None or StartupUnavailable",
-            )
-            await self._stop_record(record, preserve_failure=True)
-            return
-
         with self._lock:
-            if record.state is not PluginState.FAILED:
+            already_failed = record.state is PluginState.FAILED
+            if not already_failed:
                 record.state = PluginState.RUNNING
                 record.error = ""
+        if already_failed:
+            await self._stop_record(record, preserve_failure=True)
 
     async def _stop_record(
         self,
