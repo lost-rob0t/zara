@@ -280,3 +280,15 @@ def test_sandboxed_worker_runs_end_to_end(tmp_path, monkeypatch):
     plugin._sandbox_binary = sandbox_binary
     assert plugin._run_worker("task", "alpha", "review") == "worker done"
     plugin.stop()
+
+
+def test_worker_environment_only_passes_named_credential(tmp_path, monkeypatch):
+    (tmp_path / "alpha").mkdir()
+    plugin = configured_plugin(tmp_path, monkeypatch, projects={"alpha": str(tmp_path / "alpha")})
+    plugin._credential_env_vars = ("OPENROUTER_API_KEY",)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "selected")
+    monkeypatch.setenv("ZARA_DISCORD_TOKEN", "unrelated")
+    environment = plugin._worker_environment()
+    assert environment["OPENROUTER_API_KEY"] == "selected"
+    assert "ZARA_DISCORD_TOKEN" not in environment
+    plugin.stop()
