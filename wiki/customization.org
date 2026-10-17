@@ -43,11 +43,23 @@ When file tools are enabled, Zara resolves the selected Git worktree through
 for the active RuntimeHost turn and applies the configured file roots and size
 limit. Keep the token in protected process configuration outside Git. Startup
 fails if the sidecar lacks the authenticated =ZARA-RUNTIME/1= host-tool
-protocol. File writes and code tasks are not yet exposed through this bridge.
+protocol.
 The callback can also dispatch registered LangChain tools explicitly marked
 =zara_read_only=, with the same turn lease and bounded text result. Tools that
 require approval or support cancellation are refused. =code_task_status= is
 eligible for this read path when the host registers it.
+
+When =[plugins.code]= is enabled, Zara uses its first Prolog-declared
+=projects= alias for a private =.zara/effects/= dispatch journal. It publishes
+only successfully registered code tools to the sidecar. =code_tasks= and
+=code_task_cancel= need native approval; the callback checks the exact pending
+request, generation, attempt, fingerprint, arguments, and active turn before
+dispatch. An interrupted or uncertain dispatch is not retried automatically.
+After approval, the same Prolog-RLM plan resumes with the tool observation and
+returns its answer to the original Zara turn. =code_task_status= is available
+as a bounded read callback so the model can check persistent worker results.
+The sidecar needs the same protected =ZARA_RUNTIME_HOST_TOKEN= and a private
+=ZARA_RUNTIME_EFFECT_STORE=; it refuses effect tools without that store.
 
 * User-owned customization files
 Mutable user customization belongs in the user's Zara configuration directory, outside Git and the Nix store. Zara/Home Manager may provision directories or immutable defaults, but must not overwrite mutable private user state.

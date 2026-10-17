@@ -164,6 +164,123 @@ def test_rlm_backend_stages_plugin_tools_without_publishing_early(sidecar):
     assert backend._registered_tools == {}
 
 
+def test_rlm_backend_finalizes_registered_effect_tools(sidecar, tmp_path):
+    from zara.tasks.effect_journal import RepositoryEffectJournal
+    from zara.plugins.builtin.code_environment import CodeTasksArgs, CodeTaskLookupArgs
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    tool = StructuredTool.from_function(
+        lambda tasks: "task-123", name="code_tasks", description="Start coding tasks",
+        metadata={"zara_requires_approval": True}, args_schema=CodeTasksArgs,
+    )
+    status_tool = StructuredTool.from_function(
+        lambda project, task_id: "ready", name="code_task_status",
+        description="Read coding task status", args_schema=CodeTaskLookupArgs,
+        metadata={"zara_read_only": True},
+    )
+
+    async def run():
+        backend = PrologRLMRuntimeBackend(
+            sidecar, principal_id="user:alice", host_token="abcdefghijklmnop",
+            effect_journal=RepositoryEffectJournal(tmp_path),
+        )
+        await backend.start()
+        backend.register_tools((tool, status_tool))
+        await backend.finalize_tools()
+        await backend.stop()
+
+    asyncio.run(run())
+    config = [body for path, body in Handler.requests if path.endswith("host-config")]
+    assert len(config) == 1
+    assert [entry["name"] for entry in config[0]["tools"]] == ["code_task_status", "code_tasks"]
+    assert config[0]["tools"][1]["effect"] == "process"
+    assert config[0]["effect_endpoint"].endswith("/zara-host-tool/v1/effect")
+
+
+def test_native_approval_resumes_the_original_rlm_turn(sidecar, tmp_path):
+    from zara.runtime.events import ToolWaitingForUser
+    from zara.tasks.effect_journal import RepositoryEffectJournal
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+
+    original = Handler.do_POST
+    approval = {
+        "id": "approval-1", "name": "code_tasks", "effect": "process",
+        "args": {"tasks": [{"task": "fix bug", "project": "work"}]},
+        "fingerprint": "authority-fingerprint", "attempt_id": "attempt-1",
+        "effect_fingerprint": "effect-fingerprint", "idempotency_key": "key-1",
+    }
+
+    def approval_response(self):
+        payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        Handler.requests.append((self.path, payload))
+        if self.path.endswith("host-config"):
+            Handler.configured = True
+            self.reply({"protocol": "ZARA-RUNTIME/1", "status": "configured", "generation": payload["generation"]})
+        elif self.path.endswith("generate"):
+            self.reply({"protocol": "ZARA-RUNTIME/1", "runtime_id": "prolog-rlm",
+                        "request_id": payload["request_id"], "generation": Handler.effect_generation,
+                        "status": "approval_required", "approvals": [approval]})
+        elif self.path.endswith("host-pending"):
+            self.reply({"protocol": "ZARA-RUNTIME/1", "request_id": payload["request_id"],
+                        "generation": Handler.effect_generation, "status": "approval_required",
+                        "approvals": [approval]})
+        elif self.path.endswith("host-approval"):
+            self.reply({"protocol": "ZARA-RUNTIME/1", "request_id": payload["request_id"],
+                        "generation": Handler.effect_generation, "approval_id": "approval-1", "status": "accepted"})
+        elif self.path.endswith("host-approval-status"):
+            self.reply({"protocol": "ZARA-RUNTIME/1", "request_id": payload["request_id"],
+                        "generation": Handler.effect_generation, "approval_id": "approval-1", "status": "completed",
+                        "value": {"result": "task-123"}})
+        elif self.path.endswith("resume"):
+            self.reply({"protocol": "ZARA-RUNTIME/1", "runtime_id": "prolog-rlm",
+                        "request_id": payload["request_id"], "status": "completed",
+                        "text": "I started task-123"})
+        else:
+            original(self)
+
+    Handler.do_POST = approval_response
+    try:
+        async def run():
+            backend = PrologRLMRuntimeBackend(
+                sidecar, principal_id="user:alice",
+                read_tooling=FileTooling(FileToolingConfig(base_dir=tmp_path)),
+                host_token="abcdefghijklmnop",
+                effect_journal=RepositoryEffectJournal(tmp_path),
+            )
+            backend.register_tools((StructuredTool.from_function(
+                lambda tasks: "task-123", name="code_tasks", description="Start coding tasks"
+            ),))
+            Handler.effect_generation = backend._generation
+            seen = []
+            waiting = asyncio.Event()
+
+            def publish(event):
+                seen.append(event)
+                if isinstance(event, ToolWaitingForUser):
+                    waiting.set()
+
+            backend.bind_event_publisher(publish)
+            await backend.start()
+            lease = TurnCapabilityLease("turn-approve")
+            with bind_turn_capability_lease(lease):
+                task = asyncio.create_task(backend.submit_turn("needs approval", turn_id="turn-approve"))
+                await asyncio.wait_for(waiting.wait(), timeout=5)
+                assert not task.done()
+                await backend.approve_tool("approval-1")
+                result = await asyncio.wait_for(task, timeout=5)
+            assert result.response == "I started task-123"
+            assert seen[0].tool_run_id == "approval-1"
+            await backend.stop()
+
+        asyncio.run(run())
+        assert [path.rsplit("/", 1)[-1] for path, _ in Handler.requests[1:]] == [
+            "generate", "host-pending", "host-approval", "host-approval-status", "resume"
+        ]
+    finally:
+        Handler.do_POST = original
+
+
 def test_sidecar_rejects_protocol_mismatch(sidecar):
     original = Handler.do_GET
     def wrong(self):

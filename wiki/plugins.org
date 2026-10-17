@@ -248,5 +248,9 @@ so workers can inspect status and diffs while unrelated home files stay hidden.
 =implement= may use Pi edit/write tools; =review= and =plan= use read-only
 tools. =code_tasks= and =code_task_cancel= use Zara's tool approval policy.
 
-Pi performs code edits. The Prolog-RLM conversation backend is a separate
-runtime until its host-tool bridge can invoke this code capability.
+Pi performs code edits. With the authenticated Prolog-RLM host bridge enabled,
+the native planner can approve =code_tasks= and =code_task_cancel=, then resume
+the same turn with the observed result. It can poll =code_task_status= through
+the turn-fenced read callback. The sidecar and Zara need the same protected
+host token; effect dispatch also needs the sidecar's durable effect store and
+Zara's repository-local journal.

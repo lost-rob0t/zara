@@ -92,6 +92,9 @@ class RuntimeBackend:
     def unregister_tools(self, names) -> None:
         pass
 
+    async def finalize_tools(self) -> None:
+        pass
+
     def requires_composed_tool_approval(self, name: str) -> bool:
         raise UnsupportedRuntimeCommand(
             "composed tool policy is not available in this runtime backend"
