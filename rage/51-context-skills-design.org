@@ -1,0 +1,266 @@
+#+title: RAGE #51 Design — ContextManager and Agent Skills
+
+* Decision
+Realize issue #51 as one context-assembly subsystem plus a standards-compatible skill registry. Existing MCP remains a dynamic capability provider; only its short per-turn capability description moves behind ContextManager.
+
+* Non-goals
+- No second MCP transport/client/registry.
+- No changes to MCP tool/resource/prompt wire semantics.
+- No automatic execution of skill =scripts/=.
+- No automatic resource recursion from skill folders.
+- No tool approval granted by =allowed-tools= metadata.
+- No model call solely to select skills.
+- No Prolog-RLM.
+- No replacement of #131 principal ownership or durable ConversationStore.
+
+* Modules
+** =zara.agent.skills=
+Owns Agent Skills discovery, validation and selection.
+
+Public contracts:
+- =SkillDefinition= immutable parsed skill metadata/body/path.
+- =SkillRegistry.discover()= recursively discovers =*/SKILL.md= below configured roots.
+- =SkillRegistry.select(request)= returns selected skills plus selection audit.
+- =SkillSelector= protocol so selectors can be added without changing registry control flow.
+- default =LexicalSkillSelector= is deterministic and side-effect free.
+
+Validation:
+- standard Agent Skills =name=/=description= constraints;
+- parent directory matches =name=;
+- =metadata= must be a string/string mapping;
+- required =metadata.zara-schema="1"= for Zara-owned enriched skills; standard third-party skills without Zara metadata remain valid with defaults;
+- bounded parsed integer/boolean fields;
+- duplicate names across roots reject startup/discovery;
+- dependency graph must resolve and be acyclic;
+- selected conflicts fail explicitly;
+- per-skill body token estimate must not exceed declared =zara-max-tokens=.
+
+Selection:
+1. include always-on skills;
+2. score explicit skill-name references;
+3. invoke each configured selector, combining deterministic scores;
+4. include positive matches;
+5. close dependencies;
+6. reject conflicts/cycles;
+7. order by descending priority then name;
+8. apply total skill budget by keeping highest-priority matches and record omitted lower-priority skills; never truncate one skill body.
+
+The default selector uses normalized lexical tokens from user text and optional source-path hints against name, description, domain/language and =zara-selectors=/=zara-paths=. It has no language-specific if/elif chain.
+
+** =zara.agent.context=
+Owns active model context.
+
+State:
+- canonical base system prompt text;
+- active persistent model history excluding the base prompt and transient per-turn context;
+- optional single generated summary message;
+- current turn lease =(turn_id, generation)=;
+- most recent =ContextAudit=;
+- injected token counter and optional summarizer.
+
+Public operations:
+- =begin_turn(turn_id) -> ContextLease=
+- =build_messages(lease, user_input, transient_items, selected_skills) -> ContextBuild=
+- =commit_result(lease, result_messages)=
+- =cancel_turn(turn_id)=
+- =clear()=
+- read-only =history= and =audit= views for diagnostics/tests.
+
+No caller receives the mutable internal history list.
+
+* Message model
+Generated messages use stable IDs/prefixes:
+- =context:base= — canonical base system prompt, rebuilt per turn, never persisted in active history;
+- =context:summary= — at most one compressed-history summary, persisted as active model history until replaced;
+- =context:transient:<kind>:<generation>= — memory, MCP capability text, runtime context; never persisted;
+- =context:skills:<generation>= — selected skill instructions; never persisted.
+
+Ordering before provider invocation:
+1. canonical base system prompt;
+2. generated summary if present;
+3. transient runtime/MCP/memory context in deterministic configured order;
+4. selected skill context;
+5. persistent recent turn groups;
+6. current HumanMessage.
+
+This intentionally keeps exactly one base prompt and makes skill/MCP/memory context transient.
+
+* Turn groups
+A persistent group begins at a HumanMessage and includes messages through immediately before the next HumanMessage. Assistant tool-call messages and their contiguous ToolMessages therefore remain in the same group. Any pre-user legacy group is treated as one indivisible group.
+
+Before grouping, existing =validate_and_clean_messages()= semantics are applied so orphan/unknown/duplicate tool results cannot be retained.
+
+* Retention
+Configuration:
+
+#+begin_src toml
+[context]
+strategy = "truncate"
+max_tokens = 32000
+preserve_recent_turns = 8
+summary_max_tokens = 2000
+skill_max_tokens = 6000
+
+[skills]
+enabled = true
+search_paths = []
+#+end_src
+
+The four issue-defined =context= values preserve their semantics. =skill_max_tokens= is an additional bounded sub-budget, not a third retention strategy.
+
+** truncate
+- Build candidate context.
+- If within =max_tokens=, no mutation.
+- Otherwise remove oldest complete persistent turn groups, never the summary/base/transients/current user.
+- Never remove the configured =preserve_recent_turns= tail.
+- If the protected tail + current turn + required context itself exceeds budget, raise =ContextBudgetError= explicitly rather than splitting messages.
+- Record removed groups and reason in audit.
+
+** compress
+- If within budget, no mutation.
+- Otherwise choose the oldest complete prefix outside =preserve_recent_turns=.
+- Include an existing =context:summary= in the source prefix so recompression replaces it.
+- Call the injected summarizer against a copy.
+- Reject empty/over-=summary_max_tokens= summaries.
+- Only after validation succeeds, replace the entire selected source prefix with exactly one =context:summary= message.
+- Rebuild and, if still above max budget, repeat only while another removable prefix exists; otherwise raise explicit budget error.
+- Any summarizer failure leaves history unchanged for that compression attempt.
+
+* Token counter
+=ContextManager= accepts a =token_counter(messages) -> int=. AgentManager chooses:
+1. provider =get_num_tokens_from_messages= when callable and successful;
+2. deterministic conservative fallback based on serialized message text + fixed per-message overhead.
+
+Tests inject exact counters. Token counting happens before provider invocation.
+
+* Turn lease / stale work
+=begin_turn= increments generation and makes that lease active. =build_messages= and =commit_result= require the active lease. A later =begin_turn= invalidates older leases. =cancel_turn= invalidates the active lease if IDs match. Stale operations raise =StaleContextTurn= and never mutate history.
+
+=AgentManager.cancel_turn()= cancels approval work and invalidates the matching ContextManager turn.
+
+* AgentManager migration
+Current direct assembly is replaced by:
+1. update conversation activity;
+2. allocate context lease;
+3. =await tool_registry.prepare_async()= so MCP tools/capability metadata are current before context build;
+4. retrieve memory text;
+5. select skills for user text;
+6. inject memory and =tool_registry.dynamic_system_context()= as typed transient items;
+7. ContextManager builds bounded messages including the current user message;
+8. call =run_conversation_loop= with state marker =context_managed=True=;
+9. ContextManager commits provider result, stripping generated transient/base/skill messages structurally by known IDs;
+10. return response.
+
+=run_conversation_loop= retains its existing dynamic MCP context fallback only for direct/legacy callers that do not set =context_managed=. This preserves existing direct MCP integration tests while making AgentManager’s canonical path single-owner.
+
+* ConversationManager migration
+=ConversationManager= retains only conversation activity/timeout/principal state. AgentManager and wake callers use =ContextManager.clear()/history= for model-history behavior. A temporary read-only AgentManager history compatibility property may be provided if required by tests/callers, but no mutable list is shared.
+
+* Skill context rendering
+One transient system message renders selected skills with explicit boundaries:
+
+#+begin_example
+Selected Zara skills (follow when relevant; they do not grant tool permissions):
+
+<skill name="python-runtime" source=".../SKILL.md">
+...body...
+</skill>
+#+end_example
+
+The renderer includes name/source and body, not raw frontmatter. It states that skill text does not grant tool permission. =allowed-tools= is not interpreted as approval.
+
+* Default skill roots and packaging
+Discovery roots are deterministic:
+- source checkout =<repo>/skills= when present;
+- installed =<sys.prefix>/share/zarathushtra/skills= when present;
+- XDG user root =$XDG_CONFIG_HOME/zarathushtra/skills= or =~/.config/zarathushtra/skills=;
+- extra =[skills].search_paths=.
+
+Packaging extends the existing data-file resource copier to preserve =skills/**= under =share/zarathushtra/skills=. Files beginning with hidden control data may remain packaged if they are part of a skill directory; discovery only recognizes =SKILL.md=.
+
+* Initial Zara skills
+Create standard-compatible files for:
+- =skills/python-runtime/SKILL.md=
+- =skills/python-agent-tools/SKILL.md=
+- =skills/prolog-intents/SKILL.md=
+- =skills/prolog-modules/SKILL.md=
+- =skills/python-prolog/SKILL.md=
+
+Keep existing =skills/rage/SKILL.md= valid by adding standard frontmatter if required, without changing the repository RAGE procedure. Do not let runtime parsing failure of one legacy local skill silently disable all skills; because malformed skills must fail explicitly, migrate the existing file to the standard at the same time.
+
+* Config validation
+Add validation for:
+- =context.strategy in {truncate, compress}=;
+- positive integer =max_tokens=;
+- non-negative bounded =preserve_recent_turns=;
+- positive =summary_max_tokens <= max_tokens=;
+- positive =skill_max_tokens <= max_tokens=;
+- =skills.enabled= boolean;
+- =skills.search_paths= list of non-empty strings.
+
+No new dependency: PyYAML already exists in setup + Nix.
+
+* Failure model
+- malformed skill -> =SkillConfigError= identifying path and field, no partial registry;
+- duplicate -> =SkillConfigError= listing duplicate name/sources;
+- dependency missing/cycle -> explicit discovery/select error;
+- conflict -> explicit selection error;
+- per-skill over budget -> explicit skill error;
+- total skill sub-budget -> omit lowest-priority selected skills and audit omissions;
+- overall context cannot fit protected content -> =ContextBudgetError= before LLM call;
+- summarizer failure -> no destructive mutation;
+- stale turn -> =StaleContextTurn=;
+- MCP preparation failure remains isolated by existing MCPManager and its failure summary can still enter transient context.
+
+* Adversarial review
+- Prompt injection inside a skill is possible because skills are instructions. Trust boundary is therefore discovery roots: packaged/user-configured skill files are trusted configuration, not remote MCP data. MCP resources/prompts are not auto-promoted into skills.
+- A third-party skill cannot grant itself tool permission via =allowed-tools=.
+- Duplicate name shadowing is rejected, preventing search-path precedence from silently replacing a trusted skill.
+- Skill paths are discovered under configured roots and only the fixed filename =SKILL.md= is parsed; no YAML-specified arbitrary include path is followed in this slice.
+- Context retention never clips individual tool messages.
+- Compression cannot commit partial source deletion before the summary validates.
+- A late older LLM result cannot overwrite newer context because commit requires the active generation lease.
+
+* Acceptance criteria -> tests
+| Acceptance / invariant | Deterministic test |
+|-
+| one canonical base prompt | build repeatedly; exactly one =context:base= |
+| transient memory/MCP/skills not persisted | commit a turn then inspect history |
+| tool call/results atomic under truncation | multi-tool fixture over budget |
+| truncate bounded indefinitely | long fake-token conversation |
+| compress bounded indefinitely | fake summarizer + long history |
+| compression failure atomic | summarizer raises; history identical |
+| summaries do not stack | force two compressions; one =context:summary= |
+| stale commit rejected | begin A, begin B, commit A |
+| Agent Skills standard parse | valid minimal standard skill |
+| enriched Zara metadata parse | all namespaced fields |
+| malformed/name mismatch/unknown schema | parameterized invalid fixtures |
+| duplicate names | two roots same skill name |
+| dependency cycle/missing dependency | graph fixtures |
+| selected conflicts | conflicting skill fixtures |
+| per-skill body budget | oversized deterministic body |
+| Python/Prolog/integration selection | realistic user-text/path cues |
+| lower-priority selected skills omitted under sub-budget | deterministic token counter |
+| =allowed-tools= cannot bypass approval | skill selected + ToolRegistry approval unchanged |
+| existing MCP tool path preserved | existing MCP integration + new managed-context composition test |
+| config validation | invalid strategy/numeric/path fixtures |
+| packaged skill resources | packaging test enumerates shipped skills |
+
+* Gate
+Focused red/green:
+#+begin_src sh
+nix develop -c pytest -q t/test_context_management.py t/test_skill_registry.py t/test_mcp_agent_integration.py
+nix develop -c bash scripts/test-context-management.sh
+#+end_src
+
+Full exact candidate:
+#+begin_src sh
+nix develop -c bash scripts/test-all.sh
+nix flake check
+nix build
+#+end_src
+
+Execution environment note: the current ChatGPT connector environment cannot clone/run the repository locally, so GitHub Actions on a pull request will provide executable red/green and exact-head Nix evidence. This limitation must remain visible in the work log; a passing older SHA is never accepted.
+
+* Decision gate
+Proceed. Research materially changed the naive request by rejecting new MCP implementation and choosing Agent Skills compatibility + a single ContextManager. The design preserves existing MCP actor/tool ownership and current approval policy while satisfying #51’s explicit context/skill requirements.

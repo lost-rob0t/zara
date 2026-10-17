@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Agent context now bounds complete turns, isolates task context, supports atomic compaction with bounded summary work across restarts, and selects declarative Python/Prolog skills with metadata-only browser entries.
 - Memory can be explicitly supplied by a service plugin through the canonical runtime. Missing or failed selected providers block turns; principal binding, memory tools and daemon session persistence share one provider.
 - Service plugins now finish startup before building configured tools. Failed tool setup stops the service and cleans owned resources while preserving existing tools.
 - Zara Desktop now includes a full Prolog IDE workspace with approved-source navigation, syntax highlighting, dirty and cursor state, bounded find/replace, validation diagnostics, guided fact management, and a query console with history, bounded results, and honest stale-result cancellation. IDE queries use the canonical runtime through an admin-gated ZARA/1 command instead of creating a second Prolog engine or blocking Qt's main thread.

@@ -1,0 +1,133 @@
+#+title: Bounded context and declarative Agent Skills
+
+Tracking: [[https://github.com/lost-rob0t/zara/issues/51][#51]]. This recovery retains
+the existing ContextManager/skills implementation at =b9d3d5d3=, the existing
+=d1e42d0= recovery contracts, and #260 advice controls from =fea09898=. Its old
+research/design logs are retained for provenance; the current reconciliation
+decisions and gate are in =rage/51-context-reconciliation-20261017.org=.
+
+* Ownership and normal turns
+
+ContextManager owns active inference history, complete turn groups, one canonical
+base prompt, one optional summary, per-turn memory/runtime/MCP context, selected
+skills, budget checks and mutation audits. ConversationManager retains mode and
+timeout state and exposes a history projection backed by the context owner.
+Clearing/replacing that compatibility projection routes through ContextManager;
+callers cannot append directly to its owned history.
+
+Raw durable conversations and derived long-term memory retain their existing
+storage owners. The base prompt and transient context are regenerated per turn,
+and never committed as raw conversation history. Selected provider memory is
+still bound by RuntimeHost before turns; this code neither installs nor creates
+another memory engine. Backend memory persistence remains the existing owner.
+
+#+begin_src toml
+[context]
+strategy = "truncate" # or "compress"
+max_tokens = 32000
+preserve_recent_turns = 8
+summary_max_tokens = 2000
+skill_max_tokens = 6000
+
+[skills]
+enabled = true
+search_paths = []
+#+end_src
+
+Values are validated without coercing strings or booleans into numeric limits.
+Protected context that cannot fit reports unavailable instead of silently
+discarding a recent turn or calling a provider with an oversized request.
+
+The default counter is a conservative, local serialized UTF-8 payload estimate
+including tool arguments and message overhead. It is not a measured provider
+tokenizer count. =ContextManager(token_counter=...)= accepts an explicit local
+provider counter; no tokenizer download, dependency, model or remote endpoint is
+selected implicitly. Audit =token_count= and configured =max_tokens= use that
+counter's budget units. Check the provider's actual window separately when
+configuring a provider-specific counter.
+
+Every canonical graph model step checks its current messages, including newly
+returned tool data, before invoking the provider. Context ownership travels in
+task-local scope, outside graph/checkpoint state. Owner/lease objects are not
+serialized. An overlarge current tool turn fails closed rather than splitting
+its calls/results. A completed output cannot expand active history beyond twice
+the configured input budget; the next input assembles within the input budget.
+
+* Retention and explicit Compact
+
+=truncate= removes only complete oldest groups, retaining the configured recent
+tail. =compress= replaces an eligible prefix and any previous summary with one
+bounded summary. Destructive changes are staged: failed later summaries,
+impossible budgets, cancellation and stale leases leave the live source history
+unchanged. Automatic assembly commits retained context only with the accepted
+turn result. A failed model call cannot commit the staged prefix.
+
+=await ContextManager.compact(lease, reason="manual")= is an explicit typed API,
+not a chat prompt. It works before budget pressure and returns changed/no-op,
+affected group IDs, before/after counts, reason and summary revision. It preserves
+the recent tail exactly and replaces an existing summary. Async summarization
+has a caller deadline (60 seconds by default) covering callback invocation and
+completion. Synchronous callbacks run off-loop; asynchronous providers retain
+their original loop. Timed-out/cancelled work cannot commit. One supervised slot
+stays =draining= until actual completion, refusing replacement work instead of
+queuing more callbacks. The slot is shared across interactive/ephemeral contexts
+and retained by RuntimeHost across restart generations. A queued synchronous
+callback that expires before invocation is never called.
+Shutdown cancellation shields the queued executor job until its cleanup runs;
+cancellation before submission releases the unused slot immediately. The job
+uses the existing default executor and preserves the caller's context variables.
+
+RuntimeHost also bounds final pending-task draining by its existing shutdown
+timeout and logs only survivor counts. This does not kill arbitrary Python code:
+an uncooperative thread can remain alive and may delay OS-process exit. Providers
+must honor their own cancellation/I/O limits; restarting a runtime does not
+erase or replace occupied work. =summary_work_state= exposes idle/running/draining
+metadata without callback bodies, transcripts or results.
+
+=await AgentManager.compact_context(conversation_id)= selects only the active
+context and rejects a busy interactive turn. Explicit cancellation invalidates
+the active context lease before a late result can commit. Switching conversation
+identity clears active inference context, avoiding cross-chat carryover; this is
+not a replacement for rehydrating durable conversation history through the
+existing conversation owner.
+
+Task turns with supplied history or task system context use a fresh ephemeral
+context owner. Success/failure cannot replace interactive history, persist a
+task system message, or reuse interactive inference context. Stable scheduled
+display-thread identity remains scheduler work; it is separate from inference
+context lifetime.
+
+* Advice and skills
+
+Memory recall and context assembly are Core-owned before registrations on the
+existing AgentLoopAdviceRegistry. They run when user customization is disabled.
+Per-registration enable state is visible in metadata-only diagnostics; disabling
+assembly makes turns unavailable. Global user-hook and around/override policy
+remains effective. There is no second hook engine.
+
+SkillRegistry loads bounded-budget YAML-frontmatter SKILL.md declarations from
+the bundled source/installed tree, XDG user skills and explicit search paths.
+Only relevant selected skills and their dependencies enter transient context.
+Duplicate names, bad schema/metadata, dependency cycles, conflicts and budget
+overflow fail explicitly. Shipped RAGE instruction text is preserved with added
+standard metadata. Nix, wheel and source distributions retain the skill tree.
+
+=browser_entries()= exposes stable metadata, source, domain/language, selectors,
+priority, budgets, dependencies/conflicts, always-on state and declared tool
+references. It excludes instruction bodies. Skill selection/tool references do
+not register tools, grant permissions, approve actions or execute code.
+
+* Remaining #51 integration
+
+This slice leaves #51 open. Reconcile the existing typed attachment branch with
+principal/conversation/turn ownership, expiry, bounded storage and explicit
+acquisition. Do not import its unscoped process-global attachment store unchanged.
+Nonempty runtime context_ids remain explicitly unsupported until that contract
+is safe. Post-turn memory advice must reconcile existing backend persistence
+without duplicate writes. The typed RuntimeHost/UI command projection for Compact
+and skill metadata belongs with #961/#1478 and existing #1045 surfaces; no new
+Compose browser or competing registry is added here.
+
+Finish these existing #51 prerequisites before extending #654's retained
+#1058/#1150 scheduler. No Android Python packaging, installed UI, watch capture,
+hardware battery or live-model acceptance follows from deterministic host tests.

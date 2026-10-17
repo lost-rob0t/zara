@@ -1,0 +1,158 @@
+#+title: RAGE #51 Research — Context ownership, Agent Skills, and MCP composition
+
+* Question
+Issue #51 requires one model-context owner plus selectively loaded Python/Prolog skill files. The operator additionally asked for first-class Zara “skills” and MCP servers. Research must determine whether MCP needs implementation, whether Agent Skills should be adopted directly, and where context assembly belongs without creating another runtime stack.
+
+* Repository evidence at immutable start 7a9c25cf31c4088568e2b50e49f47ce05a0a0172
+** Context ownership is currently split
+- =AgentManager._build_system_prompt()= owns the canonical base prompt and timestamp.
+- =AgentManager.process_async()= reads/writes =ConversationManager.conversation_history= directly.
+- The same method inserts retrieved-memory text as a transient =SystemMessage= and strips it after the graph returns.
+- =run_conversation_loop()= independently prepares dynamic providers and injects =ToolRegistry.dynamic_system_context()= as another system-context path.
+- =ConversationManager= currently owns both mode lifecycle and the mutable model-history list; issue #51 explicitly says it should own conversation activity, not context assembly.
+- =wake.py= reaches through =AgentManager.conversation_manager.conversation_history= to clear/log history, so migration needs a compatibility or caller update rather than deleting the field blindly.
+
+Conclusion: #51 is not a new convenience wrapper. There are currently at least three independent context mutation sites (base prompt, memory, dynamic MCP context) plus direct history mutation. The implementation needs one owner before adding more skill context.
+
+** Tool-call grouping already has one useful primitive
+=zara.agent.graph.validate_and_clean_messages()= keeps one assistant tool-call message adjacent to matching tool results and drops orphan/unknown/duplicate tool results. That behavior should be reused or moved behind ContextManager rather than reinvented. Retention must operate on complete user-turn groups so an assistant tool call cannot be split from its result set.
+
+** MCP is already shipped and should not be rebuilt
+Current Zara already has:
+- =zara.mcp.MCPManager= and per-server actor ownership;
+- stdio and Streamable HTTP configuration;
+- =zara mcp add/list/status/inspect/tools/resources/prompts/enable/disable/remove=;
+- dynamic MCP tool registration into the ordinary LangChain =ToolRegistry=;
+- MCP resources and prompts preserved as MCP primitives;
+- request cancellation, reconnect, server-local failure isolation and secret redaction;
+- deterministic MCP agent/e2e/session tests.
+
+=ToolRegistry.prepare_async()= lazily starts =MCPManager= and =dynamic_system_context()= renders discovered capabilities. The natural-language MCP integration test proves discovered remote tools are bound into the same LangGraph tool path as native tools.
+
+Conclusion: implementing a second “MCP server system” would be a regression. #51 should only move MCP capability *context* behind ContextManager while leaving discovery, transport, actors, tool adaptation and lifecycle in =MCPManager/ToolRegistry=.
+
+* Upstream Agent Skills research
+** Open standard
+Primary source: https://agentskills.io/specification
+
+The Agent Skills specification defines a skill as a directory with required =SKILL.md= and optional =scripts/=, =references/= and =assets/=. =SKILL.md= uses YAML frontmatter plus Markdown. Required standard metadata is:
+- =name= (1-64 chars, lowercase alphanumeric/hyphen, matches parent directory);
+- =description= (1-1024 chars, says what the skill does and when to use it).
+
+Optional standard fields are =license=, =compatibility=, =metadata= (string key/value map), and experimental =allowed-tools=. The standard explicitly describes progressive disclosure: load name/description for discovery, full instructions only on activation, and supporting resources only as needed. It recommends activated instructions stay below roughly 5000 tokens.
+
+OpenAI’s current Skills documentation describes the same model: reusable workflows in =SKILL.md=, selectively used when helpful, with instructions and supporting resources. OpenAI says its Skills follow the Agent Skills open standard.
+
+Decision pressure: Zara should be compatible with this format instead of inventing another top-level metadata dialect. Zara-only selectors, dependency/conflict rules and context budgets can live in namespaced entries under the standard =metadata= string map.
+
+** Security consequence of allowed-tools
+The Agent Skills standard marks =allowed-tools= experimental and describes it as pre-approved tools, but issue #51 explicitly defines skill files as context rather than executable plugins. Zara also has an existing server-owned tool approval policy.
+
+Conclusion: Zara may parse/preserve =allowed-tools= for compatibility, but this issue must not translate it into runtime authorization or bypass =ToolApprovalController=. A text file cannot grant itself execution authority.
+
+** Scripts and references
+The standard permits executable =scripts/= and on-demand =references=/=assets/=. Automatically executing or recursively loading those would widen #51 into a sandbox/package manager/tool-authorization project.
+
+Conclusion: first realization discovers standard skill directories and activates =SKILL.md= instructions. Bundled resources remain addressable metadata for later work but are not auto-executed or auto-injected. This preserves compatibility without silently turning context into code execution.
+
+* Upstream MCP research
+Primary sources:
+- https://blog.modelcontextprotocol.io/posts/2026-07-28/
+- current MCP v2 SDK documentation.
+
+The current stable MCP protocol is 2026-07-28. The release makes the core request/response stateless, adds cache hints for list/read results, and keeps tools/resources/prompts as distinct primitives. Current SDK guidance preserves the semantic split: tools are model-controlled actions, resources are application-controlled context, prompts are user-controlled reusable templates.
+
+Conclusion for Zara:
+- skill activation is application-owned context selection;
+- MCP tools stay tools;
+- MCP resources stay resources and are fetched only when the application/model path asks for them;
+- MCP prompts stay explicit prompt templates and are not silently auto-activated as local skills;
+- only the short discovered-capability routing text belongs in the per-turn transient context.
+
+This avoids authority confusion and preserves MCP interoperability.
+
+* Skill discovery and selection alternatives
+** A: Central if/elif selector keyed to Python/Prolog skill names
+Rejected. It satisfies the initial five files but violates #51’s extensibility requirement and makes every future skill require core edits.
+
+** B: Model-based skill router on every turn
+Rejected for the first slice. It adds provider latency/cost, creates another model-dependent failure path before the actual task, and makes selection hard to test deterministically. Zara already has enough routing policy spread.
+
+** C: Deterministic registry + pluggable selector protocol
+Selected. Discovery parses all metadata once. A default lexical selector scores explicit skill-name matches, Zara metadata selectors, domain/language/path cues and description overlap. The registry accepts additional selector objects later without a central type switch. Dependency closure, conflict detection, priority ordering and budgets are deterministic.
+
+* Metadata compatibility decision
+Use standard Agent Skills frontmatter and namespaced Zara metadata strings, for example:
+
+#+begin_src yaml
+---
+name: python-runtime
+description: Zara Python runtime architecture and conventions. Use for Python runtime changes.
+metadata:
+  zara-schema: "1"
+  zara-domain: "python"
+  zara-language: "python"
+  zara-selectors: "python runtime zara/ .py"
+  zara-priority: "80"
+  zara-max-tokens: "1600"
+  zara-paths: "zara/ t/"
+  zara-dependencies: ""
+  zara-conflicts: ""
+  zara-always-on: "false"
+---
+#+end_src
+
+Rationale:
+- standard clients can still discover =name=/=description= and ignore Zara metadata;
+- Zara gets the fields #51 requires without defining incompatible top-level YAML;
+- metadata values remain strings as required by the open standard.
+
+Unknown =zara-schema= versions fail explicitly. Duplicate names fail. Directory/name mismatch fails. Cycles and selected conflicts fail. A skill whose body exceeds its declared per-skill budget fails instead of silently truncating instructions.
+
+* Context retention alternatives
+** Preserve arbitrary message count
+Rejected. Tool traces can be split and token size is not correlated reliably with count.
+
+** Character clipping individual messages
+Rejected. It can corrupt provider tool protocol and amputate instructions/results.
+
+** Atomic turn groups
+Selected. Build groups at user-message boundaries, preserving the assistant/tool sequence inside each group. Destructive retention removes/compresses whole oldest groups only.
+
+* Token counting
+Provider tokenizers differ and are not uniformly exposed. ContextManager should accept an injected deterministic counter. Production should use a provider counter when available and a conservative deterministic fallback when unavailable. Tests use a fake counter. No new tokenizer dependency is required.
+
+* Compression lifecycle
+Compression changes active model context and can fail. It must therefore be transactional:
+1. identify removable oldest complete groups while preserving configured recent groups;
+2. call summarizer against a copy;
+3. validate bounded summary;
+4. atomically replace the source prefix with one stable summary system message;
+5. on any failure, leave source history byte-for-byte/logically unchanged.
+
+Recompression includes the previous summary in the next compacted prefix and replaces it. Summary messages never stack.
+
+* Concurrency/stale-turn ownership
+Issue #51 requires stale turns to be unable to append after a newer turn. ContextManager should issue a monotonically increasing turn generation when a turn begins and require the matching =(turn_id, generation)= lease at commit. Starting a newer turn invalidates the older lease. Cancellation invalidates the matching active lease. This is local context ownership, not a replacement for principal/conversation ownership from #131.
+
+* Packaging
+The repository already depends on PyYAML in both =setup.py= and Nix, so standards-compatible frontmatter parsing adds no dependency. Runtime default skills need to work from a source checkout and installed artifacts. Packaging should preserve the skill directory tree under =share/zarathushtra/skills=, analogous to existing Prolog resources, while XDG user skills remain outside the package.
+
+* User-installed skill location
+Use a deterministic search-root model:
+1. packaged/source Zara skills;
+2. =$XDG_CONFIG_HOME/zarathushtra/skills= (fallback =~/.config/zarathushtra/skills=);
+3. optional additional configured paths.
+
+Duplicate names across roots fail explicitly rather than allowing path-order shadowing. This prevents a user file from silently replacing a packaged security/process skill by name.
+
+* RAGE research outcome
+The operator’s requested “MCP servers” portion is already implemented. The implementation target is therefore not “skills + brand-new MCP.” It is:
+- consume issue #51;
+- introduce one ContextManager;
+- adopt Agent Skills =SKILL.md= compatibility with progressive disclosure;
+- add deterministic user/project skill discovery/selection;
+- route transient memory + selected skills + existing MCP capability routing text through that one ContextManager;
+- leave MCP transport/tool/resource/prompt ownership unchanged;
+- preserve server tool approval authority;
+- prove retention/compression/stale-turn/skill-validation behavior with deterministic TDD and exact-head CI.

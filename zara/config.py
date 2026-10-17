@@ -217,6 +217,18 @@ default_duration_minutes = 30
 # default_longitude = -97.0892
 # user_agent = "ZarathushtraWeather/1.0 (contact: you@example.com)"
 
+[context]
+# Active inference context. Complete turns are truncated or compressed.
+strategy = "truncate"
+max_tokens = 32000
+preserve_recent_turns = 8
+summary_max_tokens = 2000
+skill_max_tokens = 6000
+
+[skills]
+enabled = true
+search_paths = []
+
 [memory]
 # Long-term memory settings
 provider = "builtin"

@@ -5,8 +5,33 @@ Tracks when to enter/exit conversation mode and manages conversation history.
 """
 
 import time
+from collections.abc import Sequence
 from typing import List, Optional
 from langchain_core.messages import BaseMessage
+
+
+class _HistoryView(Sequence):
+    def __init__(self, provider, clear):
+        self._provider = provider
+        self._clear = clear
+
+    def __len__(self):
+        return len(self._provider())
+
+    def __getitem__(self, index):
+        return self._provider()[index]
+
+    def __iter__(self):
+        return iter(self._provider())
+
+    def __eq__(self, other):
+        return list(self) == list(other)
+
+    def copy(self):
+        return list(self)
+
+    def clear(self):
+        self._clear()
 
 
 class ConversationManager:
@@ -20,7 +45,8 @@ class ConversationManager:
     - Activity tracking
     """
 
-    def __init__(self, timeout_seconds: int = 60, *, principal=None):
+    def __init__(self, timeout_seconds: int = 60, *, principal=None,
+                 history_provider=None, history_clear=None, history_replace=None):
         """
         Initialize conversation manager.
 
@@ -40,7 +66,30 @@ class ConversationManager:
         self.in_conversation: bool = False
         self.last_activity: Optional[float] = None
         self.timeout_seconds: int = timeout_seconds
-        self.conversation_history: List[BaseMessage] = []
+        self._history: List[BaseMessage] = []
+        self._history_provider = None
+        self._history_replace = None
+        if history_provider is not None:
+            self.bind_history(history_provider, history_clear, history_replace)
+
+    def bind_history(self, provider, clear, replace=None):
+        self._history_provider = provider
+        self._history_replace = replace
+        self._history_view = _HistoryView(provider, clear)
+        self._history = []
+
+    @property
+    def conversation_history(self):
+        return self._history_view if self._history_provider is not None else self._history
+
+    @conversation_history.setter
+    def conversation_history(self, messages):
+        if self._history_provider is not None:
+            if self._history_replace is None:
+                raise AttributeError("replace history through ContextManager")
+            self._history_replace(messages)
+        else:
+            self._history = list(messages)
 
     def should_enter_conversation(self, prolog_failed: bool, user_input: str) -> bool:
         """

@@ -10,6 +10,7 @@ include docker-compose.yml
 recursive-include kb *
 recursive-include modules *.pl
 recursive-include contracts *
+recursive-include skills *.md
 recursive-include assets *
 recursive-include scripts *.sh
 recursive-include scripts *.py
