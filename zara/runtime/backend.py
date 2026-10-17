@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .. import command_gate
+from ..context import ContextAttachmentStore
 from ..latency import LatencyTrace
 from . import events
 
@@ -171,6 +172,7 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         *,
         router=None,
         semantic_first: bool = False,
+        attachment_store: Optional[ContextAttachmentStore] = None,
     ) -> None:
         self._manager_factory = manager_factory
         self._manager = None
@@ -178,6 +180,11 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         self._router = router
         self._semantic_first = bool(semantic_first)
         self._memory_session: Optional[str] = None
+        if attachment_store is not None and not isinstance(attachment_store, ContextAttachmentStore):
+            raise TypeError("attachment_store must be a ContextAttachmentStore")
+        self._attachment_store = attachment_store
+        self._owns_attachment_store = False
+        self._attachment_owner = object()
 
     @property
     def principal_id(self) -> str:
@@ -204,7 +211,26 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             from zara.agent import AgentManager
 
             self._manager_factory = AgentManager
-        self._manager = self._manager_factory()
+        manager = self._manager_factory()
+        if self._attachment_store is not None:
+            try:
+                if getattr(manager, "principal", None) != self._attachment_store.principal:
+                    raise ValueError("context store principal does not match runtime principal")
+                self._attachment_store.bind_runtime(self._attachment_owner)
+            except Exception:
+                shutdown = getattr(manager, "shutdown_async", None)
+                try:
+                    if shutdown is not None:
+                        await shutdown()
+                    else:
+                        exit_conversation = getattr(manager, "exit_conversation", None)
+                        if exit_conversation is not None:
+                            exit_conversation()
+                except Exception:
+                    logger.warning("Rejected context owner manager cleanup failed")
+                raise
+            self._owns_attachment_store = True
+        self._manager = manager
         if self._publisher is not None:
             bind = getattr(self._manager, "bind_event_publisher", None)
             if bind is not None:
@@ -227,11 +253,43 @@ class LangGraphRuntimeBackend(RuntimeBackend):
     ) -> RuntimeTurnResult:
         if self._manager is None:
             raise RuntimeError("runtime backend is not started")
-        if context_ids:
-            raise UnsupportedRuntimeCommand(
-                "context attachments are not wired into the runtime backend yet"
+        store = self._attachment_store
+        if store is not None and getattr(self._manager, "principal", None) != store.principal:
+            raise ValueError("context store principal does not match runtime principal")
+        lease = (store.begin_turn(conversation_id=conversation_id, turn_id=turn_id)
+                 if store is not None and conversation_id else None)
+        try:
+            attachment_context = None
+            if context_ids:
+                if store is None:
+                    raise UnsupportedRuntimeCommand(
+                        "context attachments require an explicitly configured owner"
+                    )
+                attachment_context = store.render(
+                    context_ids, conversation_id=conversation_id, turn_id=turn_id,
+                )
+            return await self._submit_turn(
+                text, turn_id=turn_id, conversation_id=conversation_id,
+                system_context=system_context, conversation_history=conversation_history,
+                latency_trace=latency_trace, attachment_context=attachment_context,
             )
+        finally:
+            if lease is not None:
+                store.finish_turn(lease)
 
+    async def _submit_turn(
+        self,
+        text: str,
+        *,
+        turn_id: str,
+        conversation_id: Optional[str] = None,
+        system_context: Optional[str] = None,
+        conversation_history: Optional[list] = None,
+        latency_trace: Optional[LatencyTrace] = None,
+        attachment_context: Optional[str] = None,
+    ) -> RuntimeTurnResult:
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
         task_turn = conversation_history is not None or system_context is not None
         command_like = command_gate.looks_like_command(text)
 
@@ -291,6 +349,7 @@ class LangGraphRuntimeBackend(RuntimeBackend):
                 conversation_manager.enter_conversation()
                 conversation_manager.conversation_history.clear()
 
+        attachment_kwargs = {"attachment_context": attachment_context} if attachment_context else {}
         result = await self._manager.process_async(
             text,
             turn_id=turn_id,
@@ -299,6 +358,7 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             stream_publisher=self._stream_publisher(turn_id, conversation_id),
             conversation_history=conversation_history,
             extra_system_context=system_context,
+            **attachment_kwargs,
         )
         raw_tool_results = result.get("tool_results", [])
         response = str(result.get("response", ""))
@@ -549,6 +609,9 @@ class LangGraphRuntimeBackend(RuntimeBackend):
     async def stop(self) -> None:
         manager = self._manager
         self._manager = None
+        if self._owns_attachment_store:
+            self._attachment_store.unbind_runtime(self._attachment_owner)
+            self._owns_attachment_store = False
         if manager is None:
             return
         shutdown = getattr(manager, "shutdown_async", None)

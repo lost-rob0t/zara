@@ -119,11 +119,58 @@ not register tools, grant permissions, approve actions or execute code.
 
 * Remaining #51 integration
 
-This slice leaves #51 open. Reconcile the existing typed attachment branch with
-principal/conversation/turn ownership, expiry, bounded storage and explicit
-acquisition. Do not import its unscoped process-global attachment store unchanged.
-Nonempty runtime context_ids remain explicitly unsupported until that contract
-is safe. Post-turn memory advice must reconcile existing backend persistence
+** Explicit text attachment owner
+
+=zara.context.ContextAttachmentStore(principal=PrincipalContext(...))= is an
+opt-in, in-memory owner for already-authorized text snapshots. The typed
+kind/scope/sensitivity contract is recovered from the original #51 attachment
+branch without its global store or implicit path reads. =acquire_text= accepts
+data; a path or URL string is never opened. A trusted local caller must perform
+any acquisition and authorization before supplying text. There is no upload,
+CLI/UI acquisition command, filesystem capability, binary decoder or persistent
+scope in this slice.
+
+Inject the store with =LangGraphRuntimeBackend(..., attachment_store=store)=.
+Its canonical principal must match the manager's full PrincipalContext on start
+and before every turn. A store binds exclusively to one backend until stop;
+another backend cannot reuse it or clear its snapshots. Existing =SubmitTurn.context_ids= references resolve
+before routing/provider work. A missing/unconfigured store still fails closed.
+Conversation scope requires the same explicit conversation ID. Turn scope also
+requires the actual turn ID; direct backend callers know that ID. RuntimeHost
+allocates turn IDs after SubmitTurn, so existing pre-submit clients can use
+conversation-scoped snapshots; a future typed acquisition command must resolve
+that timing before exposing turn scope in a composer. No client-provided ID is
+silently rebound to a different turn.
+
+Defaults: 32 retained items, 64KiB UTF-8 text per item, 256KiB aggregate text,
+12,000 render characters, and 15-minute monotonic TTL (maximum one hour).
+Expired references fail closed; entries are reclaimed on the next operation
+or stop. Metadata is bounded, diagnostics contain counts/bytes only, and secret
+text is withheld from the model. A render that exceeds its bound fails without
+silently clipping data. The complete rendered transient still passes through
+ContextManager's provider budget check. This local Python API is not a sandbox
+against arbitrary code running inside the process.
+
+The backend takes a bounded store-issued turn lease before any await. Duplicate
+active identities and new TURN acquisitions during that lease are refused.
+Finally cleanup removes only the captured turn snapshots under that exact lease;
+clear/stop invalidates old leases, so late old completion cannot revoke new
+generation data. Success, failure, cancellation and deterministic routes all
+release their turn lease. Conversation snapshots remain until expiry/revoke or
+backend stop, and must be explicitly referenced again to reenter the model.
+Revocation prevents future lookup; it cannot retract text already sent to a
+provider. RuntimeHost remains responsible for turn cancellation/result fencing.
+
+Attachments enter labelled transient context as untrusted input data, never
+approval or action authorization. They do not select a route, register tools,
+change permissions, or enable task mode. Existing tool policy and the single
+backend memory persistence owner remain unchanged. Raw persisted history excludes
+attachment text; an assistant's derived response can still mention supplied
+facts. Isolated task context remains isolated and skips ordinary session writes.
+
+This slice leaves #51 open. Typed UI/CLI acquisition and binary/file adapters
+must use this scoped text owner rather than introducing global acquisition.
+Post-turn memory advice must reconcile existing backend persistence
 without duplicate writes. The typed RuntimeHost/UI command projection for Compact
 and skill metadata belongs with #961/#1478 and existing #1045 surfaces; no new
 Compose browser or competing registry is added here.
