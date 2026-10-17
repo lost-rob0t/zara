@@ -1,0 +1,8 @@
+code_environment_tool(code_tasks, starts_background_workers).
+code_environment_tool(code_task_status, reads_repository_task_state).
+code_environment_tool(code_task_wait, bounded_wait).
+code_environment_tool(code_task_cancel, cancels_worker).
+code_environment_repo_authority(kb_config:file_repository/2).
+code_environment_state_authority(zara_tasks_repository_state).
+code_environment_worker_sandbox(bubblewrap, writable_repository_mount).
+code_environment_worker_sandbox(bubblewrap, private_task_state_overlay).

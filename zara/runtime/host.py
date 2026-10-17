@@ -590,6 +590,7 @@ class RuntimeHost:
             plugin_config = config.get_plugin_runtime_config()
             backend = self._require_backend()
             composition_kwargs = {}
+            principal_id = None
             try:
                 principal_id = backend.principal_id
             except UnsupportedRuntimeCommand:
@@ -606,6 +607,7 @@ class RuntimeHost:
             manager = PluginManager(
                 paths,
                 configuration_provider=config.get_plugin_config,
+                principal_id=principal_id,
                 status_provider=self._plugin_runtime_status,
                 dispatcher=self.submit,
                 subscriber=self._subscriber,

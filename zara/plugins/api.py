@@ -161,6 +161,7 @@ class PluginRuntime:
         *,
         plugin_name: str,
         configuration: Mapping[str, Any],
+        principal_id: Optional[str] = None,
         status_provider: Callable[[], RuntimeStatus],
         dispatcher: Callable[[RuntimeCommand], concurrent.futures.Future],
         subscriber: Callable[..., bridge.RuntimeEventSubscription],
@@ -176,6 +177,7 @@ class PluginRuntime:
         capability_invoker: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._plugin_name = plugin_name
+        self._principal_id = principal_id
         self._configuration = MappingProxyType(copy.deepcopy(dict(configuration)))
         self._status_provider = status_provider
         self._dispatcher = dispatcher
@@ -200,6 +202,10 @@ class PluginRuntime:
     @property
     def plugin_name(self) -> str:
         return self._plugin_name
+
+    @property
+    def principal_id(self) -> Optional[str]:
+        return self._principal_id
 
     @property
     def configuration(self) -> Mapping[str, Any]:

@@ -4,5 +4,5 @@
 :- ensure_loaded(desktop_copilot_ui).
 :- ensure_loaded(org_fleet_delivery).
 :- ensure_loaded(desktop_prolog_ide).
-
 :- ensure_loaded(prolog_rlm_sidecar).
+:- ensure_loaded(code_environment).
