@@ -189,3 +189,24 @@ context contracts are fulfilled. #1513 stays held. No device/live-model claim.
   Automatic approval review rejected its merge into master, stating explicit
   user merge authorization was missing. No retry/bypass or merge occurred.
   The merge remains blocked pending explicit operator approval.
+
+** Independent review P2: queued executor cancellation recovery
+- Review of 2bb6d992 found that RuntimeHost cancellation could cancel a queued
+  to_thread wrapper before its cleanup ran, permanently retaining a busy slot.
+  RED regression failed with TimeoutError waiting for idle; original reproducer
+  reported draining with no callback invocation.
+- Shield actual work on the existing default executor, preserving contextvars.
+  Track submission separately: cancel-before-submission frees unused admission;
+  queued/running work retains admission until its actual finally block executes.
+  Shutdown cancellation marks work abandoned so queued callbacks never execute.
+- Original reproducer now reports idle, zero callback invocations, and accepts
+  replacement work. Added regressions cover queued cancellation, pre-submission
+  cancellation, running-work reservation and context-variable propagation.
+- First adjacent run: 196 passed, three missing langchain_openai dependency
+  failures. Installed the already-declared dependency only in the diagnostic
+  virtualenv; no production dependency changes. Corrected run: 200 passed,
+  19 RunnableConfig warnings and existing PySWIP shutdown warning.
+- Context script: 102 passed, six existing warnings. git diff --check passed.
+  All three mandatory local Nix commands remain unavailable (exit127: no nix).
+  Prior 603-test regression and packaging checks belong to 2bb6d992; this narrow
+  correction still requires new independent exact-head review and full CI.

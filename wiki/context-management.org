@@ -73,6 +73,9 @@ stays =draining= until actual completion, refusing replacement work instead of
 queuing more callbacks. The slot is shared across interactive/ephemeral contexts
 and retained by RuntimeHost across restart generations. A queued synchronous
 callback that expires before invocation is never called.
+Shutdown cancellation shields the queued executor job until its cleanup runs;
+cancellation before submission releases the unused slot immediately. The job
+uses the existing default executor and preserves the caller's context variables.
 
 RuntimeHost also bounds final pending-task draining by its existing shutdown
 timeout and logs only survivor counts. This does not kill arbitrary Python code:

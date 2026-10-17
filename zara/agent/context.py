@@ -8,7 +8,7 @@ import math
 import threading
 import time
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 import re
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Iterable, Sequence
@@ -147,6 +147,7 @@ class SummaryWork:
         self._lock = threading.Lock()
         self._task = None
         self._sync_pending = False
+        self._sync_submitted = False
         self._abandoned = False
 
     def _busy(self):
@@ -174,6 +175,10 @@ class SummaryWork:
         if not task.cancelled():
             task.exception()
         with self._lock:
+            if self._task is task and task.cancelled():
+                self._abandoned = True
+                if not self._sync_submitted:
+                    self._sync_pending = False
             if self._task is task and not self._sync_pending:
                 self._task = None
 
@@ -194,13 +199,28 @@ class SummaryWork:
         async def invoke():
             if asynchronous:
                 return await callback(messages, budget)
-            result = await asyncio.to_thread(self._call_sync, callback, messages, budget, deadline)
+            context = copy_context()
+            try:
+                with self._lock:
+                    self._sync_submitted = True
+                future = loop.run_in_executor(
+                    None, context.run, self._call_sync, callback, messages, budget, deadline
+                )
+            except BaseException:
+                with self._lock:
+                    self._sync_pending = False
+                raise
+            # Host cancellation must not cancel an executor job before its
+            # finally block can release the retained work slot.
+            future.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+            result = await asyncio.shield(future)
             return await result if inspect.isawaitable(result) else result
 
         with self._lock:
             if self._busy():
                 raise ContextError("summary backend is busy draining prior work")
             self._sync_pending = not asynchronous
+            self._sync_submitted = False
             self._abandoned = False
             task = loop.create_task(invoke(), name="zara-context-summary")
             self._task = task

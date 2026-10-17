@@ -246,3 +246,97 @@ async def test_sync_work_queued_past_deadline_never_invokes_callback():
     if running is not None:
         await asyncio.gather(running, return_exceptions=True)
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancelled_queued_wrapper_releases_slot_after_executor_drains():
+    from concurrent.futures import ThreadPoolExecutor
+    from zara.agent.context import SummaryWork
+
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+    release = threading.Event()
+    occupied = loop.run_in_executor(None, release.wait)
+    calls = []
+    work = SummaryWork()
+    caller = asyncio.create_task(work.run(lambda *args: calls.append(1) or "value", (), 1, 1))
+    try:
+        while work._task is None:
+            await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        wrapper = work._task
+        wrapper.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+        release.set()
+        await occupied
+
+        async def drain():
+            while work.state != "idle":
+                await asyncio.sleep(0.001)
+
+        await asyncio.wait_for(drain(), timeout=0.5)
+        assert calls == []
+        assert await work.run(lambda *args: "recovered", (), 1, 1) == "recovered"
+    finally:
+        release.set()
+        await occupied
+
+
+@pytest.mark.asyncio
+async def test_wrapper_cancelled_before_submission_releases_slot():
+    from zara.agent.context import SummaryWork
+
+    work = SummaryWork()
+    calls = []
+    caller = asyncio.create_task(work.run(lambda *args: calls.append(1), (), 1, 1))
+    # run() creates the wrapper; this continuation cancels it before invoke().
+    await asyncio.sleep(0)
+    work._task.cancel()
+    await asyncio.gather(caller, return_exceptions=True)
+    assert work.state == "idle"
+    assert calls == []
+    assert await work.run(lambda *args: "recovered", (), 1, 1) == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_sync_summary_preserves_provider_context():
+    from contextvars import ContextVar
+    from zara.agent.context import SummaryWork
+
+    marker = ContextVar("summary-test", default=None)
+    token = marker.set("request-owner")
+    try:
+        assert await SummaryWork().run(lambda *args: marker.get(), (), 1, 1) == "request-owner"
+    finally:
+        marker.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancelled_running_wrapper_keeps_slot_reserved():
+    from zara.agent.context import SummaryWork
+
+    entered, release = threading.Event(), threading.Event()
+    work = SummaryWork()
+
+    def blocked(*args):
+        entered.set()
+        release.wait(1)
+        return "late"
+
+    caller = asyncio.create_task(work.run(blocked, (), 1, 1))
+    try:
+        while not entered.is_set():
+            await asyncio.sleep(0.001)
+        work._task.cancel()
+        await asyncio.gather(caller, return_exceptions=True)
+        assert work.state == "draining"
+        with pytest.raises(ContextError, match="busy"):
+            await work.run(lambda *args: "overlap", (), 1, 1)
+    finally:
+        release.set()
+
+    async def drain():
+        while work.state != "idle":
+            await asyncio.sleep(0.001)
+
+    await asyncio.wait_for(drain(), timeout=0.5)
