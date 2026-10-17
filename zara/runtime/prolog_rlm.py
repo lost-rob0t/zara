@@ -126,6 +126,8 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         prompt = metadata.get("history_input")
         if not isinstance(prompt, str):
             return
+        if key not in self._history and len(self._history) >= 32:
+            self._history.pop(next(iter(self._history)))
         entries = self._history.setdefault(key, [])
         entries.extend((("user", prompt), ("assistant", result.response)))
         while len(entries) > 16 or sum(len(content) for _, content in entries) > 32768:

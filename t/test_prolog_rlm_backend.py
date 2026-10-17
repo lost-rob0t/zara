@@ -181,3 +181,20 @@ def test_history_is_committed_only_after_host_fence(sidecar):
         await backend.submit_turn("task", turn_id="turn-5", conversation_id="chat-a", conversation_history=[])
         assert Handler.requests[-1][1]["inline_context"] == ""
     asyncio.run(run())
+
+
+def test_conversation_history_has_global_bound(sidecar):
+    async def run():
+        backend = PrologRLMRuntimeBackend(sidecar, principal_id="user:alice")
+        await backend.start()
+        for index in range(33):
+            conversation_id = f"chat-{index}"
+            result = await backend.submit_turn(
+                f"message-{index}", turn_id=f"turn-{index}", conversation_id=conversation_id
+            )
+            backend.commit_turn_result(
+                result, turn_id=f"turn-{index}", conversation_id=conversation_id
+            )
+        await backend.submit_turn("again", turn_id="turn-new", conversation_id="chat-0")
+        assert Handler.requests[-1][1]["inline_context"] == ""
+    asyncio.run(run())
