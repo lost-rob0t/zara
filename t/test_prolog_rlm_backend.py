@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import subprocess
 from threading import Thread
 
 import pytest
@@ -99,6 +100,42 @@ def test_read_tool_bootstrap_and_turn_fence(sidecar, tmp_path):
     assert config["tools"][0]["name"] == "file_read"
     assert Handler.requests[1][1]["host_tools"] == ["file_read"]
     assert Handler.authorizations == ["Bearer test-secret", "Bearer test-secret"]
+
+
+def test_server_resolves_rlm_file_read_from_prolog_repository(sidecar, tmp_path, monkeypatch):
+    from zara.config import ZaraConfig
+    from zara.principals import PrincipalContext
+    from zara.runtime.bridge import RuntimeEventBus
+    from zara.server_core import RuntimeSupervisor
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        '[agent]\nbackend = "prolog_rlm"\n'
+        f'prolog_rlm_endpoint = "{sidecar}"\n'
+        '[tools]\nfile_tools = true\n'
+        '[file_tools]\nrepository = "work"\n'
+    )
+
+    class Prolog:
+        def get_wake_words(self):
+            return []
+
+        def query_all(self, query):
+            if query == "kb_config:file_repository(Alias, Path)":
+                return [{"Alias": "work", "Path": str(repository)}]
+            if query == "file_skill_resolver:resolved_tool(Skill, Tool)":
+                return [{"Skill": "read", "Tool": "read_file"}]
+            raise AssertionError(query)
+
+    monkeypatch.setenv("ZARA_RUNTIME_HOST_TOKEN", "test-secret")
+    supervisor = RuntimeSupervisor(config=ZaraConfig(str(config_file)), prolog_factory=lambda _: Prolog())
+    host = supervisor._build_default_host(PrincipalContext("user:alice"), RuntimeEventBus())
+    backend = host._backend_factory()
+    assert backend._callback._tooling.base_dir == repository
+    assert backend._host_token == "test-secret"
 
 
 def test_sidecar_requires_loopback():
