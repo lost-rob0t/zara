@@ -19,7 +19,9 @@ The mobile boundary is intentionally narrower than a desktop Prolog shell:
 
 * 1. Facts are a database
 
-Open =family.pl= in Logic -> IDE.
+Open =family.pl= in Workspace -> Logic -> Code. The source and its Save & reload
+control appear in the first viewport. Reload runtime is beside Save & reload;
+predicate suggestions appear while typing a predicate name.
 
 #+begin_src prolog
 parent(alice, bob).

@@ -270,14 +270,14 @@ class ZaraAppProjectionTest {
 
     @Test
     fun unpairedShellOffersInAppQrPairingWithoutCameraPermission() {
-        val pairingShell = File("src/main/java/ai/zara/app/ui/PairingZaraApp.kt").readText()
+        val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
         val host = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
         val manifest = File("src/main/AndroidManifest.xml").readText()
         val build = File("build.gradle.kts").readText()
         val catalog = File("../gradle/libs.versions.toml").readText()
 
-        assertTrue(pairingShell.contains("\"Scan pairing QR\""))
-        assertTrue(pairingShell.contains("runtimeState.enrollment != EnrollmentReadiness.Ready"))
+        assertTrue(shell.contains("\"Scan pairing QR\""))
+        assertTrue(shell.contains("state.enrollment != EnrollmentReadiness.Ready"))
         assertTrue(host.contains("onScanPairingQr = ::scanPairingQr"))
         assertTrue(host.contains("GmsBarcodeScanning"))
         assertTrue(host.contains("Barcode.FORMAT_QR_CODE"))
