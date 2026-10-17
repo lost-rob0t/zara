@@ -7,14 +7,14 @@ import org.junit.Test
 
 class PairingLayoutContractTest {
     @Test
-    fun pairingSetupActionReservesLayoutSpaceInsteadOfCoveringRouteTabs() {
-        val source = File("src/main/java/ai/zara/app/ui/PairingZaraApp.kt").readText()
-        val shell = source.substringBefore("@Composable\ninternal fun PairingSetupAction")
+    fun pairingActionLivesInConnectionInsteadOfTakingSpaceFromEveryScreen() {
+        val shell = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        val connection = shell.substringAfter("AppRoute.Connection -> {")
+            .substringBefore("AppRoute.Updates -> {")
 
-        assertTrue(shell.contains("Column(Modifier.fillMaxSize())"))
-        assertTrue(shell.contains("Box(Modifier.weight(1f).fillMaxWidth())"))
-        assertTrue(shell.contains(".windowInsetsPadding(WindowInsets.navigationBars)"))
-        assertFalse(shell.contains(".align(Alignment.TopEnd)"))
-        assertFalse(shell.contains("WindowInsets.statusBars"))
+        assertFalse(shell.contains("PairingSetupAction("))
+        assertFalse(File("src/main/java/ai/zara/app/ui/PairingZaraApp.kt").exists())
+        assertTrue(connection.contains("Scan pairing QR"))
+        assertTrue(connection.contains("state.enrollment != EnrollmentReadiness.Ready"))
     }
 }

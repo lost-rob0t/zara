@@ -6,10 +6,12 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Android Logic opens directly on the editable Prolog source with save and reload controls in view; pairing QR setup now lives in Connection settings.
 - Zara Desktop now mirrors the Android app's design language: Outrun is the default, the Android Outrun, StarIntel, Midnight, Terminal, and Light themes are available in desktop settings, and chat, history, composer, status, tool activity, and Org surfaces share the same semantic colors, borders, spacing, and rounded hierarchy. Existing desktop themes remain selectable.
 
 ### Fixed
 
+- Prolog Studio no longer shows autocomplete suggestions until a predicate name is being typed.
 - Security management with an explicit state directory now targets that directory's live Zara daemon instead of an unrelated daemon on the default runtime socket.
 
 ## 0.4.0-alpha

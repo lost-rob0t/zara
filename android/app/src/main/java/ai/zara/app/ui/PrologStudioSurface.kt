@@ -59,12 +59,14 @@ import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.Alignment
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
 private enum class StudioPane(val label: String) {
-    Editor("IDE"),
+    Editor("Code"),
     Expert("Expert"),
     Syntax("Syntax"),
     Advanced("KB"),
@@ -99,18 +101,39 @@ internal fun PrologStudioSurface(
         analyzed.copy(diagnostics = analyzed.diagnostics + PrologSchemaValidator.validate(analyzed))
     }
     val pane = StudioPane.entries.firstOrNull { it.name == paneName } ?: StudioPane.Editor
+    val tokens = LocalZaraTokens.current
 
-    ScreenBody(padding) {
-        ScreenTitle("Logic", "Local Prolog studio and symbolic runtime")
-        SectionCard("LOCAL SERVER") {
-            KeyValueRow("state", localState.phase.name.lowercase())
-            KeyValueRow("generation", localState.generation.toString())
-            KeyValueRow("sources", localState.loadedSources.size.toString())
-            localState.failure?.let { ErrorBanner(it) }
-            if (localState.phase == LocalServerPhase.READY) {
-                MutedNotice("Trealla owns one serialized runtime actor. Workspace reloads replace the runtime so old clauses cannot accumulate.")
+    ScreenBody(padding, spacing = 4.dp) {
+        if (pane != StudioPane.Editor) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    "PROLOG STUDIO",
+                    color = tokens.textMuted,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Spacer(Modifier.weight(1f))
+                Surface(
+                    color = tokens.surface,
+                    border = BorderStroke(1.dp, if (localState.phase == LocalServerPhase.READY) tokens.success else tokens.warning),
+                    shape = MaterialTheme.shapes.extraLarge,
+                ) {
+                    Text(
+                        "${localState.phase.name.lowercase()} · ${localState.generation}",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        color = if (localState.phase == LocalServerPhase.READY) tokens.success else tokens.warning,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                }
             }
         }
+        localState.failure?.let { ErrorBanner(it) }
 
         Row(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -126,6 +149,7 @@ internal fun PrologStudioSurface(
                 sources = sources,
                 selected = selected,
                 selectedName = selectedName,
+                runtimeLabel = "${localState.phase.name.lowercase()} · ${localState.generation}",
                 draft = draft,
                 document = document,
                 query = query,
@@ -205,6 +229,7 @@ private fun EditorPane(
     sources: List<PrologSource>,
     selected: PrologSource?,
     selectedName: String,
+    runtimeLabel: String,
     draft: String,
     document: PrologDocument,
     query: String,
@@ -233,25 +258,33 @@ private fun EditorPane(
     }
     var creatingSource by rememberSaveable { mutableStateOf(false) }
     var newSourceName by rememberSaveable { mutableStateOf("") }
-    SectionCard("SOURCES") {
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            sources.forEach { source ->
-                TextButton(onClick = { onSelect(source) }) {
-                    Text(
-                        source.name,
-                        color = if (source.name == selectedName) tokens.accentCyan else tokens.textMuted,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
-            }
-            TextButton(onClick = { creatingSource = !creatingSource }) {
-                Text("＋ source", color = tokens.accentMagenta)
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "SOURCE",
+            color = tokens.textMuted,
+            fontSize = 10.sp,
+            letterSpacing = 1.sp,
+            fontFamily = FontFamily.Monospace,
+        )
+        sources.forEach { source ->
+            TextButton(onClick = { onSelect(source) }) {
+                Text(
+                    source.name,
+                    color = if (source.name == selectedName) tokens.accentCyan else tokens.textMuted,
+                    fontFamily = FontFamily.Monospace,
+                )
             }
         }
-        if (creatingSource) {
+        TextButton(onClick = { creatingSource = !creatingSource }) {
+            Text("＋ source", color = tokens.accentMagenta)
+        }
+    }
+    if (creatingSource) {
+        SectionCard("NEW SOURCE") {
             OutlinedTextField(
                 value = newSourceName,
                 onValueChange = { newSourceName = it },
@@ -270,14 +303,21 @@ private fun EditorPane(
             }
         }
     }
-    SectionCard("EDITOR · ${selected?.name ?: "scratch.pl"}") {
+    SectionCard("EDITOR · ${selected?.name ?: "scratch.pl"} · $runtimeLabel") {
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PrimaryAction("Save & reload", !operationBusy && document.diagnostics.isEmpty(), onSave)
+            SecondaryAction("Reload runtime", !operationBusy, onReload)
+        }
         OutlinedTextField(
             value = draft,
             onValueChange = {
                 history = history.edit(it, it.length)
                 onDraft(it)
             },
-            modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp),
             textStyle = MaterialTheme.typography.bodySmall.copy(
                 color = tokens.text,
                 fontFamily = FontFamily.Monospace,
@@ -335,10 +375,6 @@ private fun EditorPane(
             document.diagnostics.forEach { diagnostic ->
                 ErrorBanner("line ${diagnostic.line}: ${diagnostic.message}")
             }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PrimaryAction("Save & reload", !operationBusy && document.diagnostics.isEmpty(), onSave)
-            SecondaryAction("Reload runtime", !operationBusy, onReload)
         }
     }
     SectionCard("QUERY") {

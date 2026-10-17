@@ -185,6 +185,7 @@ fun ZaraApp(
     onUnloadLocalModel: () -> Unit,
     onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
     onClearCloudModelApiKey: () -> Unit,
+    onScanPairingQr: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -437,6 +438,7 @@ fun ZaraApp(
                                                 operationError = operationError,
                                                 operationBusy = operationBusy,
                                                 onCreateIdentity = onCreateIdentity,
+                                                onScanPairingQr = onScanPairingQr,
                                                 onPinServer = onPinServer,
                                                 onReplaceServerPin = onReplaceServerPin,
                                                 onRequestAssistantRole = onRequestAssistantRole,
@@ -1257,6 +1259,7 @@ private fun SettingsSurface(
     operationError: String?,
     operationBusy: Boolean,
     onCreateIdentity: () -> Unit,
+    onScanPairingQr: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
     onRequestAssistantRole: () -> Unit,
@@ -1417,6 +1420,9 @@ private fun SettingsSurface(
             AppRoute.Connection -> {
                 SectionCard("IDENTITY") {
                     KeyValueRow("enrollment", enrollmentLabel(state.enrollment))
+                    if (state.enrollment != EnrollmentReadiness.Ready) {
+                        SecondaryAction("Scan pairing QR", !operationBusy, onScanPairingQr)
+                    }
                     enrollmentPublicKey?.let {
                         Text("CLIENT PUBLIC KEY", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
                         SelectionContainer {
@@ -1728,6 +1734,7 @@ private fun AboutSurface(sourceSha: String, padding: PaddingValues) {
 @Composable
 internal fun ScreenBody(
     padding: PaddingValues,
+    spacing: Dp = 14.dp,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -1736,7 +1743,7 @@ internal fun ScreenBody(
             .padding(padding)
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 18.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(spacing),
     ) {
         content()
     }

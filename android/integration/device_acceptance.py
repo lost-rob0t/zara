@@ -107,6 +107,28 @@ class Device:
         value = self.adb("shell", "wm", "size")
         return tuple(map(int, re.findall(r"(\d+)x(\d+)", value)[-1]))
 
+    def assert_studio_editor_first_viewport(self) -> None:
+        editor = self.find("Prolog source")
+        if editor is None:
+            raise AssertionError("Logic editor is absent from the first viewport")
+        _, top, _, _ = self.bounds(editor)
+        _, height = self.size()
+        if top > height * 0.45:
+            raise AssertionError(f"Logic editor starts too low: y={top}, viewport={height}")
+
+    def assert_no_pairing_footer(self) -> None:
+        if self.find("Scan pairing QR") is not None:
+            raise AssertionError("Pairing action obscures the local Logic workspace")
+
+    def assert_studio_save_visible(self) -> None:
+        save = self.find("Save & reload")
+        if save is None:
+            raise AssertionError("Logic save action is hidden below the first viewport")
+        _, top, _, bottom = self.bounds(save)
+        _, height = self.size()
+        if top < 0 or bottom > height * 0.9:
+            raise AssertionError(f"Logic save action is outside the usable viewport: {top}:{bottom}")
+
     def density(self) -> int:
         value = self.adb("shell", "wm", "density")
         return int(re.findall(r"(\d+)", value)[-1])
@@ -451,6 +473,9 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.tap("Workspace")
     device.await_label("Logic")
     device.capture("workspace-logic")
+    device.assert_studio_editor_first_viewport()
+    device.assert_no_pairing_footer()
+    device.assert_studio_save_visible()
     for tab in ("Projects", "Scheduled"):
         device.tap_tab(tab)
         time.sleep(0.4)

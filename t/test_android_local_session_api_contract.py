@@ -67,7 +67,6 @@ class LocalSessionApiContractTest(unittest.TestCase):
             ANDROID / "AndroidAppSession.kt",
             ANDROID / "MainActivity.kt",
             ANDROID / "ui/ZaraApp.kt",
-            ANDROID / "ui/PairingZaraApp.kt",
         )
         contents = [path.read_bytes() for path in paths]
         sources = [content.decode("utf-8") for content in contents]

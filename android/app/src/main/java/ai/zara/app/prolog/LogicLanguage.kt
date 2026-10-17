@@ -362,13 +362,14 @@ object PrologCompletionEngine {
 
     fun complete(text: String, cursor: Int, documents: List<PrologDocument>): List<PrologCompletion> {
         val prefix = text.take(cursor.coerceIn(0, text.length)).takeLastWhile { it.isLetterOrDigit() || it == '_' }
+        if (prefix.isEmpty()) return emptyList()
         val workspace = documents.flatMap { it.clauses }.map { it.predicate }.distinctBy { it.indicator }.map { ref ->
             val variables = (1..ref.arity).joinToString(", ") { index -> "\${" + index + ":Arg" + index + "}" }
             PrologCompletion(ref.indicator, "${ref.name}($variables)", "Workspace predicate")
         }
         return (workspace + builtIns)
             .distinctBy { it.label }
-            .filter { prefix.isBlank() || it.label.startsWith(prefix, ignoreCase = true) }
+            .filter { it.label.startsWith(prefix, ignoreCase = true) }
             .sortedWith(compareBy<PrologCompletion> { !it.label.startsWith(prefix, true) }.thenBy { it.label })
             .take(12)
     }

@@ -152,6 +152,15 @@ class PrologStudioTest {
     }
 
     @Test
+    fun completedSourceDoesNotShowUnrequestedCompletions() {
+        val source = "parent(alice, bob).\n"
+        val document = PrologSourceAnalyzer.analyze("family.pl", source)
+
+        assertTrue(PrologCompletionEngine.complete(source, source.length, listOf(document)).isEmpty())
+        assertTrue(PrologCompletionEngine.complete("parent(", 7, listOf(document)).isEmpty())
+    }
+
+    @Test
     fun localEmbeddingIsVersionedDeterministicAndCanBeDisabled() {
         val enabled = LocalEmbeddingConfiguration(enabled = true)
         val disabled = enabled.copy(enabled = false)

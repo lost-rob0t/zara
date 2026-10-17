@@ -18,7 +18,7 @@ Chat and Workspace tabs scroll horizontally. Settings does not use a horizontal 
 
 Runtime & local AI contains local symbolic-server status, Auto/Local/Remote routing selection, the on-device embedding toggle, and the embedded Local AI model manager. The model manager lists verified installed models, selects/loads one explicitly, can unload it from memory, and imports a =.litertlm= payload with explicit id/version/quantization/context/backend metadata. Android computes and verifies SHA-256 while copying the file into app-private storage. Opening the screen does not change routing or model selection implicitly.
 
-Connection contains client identity creation, public-key enrollment guidance, trusted-server pinning/replacement, endpoint entry, and Connect in one place. Previously these controls were split between Settings and Remote. Existing trust validation, connection lifecycle gates, and explicit user actions are unchanged.
+Connection contains client identity creation, QR pairing while unenrolled, public-key enrollment guidance, trusted-server pinning/replacement, endpoint entry, and Connect in one place. Previously these controls were split between Settings and Remote. Existing trust validation, connection lifecycle gates, and explicit user actions are unchanged.
 
 Permissions contains Android Assistant-role onboarding, collapsed Samsung setup help, and microphone permission status/request. Opening Permissions does not request permission or start listening.
 

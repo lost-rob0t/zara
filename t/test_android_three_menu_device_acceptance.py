@@ -17,6 +17,93 @@ def test_acceptance_uses_three_primary_menus_not_legacy_drawer_routes():
     assert 'for route in ("Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled"' not in text
 
 
+def test_logic_editor_is_checked_in_the_first_viewport():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("device_acceptance", ACCEPTANCE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class LogicScreen(module.Device):
+        def __init__(self, editor_top):
+            super().__init__("fixture", Path("/tmp"))
+            self.editor_top = editor_top
+
+        def find(self, label):
+            return object() if label == "Prolog source" else None
+
+        def bounds(self, node):
+            return (20, self.editor_top, 340, self.editor_top + 100)
+
+        def size(self):
+            return (360, 800)
+
+    LogicScreen(200).assert_studio_editor_first_viewport()
+    try:
+        LogicScreen(520).assert_studio_editor_first_viewport()
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("Editor below the first viewport was accepted")
+
+
+def test_logic_screen_has_no_pairing_footer():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("device_acceptance", ACCEPTANCE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class LogicScreen(module.Device):
+        def __init__(self, pairing_visible):
+            super().__init__("fixture", Path("/tmp"))
+            self.pairing_visible = pairing_visible
+
+        def find(self, label):
+            return object() if label == "Scan pairing QR" and self.pairing_visible else None
+
+    LogicScreen(False).assert_no_pairing_footer()
+    try:
+        LogicScreen(True).assert_no_pairing_footer()
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("Pairing footer on Logic was accepted")
+
+
+def test_logic_save_action_is_available_without_scrolling():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("device_acceptance", ACCEPTANCE)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    class LogicScreen(module.Device):
+        def __init__(self, save_visible):
+            super().__init__("fixture", Path("/tmp"))
+            self.save_visible = save_visible
+
+        def find(self, label):
+            return object() if label == "Save & reload" and self.save_visible else None
+
+        def bounds(self, node):
+            return (20, 650, 220, 720)
+
+        def size(self):
+            return (360, 800)
+
+    LogicScreen(True).assert_studio_save_visible()
+    try:
+        LogicScreen(False).assert_studio_save_visible()
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("Hidden save action was accepted")
+
+
 def test_acceptance_captures_settings_overview_children_and_two_theme_states():
     text = source()
     assert '"settings-overview"' in text
