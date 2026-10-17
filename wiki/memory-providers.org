@@ -1,0 +1,120 @@
+#+title: Runtime-owned memory providers
+
+Tracking: [[https://github.com/lost-rob0t/zara/issues/1334][#1334]].
+
+This recovers the seven existing commits on =feat/1334-memory-provider-bridge=
+([[https://github.com/lost-rob0t/zara/commit/e89ca281512d203437494ce2f6799cc4e7545fc7][original head e89ca281]]) onto current master plus #893. The original
+=memory-provider= symbol kind, in-place =bind_principal= provider contract, and
+=replace_memory_manager= seam are retained; binding is awaited and bounded by
+RuntimeHost. The original replacement/binding tests are preserved and strengthened.
+
+
+* Selection and startup
+
+The default remains the built-in MemoryManager and its existing storage/fallback
+policy. An operator may select an explicitly enabled service plugin instead:
+
+#+begin_src toml
+[memory]
+provider = "plugin:my-memory"
+
+[plugins.my-memory]
+enabled = true
+#+end_src
+
+The named plugin must already implement the contract below and be discoverable
+through normal module paths. Selection does not install a plugin, authorize new
+tools, enable it implicitly, or create another memory engine. Invalid selectors,
+disabled/unavailable plugins, missing symbols and failed binding fail startup
+closed; Zara does not silently construct Chroma or fall back to built-in memory.
+Setting =memory.enabled = false= disables automatic memory use and skips plugin
+binding even if a valid plugin selector remains configured. The enable flag must
+be a boolean; a string such as ="false"= cannot accidentally enable recording.
+
+AgentManager defers memory construction when a plugin is selected. RuntimeHost
+starts the canonical service-plugin manager, resolves its selected provider,
+binds it to the runtime principal, then accepts user/task turns. Non-memory tools
+and subsystem policy remain unchanged. A deliberately disabled built-in memory
+configuration continues to behave as before.
+
+* Provider contract
+
+During =start(runtime)=, the selected plugin publishes an object using the existing
+owner-scoped symbol registry:
+
+#+begin_src python
+runtime.register_symbol("memory.provider", "memory-provider", provider)
+#+end_src
+
+The registry winner must have kind =memory-provider= and owner =plugin:<selected-name>=.
+Another plugin's override cannot substitute its implementation for that explicit
+selection. StartupUnavailable, failed startup and disabled state cannot establish
+readiness merely by having published metadata earlier.
+
+The provider implements:
+
+#+begin_example
+bind_principal(principal: PrincipalContext) -> None
+#+end_example
+
+The runtime supplies its canonical authenticated principal (or canonical local
+owner for a local runtime), never a principal supplied by a turn or tool payload.
+After binding, the provider's canonical =principal= (including kind) and =principal_id=
+must match. The provider must preserve that principal's isolation and lifetime
+policy, including transient guest/ephemeral behavior. Its methods implement the existing
+MemoryManager call contract:
+
+- =remember_fact(text, tags, session_id, source)=;
+- =retrieve(query, k)=;
+- =list_memories(limit, kind)=;
+- =forget(...)=, matching the existing forget tool;
+- =start_session()=;
+- =add_message(session_id, role, text)=;
+- =summarise_session(session_id)=.
+
+Principal binding runs with the configured plugin lifecycle timeout. The plugin owns the
+provider resources and must clean them in its normal stop
+lifecycle. The binding is startup/restart work, not a public arbitrary provider
+invocation plane or a transactional live-provider reconfiguration API.
+
+Core serializes in-place principal binding and rejects an already scoped provider
+before another runtime can rebind it. This avoids accidental sharing of one
+mutable provider object across principals. Lock acquisition is bounded; a blocked
+binding reports busy/unavailable. Bind methods must avoid unbounded I/O and use
+the existing managed-worker lifecycle for ongoing service work. Timeout cancels
+the accepted binding result; it cannot forcibly terminate arbitrary Python code.
+
+The runtime rebuilds only =remember=, =recall=, =memory_list= and =forget= for the
+bound implementation. Existing tool toggles remain effective, unrelated tools
+remain registered, and an existing plugin-owned memory-tool name is not silently
+overwritten. Session persistence and transient memory retrieval use that same
+bound implementation. Tools still use the existing approval/cancellation path.
+
+* Failure and recovery
+
+No user/task turn is accepted while binding is incomplete. Before dispatch, Core
+checks both the selected plugin's running state and the exact symbol registration
+generation. Removal, replacement or failure makes subsequent turns unavailable
+until an explicit successful runtime restart/rebind. There is no automatic
+fallback to another provider.
+
+The operator can repair configuration/provider availability and restart the
+existing RuntimeHost. A fresh plugin generation is bound, and the previous daemon
+memory-session pointer is not reused. Provider exceptions are not included in the
+routine service-startup event message.
+
+This bridge does not itself implement a storage backend, remote service, Android
+Python runtime, or the broader #1317 transactional plugin reload contract.
+The current external =zara-memory= plugin has its own symbolic-memory contract and
+does not yet publish this provider; merely selecting its name does not make it a
+compatible replacement. Companion adapters must explicitly implement and test
+this contract using their existing storage.
+
+* Validation
+
+=t/test_memory_provider_bridge.py= exercises selector validation, no built-in
+initialization for selected plugins, exact principal binding, memory-tool
+replacement and conflict preservation, provider-backed retrieval/session writes,
+RuntimeHost startup gating, missing/disabled/unavailable/wrong-owner/wrong-kind
+providers, binding timeout, symbol removal, plugin failure, restart generations
+and explicit recovery. No live provider/model or Android device is used.

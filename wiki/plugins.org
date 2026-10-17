@@ -97,6 +97,10 @@ invalid tool cannot leave a partial batch or remove an existing owner's tool.
 Custom backends must preserve that atomic registration contract. Backends without
 a tool registry reject service tools without killing Zara.
 
+An enabled service may also publish the canonical =memory.provider= symbol to
+replace built-in memory when explicitly selected. See [[file:memory-providers.org][runtime-owned memory providers]]
+for principal binding, startup readiness, tool replacement and failure semantics.
+
 A plugin tool that performs a dangerous or mutating action can require Zara's
 canonical principal-scoped approval by setting boolean LangChain tool metadata
 =zara_requires_approval = True= when the tool is constructed:
