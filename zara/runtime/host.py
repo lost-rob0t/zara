@@ -21,7 +21,7 @@ from zara.actors import (
 )
 from zara.latency import JSONLMetricsSink, LatencyTrace, metrics_path
 from zara.plugins.api import RuntimeStatus
-from zara.plugins.manager import PluginDiagnostic, PluginManager
+from zara.plugins.manager import PluginDiagnostic, PluginManager, PluginState
 
 from . import bridge, events
 from .backend import AgentRuntimeBackend, RuntimeBackend, RuntimeTurnResult, UnsupportedRuntimeCommand
@@ -41,7 +41,7 @@ from .commands import (
     StopVoice,
     SubmitTurn,
 )
-from .symbols import ProgrammableSymbolRegistry
+from .symbols import ProgrammableSymbolRegistry, SymbolLookupError
 from .turn_context import TurnCapabilityLease, bind_turn_capability_lease
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,9 @@ class RuntimeHost:
         ] = []
 
         self._backend: Optional[RuntimeBackend] = None
+        self._memory_provider_ready = False
+        self._selected_memory_plugin: Optional[str] = None
+        self._bound_memory_registration: Optional[int] = None
         self._coordinator = None
         self._turn_tasks: dict[str, asyncio.Task] = {}
         self._turn_capability_leases: dict[str, TurnCapabilityLease] = {}
@@ -232,7 +235,11 @@ class RuntimeHost:
 
         recovery_command = isinstance(command, (RestartRuntime, ShutdownRuntime))
         if state is RuntimeHostState.RUNNING:
-            pass
+            if isinstance(command, SubmitTurn):
+                try:
+                    self._require_memory_provider_ready()
+                except RuntimeNotReady as error:
+                    return _failed_future(error)
         elif state is RuntimeHostState.DEGRADED and recovery_command:
             pass
         else:
@@ -304,6 +311,7 @@ class RuntimeHost:
             self._thread_id = None
 
     async def _run(self) -> None:
+        self._memory_provider_ready = False
         self._async_stop = asyncio.Event()
         try:
             self._coordinator = TurnCoordinator.start()
@@ -345,9 +353,22 @@ class RuntimeHost:
                 if not shutdown_requests:
                     self._state = RuntimeHostState.RUNNING
             if not shutdown_requests:
-                await self._start_api_service()
-                await self._start_plugins()
-                await self._start_task_runner()
+                try:
+                    await self._start_api_service()
+                    await self._start_plugins()
+                    await self._bind_configured_memory_provider()
+                    await self._start_task_runner()
+                except Exception as error:
+                    startup_error = error
+                    with self._state_lock:
+                        self._state = RuntimeHostState.DEGRADED
+                    self._publisher(events.RuntimeError(
+                        reason="runtime service startup failed",
+                        fatal=False,
+                        label="runtime-host",
+                    ))
+                    if not self._startup_future.done():
+                        self._startup_future.set_exception(error)
 
         if shutdown_requests:
             if startup_error is None and not self._startup_future.done():
@@ -494,6 +515,7 @@ class RuntimeHost:
             raise RuntimeHostError(f"task turn capability lease is unavailable: {turn_id!r}")
         try:
             with bind_turn_capability_lease(lease):
+                self._require_memory_provider_ready()
                 return await self._require_backend().submit_turn(
                     text,
                     turn_id=turn_id,
@@ -640,6 +662,67 @@ class RuntimeHost:
         if manager is not None:
             await manager.stop()
             self._last_plugin_diagnostics = manager.diagnostics()
+
+    async def _bind_configured_memory_provider(self) -> None:
+        from zara.memory import memory_provider_plugin
+
+        config = self._config
+        if config is None:
+            from zara.config import get_config
+            config = get_config()
+        get_section = getattr(config, "get_section", None)
+        settings = get_section("memory") if callable(get_section) else {}
+        name = memory_provider_plugin(settings)
+        self._selected_memory_plugin = name
+        self._bound_memory_registration = None
+        if name is None:
+            self._memory_provider_ready = True
+            return
+        manager = self._plugin_manager
+        if manager is None or not any(
+            item.name == name and item.state is PluginState.RUNNING
+            for item in manager.diagnostics()
+        ):
+            raise RuntimeError(f"configured memory provider is unavailable: {name}")
+        try:
+            registration = self._symbol_registry.resolve("memory.provider")
+        except SymbolLookupError as error:
+            raise RuntimeError(f"configured memory provider did not publish memory.provider: {name}") from error
+        if registration.owner != f"plugin:{name}" or registration.kind != "memory-provider":
+            raise RuntimeError("configured memory provider symbol has the wrong owner or kind")
+        timeout = config.get_plugin_runtime_config()["lifecycle_timeout"]
+        try:
+            await asyncio.wait_for(
+                self._require_backend().bind_memory_provider(registration.value),
+                timeout=timeout,
+            )
+        except Exception as error:
+            raise RuntimeError("configured memory provider binding failed") from error
+        self._bound_memory_registration = registration.registration_id
+        self._memory_provider_ready = True
+        self._require_memory_provider_ready()
+
+    def _require_memory_provider_ready(self) -> None:
+        if not self._memory_provider_ready:
+            raise RuntimeNotReady("memory provider is not ready")
+        name = self._selected_memory_plugin
+        if name is None:
+            return
+        manager = self._plugin_manager
+        running = manager is not None and any(
+            item.name == name and item.state is PluginState.RUNNING
+            for item in manager.diagnostics()
+        )
+        try:
+            registration = self._symbol_registry.resolve("memory.provider")
+        except SymbolLookupError:
+            registration = None
+        registration_matches = (
+            registration is not None
+            and registration.registration_id == self._bound_memory_registration
+        )
+        if not running or not registration_matches:
+            raise RuntimeNotReady("configured memory provider is unavailable")
 
     def _plugin_runtime_status(self) -> RuntimeStatus:
         return RuntimeStatus(
@@ -794,6 +877,7 @@ class RuntimeHost:
         try:
             try:
                 with bind_turn_capability_lease(lease):
+                    self._require_memory_provider_ready()
                     result = await backend.submit_turn(
                         command.text,
                         turn_id=turn_id,
@@ -919,6 +1003,7 @@ class RuntimeHost:
         )
 
     async def _restart(self, command: RestartRuntime) -> CommandReceipt:
+        self._memory_provider_ready = False
         with self._state_lock:
             self._state = RuntimeHostState.STARTING
         await self._cancel_all_turns(reason="runtime restart")
@@ -955,7 +1040,13 @@ class RuntimeHost:
 
         await self._start_api_service()
         await self._start_plugins()
-        await self._start_task_runner()
+        try:
+            await self._bind_configured_memory_provider()
+            await self._start_task_runner()
+        except Exception:
+            with self._state_lock:
+                self._state = RuntimeHostState.DEGRADED
+            raise
         self._publisher(events.RuntimeStarted(label="runtime-host"))
         return CommandReceipt(request_id=command.request_id, detail="runtime restarted")
 

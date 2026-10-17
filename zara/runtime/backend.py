@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
@@ -152,9 +153,14 @@ class RuntimeBackend:
     async def stop(self) -> None:
         pass
 
+    async def bind_memory_provider(self, provider) -> None:
+        raise UnsupportedRuntimeCommand("plugin memory is not available in this runtime backend")
+
 
 class LangGraphRuntimeBackend(RuntimeBackend):
     """Thin adapter over Zara's existing :class:`AgentManager`."""
+
+    _memory_binding_lock = threading.Lock()
 
     def __init__(
         self,
@@ -309,6 +315,56 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         if self._manager is None:
             return None
         return getattr(self._manager, "memory_manager", None)
+
+    async def bind_memory_provider(self, provider) -> None:
+        from zara.principals import PrincipalContext
+
+        if self._manager is None:
+            raise RuntimeError("runtime backend is not started")
+        manager = self._manager
+        principal = manager.principal or PrincipalContext.local_owner()
+        if not isinstance(principal, PrincipalContext):
+            raise TypeError("memory provider requires a canonical principal")
+        bind = getattr(provider, "bind_principal", None)
+        if not callable(bind):
+            raise TypeError("memory provider must implement bind_principal")
+        cancelled = threading.Event()
+        try:
+            await asyncio.to_thread(self._bind_memory_principal, provider, principal, cancelled)
+        finally:
+            cancelled.set()
+        if self._manager is not manager:
+            raise RuntimeError("runtime changed while binding memory provider")
+        manager.replace_memory_manager(provider)
+        self._memory_session = None
+
+    @classmethod
+    def _bind_memory_principal(cls, provider, principal, cancelled) -> None:
+        from zara.principals import PrincipalContext
+
+        if not cls._memory_binding_lock.acquire(timeout=1.0):
+            raise RuntimeError("memory provider binding is busy")
+        try:
+            if cancelled.is_set():
+                raise RuntimeError("memory provider binding was cancelled")
+            previous = getattr(provider, "principal", None)
+            previous_id = getattr(provider, "principal_id", None)
+            if (previous is not None and previous != principal) or (
+                previous_id is not None and previous_id != principal.principal_id
+            ):
+                raise ValueError("memory provider is already bound to another principal")
+            provider.bind_principal(principal)
+            if cancelled.is_set():
+                raise RuntimeError("memory provider binding was cancelled")
+            bound = getattr(provider, "principal", None)
+            if (
+                not isinstance(bound, PrincipalContext)
+                or bound != principal
+                or getattr(provider, "principal_id", None) != principal.principal_id
+            ):
+                raise ValueError("memory provider principal does not match runtime principal")
+        finally:
+            cls._memory_binding_lock.release()
 
     async def _persist_turn(self, text: str, response: str) -> None:
         memory = self._memory_manager()
@@ -558,6 +614,9 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     async def start(self) -> None:
         await self._delegate.start()
+
+    async def bind_memory_provider(self, provider) -> None:
+        await self._delegate.bind_memory_provider(provider)
 
     async def submit_turn(
         self,

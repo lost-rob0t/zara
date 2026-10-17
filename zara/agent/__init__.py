@@ -31,7 +31,7 @@ from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
 from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
-from ..memory import build_memory_manager, MemoryManager
+from ..memory import build_memory_manager, memory_provider_plugin, MemoryManager
 from ..latency import LatencyTrace
 
 
@@ -67,10 +67,10 @@ class AgentManager:
         self.llm_client = self._create_llm_client(llm_config)
 
         memory_config = self.config.get_section("memory")
-        self.memory_manager = memory_manager or build_memory_manager(
-            memory_config,
-            principal=principal,
-        )
+        self._memory_provider_plugin = memory_provider_plugin(memory_config)
+        self.memory_manager = memory_manager
+        if memory_manager is None and self._memory_provider_plugin is None:
+            self.memory_manager = build_memory_manager(memory_config, principal=principal)
         self.memory_context_limit = int(memory_config.get("max_chars", 1200))
         self.memory_top_k = int(memory_config.get("top_k", 5))
 
@@ -118,6 +118,37 @@ class AgentManager:
 
     def bind_event_publisher(self, publisher) -> None:
         self.approval_controller.bind_event_publisher(publisher)
+
+    def replace_memory_manager(self, memory_manager) -> None:
+        from .tools.builtin_tools import (
+            build_forget_tool, build_memory_list_tool, build_recall_tool, build_remember_tool,
+        )
+        from .tool_cancellation import original_tool
+
+        required = (
+            "remember_fact", "retrieve", "list_memories", "forget",
+            "start_session", "add_message", "summarise_session",
+        )
+        if any(not callable(getattr(memory_manager, name, None)) for name in required):
+            raise TypeError("memory provider does not implement the memory contract")
+        names = ("remember", "recall", "memory_list", "forget")
+        previous = [self.tool_registry.get_tool(name) for name in names]
+        previous = [original_tool(tool) for tool in previous if tool is not None]
+        if self.memory_manager is None and previous:
+            raise ValueError("memory tool is already owned by another plugin")
+        builders = (build_remember_tool, build_recall_tool, build_memory_list_tool, build_forget_tool)
+        config = getattr(self, "config", None)
+        tool_config = config.get_tool_config() if config is not None else {}
+        replacements = [builder(memory_manager) for builder in builders]
+        replacements = [tool for tool in replacements if tool_config.get(tool.name, True)]
+        self.tool_registry.unregister_tools(names)
+        try:
+            self.tool_registry.register_tools(replacements)
+        except Exception:
+            self.tool_registry.unregister_tools(names)
+            self.tool_registry.register_tools(previous)
+            raise
+        self.memory_manager = memory_manager
 
     def register_agent_loop_backend(self, name: str, owner: str, callback) -> int:
         return self.agent_loop_registry.register(name, owner, callback)
@@ -243,6 +274,8 @@ class AgentManager:
         import logging
         logger = logging.getLogger(__name__)
 
+        if getattr(self, "_memory_provider_plugin", None) is not None and self.memory_manager is None:
+            raise RuntimeError("configured memory provider is not bound")
         agent_config = self.config.get_section("agent")
         self.conversation_manager.update_activity()
         max_steps = int(agent_config.get("max_steps", 10))

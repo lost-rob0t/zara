@@ -45,6 +45,18 @@ class MemoryOperationError(RuntimeError):
     """Raised when a memory mutation cannot be completed safely."""
 
 
+def memory_provider_plugin(settings: Dict[str, Any]) -> Optional[str]:
+    enabled = settings.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("memory.enabled must be true or false")
+    provider = settings.get("provider", "builtin")
+    if provider == "builtin":
+        return None
+    if not isinstance(provider, str) or re.fullmatch(r"plugin:[a-z0-9][a-z0-9._-]{0,63}", provider) is None:
+        raise ValueError("memory.provider must be builtin or plugin:<name>")
+    return provider.removeprefix("plugin:") if enabled else None
+
+
 def _normalize_ollama_base_url(url: str) -> str:
     cleaned = (url or "").strip().rstrip("/")
     if not cleaned:

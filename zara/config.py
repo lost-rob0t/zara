@@ -219,6 +219,7 @@ default_duration_minutes = 30
 
 [memory]
 # Long-term memory settings
+provider = "builtin"
 enabled = true
 persist_directory = "~/.local/share/zarathushtra/chroma"
 collection_name = "zara_memory"
