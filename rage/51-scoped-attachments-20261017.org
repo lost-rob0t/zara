@@ -1,0 +1,93 @@
+#+title: #51 bounded attachment acquisition recovery
+
+* Iteration 1 — Research / Design
+- Consumed issue: #51, still open. Immutable start:
+  de441242dceb69d8007da157639e76e15e60a4aa, prerequisite draft #1516.
+  #1515 merge is pending direct approval; #1513 remains held. This is a
+  separate stacked slice and must not mutate #1516's reviewed candidate.
+- Sources: #51 acceptance and issuecomment6242722823; existing unpublished
+  fea098984043f4a956f512c894c06e507a47b03a:zara/context.py and tests;
+  zara/runtime/backend.py submit_turn, _persist_turn, stop;
+  zara/agent/__init__.py process_async and ContextManager transient assembly;
+  zara/principals.py and runtime/commands.py opaque context_ids boundary.
+- Retain typed attachment kinds/scopes/sensitivity and opaque references from
+  the original recovery. Preserve that branch, but reject its process-global
+  store, implicit path reads, unbounded aggregate retention and unscoped lookup.
+- Small slice: explicit text acquisition only, through an injected store bound
+  to one canonical PrincipalContext. No upload/CLI/UI command, filesystem reads,
+  locators, binary decoding, persistence, provider/runtime, or permission path.
+  Caller supplies an already-authorized text snapshot; a string path is data.
+- Scope: TURN requires conversation and exact turn; CONVERSATION requires exact
+  conversation. Persistent scope deferred; all entries have bounded monotonic
+  TTL. Store count, aggregate UTF8 bytes, per-item bytes and render bounds are
+  finite. Failed acquisitions/renders are atomic. Opaque missing, expired,
+  revoked and wrong-scope references fail with the same payload-free error.
+- Inject store only into LangGraphRuntimeBackend; verify manager principal
+  identity before resolution. Existing nonempty-ID rejection remains when no
+  store is configured. Render as labelled untrusted transient model input;
+  it cannot register tools or approve actions. Do not use extra_system_context
+  because that signals isolated task execution and changes persistence policy.
+- Backend finally releases TURN entries on success/error/cancel/deterministic
+  routing. CONVERSATION entries expire or revoke explicitly; stop clears all.
+  Keep existing _persist_turn owner and raw transcript behavior unchanged.
+- Tests before production: principal/conversation/turn isolation, guessed and
+  duplicate IDs, expiry/revocation, quota recovery, malformed values, secret
+  withholding and diagnostics privacy; backend success/failure/cancel cleanup,
+  transient history, ordinary persistence and task isolation, restart cleanup.
+- Required gate: focused RED/GREEN, context and adjacent runtime suites,
+  nix develop -c bash scripts/test-all.sh; nix flake check; nix build;
+  independent exact-head review and full existing CI. No device acceptance.
+
+* Evidence
+- Starting worktree clean, separate codex/51-scoped-attachments branch.
+- Upstream research: https://docs.python.org/3/library/time.html#time.monotonic
+  confirms TTL differences survive wall-clock changes; do not persist absolute
+  monotonic timestamps across process restart. Store is intentionally ephemeral.
+  https://docs.python.org/3/library/threading.html#rlock-objects confirms scoped
+  reentrant locking; quota checks, acquisition, resolution and cleanup share
+  one bounded critical section. No lock is held while awaiting a provider.
+- RED: new contract tests fail collection because zara.context is absent.
+  Runtime integration RED: eight tests fail because attachment_store is absent;
+  unconfigured-store fail-closed test already passes. Initial GREEN:32 passed.
+- Expanded validation first caught missing disposal of a newly constructed
+  manager on foreign-principal binding rejection (51 passed, one failed).
+  Dispose the rejected manager without clearing another principal's store.
+- Preliminary independent review found P2: old finally cleanup by live chat/turn
+  could revoke snapshots acquired after stop/restart. Original reproducer count
+  fell1->0. RED stale-completion regression reproduced this. Duplicate fixture
+  initially waited unbounded against the old implementation; its owned pytest
+  process14612 was terminated, evidence retained, waits made explicitly bounded.
+- Corrected design: bounded active-turn leases capture exact TURN references;
+  no await between acquisition and claim. Duplicate active identity and new TURN
+  acquisition during a claim reject. clear invalidates lease object identity;
+  late old finally cannot finish a replacement lease. No competing generation
+  owner, provider or executor. Original reviewer reproducer now stays1->1.
+- Added quotas under concurrent acquisition, forged/stale leases, invalid UTF8,
+  expiry/revocation, startup disposal, shutdown failure, task-context isolation,
+  wrong-principal replacement, deterministic routing and actual RuntimeHost
+  conversation-snapshot integration. Focused host/CLI/context suite78 passed.
+- Host assigns turn IDs after SubmitTurn; a pre-submit client cannot guess an
+  exact TURN binding. Expose conversation scope for current pre-submit callers,
+  document direct-backend TURN scope, and defer typed composer acquisition. Do
+  not fabricate turn rebinding or claim a completed acquisition UI.
+- Whitespace passed. Mandatory three local Nix commands attempted, all exit127
+  because Nix is absent. Full repository CI remains mandatory at final head.
+- Coverage inspection found four missing validation branches (clock callable,
+  missing TURN identity, malformed lease and revoke reference). Added meaningful
+  invalid-boundary tests; text-owner statements/branches were then100% in the
+  focused suite. Coverage is diagnostic, not evidence for hardware/UI behavior.
+- Added provider-budget overflow regression proving no provider/memory call and
+  cleanup after rejection. Deterministic router receives only original user text,
+  never attachment contents that look like actions. Existing approval is intact.
+- Ownership RED: two backends could bind the same principal store, letting a
+  second backend stop clear first-owner data. New exclusive identity binding
+  rejects that second start, disposes its candidate manager and preserves data.
+  Only the matching backend token unbinds/clears on stop; original store-bound
+  principal and bounded lease owner remain canonical.
+- Final local candidate:63 focused tests passed; zara/context.py221 statements
+  and72 branches covered100%, no exclusions. Adjacent regression675 passed,
+  33 existing RunnableConfig warnings,20.02s. Context script144 passed,
+  six existing warnings. Evidence under /workspace/scratch/zara-51-evidence/:
+  attachments-owner-{coverage,broad,context}.log. No Android/device claim.
+- Fresh independent immutable-head review and full existing CI are required
+  before this draft can be considered complete or eligible for merge.

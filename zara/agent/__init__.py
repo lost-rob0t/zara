@@ -283,6 +283,7 @@ class AgentManager:
         stream_publisher=None,
         conversation_history: Optional[list] = None,
         extra_system_context: Optional[str] = None,
+        attachment_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         import logging
         logger = logging.getLogger(__name__)
@@ -342,6 +343,8 @@ class AgentManager:
         }
         if extra_system_context:
             state["_zara_context_transients"].append(TransientContext("runtime", extra_system_context))
+        if attachment_context:
+            state["_zara_context_transients"].append(TransientContext("attachment", attachment_context))
         try:
             prepare = getattr(self.tool_registry, "prepare_async", None)
             if callable(prepare):

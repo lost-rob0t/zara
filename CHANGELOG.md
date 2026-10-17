@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Explicitly acquired text snapshots can supply bounded, expiring context through the runtime, with principal/conversation isolation, turn cleanup and no attachment text in transcript history.
 - Agent context now bounds complete turns, isolates task context, supports atomic compaction with bounded summary work across restarts, and selects declarative Python/Prolog skills with metadata-only browser entries.
 - Memory can be explicitly supplied by a service plugin through the canonical runtime. Missing or failed selected providers block turns; principal binding, memory tools and daemon session persistence share one provider.
 - Service plugins now finish startup before building configured tools. Failed tool setup stops the service and cleans owned resources while preserving existing tools.
