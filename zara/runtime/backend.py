@@ -85,6 +85,7 @@ class RuntimeBackend:
         pass
 
     def register_tools(self, tools) -> None:
+        """Register a complete batch atomically, preserving existing tools on failure."""
         raise UnsupportedRuntimeCommand(
             "tool registration is not available in this runtime backend"
         )

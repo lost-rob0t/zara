@@ -86,9 +86,16 @@ shutdown, restart, or cleanup after a failed start. A restart creates a fresh
 plugin instance for the new lifecycle.
 
 A service may also implement =tools()= and return ordinary LangChain
-=BaseTool= instances. They are registered before =start()= and removed when the
-service fails or stops. The default LangGraph backend supports service tools;
-backends without a tool registry reject them without killing Zara.
+=BaseTool= instances. Zara completes =start(runtime)= before calling =tools()=,
+so tool inventory may depend on runtime configuration or capabilities discovered
+during startup. An unavailable or failed start never constructs tools. The
+=tools()= call uses the bounded lifecycle deadline. If tool construction or
+registration fails, Zara stops the started plugin once and cleans its subscriptions, workers,
+symbols and advice. Successful tools are removed when the service fails or stops.
+The default LangGraph backend validates tool batches atomically: a duplicate or
+invalid tool cannot leave a partial batch or remove an existing owner's tool.
+Custom backends must preserve that atomic registration contract. Backends without
+a tool registry reject service tools without killing Zara.
 
 A plugin tool that performs a dangerous or mutating action can require Zara's
 canonical principal-scoped approval by setting boolean LangChain tool metadata
