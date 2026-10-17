@@ -5,6 +5,8 @@ import copy
 import json
 import asyncio
 import math
+import threading
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 import re
@@ -140,6 +142,80 @@ class CompactResult:
     summary_revision: int = 0
 
 
+class SummaryWork:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._task = None
+        self._sync_pending = False
+        self._abandoned = False
+
+    def _busy(self):
+        return self._sync_pending or (self._task is not None and not self._task.done())
+
+    @property
+    def state(self):
+        with self._lock:
+            return ("draining" if self._abandoned else "running") if self._busy() else "idle"
+
+    def _call_sync(self, callback, messages, budget, deadline):
+        try:
+            with self._lock:
+                abandoned = self._abandoned
+            if abandoned or time.monotonic() >= deadline:
+                raise TimeoutError("summary expired before invocation")
+            return callback(messages, budget)
+        finally:
+            with self._lock:
+                self._sync_pending = False
+                if self._task is not None and self._task.done():
+                    self._task = None
+
+    def _completed(self, task):
+        if not task.cancelled():
+            task.exception()
+        with self._lock:
+            if self._task is task and not self._sync_pending:
+                self._task = None
+
+    def _abandon(self, task, asynchronous):
+        with self._lock:
+            if self._task is not task:
+                return
+            already_abandoned = self._abandoned
+            self._abandoned = True
+        if asynchronous and not already_abandoned and not task.done():
+            task.cancel()
+
+    async def run(self, callback, messages, budget, timeout):
+        asynchronous = inspect.iscoroutinefunction(callback)
+        loop = asyncio.get_running_loop()
+        deadline = time.monotonic() + timeout
+
+        async def invoke():
+            if asynchronous:
+                return await callback(messages, budget)
+            result = await asyncio.to_thread(self._call_sync, callback, messages, budget, deadline)
+            return await result if inspect.isawaitable(result) else result
+
+        with self._lock:
+            if self._busy():
+                raise ContextError("summary backend is busy draining prior work")
+            self._sync_pending = not asynchronous
+            self._abandoned = False
+            task = loop.create_task(invoke(), name="zara-context-summary")
+            self._task = task
+        task.add_done_callback(self._completed)
+        try:
+            done, _ = await asyncio.wait({task}, timeout=max(0, deadline - time.monotonic()))
+            if task not in done or time.monotonic() >= deadline:
+                self._abandon(task, asynchronous)
+                raise TimeoutError("summary deadline exceeded")
+            return task.result()
+        except asyncio.CancelledError:
+            self._abandon(task, asynchronous)
+            raise
+
+
 class ContextManager:
     def __init__(
         self,
@@ -149,6 +225,7 @@ class ContextManager:
         token_counter: Callable[[Sequence[BaseMessage]], int] | None = None,
         summarizer: Callable[[Sequence[BaseMessage], int], Any] | None = None,
         summary_timeout: float = 60.0,
+        summary_work: SummaryWork | None = None,
     ):
         if (isinstance(summary_timeout, bool) or not isinstance(summary_timeout, (int, float))
                 or not math.isfinite(summary_timeout) or not 0 < summary_timeout <= 300):
@@ -158,6 +235,7 @@ class ContextManager:
         self._token_counter = token_counter or _default_token_counter
         self._summarizer = summarizer
         self._summary_timeout = summary_timeout
+        self._summary_work = summary_work if summary_work is not None else SummaryWork()
         self._history: list[BaseMessage] = []
         self._generation = 0
         self._active_lease: ContextLease | None = None
@@ -178,6 +256,17 @@ class ContextManager:
     @property
     def busy(self) -> bool:
         return self._active_lease is not None
+
+    @property
+    def summary_work_state(self) -> str:
+        return self._summary_work.state
+
+    def bind_summary_work(self, work: SummaryWork) -> None:
+        if not isinstance(work, SummaryWork):
+            raise TypeError("summary work must be a SummaryWork")
+        if self._summary_work is not work and self._summary_work.state != "idle":
+            raise ContextError("cannot replace busy summary work")
+        self._summary_work = work
 
     def begin_turn(self, turn_id: str) -> ContextLease:
         if not isinstance(turn_id, str) or not turn_id:
@@ -472,12 +561,9 @@ class ContextManager:
     async def _summarize_prefix(self, lease, source):
         if self._summarizer is None:
             raise ContextBudgetError("compression requires a summarizer")
-        candidate = self._summarizer(tuple(source), self.config.summary_max_tokens)
-        if inspect.isawaitable(candidate):
-            deadline = asyncio.get_running_loop().time() + self._summary_timeout
-            candidate = await asyncio.wait_for(candidate, timeout=self._summary_timeout)
-            if asyncio.get_running_loop().time() >= deadline:
-                raise TimeoutError("summary completed after its deadline")
+        candidate = await self._summary_work.run(
+            self._summarizer, tuple(source), self.config.summary_max_tokens, self._summary_timeout,
+        )
         self._require_active(lease)
         if not isinstance(candidate, str) or not candidate.strip():
             raise ContextBudgetError("summarizer returned an empty context summary")

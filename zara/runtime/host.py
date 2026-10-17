@@ -122,6 +122,7 @@ class RuntimeHost:
         ] = []
 
         self._backend: Optional[RuntimeBackend] = None
+        self._context_summary_work = None
         self._memory_provider_ready = False
         self._selected_memory_plugin: Optional[str] = None
         self._bound_memory_registration: Optional[int] = None
@@ -299,7 +300,14 @@ class RuntimeHost:
             for task in pending:
                 task.cancel()
             if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                done, survivors = loop.run_until_complete(
+                    asyncio.wait(pending, timeout=self._shutdown_timeout)
+                )
+                for task in done:
+                    if not task.cancelled():
+                        task.exception()
+                if survivors:
+                    logger.warning("%d runtime background task(s) remain quarantined after shutdown deadline", len(survivors))
             self._invalidate_all_turn_capability_leases()
             loop.close()
             with self._state_lock:
@@ -390,6 +398,9 @@ class RuntimeHost:
         candidate.bind_event_publisher(self._publisher)
         try:
             await candidate.start()
+            bind_summary = getattr(candidate, "bind_context_summary_work", None)
+            if callable(bind_summary):
+                self._context_summary_work = bind_summary(self._context_summary_work)
         except BaseException:
             try:
                 await candidate.stop()

@@ -152,3 +152,40 @@ context contracts are fulfilled. #1513 stays held. No device/live-model claim.
   and duplicate base prompts before invocation, in addition to budget checks.
 - No unresolved known RED remains in this slice. Full pinned repository/Nix/
   Android/screenshot checks and independent exact-head review remain merge gates.
+
+* Independent review correction on same slice
+- Reviewed head ffee7cf1db64008f789d27d8997e4822e65c7023: reviewer passed
+  106 focused tests and found one P1: inline synchronous summary can commit past
+  deadline; wait_for awaits cancellation acknowledgement and can retain a busy
+  turn indefinitely. The original head remains blocked even if its CI passes.
+- RED reproduction retained: sync 150ms callback committed under10ms limit;
+  cancellation-resistant async provider delayed timeout161ms. New tests reproduced
+  both, cross-context occupied-slot replacement, restart limiter reset, unbounded
+  runtime final drain and expired queued callbacks starting after deadline.
+- Narrow correction: one SummaryWork slot, synchronous to_thread invocation,
+  asynchronous deadline race on the original provider loop, late result fencing,
+  and admission refusal until actual work completion. Caller cancel/timeout does
+  not free a still-running thread. Late exceptions are consumed without payloads.
+- Existing RuntimeHost/backend ownership retains that slot across new manager
+  generations; every ephemeral context uses the same slot. No new event loop,
+  provider runtime, executor authority, scheduler or storage is introduced.
+- RuntimeHost final cancellation drain now uses its existing shutdown_timeout
+  and metadata-only survivor reporting. This cannot kill Python threads or
+  guarantee OS-process exit; uncooperative providers remain quarantined.
+- Isolated-process shutdown regression proves actual host join is bounded when
+  a background coroutine repeatedly suppresses cancellation. The fixture's
+  survivor is intentionally quarantined; it is not claimed terminated.
+- Expanded rerun initially caught three compatibility failures: old duck-typed
+  backends lack the new optional binding hook and diagnostic-only AgentManager
+  fixtures do not construct context fields. Keep the hook optional and allocate
+  only the limiter lazily for such managers. Existing assertions are unchanged.
+- Corrected expanded regression: 603 passed, 26 existing RunnableConfig warnings,
+  18.84 seconds. Review correction has not yet passed independent latest-head
+  review or exact-head CI; do not reuse ffee7cf1's review/CI as approval.
+- Context script rerun: 98 passed, six existing warnings. Packaging/layout rerun:
+  25 passed, one unchanged PortAudio-dependent entrypoint excluded locally;
+  full pinned CI must still execute it. Whitespace check passed.
+- #1515 at27be64a1 passed all eight exact-head jobs and independent review.
+  Automatic approval review rejected its merge into master, stating explicit
+  user merge authorization was missing. No retry/bypass or merge occurred.
+  The merge remains blocked pending explicit operator approval.

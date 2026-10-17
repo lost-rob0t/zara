@@ -26,7 +26,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .approval import ToolApprovalController
 from .conversation import ConversationManager
 from .context import (
-    ContextConfig, ContextError, ContextManager, TransientContext,
+    ContextConfig, ContextError, ContextManager, SummaryWork, TransientContext,
     provider_context_scope, check_provider_context,
 )
 from .skills import SkillRegistry
@@ -384,6 +384,8 @@ class AgentManager:
         }
 
     def _new_context_manager(self) -> ContextManager:
+        if not hasattr(self, "_context_summary_work"):
+            self._context_summary_work = SummaryWork()
         values = self.config.get_section("context")
         return ContextManager(
             system_prompt=self._build_system_prompt,
@@ -391,12 +393,30 @@ class AgentManager:
                 "strategy", "max_tokens", "preserve_recent_turns", "summary_max_tokens", "skill_max_tokens",
             ) if key in values}),
             summarizer=self._summarize_context,
+            summary_work=self._context_summary_work,
         )
+
+    def bind_context_summary_work(self, work=None):
+        if not hasattr(self, "_context_summary_work"):
+            self._context_summary_work = SummaryWork()
+        if work is None:
+            return self._context_summary_work
+        if not isinstance(work, SummaryWork):
+            raise TypeError("summary work must be a SummaryWork")
+        if self._context_summary_work is not work and self._context_summary_work.state != "idle":
+            raise ContextError("cannot replace busy summary work")
+        if hasattr(self, "context_manager"):
+            self.context_manager.bind_summary_work(work)
+        self._context_summary_work = work
+        return work
 
     def _ensure_context_runtime(self) -> None:
         if not hasattr(self, "context_manager"):
             self.context_manager = self._new_context_manager()
             self.context_manager.replace_history(self.conversation_manager.conversation_history)
+        elif not hasattr(self, "_context_summary_work"):
+            self._context_summary_work = self.context_manager._summary_work
+        self.context_manager.bind_summary_work(self._context_summary_work)
         self.conversation_manager.bind_history(
             lambda: self.context_manager.history,
             self.context_manager.clear,

@@ -54,6 +54,9 @@ class RuntimeBackend:
     async def start(self) -> None:
         pass
 
+    def bind_context_summary_work(self, work=None):
+        return work
+
     async def submit_turn(
         self,
         text: str,
@@ -206,6 +209,10 @@ class LangGraphRuntimeBackend(RuntimeBackend):
             bind = getattr(self._manager, "bind_event_publisher", None)
             if bind is not None:
                 bind(self._publisher)
+
+    def bind_context_summary_work(self, work=None):
+        binder = getattr(self._manager, "bind_context_summary_work", None)
+        return binder(work) if callable(binder) else work
 
     async def submit_turn(
         self,
@@ -614,6 +621,9 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     async def start(self) -> None:
         await self._delegate.start()
+
+    def bind_context_summary_work(self, work=None):
+        return self._delegate.bind_context_summary_work(work)
 
     async def bind_memory_provider(self, provider) -> None:
         await self._delegate.bind_memory_provider(provider)

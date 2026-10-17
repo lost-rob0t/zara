@@ -66,11 +66,20 @@ turn result. A failed model call cannot commit the staged prefix.
 not a chat prompt. It works before budget pressure and returns changed/no-op,
 affected group IDs, before/after counts, reason and summary revision. It preserves
 the recent tail exactly and replaces an existing summary. Async summarization
-has a cooperative timeout (60 seconds by default), and a late result cannot
-commit even if a callback suppresses cancellation. This cannot forcibly kill
-arbitrary callback code; provider transports must honor their own cancellation
-and I/O limits. Synchronous custom callbacks must be short local computations,
-not blocking service I/O.
+has a caller deadline (60 seconds by default) covering callback invocation and
+completion. Synchronous callbacks run off-loop; asynchronous providers retain
+their original loop. Timed-out/cancelled work cannot commit. One supervised slot
+stays =draining= until actual completion, refusing replacement work instead of
+queuing more callbacks. The slot is shared across interactive/ephemeral contexts
+and retained by RuntimeHost across restart generations. A queued synchronous
+callback that expires before invocation is never called.
+
+RuntimeHost also bounds final pending-task draining by its existing shutdown
+timeout and logs only survivor counts. This does not kill arbitrary Python code:
+an uncooperative thread can remain alive and may delay OS-process exit. Providers
+must honor their own cancellation/I/O limits; restarting a runtime does not
+erase or replace occupied work. =summary_work_state= exposes idle/running/draining
+metadata without callback bodies, transcripts or results.
 
 =await AgentManager.compact_context(conversation_id)= selects only the active
 context and rejects a busy interactive turn. Explicit cancellation invalidates
