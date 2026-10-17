@@ -34,7 +34,18 @@ commits it only after a turn remains current.
 [agent]
 backend = "prolog_rlm"
 prolog_rlm_endpoint = "http://127.0.0.1:18765/zara-runtime/v1"
+
+# Optional operator preference for the sidecar's provider.
+[agent.prolog_rlm_provider]
+kind = "openai_compatible"
+endpoint = "http://127.0.0.1:19002/v1"
+model = "configured-model-id"
+no_credential = true
 #+end_src
+
+Omit the provider table to use the sidecar's configured default. For a
+credentialed compatible provider, use =credential_env= with the name of a
+variable present in the sidecar process, never a literal key in TOML.
 
 When file tools are enabled, Zara resolves the selected Git worktree through
 =file_repository/2= and =file_skill_resolver:resolved_tool/2=. It registers

@@ -225,6 +225,7 @@ class RuntimeSupervisor:
                     read_tooling=read_tooling,
                     host_token=os.environ.get("ZARA_RUNTIME_HOST_TOKEN") if read_tooling or effect_journal else None,
                     effect_journal=effect_journal,
+                    provider=config.get_section("agent").get("prolog_rlm_provider"),
                 )
         else:
             backend_factory = lambda: AgentRuntimeBackend(manager_factory, router=router)

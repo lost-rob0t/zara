@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
+import re
 import secrets
 from typing import Optional
 from urllib.parse import urlsplit
@@ -19,7 +20,7 @@ from .turn_context import current_turn_capability_lease
 
 
 class PrologRLMRuntimeBackend(RuntimeBackend):
-    def __init__(self, endpoint: str, *, principal_id: str, timeout: float = 120.0, read_tooling=None, host_token: Optional[str] = None, effect_journal=None) -> None:
+    def __init__(self, endpoint: str, *, principal_id: str, timeout: float = 120.0, read_tooling=None, host_token: Optional[str] = None, effect_journal=None, provider: Optional[dict] = None) -> None:
         parsed = urlsplit(endpoint)
         if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/zara-runtime/v1":
             raise ValueError("Prolog-RLM endpoint must use 127.0.0.1 and ZARA-RUNTIME/1 HTTP")
@@ -31,6 +32,7 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         self._port = parsed.port or 80
         self._principal_id = principal_id
         self._timeout = timeout
+        self._provider = _validated_provider(provider)
         self._started = False
         self._history: dict[str, list[tuple[str, str]]] = {}
         self._registered_tools: dict[str, BaseTool] = {}
@@ -233,6 +235,8 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         if len(context) > 262144:
             raise ValueError("Prolog-RLM inline context exceeds size limit")
         request = {"protocol": "ZARA-RUNTIME/1", "request_id": turn_id, "mode": "rlm", "prompt": text, "inline_context": context}
+        if self._provider is not None:
+            request["provider"] = self._provider
         if self._callback is not None:
             self._callback.register_turn(turn_id, current_turn_capability_lease())
         if self._available_tools:
@@ -407,3 +411,35 @@ def _reduced_schema(schema: dict, definitions: dict) -> dict:
     if kind == "array":
         result["items"] = _reduced_schema(schema["items"], definitions)
     return result
+
+
+def _validated_provider(provider: Optional[dict]) -> Optional[dict]:
+    if provider is None:
+        return None
+    if not isinstance(provider, dict) or provider.get("kind") not in {"openrouter", "openai_compatible"}:
+        raise ValueError("Prolog-RLM provider kind is invalid")
+    kind = provider["kind"]
+    allowed = {"kind", "model"} if kind == "openrouter" else {
+        "kind", "endpoint", "model", "credential_env", "no_credential",
+    }
+    if set(provider) - allowed:
+        raise ValueError("Prolog-RLM provider contains unsupported fields")
+    for field in ("model", "endpoint"):
+        if field in provider and (not isinstance(provider[field], str) or not provider[field] or len(provider[field]) > 512):
+            raise ValueError(f"Prolog-RLM provider {field} is invalid")
+    if kind == "openai_compatible":
+        if "endpoint" not in provider or "model" not in provider:
+            raise ValueError("Prolog-RLM provider requires endpoint and model")
+        credential_env = provider.get("credential_env")
+        if credential_env is not None and (not isinstance(credential_env, str)
+                                           or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", credential_env)):
+            raise ValueError("Prolog-RLM provider credential_env is invalid")
+        if "no_credential" in provider and provider["no_credential"] is not True:
+            raise ValueError("Prolog-RLM provider no_credential must be true")
+        if provider.get("no_credential") is True and credential_env is not None:
+            raise ValueError("Prolog-RLM provider cannot combine credential settings")
+        if provider.get("no_credential") is True:
+            parsed = urlsplit(provider["endpoint"])
+            if parsed.scheme != "http" or parsed.hostname != "127.0.0.1":
+                raise ValueError("Prolog-RLM provider without credentials must use local loopback")
+    return dict(provider)

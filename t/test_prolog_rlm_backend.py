@@ -80,6 +80,23 @@ def test_loopback_protocol_turn_and_cancel(sidecar):
     assert Handler.requests[1][0].endswith("cancel")
 
 
+def test_operator_selected_sidecar_provider_is_sent_without_credentials(sidecar):
+    provider = {"kind": "openai_compatible", "endpoint": "http://127.0.0.1:19876/v1",
+                "model": "fixture", "no_credential": True}
+
+    async def run():
+        backend = PrologRLMRuntimeBackend(sidecar, principal_id="user:alice", provider=provider)
+        await backend.start()
+        await backend.submit_turn("test", turn_id="turn-provider")
+        await backend.stop()
+
+    asyncio.run(run())
+    assert Handler.requests[0][1]["provider"] == provider
+    with pytest.raises(ValueError, match="provider"):
+        PrologRLMRuntimeBackend(sidecar, principal_id="user:alice",
+                                provider={**provider, "api_key": "literal-secret"})
+
+
 def test_read_tool_bootstrap_and_turn_fence(sidecar, tmp_path):
     (tmp_path / "note.txt").write_text("hello")
     tooling = FileTooling(FileToolingConfig(base_dir=tmp_path))

@@ -362,9 +362,10 @@ class ZaraConfig:
                 PrologRLMRuntimeBackend(
                     agent_config.get("prolog_rlm_endpoint", "http://127.0.0.1:18765/zara-runtime/v1"),
                     principal_id="user:validation",
+                    provider=agent_config.get("prolog_rlm_provider"),
                 )
             except (TypeError, ValueError) as error:
-                raise ConfigError(f"Invalid agent.prolog_rlm_endpoint: {error}") from error
+                raise ConfigError(f"Invalid agent.prolog_rlm_endpoint or prolog_rlm_provider: {error}") from error
         desktop_config = config.get("desktop", {})
         if not isinstance(desktop_config, dict):
             raise ConfigError("Invalid [desktop] configuration: expected a TOML table")
