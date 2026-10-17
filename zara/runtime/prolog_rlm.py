@@ -14,8 +14,8 @@ from .backend import RuntimeBackend, RuntimeTurnResult
 class PrologRLMRuntimeBackend(RuntimeBackend):
     def __init__(self, endpoint: str, *, principal_id: str, timeout: float = 120.0) -> None:
         parsed = urlsplit(endpoint)
-        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"} or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/zara-runtime/v1":
-            raise ValueError("Prolog-RLM endpoint must be a loopback ZARA-RUNTIME/1 HTTP URL")
+        if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/zara-runtime/v1":
+            raise ValueError("Prolog-RLM endpoint must use 127.0.0.1 and ZARA-RUNTIME/1 HTTP")
         if not isinstance(principal_id, str) or not principal_id:
             raise ValueError("principal_id is required")
         if timeout <= 0:
@@ -25,6 +25,7 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         self._principal_id = principal_id
         self._timeout = timeout
         self._started = False
+        self._history: dict[str, list[tuple[str, str]]] = {}
 
     @property
     def principal_id(self) -> str:
@@ -82,10 +83,19 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
             raise RuntimeError("Prolog-RLM runtime is not started")
         if context_ids:
             raise RuntimeError("Prolog-RLM sidecar does not support context handles")
-        context = system_context or ""
-        if conversation_history:
-            history = "\n".join(f"{entry.get('role', 'user')}: {entry.get('content', '')}" for entry in conversation_history if isinstance(entry, dict))
-            context = f"{context}\n{history}".strip()
+        key = conversation_id or "default"
+        if conversation_history is None:
+            entries = self._history.get(key, [])
+        else:
+            entries = []
+            for entry in conversation_history:
+                if not isinstance(entry, dict) or entry.get("role") not in {"user", "assistant", "system"} or not isinstance(entry.get("content"), str):
+                    raise ValueError("conversation_history contains an invalid message")
+                entries.append((entry["role"], entry["content"]))
+        history = "\n".join(f"{role}: {content}" for role, content in entries)
+        context = "\n".join(part for part in (system_context or "", history) if part)
+        if len(context) > 262144:
+            raise ValueError("Prolog-RLM inline context exceeds size limit")
         request = {"protocol": "ZARA-RUNTIME/1", "request_id": turn_id, "mode": "rlm", "prompt": text, "inline_context": context}
         response = await asyncio.to_thread(self._request, "generate", request)
         if response.get("protocol") != "ZARA-RUNTIME/1" or response.get("runtime_id") != "prolog-rlm" or response.get("request_id") != turn_id:
@@ -97,7 +107,29 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         answer = response.get("text")
         if not isinstance(answer, str):
             raise RuntimeError("Prolog-RLM returned invalid text")
-        return RuntimeTurnResult(response=answer, metadata={"runtime_id": "prolog-rlm"})
+        metadata = {"runtime_id": "prolog-rlm"}
+        if conversation_history is None:
+            metadata.update({"history_turn_id": turn_id, "history_key": key, "history_input": text})
+        return RuntimeTurnResult(response=answer, metadata=metadata)
+
+    def commit_turn_result(
+        self,
+        result: RuntimeTurnResult,
+        *,
+        turn_id: str,
+        conversation_id: Optional[str] = None,
+    ) -> None:
+        metadata = result.metadata
+        key = conversation_id or "default"
+        if metadata.get("history_turn_id") != turn_id or metadata.get("history_key") != key:
+            return
+        prompt = metadata.get("history_input")
+        if not isinstance(prompt, str):
+            return
+        entries = self._history.setdefault(key, [])
+        entries.extend((("user", prompt), ("assistant", result.response)))
+        while len(entries) > 16 or sum(len(content) for _, content in entries) > 32768:
+            entries.pop(0)
 
     async def cancel_turn(self, turn_id: str) -> None:
         if self._started:
@@ -105,3 +137,4 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
 
     async def stop(self) -> None:
         self._started = False
+        self._history.clear()

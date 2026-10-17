@@ -51,7 +51,7 @@ def sidecar():
         server.server_close()
 
 
-def test_real_sidecar_turn_and_cancel(sidecar):
+def test_loopback_protocol_turn_and_cancel(sidecar):
     async def run():
         backend = PrologRLMRuntimeBackend(sidecar, principal_id="user:alice")
         await backend.start()
@@ -69,8 +69,12 @@ def test_real_sidecar_turn_and_cancel(sidecar):
 
 
 def test_sidecar_requires_loopback():
-    with pytest.raises(ValueError, match="loopback"):
-        PrologRLMRuntimeBackend("http://example.com:8000/zara-runtime/v1", principal_id="user:alice")
+    for endpoint in (
+        "http://example.com:8000/zara-runtime/v1",
+        "http://localhost:8000/zara-runtime/v1",
+    ):
+        with pytest.raises(ValueError, match="127.0.0.1"):
+            PrologRLMRuntimeBackend(endpoint, principal_id="user:alice")
 
 
 def test_sidecar_rejects_protocol_mismatch(sidecar):
@@ -157,3 +161,23 @@ def test_rlm_config_rejects_non_loopback_endpoint(tmp_path):
     )
     with pytest.raises(ConfigError, match="prolog_rlm_endpoint"):
         ZaraConfig(str(path))
+
+
+def test_history_is_committed_only_after_host_fence(sidecar):
+    async def run():
+        backend = PrologRLMRuntimeBackend(sidecar, principal_id="user:alice")
+        await backend.start()
+        first = await backend.submit_turn("first", turn_id="turn-1", conversation_id="chat-a")
+        await backend.submit_turn("stale", turn_id="turn-2", conversation_id="chat-a")
+        assert Handler.requests[-1][1]["inline_context"] == ""
+        backend.commit_turn_result(first, turn_id="turn-1", conversation_id="chat-a")
+        await backend.submit_turn("next", turn_id="turn-3", conversation_id="chat-a")
+        context = Handler.requests[-1][1]["inline_context"]
+        assert "user: first" in context
+        assert "assistant: from prolog" in context
+        assert "stale" not in context
+        await backend.submit_turn("other", turn_id="turn-4", conversation_id="chat-b")
+        assert Handler.requests[-1][1]["inline_context"] == ""
+        await backend.submit_turn("task", turn_id="turn-5", conversation_id="chat-a", conversation_history=[])
+        assert Handler.requests[-1][1]["inline_context"] == ""
+    asyncio.run(run())
