@@ -1,0 +1,13 @@
+code_environment_tool(code_tasks, starts_background_workers).
+code_environment_tool(code_task_status, reads_repository_task_state).
+code_environment_tool(code_task_wait, bounded_wait).
+code_environment_tool(code_task_cancel, cancels_worker).
+code_environment_repo_authority(kb_config:file_repository/2).
+code_environment_state_authority(zara_tasks_repository_state).
+code_environment_worker_sandbox(bubblewrap, writable_repository_mount).
+code_environment_worker_sandbox(bubblewrap, private_task_state_overlay).
+code_environment_worker_lease(worktree, cross_process_flock).
+code_environment_cancellation_invariant(cancelled, worker_process_exited).
+code_environment_git_metadata(linked_worktree, read_only_mount).
+code_environment_startup_requirement(bubblewrap_user_namespace_available).
+code_environment_result_readback(code_task_status, turn_fenced_host_read_callback).

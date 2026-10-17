@@ -202,3 +202,55 @@ On RuntimeHost shutdown, each started service is stopped in reverse discovery
 order. Its subscriptions are closed, managed workers are signalled and joined,
 and registered tools are removed. Repeated host start or shutdown calls do not
 duplicate lifecycle calls.
+
+* Code environment
+
+The opt-in =code= service plugin starts bounded Pi worker tasks in parallel
+and returns task IDs immediately. =code_task_status= reads persisted results;
+=code_task_wait= waits at most 30 seconds; =code_task_cancel= stops a worker.
+Each task in one =code_tasks= call must name a distinct repository alias. A
+later call cannot start another task in an occupied worktree.
+The worktree lease also excludes workers from other Zara instances and principals
+until the running task exits. Cancellation waits for an active worker process to
+stop before reporting =cancelled=; a queued task cancelled before launch never
+starts its worker.
+
+The operator declares each writable Git worktree in private Prolog
+configuration with =file_repository(alias, "/absolute/worktree").= Aliases use
+lowercase letters, digits, and underscores. The plugin resolves that policy at
+startup and again before use. It writes principal-scoped task state under the
+worktree's =.zara/= directory through =RepositoryTaskState=. On restart,
+orphaned active tasks become =interrupted=; shutdown interrupts active workers.
+
+#+begin_src toml
+[plugins.code]
+enabled = true
+projects = ["project_a", "project_b"]
+max_concurrent = 2
+timeout_seconds = 900
+model_provider = "openrouter"
+model = "configured-model-id"
+credential_env_vars = ["OPENROUTER_API_KEY"]
+allow_shell = false
+project_trust = false
+#+end_src
+
+Pi and Bubblewrap come from the Nix package. Bubblewrap makes the selected
+worktree writable, keeps the rest of the host filesystem read-only, hides the
+user's home directory, and overlays =.zara/= with private temporary storage so
+workers cannot modify persisted task state. Only named
+credential environment variables and minimal process settings reach the
+worker. Model credentials belong in a protected runtime environment file.
+The plugin checks that Bubblewrap can start at startup and refuses to enable
+code tasks when the host denies user namespaces.
+For linked worktrees, the resolved Git metadata directory is mounted read-only
+so workers can inspect status and diffs while unrelated home files stay hidden.
+=implement= may use Pi edit/write tools; =review= and =plan= use read-only
+tools. =code_tasks= and =code_task_cancel= use Zara's tool approval policy.
+
+Pi performs code edits. With the authenticated Prolog-RLM host bridge enabled,
+the native planner can approve =code_tasks= and =code_task_cancel=, then resume
+the same turn with the observed result. It can poll =code_task_status= through
+the turn-fenced read callback. The sidecar and Zara need the same protected
+host token; effect dispatch also needs the sidecar's durable effect store and
+Zara's repository-local journal.

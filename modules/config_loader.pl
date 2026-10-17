@@ -87,6 +87,7 @@ write_default_config(Stream) :-
     writeln(Stream, '% ---- Custom TODO Settings ----'),
     writeln(Stream, '% todo_destination("~/my-custom-org/tasks.org").'),
     writeln(Stream, '% todo_context_mode(llm_only).  % Options: infer, infer_with_llm, llm_only'),
+    writeln(Stream, '% file_repository(code, "/absolute/path/to/git-worktree").'),
     writeln(Stream, ''),
     writeln(Stream, '% ---- Custom App Mappings ----'),
     writeln(Stream, '% Override existing apps or add new ones:'),
@@ -311,6 +312,8 @@ validate_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoint)) :-
     text_value(Endpoint).
 validate_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
+validate_user_fact(file_repository(Alias, Path), kb_config, file_repository(Alias, Path)) :-
+    file_repository_setting(Alias, Path).
 validate_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
     memberchk(Mode, [infer, infer_with_llm, llm_only]).
 validate_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,
@@ -326,6 +329,15 @@ nonempty_text(Value) :-
     text_value(Value),
     text_string(Value, Text),
     Text \= "".
+
+file_repository_setting(Alias, Path) :-
+    atom(Alias),
+    atom_codes(Alias, [First|Rest]),
+    code_type(First, lower),
+    forall(member(Code, Rest), (code_type(Code, lower) ; code_type(Code, digit) ; Code =:= 0'_)),
+    nonempty_text(Path),
+    text_string(Path, PathText),
+    sub_string(PathText, 0, 1, _, "/").
 
 sound_setting(disabled).
 sound_setting(Path) :-
@@ -415,6 +427,8 @@ validate_server_user_fact(llm_endpoint(Endpoint), kb_config, llm_endpoint(Endpoi
     text_value(Endpoint).
 validate_server_user_fact(todo_destination(Path), kb_config, todo_destination(Path)) :-
     text_value(Path).
+validate_server_user_fact(file_repository(Alias, Path), kb_config, file_repository(Alias, Path)) :-
+    file_repository_setting(Alias, Path).
 validate_server_user_fact(todo_context_mode(Mode), kb_config, todo_context_mode(Mode)) :-
     memberchk(Mode, [infer, infer_with_llm, llm_only]).
 validate_server_user_fact(verb_intent(Surface, Intent, Arity), kb_intents,

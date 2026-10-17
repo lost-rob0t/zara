@@ -345,9 +345,21 @@ class RuntimeHost:
                 if not shutdown_requests:
                     self._state = RuntimeHostState.RUNNING
             if not shutdown_requests:
-                await self._start_api_service()
-                await self._start_plugins()
-                await self._start_task_runner()
+                try:
+                    await self._start_api_service()
+                    await self._start_plugins()
+                    await self._start_task_runner()
+                    await self._require_backend().finalize_tools()
+                except Exception as error:
+                    startup_error = error
+                    with self._state_lock:
+                        self._state = RuntimeHostState.DEGRADED
+                    self._publisher(events.RuntimeError(
+                        reason=f"runtime tool configuration failed: {error}",
+                        fatal=False, label="runtime-host",
+                    ))
+                    if not self._startup_future.done():
+                        self._startup_future.set_exception(error)
 
         if shutdown_requests:
             if startup_error is None and not self._startup_future.done():
@@ -590,6 +602,7 @@ class RuntimeHost:
             plugin_config = config.get_plugin_runtime_config()
             backend = self._require_backend()
             composition_kwargs = {}
+            principal_id = None
             try:
                 principal_id = backend.principal_id
             except UnsupportedRuntimeCommand:
@@ -606,6 +619,7 @@ class RuntimeHost:
             manager = PluginManager(
                 paths,
                 configuration_provider=config.get_plugin_config,
+                principal_id=principal_id,
                 status_provider=self._plugin_runtime_status,
                 dispatcher=self.submit,
                 subscriber=self._subscriber,
@@ -956,6 +970,7 @@ class RuntimeHost:
         await self._start_api_service()
         await self._start_plugins()
         await self._start_task_runner()
+        await self._require_backend().finalize_tools()
         self._publisher(events.RuntimeStarted(label="runtime-host"))
         return CommandReceipt(request_id=command.request_id, detail="runtime restarted")
 

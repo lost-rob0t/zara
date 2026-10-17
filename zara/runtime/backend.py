@@ -92,6 +92,9 @@ class RuntimeBackend:
     def unregister_tools(self, names) -> None:
         pass
 
+    async def finalize_tools(self) -> None:
+        pass
+
     def requires_composed_tool_approval(self, name: str) -> bool:
         raise UnsupportedRuntimeCommand(
             "composed tool policy is not available in this runtime backend"
@@ -503,6 +506,13 @@ def create_runtime_backend(config=None, *, semantic_first: bool = False) -> Runt
         config = get_config()
 
     backend_name = str(config.get("agent", "backend", "langgraph")).strip().lower()
+    if backend_name in {"prolog_rlm", "prolog-rlm"}:
+        from .prolog_rlm import PrologRLMRuntimeBackend
+
+        return PrologRLMRuntimeBackend(
+            str(config.get("agent", "prolog_rlm_endpoint", "http://127.0.0.1:18765/zara-runtime/v1")),
+            principal_id="user:local",
+        )
     if backend_name != "langgraph":
         raise ValueError(
             f"Unsupported agent backend {backend_name!r}; choose 'langgraph'"

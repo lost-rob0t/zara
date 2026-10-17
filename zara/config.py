@@ -140,6 +140,9 @@ history_limit = 20
 
 [agent]
 # Conversational agent settings
+backend = "langgraph"
+# Native Prolog-RLM sidecar (when backend = "prolog_rlm").
+prolog_rlm_endpoint = "http://127.0.0.1:18765/zara-runtime/v1"
 conversation_timeout = 3600  # seconds (60 minutes grace window)
 # Short grace period after TTS playback completes before the listener
 # returns to passive mode. Keep small so the user can respond quickly.
@@ -197,7 +200,9 @@ wall_clock_minutes = 30.0
 step_log_chars = 2000
 
 [file_tools]
-# File tools are disabled above by default. Relative roots use the repository root.
+# Declare file_repository(default, "/absolute/git/worktree") in Prolog config.
+# Relative roots use that repository root.
+repository = "default"
 readable_roots = ["."]
 writable_roots = ["."]
 max_bytes = 20000
@@ -345,6 +350,22 @@ class ZaraConfig:
         return config
 
     def _validate_config(self, config: Dict[str, Any]) -> None:
+        agent_config = config.get("agent", {})
+        if not isinstance(agent_config, dict):
+            raise ConfigError("Invalid [agent] configuration: expected a TOML table")
+        if agent_config.get("backend", "langgraph") not in {"langgraph", "prolog_rlm", "prolog-rlm"}:
+            raise ConfigError("agent.backend must be langgraph or prolog_rlm")
+        if agent_config.get("backend", "langgraph") in {"prolog_rlm", "prolog-rlm"}:
+            from zara.runtime.prolog_rlm import PrologRLMRuntimeBackend
+
+            try:
+                PrologRLMRuntimeBackend(
+                    agent_config.get("prolog_rlm_endpoint", "http://127.0.0.1:18765/zara-runtime/v1"),
+                    principal_id="user:validation",
+                    provider=agent_config.get("prolog_rlm_provider"),
+                )
+            except (TypeError, ValueError) as error:
+                raise ConfigError(f"Invalid agent.prolog_rlm_endpoint or prolog_rlm_provider: {error}") from error
         desktop_config = config.get("desktop", {})
         if not isinstance(desktop_config, dict):
             raise ConfigError("Invalid [desktop] configuration: expected a TOML table")
@@ -499,6 +520,9 @@ class ZaraConfig:
         file_config = config.get("file_tools", {})
         if not isinstance(file_config, dict):
             raise ConfigError("Invalid [file_tools] configuration: expected a TOML table")
+        repository = file_config.get("repository", "default")
+        if not isinstance(repository, str) or not repository:
+            raise ConfigError("file_tools.repository must be a non-empty string")
         for key in ("readable_roots", "writable_roots"):
             roots = file_config.get(key, ["."])
             if (
@@ -778,7 +802,10 @@ class ZaraConfig:
             roots = []
             for value in file_config.get(key, ["."]):
                 expanded = Path(os.path.expanduser(os.path.expandvars(value)))
-                roots.append(expanded if expanded.is_absolute() else repo_root / expanded)
+                root = expanded if expanded.is_absolute() else repo_root / expanded
+                if not root.resolve().is_relative_to(repo_root.resolve()):
+                    raise ValueError("file tool root must remain within the selected repository")
+                roots.append(root)
             return roots
 
         return {

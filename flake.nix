@@ -25,6 +25,8 @@
             vulkanSupport = true;
           };
 
+          codingRuntime = [ pkgs.pi-coding-agent pkgs.bubblewrap ];
+
           # nixpkgs now packages sherpa-onnx (1.13.3) matched against its own
           # onnxruntime; the hand-pinned 1.12.37 wheel (ORTools 1.23.2 ABI) is
           # retired with the old nixpkgs revision.
@@ -308,26 +310,26 @@
             pname = "zara-cli";
             binaryName = "zara";
             addFlags = "-m zara";
-            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
+            extraPath = codingRuntime ++ [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
           zara-server = mkZaraPackage {
             pname = "zara-server";
             binaryName = "zara-server";
             addFlags = "-m zara.server";
-            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
+            extraPath = codingRuntime ++ [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
           zara-desktop = mkZaraPackage {
             pname = "zara-desktop";
             addFlags = "-m zara.desktop.app";
-            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
+            extraPath = codingRuntime ++ [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
           zara-wake = mkZaraPackage {
             pname = "zara-wake";
             addFlags = "-m zara --wake";
-            extraPath = [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
+            extraPath = codingRuntime ++ [ pkgs.xdotool pkgs.pulseaudio pkgs.ffmpeg-full whisperCppVulkan ];
           };
 
           zara-dictate = mkZaraPackage {
@@ -526,6 +528,12 @@
                 grep -q "usage:" $HOME/dictate.out
                 command -v zara-desktop >/dev/null
                 test -x "$(command -v zara-desktop)"
+                grep -q ${pkgs.pi-coding-agent}/bin ${zara-cli}/bin/zara
+                grep -q ${pkgs.pi-coding-agent}/bin ${zara-server}/bin/zara-server
+                grep -q ${pkgs.pi-coding-agent}/bin ${zara-desktop}/bin/zara-desktop
+                grep -q ${pkgs.bubblewrap}/bin ${zara-cli}/bin/zara
+                grep -q ${pkgs.bubblewrap}/bin ${zara-server}/bin/zara-server
+                grep -q ${pkgs.bubblewrap}/bin ${zara-desktop}/bin/zara-desktop
                 # The Nix packages are an authoritative install surface: prove
                 # the complete canonical contract tree survives installation.
                 diff -r $src/contracts ${zara-cli}/share/zarathushtra/contracts
@@ -591,6 +599,8 @@
               pkgs.portaudio
               pkgs.swi-prolog
               pkgs.pulseaudio
+              pkgs.pi-coding-agent
+              pkgs.bubblewrap
             ];
 
             shellHook = ''

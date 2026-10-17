@@ -161,17 +161,25 @@ class ToolRegistry:
 
     def load_builtin_tools(self, memory_manager=None):
         """Load built-ins and apply subsystem-level capability toggles."""
-        from pathlib import Path
-
         from .builtin_tools import get_builtin_tools
+        from .file_tools import resolve_writable_repo
         from ...python_skills import python_skills
 
-        repo_root = Path(__file__).resolve().parents[3]
         tool_config = self.config.get_tool_config() if self.config else {}
         todo_config = self.config.get_section("todo") if self.config else {}
         file_tool_config = None
+        file_skill_names = None
         if self.config and tool_config.get("file_tools", False):
+            alias = self.config.get_section("file_tools").get("repository", "default")
+            repo_root = resolve_writable_repo(self.prolog_engine, alias)
             file_tool_config = self.config.get_file_tool_config(repo_root)
+            rows = self.prolog_engine.query_all(
+                "file_skill_resolver:resolved_tool(Skill, Tool)"
+            )
+            file_skill_names = {row["Tool"] for row in rows}
+            declared = {"read_file", "write_file", "diff_file", "list_dir"}
+            if not file_skill_names or not file_skill_names <= declared:
+                raise ValueError("Prolog file skill declarations are invalid")
 
         todos_enabled = todo_config.get("enabled", True)
         if not isinstance(todos_enabled, bool):
@@ -194,6 +202,12 @@ class ToolRegistry:
             memory_manager=memory_manager,
             file_tool_config=file_tool_config,
         )
+        if file_skill_names is not None:
+            all_tools = [
+                tool for tool in all_tools
+                if tool.name not in {"read_file", "write_file", "diff_file", "list_dir"}
+                or tool.name in file_skill_names
+            ]
         if not todos_enabled:
             all_tools = [tool for tool in all_tools if tool.name not in TODO_TOOL_NAMES]
 

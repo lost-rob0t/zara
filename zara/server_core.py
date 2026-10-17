@@ -192,8 +192,46 @@ class RuntimeSupervisor:
                 prolog_engine=prolog_engine,
             )
 
+        backend_name = str(config.get("agent", "backend", "langgraph")).strip().lower()
+        if backend_name in {"prolog_rlm", "prolog-rlm"}:
+            from zara.runtime.prolog_rlm import PrologRLMRuntimeBackend
+
+            endpoint = str(config.get("agent", "prolog_rlm_endpoint", "http://127.0.0.1:18765/zara-runtime/v1"))
+
+            def backend_factory():
+                read_tooling = None
+                effect_journal = None
+                if config.get_tool_config().get("file_tools", False):
+                    from zara.agent.tools.file_tools import FileTooling, FileToolingConfig, resolve_writable_repo
+
+                    alias = config.get_section("file_tools").get("repository", "default")
+                    repo_root = resolve_writable_repo(prolog_engine, alias)
+                    skills = prolog_engine.query_all("file_skill_resolver:resolved_tool(Skill, Tool)")
+                    if not any(row.get("Tool") == "read_file" for row in skills):
+                        raise RuntimeError("Prolog file read skill is unavailable")
+                    file_config = config.get_file_tool_config(repo_root)
+                    read_tooling = FileTooling(FileToolingConfig(**file_config))
+                code_config = config.get_plugin_config("code")
+                if code_config.get("enabled") is True:
+                    from zara.tasks.effect_journal import RepositoryEffectJournal
+
+                    projects = code_config.get("projects")
+                    if not isinstance(projects, list) or not projects or not isinstance(projects[0], str):
+                        raise RuntimeError("Prolog-RLM code effect journal needs a configured repository alias")
+                    effect_journal = RepositoryEffectJournal.from_alias(prolog_engine, projects[0])
+                return PrologRLMRuntimeBackend(
+                    endpoint,
+                    principal_id=principal.principal_id,
+                    read_tooling=read_tooling,
+                    host_token=os.environ.get("ZARA_RUNTIME_HOST_TOKEN") if read_tooling or effect_journal else None,
+                    effect_journal=effect_journal,
+                    provider=config.get_section("agent").get("prolog_rlm_provider"),
+                )
+        else:
+            backend_factory = lambda: AgentRuntimeBackend(manager_factory, router=router)
+
         return RuntimeHost(
-            backend_factory=lambda: AgentRuntimeBackend(manager_factory, router=router),
+            backend_factory=backend_factory,
             publisher=bus.publish,
             subscriber=bus.subscribe,
             shutdown_timeout=self._shutdown_timeout,

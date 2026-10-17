@@ -22,6 +22,56 @@ backend = "langgraph"
 - =[agent].backend= names a backend in the canonical agent-loop registry. =langgraph= remains the built-in default.
 - Unknown backend names fail explicitly; Zara does not silently fall back to another implementation after an explicit invalid selection.
 
+* Local Prolog-RLM runtime
+
+The built-in =prolog_rlm= selection uses a separately started Prolog-RLM
+=ZARA-RUNTIME/1= sidecar. Its endpoint must be the local IPv4 loopback address;
+Zara checks the sidecar descriptor before accepting turns. The sidecar owns
+model calls and cancellation. Zara keeps bounded conversation context and
+commits it only after a turn remains current.
+
+#+begin_src toml
+[agent]
+backend = "prolog_rlm"
+prolog_rlm_endpoint = "http://127.0.0.1:18765/zara-runtime/v1"
+
+# Optional operator preference for the sidecar's provider.
+[agent.prolog_rlm_provider]
+kind = "openai_compatible"
+endpoint = "http://127.0.0.1:19002/v1"
+model = "configured-model-id"
+no_credential = true
+#+end_src
+
+Omit the provider table to use the sidecar's configured default. For a
+credentialed compatible provider, use =credential_env= with the name of a
+variable present in the sidecar process, never a literal key in TOML.
+
+When file tools are enabled, Zara resolves the selected Git worktree through
+=file_repository/2= and =file_skill_resolver:resolved_tool/2=. It registers
+=file_read= with the native sidecar over loopback using
+=ZARA_RUNTIME_HOST_TOKEN= from both processes. The callback accepts reads only
+for the active RuntimeHost turn and applies the configured file roots and size
+limit. Keep the token in protected process configuration outside Git. Startup
+fails if the sidecar lacks the authenticated =ZARA-RUNTIME/1= host-tool
+protocol.
+The callback can also dispatch registered LangChain tools explicitly marked
+=zara_read_only=, with the same turn lease and bounded text result. Tools that
+require approval or support cancellation are refused. =code_task_status= is
+eligible for this read path when the host registers it.
+
+When =[plugins.code]= is enabled, Zara uses its first Prolog-declared
+=projects= alias for a private =.zara/effects/= dispatch journal. It publishes
+only successfully registered code tools to the sidecar. =code_tasks= and
+=code_task_cancel= need native approval; the callback checks the exact pending
+request, generation, attempt, fingerprint, arguments, and active turn before
+dispatch. An interrupted or uncertain dispatch is not retried automatically.
+After approval, the same Prolog-RLM plan resumes with the tool observation and
+returns its answer to the original Zara turn. =code_task_status= is available
+as a bounded read callback so the model can check persistent worker results.
+The sidecar needs the same protected =ZARA_RUNTIME_HOST_TOKEN= and a private
+=ZARA_RUNTIME_EFFECT_STORE=; it refuses effect tools without that store.
+
 * User-owned customization files
 Mutable user customization belongs in the user's Zara configuration directory, outside Git and the Nix store. Zara/Home Manager may provision directories or immutable defaults, but must not overwrite mutable private user state.
 

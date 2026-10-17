@@ -5,6 +5,7 @@
 :- use_module('../kb/device_providers').
 :- use_module('../kb/android_control').
 :- use_module('../modules/config_loader').
+:- use_module('../modules/file_skill_resolver').
 
 write_config(Path, Text) :-
     setup_call_cleanup(open(Path, write, Stream), write(Stream, Text), close(Stream)).
@@ -26,6 +27,7 @@ test(all_supported_overrides_and_reload) :-
         'llm_provider(openai).',
         'llm_model("custom-model").',
         'llm_endpoint("https://llm.example.test").',
+        'file_repository(code, "/tmp/code-repo").',
         'verb_intent(hello, open, 1).'
     ], '\n', Config),
     write_config(Path, Config),
@@ -41,6 +43,7 @@ test(all_supported_overrides_and_reload) :-
     once(kb_config:llm_provider(openai)),
     once(kb_config:llm_model("custom-model")),
     once(kb_config:llm_endpoint("https://llm.example.test")),
+    once(kb_config:file_repository(code, "/tmp/code-repo")),
     once(kb_intents:verb_intent(hello, open, 1)),
     write_config(Path, 'app_mapping(github, "new-browser").\n'),
     config_loader:reload_user_config,
@@ -48,6 +51,19 @@ test(all_supported_overrides_and_reload) :-
     \+ kb_device_providers:app_mapping(github, ["custom-browser", "--new-window"]),
     findall(Command, kb_device_providers:app_mapping(github, Command), Commands),
     Commands = ["new-browser", "xdg-open https://github.com"].
+
+test(file_skills_resolve_from_kb) :-
+    findall(Skill-Tool, file_skill_resolver:resolved_tool(Skill, Tool), Pairs),
+    sort(Pairs, Sorted),
+    Sorted = [diff-diff_file, list-list_dir, read-read_file, write-write_file],
+    file_skill_resolver:tool_for_action(write, write_file),
+    \+ file_skill_resolver:tool_for_action(delete, _).
+
+test(relative_file_repository_is_rejected,
+     [throws(error(domain_error(zarathushtra_user_config_fact, _), _))]) :-
+    config_loader:user_config_path(Path),
+    write_config(Path, 'file_repository(code, "relative/path").\n'),
+    config_loader:reload_user_config.
 
 test(device_facts_never_land_in_shared_semantic_config) :-
     config_loader:user_config_path(Path),

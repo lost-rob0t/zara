@@ -92,6 +92,7 @@ class PluginManager:
         paths: Iterable[Path | str],
         *,
         configuration_provider: Callable[[str], dict],
+        principal_id: Optional[str] = None,
         status_provider: Callable[[], RuntimeStatus],
         dispatcher,
         subscriber,
@@ -113,6 +114,7 @@ class PluginManager:
         discovered_paths.extend(Path(path).expanduser() for path in paths)
         self._paths = tuple(dict.fromkeys(discovered_paths))
         self._configuration_provider = configuration_provider
+        self._principal_id = principal_id
         self._status_provider = status_provider
         self._dispatcher = dispatcher
         self._subscriber = subscriber
@@ -435,6 +437,7 @@ class PluginManager:
         runtime = PluginRuntime(
             plugin_name=record.metadata.name,
             configuration=self._configuration_provider(record.metadata.name),
+            principal_id=self._principal_id,
             status_provider=self._status_provider,
             dispatcher=self._dispatcher,
             subscriber=self._subscriber,
