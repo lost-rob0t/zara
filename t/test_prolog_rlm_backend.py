@@ -7,6 +7,7 @@ import subprocess
 from threading import Thread
 
 import pytest
+from langchain_core.tools import StructuredTool
 
 from zara.runtime.prolog_rlm import PrologRLMRuntimeBackend
 from zara.runtime.turn_context import TurnCapabilityLease, bind_turn_capability_lease
@@ -145,6 +146,22 @@ def test_sidecar_requires_loopback():
     ):
         with pytest.raises(ValueError, match="127.0.0.1"):
             PrologRLMRuntimeBackend(endpoint, principal_id="user:alice")
+
+
+def test_rlm_backend_stages_plugin_tools_without_publishing_early(sidecar):
+    backend = PrologRLMRuntimeBackend(sidecar, principal_id="user:alice")
+    tool = StructuredTool.from_function(
+        lambda: "ready", name="code_task_status", description="Read task status"
+    )
+    backend.register_tools((tool,))
+    assert backend._registered_tools == {"code_task_status": tool}
+    with pytest.raises(ValueError, match="already registered"):
+        backend.register_tools((tool,))
+    backend.unregister_tools(("code_task_status",))
+    assert backend._registered_tools == {}
+    backend.register_tools((tool,))
+    asyncio.run(backend.stop())
+    assert backend._registered_tools == {}
 
 
 def test_sidecar_rejects_protocol_mismatch(sidecar):

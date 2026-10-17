@@ -9,6 +9,8 @@ import secrets
 from typing import Optional
 from urllib.parse import urlsplit
 
+from langchain_core.tools import BaseTool
+
 from .backend import RuntimeBackend, RuntimeTurnResult
 from .host_read_callback import HostReadCallbackServer
 from .turn_context import current_turn_capability_lease
@@ -29,6 +31,7 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
         self._timeout = timeout
         self._started = False
         self._history: dict[str, list[tuple[str, str]]] = {}
+        self._registered_tools: dict[str, BaseTool] = {}
         if read_tooling is not None and not host_token:
             raise ValueError("Prolog-RLM host token is required for file tools")
         self._host_token = host_token
@@ -41,6 +44,19 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
     @property
     def principal_id(self) -> str:
         return self._principal_id
+
+    def register_tools(self, tools) -> None:
+        staged = tuple(tools)
+        if any(not isinstance(tool, BaseTool) for tool in staged):
+            raise TypeError("Prolog-RLM tools must be LangChain BaseTool instances")
+        names = [tool.name for tool in staged]
+        if len(set(names)) != len(names) or any(name in self._registered_tools for name in names):
+            raise ValueError("Prolog-RLM tool is already registered")
+        self._registered_tools.update((tool.name, tool) for tool in staged)
+
+    def unregister_tools(self, names) -> None:
+        for name in names:
+            self._registered_tools.pop(name, None)
 
     def _request(self, route: str, payload: Optional[dict] = None) -> dict:
         body = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -187,5 +203,6 @@ class PrologRLMRuntimeBackend(RuntimeBackend):
     async def stop(self) -> None:
         self._started = False
         self._history.clear()
+        self._registered_tools.clear()
         if self._callback is not None:
             await asyncio.to_thread(self._callback.stop)
