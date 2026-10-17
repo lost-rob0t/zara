@@ -6,3 +6,5 @@ code_environment_repo_authority(kb_config:file_repository/2).
 code_environment_state_authority(zara_tasks_repository_state).
 code_environment_worker_sandbox(bubblewrap, writable_repository_mount).
 code_environment_worker_sandbox(bubblewrap, private_task_state_overlay).
+code_environment_worker_lease(worktree, cross_process_flock).
+code_environment_cancellation_invariant(cancelled, worker_process_exited).

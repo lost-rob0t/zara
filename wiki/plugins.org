@@ -210,6 +210,10 @@ and returns task IDs immediately. =code_task_status= reads persisted results;
 =code_task_wait= waits at most 30 seconds; =code_task_cancel= stops a worker.
 Each task in one =code_tasks= call must name a distinct repository alias. A
 later call cannot start another task in an occupied worktree.
+The worktree lease also excludes workers from other Zara instances and principals
+until the running task exits. Cancellation waits for an active worker process to
+stop before reporting =cancelled=; a queued task cancelled before launch never
+starts its worker.
 
 The operator declares each writable Git worktree in private Prolog
 configuration with =file_repository(alias, "/absolute/worktree").= Aliases use

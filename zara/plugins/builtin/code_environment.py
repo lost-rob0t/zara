@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import pwd
 import re
 import shutil
 import signal
 import subprocess
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Literal
 
@@ -72,6 +75,9 @@ class CodeEnvironmentPlugin(ServicePlugin):
         self._future_projects: dict[str, str] = {}
         self._task_states: dict[str, object] = {}
         self._process_by_task: dict[str, subprocess.Popen] = {}
+        self._task_locks: dict[str, threading.RLock] = {}
+        self._cancel_requested: set[str] = set()
+        self._lease_fds: dict[str, int] = {}
         self._worker_context = threading.local()
         self._executor: ThreadPoolExecutor | None = None
         self._started = False
@@ -93,7 +99,7 @@ class CodeEnvironmentPlugin(ServicePlugin):
             if not isinstance(name, str) or not name or len(name) > 128:
                 raise ValueError("code project names must be bounded strings")
             path = self._resolve_project(name)
-            home = Path.home().resolve()
+            home = Path(pwd.getpwuid(os.getuid()).pw_dir).resolve()
             if path == home or path in home.parents:
                 raise ValueError("code repository must not expose the home directory")
             projects[name] = path
@@ -146,14 +152,20 @@ class CodeEnvironmentPlugin(ServicePlugin):
     def stop(self) -> None:
         with self._lock:
             self._started = False
-            processes = tuple(self._processes)
-        with self._lock:
             futures = tuple(self._futures.items())
             states = dict(self._task_states)
             executor = self._executor
             self._executor = None
         for task_id, future in futures:
-            if not future.done():
+            with self._lock:
+                task_lock = self._task_locks.setdefault(task_id, threading.RLock())
+            with task_lock:
+                self._cancel_requested.add(task_id)
+                with self._lock:
+                    process = self._process_by_task.get(task_id)
+                if process is not None:
+                    self._terminate(process)
+                    process.wait(timeout=5)
                 state = states[task_id]
                 task = state.get(self._principal_id, task_id)
                 if task is not None and task.status.value == "running":
@@ -161,8 +173,6 @@ class CodeEnvironmentPlugin(ServicePlugin):
                 elif task is not None and task.status.value == "pending":
                     state.cancel(self._principal_id, task_id, "runtime_shutdown")
                 future.cancel()
-        for process in processes:
-            self._terminate(process)
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
@@ -233,6 +243,8 @@ class CodeEnvironmentPlugin(ServicePlugin):
                 raise RuntimeError("code project already has a running task")
             self._busy_projects.update(projects)
         try:
+            for project in sorted(projects):
+                self._acquire_lease(project)
             return self._execute_reserved(parsed, cancellation)
         except Exception:
             with self._lock:
@@ -240,8 +252,26 @@ class CodeEnvironmentPlugin(ServicePlugin):
                     alias for task_id, alias in self._future_projects.items()
                     if task_id in self._futures and not self._futures[task_id].done()
                 }
-                self._busy_projects.difference_update(set(projects) - active)
+                for project in set(projects) - active:
+                    self._release_project(project)
             raise
+
+    def _acquire_lease(self, project: str) -> None:
+        path = self._projects[project] / ".zara" / "code-worker.lock"
+        if path.parent.is_symlink() or path.is_symlink():
+            raise ValueError("code worker lease path must not be a symlink")
+        flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            os.close(descriptor)
+            raise RuntimeError("code worktree lease is held") from error
+        except Exception:
+            os.close(descriptor)
+            raise
+        with self._lock:
+            self._lease_fds[project] = descriptor
 
     def _execute_reserved(self, parsed: list[CodeTask], cancellation) -> str:
         identities = []
@@ -287,6 +317,10 @@ class CodeEnvironmentPlugin(ServicePlugin):
     def _release_project(self, alias: str) -> None:
         with self._lock:
             self._busy_projects.discard(alias)
+            descriptor = self._lease_fds.pop(alias, None)
+        if descriptor is not None:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
     def _status(self, project: str, task_id: str) -> dict:
         if project not in self._projects or self._resolve_project(project) != self._projects[project]:
@@ -314,34 +348,48 @@ class CodeEnvironmentPlugin(ServicePlugin):
         return self._status(project, task_id)
 
     def _cancel(self, project: str, task_id: str) -> dict:
-        current = self._status(project, task_id)
-        if current["status"] in {"completed", "failed", "cancelled", "interrupted"}:
-            return current
-        state = self._state_for_project(project)
-        state.cancel(self._principal_id, task_id)
+        self._status(project, task_id)
         with self._lock:
-            future = self._futures.get(task_id)
-            process = self._process_by_task.get(task_id)
-        if future is not None:
-            future.cancel()
-        if process is not None:
-            self._terminate(process)
-        return self._status(project, task_id)
+            task_lock = self._task_locks.setdefault(task_id, threading.RLock())
+        with task_lock:
+            current = self._status(project, task_id)
+            if current["status"] in {"completed", "failed", "cancelled", "interrupted"}:
+                return current
+            self._cancel_requested.add(task_id)
+            with self._lock:
+                future = self._futures.get(task_id)
+                process = self._process_by_task.get(task_id)
+            if future is not None:
+                future.cancel()
+            if process is not None:
+                self._terminate(process)
+                process.wait(timeout=5)
+                if process.poll() is None:
+                    raise RuntimeError("code worker did not stop")
+            self._state_for_project(project).cancel(self._principal_id, task_id)
+            return self._status(project, task_id)
 
     def _run_persisted_worker(self, identity, task: CodeTask) -> str:
         state, task_id = identity
-        state.start(self._principal_id, task_id)
+        with self._lock:
+            task_lock = self._task_locks.setdefault(task_id, threading.RLock())
+        with task_lock:
+            if task_id in self._cancel_requested:
+                return ""
+            state.start(self._principal_id, task_id)
         self._worker_context.task_id = task_id
         try:
             result = self._run_worker(task.task, task.project, task.mode)
         except Exception as error:
-            if state.get(self._principal_id, task_id).status.value == "running":
-                state.finish(self._principal_id, task_id, str(error)[:2000], failed=True)
+            with task_lock:
+                if state.get(self._principal_id, task_id).status.value == "running":
+                    state.finish(self._principal_id, task_id, str(error)[:2000], failed=True)
             raise
         finally:
             self._worker_context.task_id = None
-        if state.get(self._principal_id, task_id).status.value == "running":
-            state.finish(self._principal_id, task_id, result[:2000])
+        with task_lock:
+            if state.get(self._principal_id, task_id).status.value == "running":
+                state.finish(self._principal_id, task_id, result[:2000])
         return result
 
     @staticmethod
@@ -384,24 +432,29 @@ class CodeEnvironmentPlugin(ServicePlugin):
             "review": "Review only. Do not change files.",
             "plan": "Plan only. Do not change files.",
         }[mode]
-        process = subprocess.Popen(
-            self._sandbox_command(project, command),
-            cwd=self._projects[project],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=self._worker_environment(),
-            start_new_session=os.name != "nt",
-        )
+        task_id = getattr(self._worker_context, "task_id", None)
         with self._lock:
-            if not self._started:
-                self._terminate(process)
-                raise RuntimeError("code environment stopped")
-            self._processes.add(process)
-            task_id = getattr(self._worker_context, "task_id", None)
-            if task_id is not None:
-                self._process_by_task[task_id] = process
+            task_lock = self._task_locks.setdefault(task_id, threading.RLock()) if task_id is not None else nullcontext()
+        with task_lock:
+            if task_id is not None and task_id in self._cancel_requested:
+                raise RuntimeError("code task was cancelled before launch")
+            with self._lock:
+                if not self._started:
+                    raise RuntimeError("code environment stopped")
+            process = subprocess.Popen(
+                self._sandbox_command(project, command),
+                cwd=self._projects[project],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=self._worker_environment(),
+                start_new_session=os.name != "nt",
+            )
+            with self._lock:
+                self._processes.add(process)
+                if task_id is not None:
+                    self._process_by_task[task_id] = process
         try:
             try:
                 stdout, stderr = process.communicate(
@@ -429,7 +482,7 @@ class CodeEnvironmentPlugin(ServicePlugin):
 
     def _sandbox_command(self, project: str, command: list[str]) -> list[str]:
         root = str(self._projects[project])
-        home = str(Path.home())
+        home = pwd.getpwuid(os.getuid()).pw_dir
         return [
             self._sandbox_binary,
             "--die-with-parent", "--share-net",

@@ -1,6 +1,10 @@
 import json
+import os
+import pwd
+import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +18,8 @@ def configured_plugin(tmp_path, monkeypatch, *, projects=None, max_concurrent=2)
     monkeypatch.setattr("shutil.which", lambda binary: "/usr/bin/pi")
     plugin = CodeEnvironmentPlugin()
     roots = projects or {"alpha": str(tmp_path / "alpha"), "beta": str(tmp_path / "beta")}
+    for root in roots.values():
+        (Path(root) / ".zara").mkdir(exist_ok=True)
     monkeypatch.setattr(plugin, "_resolve_project", lambda alias: Path(roots[alias]))
     plugin.state_events = []
 
@@ -166,6 +172,10 @@ def test_code_requires_runtime_principal(tmp_path, monkeypatch):
 
 
 def test_sandbox_allows_repo_write_and_denies_outside_and_symlink(tmp_path, monkeypatch):
+    actual_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    isolated_home = tmp_path / "harness-home"
+    isolated_home.mkdir()
+    monkeypatch.setenv("HOME", str(isolated_home))
     sandbox_binary = shutil.which("bwrap")
     if sandbox_binary is None:
         pytest.skip("bubblewrap unavailable")
@@ -183,7 +193,7 @@ def test_sandbox_allows_repo_write_and_denies_outside_and_symlink(tmp_path, monk
         "(echo no > /etc/zara-sandbox-denied) 2>/dev/null; "
         "test $? -ne 0 && "
         "(echo no > escape) 2>/dev/null; test $? -ne 0 && "
-        "test ! -e /home/unseen/.ssh",
+        f"test ! -e {shlex.quote(str(actual_home / '.ssh'))}",
     ])
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
@@ -191,6 +201,30 @@ def test_sandbox_allows_repo_write_and_denies_outside_and_symlink(tmp_path, monk
     assert (root / ".zara" / "task-state.json").read_text() == "protected\n"
     assert not Path("/etc/zara-sandbox-denied").exists()
     plugin.stop()
+
+
+def test_sandbox_keeps_approved_worktree_under_passwd_home_writable(tmp_path, monkeypatch):
+    sandbox_binary = shutil.which("bwrap")
+    if sandbox_binary is None:
+        pytest.skip("Bubblewrap unavailable")
+    actual_home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with tempfile.TemporaryDirectory(prefix="zara-code-sandbox-", dir=actual_home) as directory:
+        base = Path(directory)
+        root = base / "approved"
+        root.mkdir()
+        (root / ".zara").mkdir()
+        hidden = base / "hidden"
+        hidden.write_text("private")
+        plugin = configured_plugin(tmp_path, monkeypatch, projects={"alpha": str(root)})
+        plugin._sandbox_binary = sandbox_binary
+        command = plugin._sandbox_command("alpha", [
+            "/bin/sh", "-c", f"echo yes > inside && test ! -e {shlex.quote(str(hidden))}",
+        ])
+        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, result.stderr
+        assert (root / "inside").read_text() == "yes\n"
+        plugin.stop()
 
 
 def test_second_start_cannot_overlap_same_worktree(tmp_path, monkeypatch):
@@ -292,3 +326,114 @@ def test_worker_environment_only_passes_named_credential(tmp_path, monkeypatch):
     assert environment["OPENROUTER_API_KEY"] == "selected"
     assert "ZARA_DISCORD_TOKEN" not in environment
     plugin.stop()
+
+
+def test_cancel_waits_for_launch_fence_and_worker_death(tmp_path, monkeypatch):
+    (tmp_path / "alpha").mkdir()
+    plugin = configured_plugin(tmp_path, monkeypatch, projects={"alpha": str(tmp_path / "alpha")})
+    spawning = threading.Event()
+    finish_spawn = threading.Event()
+    cancelled = threading.Event()
+    cancel_returned = threading.Event()
+    edited = threading.Event()
+
+    class Process:
+        returncode = None
+        pid = 12345
+
+        def communicate(self, *, input, timeout):
+            if not cancelled.wait(2):
+                edited.set()
+            self.returncode = -9 if cancelled.is_set() else 0
+            return "done", ""
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout):
+            assert cancelled.wait(timeout)
+            return self.returncode
+
+    process = Process()
+
+    def spawn(command, **kwargs):
+        spawning.set()
+        assert finish_spawn.wait(2)
+        return process
+
+    def terminate(target):
+        assert target is process
+        cancelled.set()
+        target.returncode = -9
+
+    monkeypatch.setattr("subprocess.Popen", spawn)
+    monkeypatch.setattr(plugin, "_terminate", terminate)
+    task_id = json.loads(plugin.tools()[0].invoke({"tasks": [{"task": "edit", "project": "alpha"}]}))["results"][0]["task_id"]
+    assert spawning.wait(2)
+
+    def cancel():
+        plugin.tools()[3].invoke({"project": "alpha", "task_id": task_id})
+        cancel_returned.set()
+
+    thread = threading.Thread(target=cancel)
+    thread.start()
+    assert not cancel_returned.wait(0.1)
+    finish_spawn.set()
+    assert cancel_returned.wait(2)
+    thread.join()
+    assert not edited.is_set()
+    assert plugin.states["alpha"].status == "cancelled"
+    plugin.stop()
+
+
+def test_cancelled_pending_future_never_starts_worker(tmp_path, monkeypatch):
+    for name in ("alpha", "beta"):
+        (tmp_path / name).mkdir()
+    plugin = configured_plugin(tmp_path, monkeypatch, max_concurrent=1)
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    launched = []
+
+    def worker(task, project, mode):
+        launched.append(project)
+        if project == "alpha":
+            first_entered.set()
+            assert release_first.wait(3)
+        return "done"
+
+    monkeypatch.setattr(plugin, "_run_worker", worker)
+    rows = json.loads(plugin.tools()[0].invoke({"tasks": [
+        {"task": "first", "project": "alpha"},
+        {"task": "second", "project": "beta"},
+    ]}))["results"]
+    assert first_entered.wait(2)
+    assert json.loads(plugin.tools()[3].invoke({"project": "beta", "task_id": rows[1]["task_id"]}))["status"] == "cancelled"
+    release_first.set()
+    plugin.tools()[2].invoke({"project": "alpha", "task_id": rows[0]["task_id"], "timeout_seconds": 3})
+    assert launched == ["alpha"]
+    plugin.stop()
+
+
+def test_distinct_instances_cannot_edit_same_worktree(tmp_path, monkeypatch):
+    root = tmp_path / "alpha"
+    root.mkdir()
+    projects = {"alpha": str(root)}
+    first = configured_plugin(tmp_path, monkeypatch, projects=projects)
+    second = configured_plugin(tmp_path, monkeypatch, projects=projects)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def worker(task, project, mode):
+        entered.set()
+        assert release.wait(3)
+        return "done"
+
+    monkeypatch.setattr(first, "_run_worker", worker)
+    task_id = json.loads(first.tools()[0].invoke({"tasks": [{"task": "first", "project": "alpha"}]}))["results"][0]["task_id"]
+    assert entered.wait(2)
+    with pytest.raises(RuntimeError, match="lease"):
+        second.tools()[0].invoke({"tasks": [{"task": "second", "project": "alpha"}]})
+    release.set()
+    first.tools()[2].invoke({"project": "alpha", "task_id": task_id, "timeout_seconds": 3})
+    first.stop()
+    second.stop()
