@@ -42,7 +42,7 @@ class RepositoryTaskState:
         ignore = state_dir / ".gitignore"
         if ignore.is_symlink():
             raise ValueError("task state ignore file must not be a symlink")
-        ignore_rules = {"/task-state.sqlite3*", "/task-state.lock", "/tasks/", "/.gitignore"}
+        ignore_rules = {"/task-state.sqlite3*", "/task-state.lock", "/code-worker.lock", "/tasks/", "/.gitignore"}
         existing = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
         missing = sorted(ignore_rules - set(existing.splitlines()))
         if missing:

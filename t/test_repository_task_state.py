@@ -64,6 +64,7 @@ def test_task_state_files_are_git_ignored(tmp_path):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     state = RepositoryTaskState(tmp_path)
     state.create("user:alice", "code", "Local task")
+    (tmp_path / ".zara" / "code-worker.lock").touch()
     result = subprocess.run(
         ["git", "-C", str(tmp_path), "status", "--short", "--untracked-files=all"],
         capture_output=True, text=True, check=True,
