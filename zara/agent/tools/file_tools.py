@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import difflib
 import os
+import re
 import stat
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,6 +67,31 @@ class FileToolingConfig:
 
 class FilePolicyError(ValueError):
     pass
+
+
+def resolve_writable_repo(prolog_engine, alias: str) -> Path:
+    """Resolve one operator-declared repository, failing closed on ambiguity."""
+    if not isinstance(alias, str) or re.fullmatch(r"[a-z][a-z0-9_]*", alias) is None:
+        raise ValueError("invalid repository alias")
+    if prolog_engine is None:
+        raise ValueError("Prolog repository policy is unavailable")
+    rows = prolog_engine.query_all("kb_config:file_repository(Alias, Path)")
+    matches = [row["Path"] for row in rows if row.get("Alias") == alias]
+    if len(matches) != 1 or not isinstance(matches[0], str):
+        raise ValueError("repository must have one Prolog path declaration")
+    declared = Path(matches[0]).expanduser()
+    if not declared.is_absolute() or declared.is_symlink() or not declared.is_dir():
+        raise ValueError("repository must be an existing absolute directory")
+    resolved = declared.resolve(strict=True)
+    if declared != resolved:
+        raise ValueError("repository path must not contain symlinks")
+    result = subprocess.run(
+        ["git", "-C", str(resolved), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0 or Path(result.stdout.strip()) != resolved:
+        raise ValueError("repository must be an exact Git worktree root")
+    return resolved
 
 
 class FileTooling:

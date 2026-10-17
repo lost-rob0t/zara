@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from zara.agent.tools.file_tools import FileTooling, FileToolingConfig
+from zara.agent.tools.file_tools import (
+    FileTooling, FileToolingConfig, resolve_writable_repo,
+)
 from zara.agent.tools.registry import ToolRegistry
 from zara.config import DEFAULT_CONFIG_TOML, ZaraConfig
 
@@ -216,8 +218,73 @@ def test_file_tools_are_disabled_by_default_and_explicitly_enabled(tmp_path):
 
     assert FILE_TOOL_NAMES.isdisjoint(registry.list_tools())
 
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
     config._config["tools"]["file_tools"] = True
-    enabled_registry = ToolRegistry(config=config)
+
+    class Prolog:
+        def query_all(self, query, **kwargs):
+            if query == "kb_config:file_repository(Alias, Path)":
+                return [{"Alias": "default", "Path": str(repo)}]
+            if query == "file_skill_resolver:resolved_tool(Skill, Tool)":
+                return [{"Skill": name, "Tool": name} for name in FILE_TOOL_NAMES]
+            return []
+
+        def query_once(self, query):
+            return {}
+
+    enabled_registry = ToolRegistry(prolog_engine=Prolog(), config=config)
     enabled_registry.load_builtin_tools()
 
     assert FILE_TOOL_NAMES.issubset(enabled_registry.list_tools())
+
+
+def test_file_repository_resolver_requires_exact_unique_git_root(tmp_path):
+    import subprocess
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    nested = root / "nested"
+    nested.mkdir()
+
+    class Prolog:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def query_all(self, query, **kwargs):
+            assert query == "kb_config:file_repository(Alias, Path)"
+            return self.rows
+
+    assert resolve_writable_repo(
+        Prolog([{"Alias": "code", "Path": str(root)}]), "code"
+    ) == root
+    for rows in (
+        [],
+        [{"Alias": "code", "Path": str(nested)}],
+        [{"Alias": "code", "Path": "relative"}],
+        [{"Alias": "code", "Path": str(root)}] * 2,
+    ):
+        with pytest.raises(ValueError, match="repository"):
+            resolve_writable_repo(Prolog(rows), "code")
+
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    with pytest.raises(ValueError, match="repository"):
+        resolve_writable_repo(Prolog([{"Alias": "code", "Path": str(alias)}]), "code")
+
+
+def test_configured_file_roots_cannot_escape_selected_repository(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(DEFAULT_CONFIG_TOML)
+    config = ZaraConfig(str(config_path))
+    config._config["file_tools"]["readable_roots"] = [str(outside)]
+
+    with pytest.raises(ValueError, match="repository"):
+        config.get_file_tool_config(root)

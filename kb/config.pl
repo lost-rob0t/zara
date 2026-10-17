@@ -24,7 +24,8 @@
 
         llm_provider/1,             % anthropic | openai | openrouter | ollama
         llm_model/1,                % model name/ID
-        llm_endpoint/1              % API endpoint URL
+        llm_endpoint/1,             % API endpoint URL
+        file_repository/2           % named absolute Git worktree path
     ]).
 
 :- discontiguous kb_config:todo_destination/1.
@@ -45,6 +46,7 @@
 :- dynamic llm_provider/1.
 :- dynamic llm_model/1.
 :- dynamic llm_endpoint/1.
+:- dynamic file_repository/2.
 
 % ============================================================
 % ZARATHUSTRA DEFAULT CONFIGURATION

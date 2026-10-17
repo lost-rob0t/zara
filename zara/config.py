@@ -200,7 +200,9 @@ wall_clock_minutes = 30.0
 step_log_chars = 2000
 
 [file_tools]
-# File tools are disabled above by default. Relative roots use the repository root.
+# Declare file_repository(default, "/absolute/git/worktree") in Prolog config.
+# Relative roots use that repository root.
+repository = "default"
 readable_roots = ["."]
 writable_roots = ["."]
 max_bytes = 20000
@@ -517,6 +519,9 @@ class ZaraConfig:
         file_config = config.get("file_tools", {})
         if not isinstance(file_config, dict):
             raise ConfigError("Invalid [file_tools] configuration: expected a TOML table")
+        repository = file_config.get("repository", "default")
+        if not isinstance(repository, str) or not repository:
+            raise ConfigError("file_tools.repository must be a non-empty string")
         for key in ("readable_roots", "writable_roots"):
             roots = file_config.get(key, ["."])
             if (
@@ -796,7 +801,10 @@ class ZaraConfig:
             roots = []
             for value in file_config.get(key, ["."]):
                 expanded = Path(os.path.expanduser(os.path.expandvars(value)))
-                roots.append(expanded if expanded.is_absolute() else repo_root / expanded)
+                root = expanded if expanded.is_absolute() else repo_root / expanded
+                if not root.resolve().is_relative_to(repo_root.resolve()):
+                    raise ValueError("file tool root must remain within the selected repository")
+                roots.append(root)
             return roots
 
         return {

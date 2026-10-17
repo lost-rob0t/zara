@@ -221,11 +221,16 @@ Repeated wake phrases are stripped from longer active utterances. A standalone
 =Zara.= clears stale conversation context and immediately listens for the next
 command without sending the wake phrase to the LLM.
 
-Agent file tools are disabled by default with =tools.file_tools = false=. To
-enable them, set that value to =true= and configure =file_tools.readable_roots=,
-=file_tools.writable_roots=, and =file_tools.max_bytes=. Relative roots resolve
-from the repository root. Paths outside those roots, symlinks, and special files
-are rejected; writes require explicit overwrite permission and are atomic.
+Agent file skills are declared in =kb/file_skills.pl= and selected by
+=file_skill_resolver:resolved_tool/2=. They are disabled by default with
+=tools.file_tools = false=. Declare a named, exact Git worktree root in the
+user Prolog config, for example =file_repository(code, "/path/to/worktree").=,
+set =file_tools.repository = "code"= and =tools.file_tools = true= in TOML, and
+configure =file_tools.readable_roots=, =file_tools.writable_roots=, and
+=file_tools.max_bytes=. Relative roots resolve from the selected worktree.
+Missing or ambiguous repository declarations prevent tool registration.
+Paths outside the roots, symlinks, and special files are rejected; writes
+require explicit overwrite permission and are atomic.
 
 Todo records are validated and updated transactionally with their tags and
 generated occurrences. Storage updates use =PRESERVE= (leave unchanged), a new
