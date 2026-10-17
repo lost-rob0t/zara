@@ -207,6 +207,7 @@ class CodeEnvironmentPlugin(ServicePlugin):
             name="code_task_status",
             description="Read one persisted code task status and bounded result.",
             args_schema=CodeTaskLookupArgs,
+            metadata={"zara_read_only": True},
         ), StructuredTool.from_function(
             code_task_wait,
             name="code_task_wait",
