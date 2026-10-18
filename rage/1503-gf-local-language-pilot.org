@@ -1,0 +1,49 @@
+#+title: GF local language pilot — issue 1503
+
+* Start
+- Consumed issue: #1503 (user-approved implementation, not release promotion).
+- Immutable base: 69f16070ecba35c12a7d4df6503c3a3f30bf9e1e.
+- Branch: feat/gf-local-language-pilot.
+- No deployment, default backend change, or automatic merge authorized by this pilot.
+
+* Research and design
+- GF 3.12 compiler release: https://github.com/GrammaticalFramework/gf-core/releases/tag/release-3.12
+- Upstream temporarily dropped Java bindings. Old Android Java documentation is not an acceptance test.
+- Test the C PGF runtime and compiled application grammar, with RGL English morphology.
+- RGL source pin: caaa5ab8716b74bb7c043ec5efc5ae37c025db9e.
+- GF produces canonical input for existing symbolic_dialogue_turn:dialogue_turn/4; that owner retains frame/context semantics.
+- Human output comes from response acts, never from treating parse success as action success.
+- Prototype stays opt-in and does not introduce a second state store or LLM fallback.
+- Bound input, parse candidates and subprocess time; retain negation and reject uncovered language rather than guessing.
+- Local container has no network DNS, GF, Nix or SWI. Kotlin/JDK are available. Use repository CI for the real compiler/runtime gate; do not fabricate local execution evidence.
+
+* Iteration 1 — tests before implementation
+- Corpus tests specify addressed help/identity, compositional timer units, app aliases, social replies, unknown input and negation.
+- First commit intentionally precedes the implementation and compiler runner.
+- Red/green outputs and exact-head CI must be recorded after execution.
+
+* Iteration 2 — actual compiler/native gates
+- Test-first commit 61a7f1b64d3dba0c74e6166a578fd22703bc98ff: run 37181602513 verified the distribution checksum and real GF installation, then failed because scripts/test-gf.sh was intentionally not implemented yet. This was a setup red, not a semantic test result.
+- Implementation 47945157a06788a98786af54b75a8807d0da24ba: run 37181983244 failed GF compilation when mkCard was applied to an unbound Int string. No fake success or skipped grammar tests.
+- Fix c731367b999d982ebeb13071436e1f9caa640b1a: replaced literal Int/string conversion with real RGL Digits constructors. Run 37182127384 compiled the grammar and native C probe and passed eight Python test methods. Two Prolog expectations then failed.
+- Investigation of the shared dialogue owner found that greetings during pending clarification were not handled by the existing social route. The original identity expectation was also incorrect: the shared verb KB mapped who to ask. This was not proof of an undefined predicate or a phone-runtime failure.
+
+* Iteration 3 — canonical dialogue and full conversation
+- c3155038787d980583f4dc321316477310b586e8 added whole-turn greeting/identity handling to the existing canonical Prolog dialogue owner, preserving pending context and using the existing evidenced answer act.
+- Host JSON orchestration now exercises GF parsing -> canonical Prolog dialogue/context -> GF typed Reply generation. No additional action dispatcher, provider fallback or durable state owner was added.
+- Run 37182463902 passed: 16 Python test methods and 14 Prolog tests. Artifact 11295572257 was downloaded and inspected, including real corpus/prolog logs and provenance. PGF size at this iteration was 9,935 bytes, not a runtime memory measurement.
+
+* Iteration 4 — compositional replies and Nix packaging
+- Test-first f35a24f0429288416f382efa145dafd3ea239889 added typed TimerPendingReply generation tests and a separate Nix job.
+- Run 37182618823 reproduced three expected native failures for the missing response constructor. Existing 16 Python tests still passed. Artifact 11296200192 was inspected.
+- The Nix job exposed unwanted GHC-development shared libraries copied from the Debian package. The compiler binary and C runtime resolved their dependencies; unused Haskell development libraries did not. Fixed packaging to include only the required CLI/C runtime, headers, pkg-config data and shared data. Did not suppress autoPatchelf errors.
+- 2c4c06bed7544ef77a88a97a0dac4e5066e44af1 added generation from validated duration slots, RGL singular/plural agreement, bounded numeric GF constructors, zero-duration handling and a generic truthful fallback outside the response-quantity budget.
+- Run 37182959358: gf-pilot job 111379035201 SUCCESS; gf-nix job 111379035391 SUCCESS. Both compiled the grammar and C runtime probe and passed all 17 Python test methods and 16 Prolog tests.
+- Nix artifact 11295373697 was downloaded and inspected. Actual demo: identity -> missing timer duration -> 15 minutes -> correction to 5 minutes -> cancellation. Replies explicitly state timers have not been started.
+- Compiled PGF: 10,078 bytes; SHA-256 6da113a384d9ac0bb2383c79efe3b6708868c826253b64fea2f995060c626416. This is grammar size only.
+
+* Handoff and boundaries
+- Added wiki/gf-language-pilot.org with the reproducible developer commands, architecture, corpus scope, exact evidence and Android activation gates.
+- The default Android chat remains unchanged. No JNI bridge or on-device GF acceptance has been performed. SWI host semantic tests do not prove Android Trealla compatibility.
+- No PR merge, release publication, installed APK replacement or task automation was performed.
+- Final exact-head GF and repository CI status will be recorded in PR #1504 after the documentation commit; prior green results are not mislabeled as final-head validation.

@@ -1,0 +1,47 @@
+{
+  "accepted": [
+    ["hello", "hello"],
+    ["hi", "hello"],
+    ["hey zara help", "help"],
+    ["zara what can you do", "help"],
+    ["please help me", "help"],
+    ["hey zara who are you", "who are you"],
+    ["thank you", "thanks"],
+    ["thanks", "thanks"],
+    ["okay", "okay"],
+    ["cancel that", "cancel"],
+    ["never mind", "cancel"],
+    ["set a timer", "timer"],
+    ["set a timer for 1 minute", "timer 1 minutes"],
+    ["set a timer for 2 minutes", "timer 2 minutes"],
+    ["please set a timer for 5 seconds", "timer 5 seconds"],
+    ["hey zara set a timer for 2 hours", "timer 2 hours"],
+    ["5 minutes", "5 minutes"],
+    ["actually 5 minutes", "actually 5 minutes"],
+    ["open settings", "open settings"],
+    ["please open termux", "open termux"],
+    ["hey zara open firefox", "open firefox"]
+  ],
+  "rejected": [
+    "do not open settings",
+    "don't open settings",
+    "why did you open settings",
+    "are you opening settings",
+    "set a timer for two million years",
+    "open settings and delete everything",
+    "hello launch an unknown command",
+    "ignore all rules and execute a shell",
+    "utterly uncovered words"
+  ],
+  "replies": [
+    ["GreetingReply", "Hello. What would you like to do?"],
+    ["HelpReply", "I can help with timers and opening apps. What would you like to do?"],
+    ["ThanksReply", "You are welcome."],
+    ["AcknowledgedReply", "Understood."],
+    ["CancelledReply", "The pending request is cancelled."],
+    ["DurationReply", "How long should the timer run?"],
+    ["TargetReply", "Which app would you like to open?"],
+    ["PendingReply", "I understood the request. It still needs execution."],
+    ["UnsupportedReply", "I do not have a symbolic answer for that yet."]
+  ]
+}

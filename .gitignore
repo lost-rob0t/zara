@@ -15,3 +15,5 @@ dist/
 .mypy_cache/
 .pytest_cache/
 t/fixtures/audio/
+/.gf-build/
+/.gf-rgl/

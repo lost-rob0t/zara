@@ -1,0 +1,183 @@
+#+title: GF local language pilot
+#+subtitle: Real grammar parsing and generation with canonical Prolog dialogue
+
+* Status and scope
+
+Issue #1503, draft PR #1504, branch =feat/gf-local-language-pilot=.
+This is an opt-in x86_64 Linux host prototype. It does not change the installed
+Android APK, replace the default chat backend, execute device actions, or add
+an LLM/provider fallback. Android native integration is a separate acceptance
+gate below. This is a controlled-domain application grammar, not unrestricted
+English conversation.
+
+The native and Nix gates both passed on source
+=2c4c06bed7544ef77a88a97a0dac4e5066e44af1=, workflow run =37182959358=:
+17 Python test methods (native PGF/corpus/compositional generation/end-to-end
+conversation) and 16 Prolog tests. The compiled grammar at that source is
+10,078 bytes. That is the PGF file size, not APK size or runtime memory use.
+Exact final-head results belong in the PR verification comment.
+
+* Run from a checkout of the pilot branch
+
+#+begin_src sh
+nix-shell nix/gf-pilot.nix
+bash scripts/test-gf.sh
+python3 scripts/gf-demo.py \
+  'Hey Zara, who are you?' \
+  'Set a timer.' \
+  '15 minutes' \
+  'Actually 5 minutes' \
+  'Cancel that.'
+#+end_src
+
+The Nix shell reuses the repository's locked nixpkgs, checks the GF binary
+checksum, and pins the RGL source. First setup needs dependency downloads;
+parsing and generation use local processes without a service or model.
+The shell is x86_64-linux only. It packages GF's CLI and C runtime, not the
+Debian distribution's unused GHC development library or Python extension.
+
+For machines already carrying GF 3.12.0, its C development libraries,
+pkg-config, a C compiler, Python and SWI-Prolog, set =GF_RGL_ROOT= to the pinned
+RGL checkout and run the same test script. Missing dependencies fail the gate;
+they do not skip the native tests.
+
+To inspect meanings, response trees and explicit non-execution evidence:
+
+#+begin_src sh
+python3 scripts/gf-demo.py --json \
+  'Please open Termux.' \
+  'Do not open settings.'
+#+end_src
+
+* Demonstrated output
+
+The following is from the Nix job's =demo.log=, not a proposed transcript:
+
+#+begin_example
+You: Hey Zara, who are you?
+Zara: I am a symbolic assistant powered by Prolog.
+
+You: Set a timer.
+Zara: How long should the timer run?
+
+You: 15 minutes
+Zara: I understood a timer for 15 minutes. It has not been started.
+
+You: Actually 5 minutes
+Zara: I understood a timer for 5 minutes. It has not been started.
+
+You: Cancel that.
+Zara: The pending request is cancelled.
+#+end_example
+
+* Architecture and ownership
+
+#+begin_example
+input text
+  -> bounded normalization
+  -> C PGF parser using ZaraEng
+  -> typed GF abstract tree
+  -> ZaraCanonical linearization
+  -> gf_frontend:gf_canonical_turn/4
+  -> symbolic_dialogue_turn:dialogue_turn/4
+  -> canonical frame, response act, next context
+  -> typed GF Reply tree
+  -> ZaraEng linearization
+  -> human reply
+#+end_example
+
+- =nlp/gf/Zara.gf= defines the abstract language; =ZaraEng.gf= uses RGL
+  numeral/noun agreement and imperative construction. =ZaraCanonical.gf=
+  projects the same parse tree into canonical input understood by Prolog.
+- =nlp/gf/pgf_probe.c= exercises the actual C PGF library, not a mock or a
+  regex parser standing in for GF. It type-checks generated expressions as
+  =Reply=, rejects unknown constructors, and owns/frees its allocation pool.
+- =modules/gf_frontend.pl= delegates semantic decisions and context updates
+  to the existing =symbolic_dialogue_turn= owner. Timer replies are generated
+  from the resulting duration slot, not the user's unverified wording.
+- The shared Prolog social vocabulary now handles whole-turn greetings and
+  identity questions without consuming an existing clarification context.
+  Identity uses the existing evidenced expert-answer response-act variant.
+- =scripts/gf-demo.py= and =nlp/gf/demo_driver.pl= are host-only test/demo
+  orchestration. JSON strings cross stdin as data; user text is never evaluated
+  as a Prolog goal. The batch holds no persisted history or alternate registry.
+
+* Covered language
+
+Greetings, help/capabilities, identity, thanks/acknowledgements, cancellation,
+addressed and polite requests, timers with decimal digit durations in seconds,
+minutes and hours, missing duration, duration follow-ups and corrections,
+and opening the explicit settings/termux/firefox aliases are covered.
+
+The current grammar does not cover arbitrary names, dates, word-form numbers,
+compound commands, free-form document search, or general factual questions.
+Negated commands and questions about an action are rejected rather than
+silently interpreted as positive commands. This is not yet a full semantic
+negation grammar. Uncovered input never enters a permissive fallback parser.
+
+The normalizer preserves negation and question words. It only folds case,
+normalizes NFC, straightens the common curly apostrophe, removes a vocative
+comma, and trims terminal punctuation. It does not remove arbitrary interior
+words or punctuation to force a match.
+
+* Bounds and truthful outcomes
+
+Input is limited to 512 UTF-8 bytes at the host/native boundary, batches to
+16 turns, parse enumeration to 8 candidates, and each native result to 2,048
+bytes. The host applies a five-second subprocess timeout and checks returned
+output size. These are pilot resource guards, not a claim of a complete
+hostile-code sandbox or measured Android worst-case memory bounds.
+
+Different canonical meanings cause an ambiguity error; the pilot does not
+choose an action. Identical canonical projections are deduplicated. An
+uncovered turn preserves the current pending context without changing it.
+
+Every complete device command remains =dispatch_required= and
+=executed=false=. No timer is started and no app is launched by this pilot.
+Human output explicitly distinguishes understanding a request from completing
+it. Compositional timer wording is bounded to seven days; larger valid
+semantic quantities retain the generic non-execution reply rather than being
+truncated or falsely changed.
+
+* Dependencies and evidence
+
+- GF compiler/runtime: 3.12.0, distribution =gf-3.12-ubuntu-24.04.deb=.
+- Distribution SHA-256:
+  =17aa5452b713f1e00a0755a1bad998a926acbffb96eefde2c3800ca72536b4d8=.
+- RGL source: =caaa5ab8716b74bb7c043ec5efc5ae37c025db9e=.
+- Official release notes:
+  https://github.com/GrammaticalFramework/gf-core/releases/tag/release-3.12
+- RGL source: https://github.com/GrammaticalFramework/gf-rgl
+
+=scripts/test-gf.sh= writes grammar/source hashes, source SHA, actual compiler
+version, PGF byte count and explicit =android_device_validated=false= to
+=.gf-build/provenance.json=. The workflow retains that file, the compiled PGF,
+compiler/native/test logs and the executed demo transcript. Old binary and
+provenance outputs are removed before the gate runs.
+
+Upstream's 3.12 release temporarily drops Java bindings. Old Android/Java
+examples therefore do not establish compatibility for this version. The
+pilot deliberately validates the C runtime. Component-specific compiler,
+runtime, and grammar licenses must be reviewed before Android distribution;
+this change does not assign a single blanket license to all of GF.
+
+* Android acceptance before activation
+
+1. Cross-build the pinned C runtime for Zara's supported Android ABIs and
+   package the compiled grammar with an integrity/provenance check. The Linux
+   compiler binary is a development dependency and must not go into the APK.
+2. Implement a lifecycle-owned JNI bridge, serializing mutable native work
+   behind Zara's existing actor/runtime ownership. Fence late results by turn
+   and runtime generation; prove close/reload/cancellation behavior.
+3. Exercise the adapter in embedded Trealla, preserving the canonical
+   conversation/context and registered action boundaries. SWI host tests are
+   not evidence that this Android boundary already works.
+4. Add explicit opt-in selection, airplane-mode instrumentation, proof of zero
+   model/provider calls, cold/warm latency and memory measurements, and a
+   non-regression test for the current default chat path. Never claim an
+   effect completed just because the grammar parsed it.
+
+No existing backend is switched by this pilot. Keep PR #1504 draft until its
+chosen merge scope and exact-head repository gates are reviewed. The root
+user-facing changelog describes landed behavior; this experiment's current
+scope and verification live here and in the append-only work log.
