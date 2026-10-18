@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset ADB_TRACE
 
 serial="${1:-emulator-5554}"
 source_sha="${2:?Source SHA is required}"
