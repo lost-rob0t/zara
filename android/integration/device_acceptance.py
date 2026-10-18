@@ -50,10 +50,10 @@ class Device:
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
 
-    def adb(self, *arguments: str, binary: bool = False):
+    def adb(self, *arguments: str, binary: bool = False, timeout: float = 30):
         return subprocess.check_output(
             ["adb", "-s", self.serial, *arguments],
-            timeout=30,
+            timeout=timeout,
             text=not binary,
         )
 

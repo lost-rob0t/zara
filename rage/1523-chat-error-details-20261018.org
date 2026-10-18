@@ -66,3 +66,32 @@ actual Android compile, installed clipboard accessibility, screenshots and
 exact-head CI remain pending. No device recording, provider call, release change
 or held merge. Draft only until remaining gates pass; do not claim phone
 exception identified.
+
+* Exact-head CI / recovery iteration
+PR1524 candidate7ed1457 CI39152401280 Android job117748544244 failed
+compileDebugKotlin: missing Compose remember import and recordTurnFailure
+referenced onCreate-local runtimeMode. Corrected import and use application-owned
+appSession.runtimeMode(). This demonstrates limited JVM tests were not full
+Android compilation; no acceptance claimed. Other broad jobs still running.
+Existing Android job already provisions API35 emulator, runs selected instrumented
+tests, UI screenshot smoke, real local/remote stock-server acceptance and uploads
+exact-head APK only after success. Extend that existing bounded acceptance, no
+new CI jobs or paid calls: explicit Prolog throw with private synthetic marker,
+copy feedback/screenshots, clear diagnostics, verified symbolic success, process
+recreation, unchanged persisted snapshot. Then Android platform accessibility
+click + real ClipboardManager exact-byte comparison through a dedicated
+instrumented test at restored failed message. Reinstall already-built test APK
+alongside candidate because connected-test cleanup may remove packages.
+Harness RED4 missing module -> GREEN4; tests reject missing/duplicate/truncated/
+oversize snapshots and instrumentation failures. py_compile and diff-check pass.
+This is newly wired acceptance, not yet executed Android evidence. Must await
+latest-head CI, screenshot inspection and immutable review before eligibility.
+
+Recovery focused gate: 22 real core JVM tests pass again; 16 Python acceptance/packaging/UIAutomator tests plus5subtests pass using temporary pytest-only venv. Full Nix gate attempted again ->127 missing nix. No new production dependencies.
+
+Independent acceptance review requested probe timeout above its30s internal
+search budget and clipboard sentinel before the action. Timeout RED1 (90 !=null)
+then scoped90s probe with existing default30s unchanged. Instrumented test now
+sets/asserts sentinel immediately before the real accessibility click, then
+requires exact saved payload and accessible feedback. No earlier copy can
+satisfy the assertion. Android execution still pending.

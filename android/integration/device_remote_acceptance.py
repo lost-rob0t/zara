@@ -12,6 +12,7 @@ import socket
 import time
 
 from device_acceptance import Device, open_menu
+from chat_error_acceptance import exercise_chat_error
 from zara.security_admin import SecurityAdminClient
 from zmq.utils import z85
 
@@ -196,6 +197,8 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.await_contains("LOCAL", timeout=5.0)
     device.capture("local-text-turn")
 
+    chat_error_evidence = exercise_chat_error(device, type_printable_ascii)
+
     # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
     device.tap_tab("Connection")
@@ -242,6 +245,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
         "endpoint": android_endpoint,
         "reverse_mapping": reverse_mapping.splitlines(),
         "local_turn_completed": True,
+        "chat_error": chat_error_evidence,
         "client_enrolled": True,
         "server_pin_verified": True,
         "connected": True,

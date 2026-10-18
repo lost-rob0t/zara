@@ -850,7 +850,7 @@ class MainActivity : ComponentActivity() {
                 conversationState = conversationStore.failTurn(
                     conversationId, summary,
                     errorDetails = errorDetails ?: appSession.captureChatError(
-                        error, selected.localConversationId, classified.turnId, runtimeMode.name.lowercase(),
+                        error, selected.localConversationId, classified.turnId, appSession.runtimeMode().name.lowercase(),
                         requestId = classified.requestId,
                     ),
                 )
