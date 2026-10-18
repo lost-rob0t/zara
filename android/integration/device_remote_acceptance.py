@@ -356,8 +356,6 @@ def main() -> None:
         result.update(collect_app_diagnostics(device, args.output))
         try:
             device.adb("shell", "am", "force-stop", APP_PACKAGE)
-        except Exception as error:
-            result["force_stop_failure"] = str(error)
         finally:
             (args.output / "remote-manifest.json").write_text(
                 json.dumps(result, indent=2) + "\n",
