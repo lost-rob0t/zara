@@ -2,7 +2,7 @@
 
 * Documentation index
 
-This directory contains implementation-facing documentation for Zara. The project changes quickly, so documents should distinguish between code that exists, code that is actively changing, researched/design-ready work, and release-gated claims.
+This directory contains implementation-facing documentation for Zara plus the canonical end-user teaching guide. The project changes quickly, so documents should distinguish between code that exists, code that is actively changing, researched/design-ready work, and release-gated claims.
 
 * Status vocabulary
 
@@ -17,6 +17,7 @@ Do not turn a research document into a feature claim just because the design is 
 
 | Document | Purpose |
 |----------+---------|
+| [[file:book.org][The Zara Book]] | Canonical user guide: learn Zara + Zara Android from first launch through Prolog, voice, plugins, security and advanced operation. |
 | [[file:../README.org][README.org]] | Project overview, commands, current platform status. |
 | [[file:architecture.org][architecture.org]] | Runtime/client/server architecture and invariants. |
 | [[file:server.org][server.org]] | =zara-server=, =ZARA/1=, principal ownership, authentication, voice transport. |
@@ -26,6 +27,12 @@ Do not turn a research document into a feature claim just because the design is 
 | [[file:pets.md][pets.md]] | Zarathushtra Pet runtime/event integration. |
 | [[file:desktop-copilot-design.md][desktop-copilot-design.md]] | Historical/current desktop design material; verify implementation status before treating planned sections as shipped. |
 | [[file:research/002-unified-copilot-voice-visual-ci.md][research/002-unified-copilot-voice-visual-ci.md]] | Current design-ready direction for one adaptive Copilot, voice/chat continuity, and screenshot-producing CI. |
+
+** The Zara Book
+
+=docs/book.org= is the canonical teaching surface for users. It should answer how to actually use Zara, not merely how the implementation is organized.
+
+The Book is intentionally status-aware: implemented, evolving, and gated behavior must remain clearly separated. Book+Docs Lead #917 owns continuous Book maintenance under issue #911; Frontier Research #645 supplies verified research handoffs rather than owning the canonical docs lane.
 
 * Wiki / feature documentation
 
@@ -72,15 +79,17 @@ See [[file:research/002-unified-copilot-voice-visual-ci.md][research/002-unified
 
 Android is a native client in =android/=. The project currently includes typed runtime state, Trealla/NDK symbolic execution, shared semantic fixtures, and authenticated JeroMQ/CURVE =ZARA/1= enrollment/transport foundations. The full daily-driver assistant UI and device integration are still active work.
 
-See [[file:../wiki/android.org][wiki/android.org]].
+See [[file:../wiki/android.org][wiki/android.org]] and the end-user chapters in [[file:book.org][The Zara Book]].
 
 * Documentation maintenance rules
 
 - Prefer links to canonical docs instead of duplicating entire specifications.
 - Keep implementation docs concise enough to audit against code.
 - Keep research docs appendable and explicit about their baseline/date/status.
+- Keep =book.org= workflow-oriented and useful to a real user; implementation details belong there only when they help operation or troubleshooting.
 - Mark superseded architectural assumptions rather than silently leaving two conflicting "current" designs.
 - Never describe a security property as complete solely because a happy-path feature landed.
 - When a release gate remains open, say so near the feature claim.
 - For Android, distinguish portable symbolic/runtime foundations from complete assistant UX.
 - For desktop, distinguish the currently shipped two-window code from the design-ready adaptive-window target until consolidation lands.
+- Major user-visible feature changes should update The Zara Book before they are considered fully documented.
