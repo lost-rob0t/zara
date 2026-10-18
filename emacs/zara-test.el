@@ -67,32 +67,48 @@
       (should (equal (gethash "text" read-result) "alpha")))))
 
 (ert-deftest zara-bridge-edit-preview-apply-is-revision-safe-and-undoable ()
-  (with-temp-buffer
-    (insert "alpha beta")
-    (let* ((context
-            (gethash "result" (zara-test--request "buffer.context")))
-           (buffer-id (gethash "buffer_id" context))
-           (tick (gethash "modified_tick" context))
-           (preview
-            (gethash
-             "result"
-             (zara-test--request
-              "edit.preview"
-              (zara-test--args
-               "buffer_id" buffer-id
-               "start" 7
-               "end" 11
-               "expected_tick" tick
-               "replacement" "BETA"))))
-           (edit-id (gethash "edit_id" preview))
-           (apply-response
-            (zara-test--request
-             "edit.apply"
-             (zara-test--args "edit_id" edit-id))))
-      (should (eq (gethash "ok" apply-response) t))
-      (should (equal (buffer-string) "alpha BETA"))
-      (undo)
-      (should (equal (buffer-string) "alpha beta")))))
+  (let ((buffer (generate-new-buffer "zara-bridge-undo-test")))
+    (unwind-protect
+        (with-current-buffer buffer
+          ;; Model a normal user buffer.  `with-temp-buffer' creates a
+          ;; space-prefixed internal buffer whose undo recording starts off.
+          (insert "alpha beta")
+          (undo-boundary)
+          (should (consp buffer-undo-list))
+          (should (null (car buffer-undo-list)))
+          (let* ((context
+                  (gethash "result" (zara-test--request "buffer.context")))
+                 (buffer-id (gethash "buffer_id" context))
+                 (tick (gethash "modified_tick" context))
+                 (preview
+                  (gethash
+                   "result"
+                   (zara-test--request
+                    "edit.preview"
+                    (zara-test--args
+                     "buffer_id" buffer-id
+                     "start" 7
+                     "end" 11
+                     "expected_tick" tick
+                     "replacement" "BETA"))))
+                 (edit-id (gethash "edit_id" preview))
+                 (apply-response
+                  (zara-test--request
+                   "edit.apply"
+                   (zara-test--args "edit_id" edit-id))))
+            (should (eq (gethash "ok" apply-response) t))
+            (should (equal (buffer-string) "alpha BETA"))
+            ;; Prove `edit.apply' emitted real undo records before modeling
+            ;; the command-loop boundary that precedes an interactive undo.
+            (should (seq-some #'identity buffer-undo-list))
+            (undo-boundary)
+            (let ((last-command nil)
+                  (this-command 'undo)
+                  (pending-undo-list nil))
+              (undo))
+            (should (equal (buffer-string) "alpha beta"))))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
 
 (ert-deftest zara-bridge-edit-apply-rejects-stale-buffer ()
   (with-temp-buffer

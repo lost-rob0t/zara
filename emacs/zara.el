@@ -257,6 +257,10 @@ Exactly one of RESPONSE or ERROR is non-nil."
   "Return VALUE represented as a JSON boolean."
   (if value t :false))
 
+(defun zara-bridge--json-array (values)
+  "Return VALUES in the vector representation required for a JSON array."
+  (vconcat values))
+
 (defun zara-bridge--args (request)
   "Return the args hash table from REQUEST."
   (let ((args (gethash "args" request)))
@@ -335,12 +339,12 @@ Exactly one of RESPONSE or ERROR is non-nil."
       (expand-file-name (project-root project)))))
 
 (defun zara-bridge--active-minor-modes ()
-  "Return bounded list of active minor mode names in the current buffer."
+  "Return bounded active minor mode names as a JSON array."
   (let (modes)
     (dolist (mode minor-mode-list)
       (when (and (boundp mode) (symbol-value mode))
         (push (symbol-name mode) modes)))
-    (seq-take (nreverse modes) 64)))
+    (zara-bridge--json-array (seq-take (nreverse modes) 64))))
 
 (defun zara-bridge--buffer-context (buffer)
   "Return structured context for BUFFER."
@@ -381,7 +385,7 @@ Exactly one of RESPONSE or ERROR is non-nil."
     (server_name . ,(and (boundp 'server-name) server-name))
     (native_mode . ,(zara-bridge--json-bool zara-native-mode))
     (capabilities
-     . ("session.describe"
+     . ["session.describe"
         "buffer.list" "buffer.context" "buffer.read" "buffer.open" "buffer.switch"
         "window.list" "window.select" "window.split" "window.delete"
         "command.list" "command.describe" "command.where_is" "command.key_lookup"
@@ -389,7 +393,7 @@ Exactly one of RESPONSE or ERROR is non-nil."
         "edit.preview" "edit.apply" "edit.cancel" "edit.status"
         "buffer.save"
         "ui.scratch" "ui.buffer_by_name" "ui.zara_chat" "ui.ai_dashboard"
-        "org_roam.open_daily" "magit.open_project"))))
+        "org_roam.open_daily" "magit.open_project"])))
 
 (defun zara-bridge--op-buffer-list (args)
   "Implement buffer.list."
@@ -406,7 +410,7 @@ Exactly one of RESPONSE or ERROR is non-nil."
                   (read_only . ,(zara-bridge--json-bool buffer-read-only))
                   (modified_tick . ,(buffer-chars-modified-tick)))
                 rows))))
-    `((buffers . ,(nreverse rows))
+    `((buffers . ,(zara-bridge--json-array (nreverse rows)))
       (count . ,(length rows)))))
 
 (defun zara-bridge--op-buffer-context (args)
@@ -475,7 +479,8 @@ Exactly one of RESPONSE or ERROR is non-nil."
 (defun zara-bridge--op-window-list (_args)
   "Implement window.list for the selected frame."
   (let ((windows (window-list (selected-frame) nil)))
-    `((windows . ,(mapcar #'zara-bridge--window-row windows))
+    `((windows . ,(zara-bridge--json-array
+                   (mapcar #'zara-bridge--window-row windows)))
       (count . ,(length windows)))))
 
 (defun zara-bridge--op-window-select (args)
@@ -521,7 +526,7 @@ Exactly one of RESPONSE or ERROR is non-nil."
                   (string-match-p (regexp-quote query)
                                   (downcase (symbol-name symbol))))
          (push (symbol-name symbol) names))))
-    `((commands . ,(sort names #'string<))
+    `((commands . ,(zara-bridge--json-array (sort names #'string<)))
       (count . ,(length names)))))
 
 (defun zara-bridge--command-symbol (args)
@@ -539,14 +544,14 @@ Exactly one of RESPONSE or ERROR is non-nil."
          (keys (where-is-internal command nil nil nil)))
     `((command . ,(symbol-name command))
       (documentation . ,(when doc (substring doc 0 (min 8192 (length doc)))))
-      (keys . ,(mapcar #'key-description keys)))))
+      (keys . ,(zara-bridge--json-array (mapcar #'key-description keys))))))
 
 (defun zara-bridge--op-command-where-is (args)
   "Implement command.where_is."
   (let* ((command (zara-bridge--command-symbol args))
          (keys (where-is-internal command nil nil nil)))
     `((command . ,(symbol-name command))
-      (keys . ,(mapcar #'key-description keys)))))
+      (keys . ,(zara-bridge--json-array (mapcar #'key-description keys))))))
 
 (defun zara-bridge--op-command-key-lookup (args)
   "Implement command.key_lookup."
