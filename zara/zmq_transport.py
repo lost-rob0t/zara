@@ -357,8 +357,10 @@ class ZaraZmqGateway:
     def _run(self) -> None:
         socket = self._context.socket(zmq.ROUTER)
         apply_socket_options(socket, self._config, router=True)
+        bound = False
         try:
             socket.bind(self._endpoint)
+            bound = True
             self._event_subscription = self._supervisor.subscribe(
                 self._principal,
                 maxsize=self._config.event_queue_size,
@@ -380,9 +382,15 @@ class ZaraZmqGateway:
         finally:
             subscription = self._event_subscription
             self._event_subscription = None
-            if subscription is not None:
-                subscription.close()
-            socket.close(self._config.linger_ms)
+            try:
+                if subscription is not None:
+                    subscription.close()
+            finally:
+                try:
+                    if bound:
+                        socket.unbind(self._endpoint)
+                finally:
+                    socket.close(self._config.linger_ms)
 
     def _voice_ingress_context(
         self,

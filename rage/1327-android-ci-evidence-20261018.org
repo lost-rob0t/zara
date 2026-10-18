@@ -30,3 +30,13 @@ Run 39147143311 job 117733175777 failed before Gradle/emulator: the
 the root Python environment. Prepare that environment synchronously before
 launching the fixture; retain its existing readiness deadline. The ordering
 regression failed before this change and passes afterward.
+
+* Gateway endpoint release race
+Exact head 29e72829, run 39147822166, test job 117735254559 failed
+test_old_generation_completion_cannot_erase_reused_request_inflight_owner:
+Address already in use on immediate inproc endpoint rebind after gateway close.
+Both deep-regression jobs passed. Local native close/rebind also reproduced
+EADDRINUSE; socket close can leave endpoint destruction pending.
+A deterministic real-socket test defers destruction: RED at second start;
+GREEN after explicit owner-thread unbind before close. All 13 demux tests pass.
+The existing one-second restart assertion is unchanged; no sleeps or retries.
