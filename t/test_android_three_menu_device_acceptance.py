@@ -240,7 +240,7 @@ def test_remote_diagnostics_pulls_full_device_dump_and_detects_voice_process_cra
             sys.modules["zmq.utils"] = previous_zmq_utils
 
     class HostedEmulatorDevice:
-        def adb(self, *arguments: str):
+        def adb(self, *arguments: str, binary=False):
             if arguments == (
                 "shell",
                 "run-as",
@@ -253,11 +253,16 @@ def test_remote_diagnostics_pulls_full_device_dump_and_detects_voice_process_cra
                 return ""
             if arguments == ("shell", "logcat", "-d", "-b", "main", "-b", "system", "-b", "crash", "-f", module.DEVICE_LOGCAT_PATH):
                 return ""
-            if arguments == ("pull", module.DEVICE_LOGCAT_PATH, str(tmp_path / "remote-logcat.log")):
-                (tmp_path / "remote-logcat.log").write_text(
-                    "09-23 19:54:43.678 I Zara: remote turn complete\n"
-                    "Process: ai.zara.app:voice, PID: 4242\n")
-                return "1 file pulled"
+            data = ("09-23 19:54:43.678 I Zara: remote turn complete\n"
+                    "Process: ai.zara.app:voice, PID: 4242\n").encode()
+            if arguments == ("shell", "stat", "-c", "%s", module.DEVICE_LOGCAT_PATH):
+                return str(len(data))
+            if arguments == ("shell", "sha256sum", module.DEVICE_LOGCAT_PATH):
+                import hashlib
+                return hashlib.sha256(data).hexdigest() + "  " + module.DEVICE_LOGCAT_PATH
+            if arguments == ("exec-out", "dd", "if=" + module.DEVICE_LOGCAT_PATH, "bs=65536", "skip=0", "count=1", "status=none"):
+                assert binary
+                return data
             raise AssertionError(f"unexpected adb invocation: {arguments!r}")
 
     evidence = module.collect_app_diagnostics(HostedEmulatorDevice(), tmp_path)
