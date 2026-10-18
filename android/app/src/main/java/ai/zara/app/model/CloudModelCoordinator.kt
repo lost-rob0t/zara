@@ -73,6 +73,7 @@ class CloudModelCoordinator(
         prompt: String,
         purpose: CloudModelPurpose,
         effectiveAppName: String? = null,
+        history: List<CloudModelTurn> = emptyList(),
         onText: (String) -> Unit = {},
     ): CompletableFuture<CloudModelResult> {
         val refreshed = try {
@@ -95,6 +96,7 @@ class CloudModelCoordinator(
         }
         val appName = effectiveAppName?.trim()?.takeIf(String::isNotEmpty) ?: refreshed.config.appName
         require(appName.length <= CloudModelConfig.MAX_APP_NAME_CHARS) { "LLM app name is too long" }
+        val historySnapshot = history.toList()
         val snapshot = refreshed
         val cancellation = AtomicBoolean(false)
         val future = CompletableFuture<CloudModelResult>()
@@ -131,6 +133,7 @@ class CloudModelCoordinator(
                         maxOutputTokens = snapshot.config.maxOutputTokens,
                         deadlineMs = snapshot.config.deadlineMs,
                         appName = appName,
+                        history = historySnapshot,
                     ),
                     cancelled = cancellation::get,
                     onText = onText,

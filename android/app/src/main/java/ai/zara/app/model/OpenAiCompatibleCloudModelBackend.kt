@@ -9,7 +9,9 @@ import java.net.URL
 import org.json.JSONArray
 import org.json.JSONObject
 
-class OpenAiCompatibleCloudModelBackend : CloudModelBackend {
+class OpenAiCompatibleCloudModelBackend(
+    private val openConnection: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection },
+) : CloudModelBackend {
     @Volatile
     private var activeConnection: HttpURLConnection? = null
 
@@ -34,7 +36,7 @@ class OpenAiCompatibleCloudModelBackend : CloudModelBackend {
         val started = System.nanoTime()
         val deadlineNanos = started + request.deadlineMs * 1_000_000L
         val endpoint = "${safe.endpoint}/chat/completions"
-        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+        val connection = openConnection(URL(endpoint)).apply {
             requestMethod = "POST"
             doOutput = true
             instanceFollowRedirects = false
@@ -57,9 +59,7 @@ class OpenAiCompatibleCloudModelBackend : CloudModelBackend {
                 .put("max_tokens", request.maxOutputTokens)
                 .put(
                     "messages",
-                    JSONArray()
-                        .put(JSONObject().put("role", "system").put("content", request.systemPrompt()))
-                        .put(JSONObject().put("role", "user").put("content", request.prompt)),
+                    cloudModelMessages(request),
                 )
             if (safe.provider == CloudModelProvider.OPENROUTER) {
                 payload.put("provider", JSONObject(safe.openRouterPolicy.toWireMap()))
@@ -265,4 +265,22 @@ class OpenAiCompatibleCloudModelBackend : CloudModelBackend {
         private const val MAX_ERROR_CHARS = 32_768
         private const val MAX_ERROR_DETAIL_CHARS = 512
     }
+}
+
+internal fun cloudModelMessages(request: CloudModelRequest): JSONArray {
+    val retained = ArrayList<CloudModelTurn>()
+    var remaining = CloudModelRequest.MAX_PROMPT_CHARS - request.prompt.length
+    for (turn in request.history.asReversed()) {
+        val size = turn.userText.length + turn.assistantText.length
+        if (retained.size == 64 || size > remaining) break
+        retained.add(turn)
+        remaining -= size
+    }
+    val messages = JSONArray()
+        .put(JSONObject().put("role", "system").put("content", request.systemPrompt()))
+    for (turn in retained.asReversed()) {
+        messages.put(JSONObject().put("role", "user").put("content", turn.userText))
+        messages.put(JSONObject().put("role", "assistant").put("content", turn.assistantText))
+    }
+    return messages.put(JSONObject().put("role", "user").put("content", request.prompt))
 }

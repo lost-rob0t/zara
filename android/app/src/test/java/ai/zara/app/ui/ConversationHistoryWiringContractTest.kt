@@ -53,6 +53,8 @@ class ConversationHistoryWiringContractTest {
         assertTrue(session.contains("submitRemoteText(text, remoteConversationId)"))
         assertTrue(host.contains("localConversationId = conversation.localConversationId"))
         assertTrue(host.contains("remoteConversationId = conversation.remoteConversationId"))
+        assertTrue(host.contains("cloudHistory = checkNotNull(conversationStore.state().conversation(conversationId)).cloudModelHistory()"))
+        assertTrue(session.contains("history = history?.forConversation(conversationId).orEmpty()"))
     }
 
     @Test fun `host persists lifecycle mutations through the conversation store`() {

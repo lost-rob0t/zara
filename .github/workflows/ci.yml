@@ -364,6 +364,7 @@ jobs:
       - name: Capture Android screenshot evidence and verify Zara Code install
         uses: reactivecircus/android-emulator-runner@v2
         env:
+          ADB_TRACE: transport
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         with:
           api-level: 35

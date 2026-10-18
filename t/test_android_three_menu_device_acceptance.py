@@ -205,7 +205,7 @@ def test_remote_gates_follow_settings_overview_instead_of_removed_tabs():
     assert 'LOCAL ZARA SERVER' not in remote
 
 
-def test_remote_diagnostics_uses_device_shell_logcat_for_hosted_emulator(tmp_path):
+def test_remote_diagnostics_pulls_full_device_dump_and_detects_voice_process_crash(tmp_path):
     import importlib.util
     import sys
     import types
@@ -240,7 +240,7 @@ def test_remote_diagnostics_uses_device_shell_logcat_for_hosted_emulator(tmp_pat
             sys.modules["zmq.utils"] = previous_zmq_utils
 
     class HostedEmulatorDevice:
-        def adb(self, *arguments: str):
+        def adb(self, *arguments: str, binary=False):
             if arguments == (
                 "shell",
                 "run-as",
@@ -249,24 +249,34 @@ def test_remote_diagnostics_uses_device_shell_logcat_for_hosted_emulator(tmp_pat
                 module.APP_DIAGNOSTICS_PATH,
             ):
                 return "event=text.submit mode=remote\n"
-            if arguments == ("shell", "pidof", module.APP_PACKAGE):
-                return "4242\n"
-            if arguments == (
-                "shell",
-                "logcat",
-                "-d",
-                "--pid",
-                "4242",
-                "-v",
-                "threadtime",
-            ):
-                return "09-23 19:54:43.678 I Zara: remote turn complete\n"
+            if arguments == ("shell", "rm", "-f", module.DEVICE_LOGCAT_PATH):
+                return ""
+            if arguments == ("shell", "logcat", "-d", "-b", "main", "-b", "system", "-b", "crash", "-f", module.DEVICE_LOGCAT_PATH):
+                return ""
+            data = ("09-23 19:54:43.678 I Zara: remote turn complete\n"
+                    "Process: ai.zara.app:voice, PID: 4242\n").encode()
+            if arguments == ("shell", "stat", "-c", "%s", module.DEVICE_LOGCAT_PATH):
+                return str(len(data))
+            if arguments == ("shell", "sha256sum", module.DEVICE_LOGCAT_PATH):
+                import hashlib
+                return hashlib.sha256(data).hexdigest() + "  " + module.DEVICE_LOGCAT_PATH
+            if arguments == ("exec-out", "dd", "if=" + module.DEVICE_LOGCAT_PATH, "bs=65536", "skip=0", "count=1", "status=none"):
+                assert binary
+                return data
             raise AssertionError(f"unexpected adb invocation: {arguments!r}")
 
     evidence = module.collect_app_diagnostics(HostedEmulatorDevice(), tmp_path)
 
     assert evidence["app_diagnostics"] == "remote-app-diagnostics.log"
     assert evidence["logcat"] == "remote-logcat.log"
-    assert evidence["logcat_pid_filtered"] is True
-    assert evidence["fatal_log_markers"] == []
+    assert evidence["logcat_pid_filtered"] is False
+    assert evidence["fatal_log_markers"] == ["Process: ai.zara.app:voice, PID:"]
     assert "logcat_failure" not in evidence
+
+
+def test_remote_response_assertion_scrolls_to_the_latest_turn():
+    text = REMOTE_ACCEPTANCE.read_text()
+    signal = text.index("    signal_turn_acceptance(fixture)")
+    scroll = text.index("    scroll_chat_to_bottom(device)", signal)
+    assertion = text.index('    device.await_contains("stock server response"', signal)
+    assert signal < scroll < assertion

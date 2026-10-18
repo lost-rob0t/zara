@@ -127,3 +127,11 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 - Google LiteRT-LM Web API: https://developers.google.com/edge/litert-lm/js
 - Android =Voice.isNetworkConnectionRequired=: https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired()
 - sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
+
+* Direct cloud conversation context
+
+The chat composer projects completed successful turns from its existing conversation store into direct cloud requests. Project chats use the same projection; no second history store is introduced. Pending, failed and interrupted turns are excluded. A conversation identity mismatch is rejected before provider submission. Restart uses the persisted transcript. Explicitly switching providers for the same chat retains that chat's context; starting another chat does not.
+
+The HTTP messages keep the existing system instruction first, then chronological user/assistant pairs and the current user prompt exactly once. At most 64 recent complete pairs fit within 65,536 transcript characters including the current prompt. If the next older pair does not fit, older pairs are omitted together; messages are never split. This character bound is not a model-token estimate. Model, endpoint, provider policy and output limits remain unchanged. No attachment or tool authority is added.
+
+The installed CloudHistoryInstrumentedTest exercises app-private persistence, Android Keystore credentials, the coordinator and HTTP serialization with a deterministic transport. It makes no paid calls and does not substitute for live OpenRouter multi-turn acceptance.

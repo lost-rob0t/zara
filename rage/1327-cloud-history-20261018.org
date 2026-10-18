@@ -1,0 +1,47 @@
+#+title: #1327 direct-cloud conversation history
+
+* Scope and ownership
+Start242acecfb61318b27159d38397b051d63f460e01, existing PR1510 stack.
+Separate fix/android-cloud-history-1327 branch. Coordination posted on1510.
+Original worktree and existing branches untouched. Related1413/1508/1510 retained.
+
+* Research and design
+Confirmed MainActivity -> AndroidAppSession -> CloudModelCoordinator -> HTTP request
+lost all prior turns; only system/current user were serialized. Use existing
+ConversationStore as history owner. Snapshot its identified record at submission,
+filter completed successful pairs, preserve original system prompt, append current
+prompt once. Bound recent whole pairs to64 and transcript chars65536. Reject identity
+mismatch; no other chat/history owner or provider permission change. Project routes
+receive same projection; local/server/pure-symbolic routing remains authoritative.
+Explicit provider change within a chat retains its transcript, new chat stays empty.
+
+* RED and GREEN
+Kotlin2.3.21 compiler, real JUnit4.13.2 and org.json20260814 from Maven into external
+/workspace/.tooling/kotlin; no repository dependency additions or test doubles for
+Kotlin/JUnit/JSON. Initial5 tests failed compilation on absent history contract.
+Second HTTP request test RED: connection seam missing. Implemented projection and
+actual backend serializer; GREEN6 focused tests. Expanded adjacent real production
+coordinator/config/key-store/conversation-store suites:27 tests passed.
+Includes role/order/system prompt, restart/interruption, chat isolation, oversized
+pair and count/character boundaries, HTTP payload/provider policy, queue snapshots.
+HTTP connection is deterministic fixture; this is not paid provider verification.
+
+Commands:
+- bash /workspace/scratch/zara-checkpoint/run-cloud-tests.sh:27 passed.
+- NP_LOCATION=/workspace/.tooling XDG_CACHE_HOME=/workspace/.tooling/cache
+  /workspace/.tooling/bin/nix develop -c bash scripts/test-all.sh:BLOCKED,
+  Fatal error: nix is unable to build packages.
+- git diff --check:PASS.
+
+Installed CloudHistoryInstrumentedTest added to existing bounded emulator gate.
+Exercises real Android Keystore/app-private persisted transcript/coordinator/request
+serialization using deterministic connection. Not run locally (no SDK/emulator/KVM).
+Exact-head CI/full Android and dual-surface evidence must pass before readiness.
+No live OpenRouter credentials/budget available; paid gate remains UNRUN.
+
+* Remaining distinct release blockers
+1510 real LiteRT unload/reload issue; original September27 symbolic hello failure;
+live multi-turn OpenRouter acceptance and provider switching/recovery; independent
+review and unchanged-head final gates. No production readiness, merges or releases.
+Pairing follow-up: Settings > Connections, unpaired onboarding shortcut, isolated
+credentials for multiple saved endpoints. Not implemented in this focused repair.
