@@ -10,13 +10,16 @@ and validates the shared usage ledger before accepting a terminal result.
 from __future__ import annotations
 
 import inspect
+import json
 import threading
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Optional
 
 from . import _experts_v1 as _impl
 from ._experts_v1 import *  # noqa: F401,F403
+from .expert_idempotency import DurableIdempotencyClaim, ExpertIdempotencyJournal
 
 
 _ORIGINAL_HANDLER_ATTR = "__zara_original_expert_handler__"
@@ -65,6 +68,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
     """Canonical registry with dispatch, delegation, generation and usage fences."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
+        database = kwargs.pop("database", None)
         super().__init__(*args, **kwargs)
         # Expert handlers may synchronously delegate back into this registry.
         # Reentrancy preserves the one canonical state machine without forcing a
@@ -76,6 +80,10 @@ class ExpertRegistry(_impl.ExpertRegistry):
         # can fence every still-live nested invocation atomically.
         self._invocation_parent: dict[str, str] = {}
         self._invocation_children: dict[str, set[str]] = {}
+        # The journal is a persistence projection owned by this registry. It does
+        # not dispatch, mint authority, or expose an alternate history surface.
+        self._durable_idempotency = ExpertIdempotencyJournal(database)
+        self._durable_claims: dict[str, DurableIdempotencyClaim] = {}
 
     def _delegation_stack(self) -> list[_DelegationFrame]:
         stack = getattr(self._delegation_state, "stack", None)
@@ -199,6 +207,133 @@ class ExpertRegistry(_impl.ExpertRegistry):
             ),
         )
 
+    @staticmethod
+    def _charge_delegation_usage(
+        parent: Optional[_DelegationFrame],
+        model_calls: int,
+    ) -> bool:
+        """Charge one accepted child result into the canonical parent ledger."""
+
+        if parent is None or model_calls == 0:
+            return True
+        if model_calls > parent.remaining_model_calls:
+            parent.delegated_model_calls += model_calls
+            parent.remaining_model_calls = 0
+            return False
+        parent.remaining_model_calls -= model_calls
+        parent.delegated_model_calls += model_calls
+        return True
+
+    def _durable_idempotency_preflight_unlocked(
+        self,
+        handle: ActivationHandle,
+        expert_operation: str,
+        input: dict[str, Any],
+        idempotency_key: Optional[str],
+    ) -> tuple[Optional[DurableIdempotencyClaim], Optional[ExpertResult]]:
+        """Atomically reserve or recover one canonical idempotent invocation."""
+
+        if idempotency_key is None:
+            return None, None
+        _impl._bounded_pattern(
+            idempotency_key,
+            field_name="idempotency_key",
+            pattern=_impl._PORTABLE,
+            limit=128,
+        )
+        record = self._resolve_record_unlocked(handle)
+        if (
+            handle.registry_generation != self._registry_generation
+            or handle.runtime_generation != self._runtime_generation
+        ):
+            raise ExpertStaleGenerationError(
+                f"activation handle generation "
+                f"({handle.registry_generation}/{handle.runtime_generation}) is stale "
+                f"against registry ({self._registry_generation}/{self._runtime_generation})"
+            )
+        descriptor = self._resolve_active_state_unlocked(record)
+        resolved_input = dict(input)
+        try:
+            _impl._validate_input_value(resolved_input)
+            serialized = json.dumps(
+                resolved_input,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as error:
+            raise ExpertInvalidInputError(
+                f"input payload is not bounded JSON data: {error}"
+            ) from error
+        if len(serialized) > _impl._MAX_INPUT_BYTES:
+            raise ExpertInvalidInputError("input payload exceeds bounded size")
+        operation = next(
+            (item for item in descriptor.operations if item.operation_id == expert_operation),
+            None,
+        )
+        if operation is None:
+            raise ExpertUnsupportedOperationError(
+                f"expert {descriptor.expert_id!r} does not declare operation "
+                f"{expert_operation!r}"
+            )
+        self._validate_input_against_operation(operation, resolved_input)
+        decision = self._durable_idempotency.claim_or_replay(
+            principal=handle.principal,
+            workspace=handle.workspace,
+            expert_id=descriptor.expert_id,
+            expert_operation=expert_operation,
+            idempotency_key=idempotency_key,
+            input_digest=_impl._input_digest(serialized),
+            handle=handle,
+        )
+        return decision.claim if decision.created else None, decision.replay
+
+    def _commit_durable_result(
+        self,
+        claim: Optional[DurableIdempotencyClaim],
+        result: ExpertResult,
+    ) -> ExpertResult:
+        if claim is None:
+            return result
+        try:
+            self._durable_idempotency.commit(claim, result)
+        except Exception:
+            self._durable_idempotency.interrupt(claim)
+            self._durable_claims.pop(result.invocation_id, None)
+            self._invocations.pop(result.invocation_id, None)
+            raise
+        self._durable_claims.pop(result.invocation_id, None)
+        return result
+
+    def _commit_durable_rejection(
+        self,
+        claim: Optional[DurableIdempotencyClaim],
+        result: ExpertResult,
+        *,
+        error_code: ExpertErrorCode,
+        error_message: str,
+    ) -> bool:
+        if claim is None:
+            return False
+        rejected = replace(
+            result,
+            verdict=ExpertVerdict.UNKNOWN,
+            data={},
+            evidence_refs=(),
+            error_code=error_code,
+            error_message=error_message,
+        )
+        invocation = self._invocations.get(rejected.invocation_id)
+        if invocation is not None:
+            invocation.verdict = rejected.verdict
+            invocation.evidence_refs = rejected.evidence_refs
+            invocation.usage = dict(rejected.usage)
+            invocation.effect_receipts = rejected.effect_receipts
+            invocation.result = rejected
+            invocation.state = "completed"
+        self._commit_durable_result(claim, rejected)
+        return True
+
     def _invoke_unlocked(
         self,
         handle: ActivationHandle,
@@ -221,6 +356,76 @@ class ExpertRegistry(_impl.ExpertRegistry):
         admitted_runtime_generation = self._runtime_generation
         delegation_parent = self._delegation_parent()
         admitted_limits = self._admit_limits_unlocked(handle, limits)
+        durable_claim, durable_replay = self._durable_idempotency_preflight_unlocked(
+            handle,
+            expert_operation,
+            input,
+            idempotency_key,
+        )
+        if durable_replay is not None:
+            if durable_replay.verdict is ExpertVerdict.SUCCEEDED:
+                record = self._resolve_record_unlocked(handle)
+                descriptor = self._resolve_active_state_unlocked(record)
+                operation = next(
+                    (
+                        item
+                        for item in descriptor.operations
+                        if item.operation_id == expert_operation
+                    ),
+                    None,
+                )
+                if operation is None:
+                    raise ExpertUnsupportedOperationError(
+                        f"expert {descriptor.expert_id!r} does not declare operation "
+                        f"{expert_operation!r}"
+                    )
+                if operation.output_fields:
+                    output_contract = replace(
+                        operation,
+                        input_fields=operation.output_fields,
+                    )
+                    try:
+                        self._validate_input_against_operation(
+                            output_contract,
+                            dict(durable_replay.data),
+                        )
+                    except ExpertInvalidInputError as error:
+                        durable_replay = replace(
+                            durable_replay,
+                            verdict=ExpertVerdict.UNKNOWN,
+                            data={},
+                            evidence_refs=(),
+                            error_code=ExpertErrorCode.INVALID_INPUT,
+                            error_message=f"output schema violation: {error}",
+                        )
+
+            replay_usage = durable_replay.usage
+            replay_model_calls = (
+                replay_usage.get("model_calls")
+                if isinstance(replay_usage, Mapping)
+                else None
+            )
+            if type(replay_model_calls) is not int or replay_model_calls < 0:
+                raise ExpertInvalidInputError(
+                    "durable replay usage.model_calls must be a non-negative built-in integer"
+                )
+            if replay_model_calls > admitted_limits.max_model_calls:
+                raise ExpertBudgetExceededError(
+                    "durable replay usage.model_calls exceeds admitted max_model_calls"
+                )
+            if (
+                _impl._result_output_size_bytes(durable_replay)
+                > admitted_limits.max_output_bytes
+            ):
+                raise ExpertBudgetExceededError(
+                    "durable replay output exceeds admitted max_output_bytes"
+                )
+            if not self._charge_delegation_usage(delegation_parent, replay_model_calls):
+                raise ExpertBudgetExceededError(
+                    "delegated expert aggregate usage exceeds parent model-call budget"
+                )
+            return durable_replay
+        durable_started = False
         registered_handler = self._handlers.get(handle.expert_id)
         handler = (
             self._original_handler(registered_handler)
@@ -235,6 +440,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
             injected = self._handler_declares_host_operation(handler)
 
             def dispatch_handler(**payload: Any) -> Any:
+                nonlocal durable_started
                 invocation_id = next(reversed(self._invocations))
                 invocation = self._invocations[invocation_id]
                 if (
@@ -245,6 +451,15 @@ class ExpertRegistry(_impl.ExpertRegistry):
                     raise ExpertInvalidInputError(
                         "expert dispatch lost its canonical invocation record"
                     )
+
+                if durable_claim is not None:
+                    self._durable_idempotency.mark_dispatching(
+                        durable_claim,
+                        invocation_id=invocation.invocation_id,
+                        request_id=invocation.request_id,
+                    )
+                    durable_started = True
+                    self._durable_claims[invocation.invocation_id] = durable_claim
 
                 descriptor = self._descriptors.get(handle.expert_id)
                 if descriptor is None:
@@ -285,6 +500,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 stack = self._delegation_stack()
                 stack.append(frame)
 
+                dispatch_started_ns = time.monotonic_ns()
                 self._lock.release()
                 try:
                     if injected:
@@ -296,6 +512,7 @@ class ExpertRegistry(_impl.ExpertRegistry):
                         outcome = handler(**payload)
                 finally:
                     self._lock.acquire()
+                    dispatch_elapsed_ns = time.monotonic_ns() - dispatch_started_ns
                     popped = stack.pop()
                     if popped is not frame:
                         stack.clear()
@@ -338,6 +555,21 @@ class ExpertRegistry(_impl.ExpertRegistry):
                         "effect_receipts": receipts,
                     }
 
+                if dispatch_elapsed_ns > admitted_limits.timeout_ms * 1_000_000:
+                    raw_outcome["deadline_exceeded"] = True
+                    receipts = (
+                        outcome.get("effect_receipts", ())
+                        if isinstance(outcome, Mapping)
+                        else ()
+                    )
+                    return {
+                        "verdict": "error",
+                        "data": {},
+                        "evidence_refs": [],
+                        "usage": {"model_calls": 0},
+                        "effect_receipts": receipts,
+                    }
+
                 return outcome
 
             setattr(dispatch_handler, _ORIGINAL_HANDLER_ATTR, handler)
@@ -350,9 +582,16 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 expert_operation,
                 input,
                 admitted_limits,
-                idempotency_key,
+                None if durable_claim is not None else idempotency_key,
                 request_id,
             )
+        except Exception:
+            if durable_claim is not None:
+                if durable_started:
+                    self._durable_idempotency.interrupt(durable_claim)
+                else:
+                    self._durable_idempotency.release_unstarted(durable_claim)
+            raise
         finally:
             if (
                 handler is not None
@@ -383,10 +622,11 @@ class ExpertRegistry(_impl.ExpertRegistry):
             or handler_terminal
             or bool(raw_outcome.get("cancelled"))
             or bool(raw_outcome.get("stale"))
+            or bool(raw_outcome.get("deadline_exceeded"))
         )
         if not isinstance(usage, Mapping) or "model_calls" not in usage:
             if not require_actual_usage:
-                return result
+                return self._commit_durable_result(durable_claim, result)
             self._discard_invalid_success(
                 result,
                 handle,
@@ -422,36 +662,6 @@ class ExpertRegistry(_impl.ExpertRegistry):
             aggregate_model_calls = model_calls + delegated_model_calls
             charge_model_calls = aggregate_model_calls
 
-        if delegation_parent is not None and charge_model_calls:
-            if charge_model_calls > delegation_parent.remaining_model_calls:
-                # Actual work already happened. Exhaust the inherited allowance and
-                # preserve the full consumed count before failing closed so a caller
-                # cannot catch this error and immediately spend the same budget again.
-                delegation_parent.delegated_model_calls += charge_model_calls
-                delegation_parent.remaining_model_calls = 0
-                self._discard_invalid_success(
-                    result,
-                    handle,
-                    expert_operation,
-                    idempotency_key,
-                )
-                raise ExpertBudgetExceededError(
-                    "delegated expert aggregate usage exceeds parent model-call budget"
-                )
-            delegation_parent.remaining_model_calls -= charge_model_calls
-            delegation_parent.delegated_model_calls += charge_model_calls
-
-        if aggregate_model_calls > admitted_limits.max_model_calls:
-            self._discard_invalid_success(
-                result,
-                handle,
-                expert_operation,
-                idempotency_key,
-            )
-            raise ExpertBudgetExceededError(
-                "expert aggregate usage.model_calls exceeds admitted max_model_calls"
-            )
-
         if not result.replayed and aggregate_model_calls != result.usage.get("model_calls"):
             aggregate_usage = dict(result.usage)
             aggregate_usage["model_calls"] = aggregate_model_calls
@@ -461,18 +671,148 @@ class ExpertRegistry(_impl.ExpertRegistry):
                 invocation.usage = aggregate_usage
                 invocation.result = result
 
-        if raw_outcome.get("stale"):
-            self._discard_invalid_success(
-                result,
-                handle,
-                expert_operation,
-                idempotency_key,
+        if delegation_parent is not None and charge_model_calls:
+            budget_ok = self._charge_delegation_usage(
+                delegation_parent,
+                charge_model_calls,
             )
-            raise ExpertStaleGenerationError(
+            if not budget_ok:
+                budget_message = (
+                    "delegated expert aggregate usage exceeds parent model-call budget"
+                )
+                if not self._commit_durable_rejection(
+                    durable_claim,
+                    result,
+                    error_code=ExpertErrorCode.BUDGET_EXCEEDED,
+                    error_message=budget_message,
+                ):
+                    self._discard_invalid_success(
+                        result,
+                        handle,
+                        expert_operation,
+                        idempotency_key,
+                    )
+                raise ExpertBudgetExceededError(budget_message)
+
+        if aggregate_model_calls > admitted_limits.max_model_calls:
+            budget_message = (
+                "expert aggregate usage.model_calls exceeds admitted max_model_calls"
+            )
+            if not self._commit_durable_rejection(
+                durable_claim,
+                result,
+                error_code=ExpertErrorCode.BUDGET_EXCEEDED,
+                error_message=budget_message,
+            ):
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertBudgetExceededError(budget_message)
+
+        if _impl._result_output_size_bytes(result) > admitted_limits.max_output_bytes:
+            budget_message = "expert result exceeds admitted max_output_bytes"
+            if not self._commit_durable_rejection(
+                durable_claim,
+                result,
+                error_code=ExpertErrorCode.BUDGET_EXCEEDED,
+                error_message=budget_message,
+            ):
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertBudgetExceededError(budget_message)
+
+        if raw_outcome.get("stale"):
+            stale_message = (
                 "expert completion crossed a registry/runtime generation change"
             )
+            if durable_claim is not None:
+                stale_result = replace(
+                    result,
+                    verdict=ExpertVerdict.UNKNOWN,
+                    data={},
+                    evidence_refs=(),
+                    error_code=ExpertErrorCode.INTERRUPTED,
+                    error_message=stale_message,
+                )
+                invocation = self._invocations.get(stale_result.invocation_id)
+                if invocation is not None:
+                    invocation.verdict = stale_result.verdict
+                    invocation.evidence_refs = stale_result.evidence_refs
+                    invocation.usage = dict(stale_result.usage)
+                    invocation.effect_receipts = stale_result.effect_receipts
+                    invocation.result = stale_result
+                    invocation.state = "completed"
+                self._commit_durable_result(durable_claim, stale_result)
+            else:
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertStaleGenerationError(stale_message)
 
-        return result
+        if raw_outcome.get("deadline_exceeded"):
+            deadline_message = "expert completion crossed admitted deadline"
+            if durable_claim is not None:
+                deadline_result = replace(
+                    result,
+                    verdict=ExpertVerdict.UNKNOWN,
+                    data={},
+                    evidence_refs=(),
+                    error_code=ExpertErrorCode.DEADLINE_EXCEEDED,
+                    error_message=deadline_message,
+                )
+                invocation = self._invocations.get(deadline_result.invocation_id)
+                if invocation is not None:
+                    invocation.verdict = deadline_result.verdict
+                    invocation.evidence_refs = deadline_result.evidence_refs
+                    invocation.usage = dict(deadline_result.usage)
+                    invocation.effect_receipts = deadline_result.effect_receipts
+                    invocation.result = deadline_result
+                    invocation.state = "completed"
+                self._commit_durable_result(durable_claim, deadline_result)
+            else:
+                self._discard_invalid_success(
+                    result,
+                    handle,
+                    expert_operation,
+                    idempotency_key,
+                )
+            raise ExpertDeadlineExceededError(deadline_message)
+
+        if durable_claim is not None and not result.replayed:
+            raw_terminal = raw_outcome.get("value")
+            raw_data = (
+                raw_terminal.get("data")
+                if isinstance(raw_terminal, Mapping)
+                else None
+            )
+            if isinstance(raw_data, Mapping):
+                try:
+                    json.dumps(
+                        dict(raw_data),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    )
+                except (TypeError, ValueError):
+                    # Preserve the handler's raw terminal data long enough for the
+                    # existing durable journal to persist known usage/effect
+                    # accounting fail-closed and raise the canonical JSON error.
+                    return self._commit_durable_result(
+                        durable_claim,
+                        replace(result, data=dict(raw_data)),
+                    )
+
+        return self._commit_durable_result(durable_claim, result)
 
     def cancel(self, invocation_id: str) -> dict[str, Any]:
         """Cancel one invocation and every still-live canonical descendant."""
@@ -535,10 +875,13 @@ class ExpertRegistry(_impl.ExpertRegistry):
         expert_operation: str,
         idempotency_key: Optional[str],
     ) -> None:
-        """Fail closed without leaving a replayable result in the registry."""
+        """Fail closed without leaving a replayable terminal success."""
 
         if result.replayed:
             return
+        claim = self._durable_claims.pop(result.invocation_id, None)
+        if claim is not None:
+            self._durable_idempotency.interrupt(claim)
         self._invocations.pop(result.invocation_id, None)
         if idempotency_key is None:
             return
