@@ -1,6 +1,8 @@
 package ai.zara.app.telemetry
 
 import ai.zara.app.auth.AuthenticationException
+import ai.zara.app.runtime.ProtocolFailureContext
+import ai.zara.app.runtime.protocolFailureContext
 import ai.zara.app.runtime.StaleTextSessionException
 import ai.zara.app.runtime.TextRequestTimeoutException
 import ai.zara.app.runtime.ZaraWireException
@@ -65,6 +67,7 @@ data class ZaraFailure(
     val connectionGeneration: Long?,
     val requestId: String?,
     val turnId: String?,
+    val protocolContext: ProtocolFailureContext? = null,
 )
 
 object ZaraFailures {
@@ -85,6 +88,7 @@ object ZaraFailures {
         turnId: String? = null,
     ): ZaraFailure {
         val root = rootCause(error)
+        val context = protocolFailureContext(error)
         val (code, serverCode, retryable) = when (root) {
             is ZaraWireException -> Triple(root.code, root.serverCode, root.retryable)
             is TextRequestTimeoutException -> Triple(ZaraFailureCodes.TRANSPORT_TIMEOUT, null, null)
@@ -98,16 +102,17 @@ object ZaraFailures {
         return ZaraFailure(
             subsystem = subsystemFor(code, operation),
             operation = operation,
-            phase = phase,
+            phase = context?.phase ?: phase,
             code = code,
             message = bounded(root.message ?: root.javaClass.simpleName),
             causeClass = root.javaClass.name,
             serverCode = serverCode,
             retryable = retryable,
             recovery = recoveryFor(code, retryable),
-            connectionGeneration = connectionGeneration,
-            requestId = requestId,
-            turnId = turnId,
+            connectionGeneration = context?.connectionGeneration ?: connectionGeneration,
+            requestId = context?.requestId ?: requestId,
+            turnId = context?.turnId ?: turnId,
+            protocolContext = context,
         )
     }
 
@@ -165,6 +170,11 @@ object ZaraFailures {
         var current = error
         var depth = 0
         while (current.cause != null && current.cause !== current && depth < 8) {
+            if (
+                current is ZaraWireException || current is TextRequestTimeoutException ||
+                current is StaleTextSessionException || current is RemoteUnavailableException ||
+                current is AuthenticationException || current is VoiceStreamBackpressureException
+            ) return current
             current = current.cause!!
             depth += 1
         }
