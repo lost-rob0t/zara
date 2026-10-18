@@ -25,6 +25,7 @@ import org.zeromq.ZMQ
  */
 class RemoteRecoveryInteropTest {
     private val streamEvents = CopyOnWriteArrayList<String>()
+    private val staleFrames = CopyOnWriteArrayList<String>()
 
     @Test
     fun recoveryMatrixSurvivesVoiceTurnsProtocolFailuresAndReconnects() {
@@ -51,6 +52,7 @@ class RemoteRecoveryInteropTest {
         )
         actor.setConnectionFailureObserver { failure -> failures += failure }
         actor.setVoiceStreamObserver { event -> streamEvents += event.javaClass.simpleName }
+        actor.setStaleFrameObserver { messageType, _ -> staleFrames += messageType }
 
         val generation = 1L
         val session = actor.connect(ServerProfile.create(endpoint), generation).get(20, TimeUnit.SECONDS)
@@ -84,6 +86,28 @@ class RemoteRecoveryInteropTest {
             "after malformed recovery",
         ).get(20, TimeUnit.SECONDS)
         assertEquals("stock server response", secondTurn.text)
+
+        arm(controlFifo, "STALE_TEXT")
+        val staleDrainedTurn = actor.submitText(
+            generation2,
+            secondSession.sessionId,
+            null,
+            "after stale voice lifecycle",
+        ).get(20, TimeUnit.SECONDS)
+        assertEquals("stock server response", staleDrainedTurn.text)
+        assertTrue(staleFrames.contains("TurnCompleted"))
+        assertTrue(staleFrames.contains("AssistantResponse"))
+        assertEquals(0, failures.size)
+
+        arm(controlFifo, "SLOW_TURN")
+        val slowTurn = actor.submitText(
+            generation2,
+            secondSession.sessionId,
+            null,
+            "quiet model turn",
+        ).get(20, TimeUnit.SECONDS)
+        assertEquals("stock server response", slowTurn.text)
+        assertEquals(0, failures.size)
 
         arm(controlFifo, "OUT_OF_ORDER")
         runCatching {
