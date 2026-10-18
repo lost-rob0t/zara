@@ -228,6 +228,51 @@ class CloudModelTest {
         assertEquals("super-secret-token", keyStore.load())
     }
 
+    @Test
+    fun queuedRequestsSnapshotTheirOwnHistoryWithoutLeakingIntoNewProviderChat() {
+        val root = temporary.newFolder("history-queue")
+        val configStore = CloudModelConfigStore(File(root, "config"))
+        val keyStore = CloudApiKeyStore(File(root, "key"), PassThroughCipher())
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val requests = java.util.Collections.synchronizedList(mutableListOf<CloudModelRequest>())
+        val backend = object : CloudModelBackend {
+            override fun generate(config: CloudModelConfig, apiKey: String, request: CloudModelRequest,
+                cancelled: () -> Boolean, onText: (String) -> Unit): CloudModelResult {
+                requests.add(request)
+                if (request.prompt == "first") {
+                    entered.countDown()
+                    check(release.await(5, TimeUnit.SECONDS))
+                }
+                return CloudModelResult(CloudModelIdentity(config.provider, config.endpoint, config.model, request.appName), "reply", 1)
+            }
+            override fun cancel() {}
+            override fun close() {}
+        }
+        val coordinator = CloudModelCoordinator(configStore, keyStore, backend)
+        try {
+            val config = CloudModelConfig(enabled = true, endpoint = "https://example.test/v1", model = "test")
+            coordinator.configure(config)
+            coordinator.setApiKey("fixture-key")
+            val first = coordinator.generate("first", CloudModelPurpose.GENERAL)
+            assertTrue(entered.await(5, TimeUnit.SECONDS))
+            val history = mutableListOf(CloudModelTurn("saved question", "saved answer"))
+            val second = coordinator.generate("second", CloudModelPurpose.GENERAL, history = history)
+            history.clear()
+            release.countDown()
+            first.get(5, TimeUnit.SECONDS)
+            second.get(5, TimeUnit.SECONDS)
+            assertTrue(requests[0].history.isEmpty())
+            assertEquals(listOf(CloudModelTurn("saved question", "saved answer")), requests[1].history)
+            coordinator.configure(config.copy(endpoint = "https://other.example.test/v1"))
+            coordinator.generate("new chat", CloudModelPurpose.GENERAL).get(5, TimeUnit.SECONDS)
+            assertTrue(requests[2].history.isEmpty())
+        } finally {
+            release.countDown()
+            coordinator.close()
+        }
+    }
+
     private fun CloudModelConfig.runCatchingValidated(): Result<CloudModelConfig> =
         runCatching { validated() }
 
