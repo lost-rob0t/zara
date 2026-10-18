@@ -1,0 +1,62 @@
+#+title: #1327 Android CI evidence repair
+
+* Failed exact-head evidence
+#1520 1578ced6, job 117722750652: remote UI passed; shell logcat exit
+255 followed by offline device and force-stop failure.
+#1521 eff95d69, job 117722896719: server published all response events;
+UI assertion inspected older messages in the scrollable transcript. Both
+new greeting screenshots exist. Logcat then failed as above.
+#1522 5bac67f1, job 117722997263: remote and recovery UI passed;
+recovery logcat exit 255 and offline device. No model was loaded.
+Artifacts: 12142563999, 12143750597, 12143996257.
+
+* Repairs and limitations
+Reuse recovery's scroll-to-bottom operation before remote response assertion.
+Dump all main/system/crash buffers to a device file, then pull the file, rather
+than streaming the full dump through shell stdout. Empty or unavailable dumps
+remain fatal. Include :voice process crashes; force-stop cleanup failures remain fatal. Underlying ADB disconnect cause is not established;
+this transport repair must pass hosted execution before acceptance.
+
+Focused test RED: old collector fails the dump/pull and voice-crash assertion.
+GREEN: 16 tests in test_android_three_menu_device_acceptance.py,
+test_android_remote_acceptance_packaging.py, and
+test_android_symbolic_migration_device_gate.py. git diff --check passes.
+Paid provider verification remains manual/release-only, not a merge gate.
+
+* Cold Nix setup failure
+Run 39147143311 job 117733175777 failed before Gradle/emulator: the
+60-second fixture deadline elapsed while Nix was still downloading/building
+the root Python environment. Prepare that environment synchronously before
+launching the fixture; retain its existing readiness deadline. The ordering
+regression failed before this change and passes afterward.
+
+* Gateway endpoint release race
+Exact head 29e72829, run 39147822166, test job 117735254559 failed
+test_old_generation_completion_cannot_erase_reused_request_inflight_owner:
+Address already in use on immediate inproc endpoint rebind after gateway close.
+Both deep-regression jobs passed. Local native close/rebind also reproduced
+EADDRINUSE; socket close can leave endpoint destruction pending.
+A deterministic real-socket test defers destruction: RED at second start;
+GREEN after explicit owner-thread unbind before close. All 13 demux tests pass.
+The existing one-second restart assertion is unchanged; no sleeps or retries.
+
+Review additionally reproduced unbind failure for wildcard TCP endpoints
+(:* and :0). Use ZMQ_LAST_ENDPOINT to release the resolved address.
+The deterministic deferred-destruction test now covers inproc and both
+wildcard forms and proves another real socket can bind the released address.
+
+* Bulk evidence transfer falsified; bounded verified transfer
+Runs 39149067672 and 39149082091 still lost ADB at adb pull of the
+complete log dump. Device-file capture alone did not solve the disconnect.
+Artifact 12144618322 proves both hello modes and the remote reply passed;
+the viewport repair is confirmed. The remaining failure is evidence transfer.
+Read the entire fixed dump in 64-KiB binary chunks and require exact device
+size plus SHA-256. Never truncate or reconnect/retry away a failure. Nine
+new tests cover many chunks, invalid sizes/digests, truncation, corruption,
+and transport failure. Preserve host transport traces and both ADB versions
+for the next installed run. Underlying disconnect cause remains unproven.
+
+Host trace setup review: run 39151312306 failed the strict permission query
+because ADB client diagnostics appeared on stderr. Unset ADB_TRACE inside
+the acceptance script; the already-running server retains tracing. Do not
+relax the permission-query assertion or discard its stderr.

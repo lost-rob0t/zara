@@ -1,0 +1,41 @@
+#+title: #1327 installed greeting and manual paid acceptance
+
+Start ae1e4f8e2ef499d578b02efd66048f0456f22487 (PR1520).
+Branch test/android-model-live-gates-1327; existing branch writers untouched.
+
+Source investigation: production shared intent_frames:resolve_frames("hello",
+passive,[],F) executes under SWI9.2.9 and returns
+[frame(intent(ns(conversation),name(greet)),[],complete)]. Not a missing grammar.
+An initial attempt to load unstaged Android assets failed because their generated
+shared/modules directory was absent in the source checkout; that is a local test
+setup failure, not the user's installed failure. No inferred original error.
+
+Published android-latest manifest retrieved2026-10-18:
+source74728fa899e937fb43a9f618c8223137832b09b5,0.3.1-alpha/code6,
+phone SHA256 bae523feb84c5ca4aa3d1731a8eafe8e459ba1556a67560b058e0a05b4792803.
+Tag target_commitish is not artifact provenance. The actual manifest is authority.
+
+Existing installed acceptance now sends hello in Local, then starts a fresh chat
+and tests /symbolic on + hello without old greeting text satisfying the assertion.
+Requires greeting term and zero model-generation diagnostics. Captures both states
+and records explicit completion fields. Real installed results pending exact CI.
+
+Manual OpenRouter gate RED3 missing-module errors; GREEN4 unittest cases plus
+12 boundary subtests. Focused adjacent pytest:17 passed,12 subtests.
+Command PYTHONPATH=/workspace/.tooling/test-python:/workspace/.tooling/python
+python -m pytest -q t/test_android_manual_openrouter_gate.py
+t/test_android_three_menu_device_acceptance.py
+t/test_android_remote_acceptance_packaging.py.
+Python compilation passed. Nix local full gate remains unavailable.
+
+Paid probe requires explicit manual flag, explicit model, key, budget<=USD0.05;
+verifies server-reported non-resetting key cap and BYOK inclusion before inference.
+Real Android coordinator/Keystore/store/backend makes only2 sequential requests,
+64 tokens each, no retry, price cap1 USD/million input/output, no provider fallback.
+Nonce recall spans persisted history/recreated coordinator. Exact BuildConfig SHA
+must match requested provenance. Fixture consumed/deleted; no secrets in argv or
+receipt. Not composer UI or complete production acceptance. No workflow invokes
+this script automatically. Paid execution UNRUN: credentials/budget absent.
+
+Remaining: actual original-APK hello reproduction, native model lifecycle and
+live provider-switch/restart/recovery evidence. No merges/releases/readiness claim.

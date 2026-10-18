@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 import time
 
-from device_acceptance import Device, open_menu
+from device_acceptance import Device, open_menu, scroll_chat_to_bottom
 from device_remote_acceptance import (
     collect_app_diagnostics,
     find_curve_public_key,
@@ -61,20 +61,6 @@ def endpoint_port(endpoint: str) -> int:
         raise AssertionError(f"Recovery fixture endpoint is not loopback TCP: {endpoint!r}")
     return int(match.group(1))
 
-
-def scroll_chat_to_bottom(device: Device, swipes: int = 6) -> None:
-    size = device.adb("shell", "wm", "size").strip()
-    match = re.search(r"(\d+)x(\d+)", size)
-    if match is None:
-        raise AssertionError(f"Emulator did not report its size: {size!r}")
-    width, height = int(match.group(1)), int(match.group(2))
-    center_x, lower_y, upper_y = width // 2, int(height * 0.72), int(height * 0.28)
-    for _ in range(swipes):
-        device.adb(
-            "shell", "input", "swipe", str(center_x), str(lower_y),
-            str(center_x), str(upper_y), "250",
-        )
-    time.sleep(0.5)
 
 
 def send_chat_turn(device: Device, text: str, expect: str, timeout: float = 25.0) -> None:

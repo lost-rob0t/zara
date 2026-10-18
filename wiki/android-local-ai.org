@@ -127,3 +127,51 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 - Google LiteRT-LM Web API: https://developers.google.com/edge/litert-lm/js
 - Android =Voice.isNetworkConnectionRequired=: https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired()
 - sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
+
+* Direct cloud conversation context
+
+The chat composer projects completed successful turns from its existing conversation store into direct cloud requests. Project chats use the same projection; no second history store is introduced. Pending, failed and interrupted turns are excluded. A conversation identity mismatch is rejected before provider submission. Restart uses the persisted transcript. Explicitly switching providers for the same chat retains that chat's context; starting another chat does not.
+
+The HTTP messages keep the existing system instruction first, then chronological user/assistant pairs and the current user prompt exactly once. At most 64 recent complete pairs fit within 65,536 transcript characters including the current prompt. If the next older pair does not fit, older pairs are omitted together; messages are never split. This character bound is not a model-token estimate. Model, endpoint, provider policy and output limits remain unchanged. No attachment or tool authority is added.
+
+The installed CloudHistoryInstrumentedTest exercises app-private persistence, Android Keystore credentials, the coordinator and HTTP serialization with a deterministic transport. It makes no paid calls and does not substitute for live OpenRouter multi-turn acceptance.
+
+* Manual capped OpenRouter verification
+
+This is a manual/release-only installed coordinator + HTTP backend probe, not UI
+composer acceptance. It is never selected by recurring or pull-request CI.
+Build/install the exact candidate phone APK and build its instrumentation APK.
+Use a dedicated disposable OpenRouter key with a non-resetting lifetime cap no
+larger than the explicitly chosen ceiling, at most USD0.05, including BYOK usage.
+The script verifies that cap using =GET https://openrouter.ai/api/v1/key= before
+transferring the credential through stdin into app-private cache (never argv).
+Missing credentials, model, budget or key limits block before inference.
+
+Set =ZARA_OPENROUTER_API_KEY=, =ZARA_OPENROUTER_MODEL= and
+=ZARA_OPENROUTER_BUDGET_USD= in the operator environment, then run:
+
+#+begin_src sh
+python android/integration/manual_openrouter_acceptance.py --manual \
+  --serial emulator-5554 --source-sha <exact-40-character-candidate-sha> \
+  --test-apk android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk \
+  --receipt /tmp/zara-openrouter-live-receipt.json
+#+end_src
+
+Exactly two sequential production-backend requests, no retries, max64 output
+tokens each, 30-second request deadlines, USD1/million input/output price filters,
+and provider fallback disabled. The second request must recall a random code from
+the persisted first turn after coordinator/store recreation. The receipt excludes
+credentials and response text. A failure stays failed; do not treat a missing
+fixture or skipped test as success. Only the explicit class selector invokes
+=OpenRouterLiveAcceptanceTest=; an unconfigured invocation fails closed.
+
+OpenRouter limit semantics: https://openrouter.ai/docs/api_reference/limits
+Provider price-filter semantics: https://openrouter.ai/docs/guides/routing/provider-selection
+This gate is prepared but UNRUN without credentials and a configured spending cap.
+* Native lifecycle ownership (issue #1327)
+Completion remains off the LiteRT callback thread. Conversation close retains
+the backend monitor and active identity until native close returns; engine
+load, generate, unload, and close use that same monitor. A stale completion is
+a no-op. This prevents overlapping native close/unload operations; it does not
+establish that a device-specific reload hang is fixed. Real model load, two
+turns, unload, reload, and another turn remain required release evidence.

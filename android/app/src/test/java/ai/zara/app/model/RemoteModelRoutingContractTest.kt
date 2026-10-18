@@ -18,7 +18,7 @@ class RemoteModelRoutingContractTest {
         assertTrue(submit.contains("RuntimeMode.Remote ->"))
         assertTrue(submit.contains("if (remoteConnected)"))
         assertTrue(submit.contains("if (cloudEnabled)"))
-        assertTrue(submit.contains("submitCloudModelText(text, localConversationId)"))
+        assertTrue(submit.contains("submitCloudModelText(text, localConversationId, cloudHistory)"))
 
         val auto = session.substringAfter("private fun submitAutoRemoteFirst(")
             .substringBefore("private fun submitCloudModelText(")

@@ -20,6 +20,26 @@ UI_DUMP_ATTEMPTS = 3
 UI_DUMP_RETRY_DELAY_SECONDS = 0.2
 
 
+def read_device_file(device: Device, path: str) -> bytes:
+    size = int(device.adb("shell", "stat", "-c", "%s", path).strip())
+    if not 0 < size <= 16 * 1024 * 1024:
+        raise AssertionError("Device evidence file size is empty or exceeds the transfer bound")
+    digest = device.adb("shell", "sha256sum", path).split()[0]
+    if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise AssertionError("Device evidence SHA-256 is invalid")
+    chunk_size = 65536
+    data = bytearray()
+    for offset in range(0, size, chunk_size):
+        chunk = device.adb("exec-out", "dd", f"if={path}", f"bs={chunk_size}",
+                           f"skip={offset // chunk_size}", "count=1", "status=none", binary=True)
+        if len(chunk) != min(chunk_size, size - offset):
+            raise AssertionError("Device evidence transfer returned an incomplete chunk")
+        data.extend(chunk)
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise AssertionError("Device evidence transfer SHA-256 mismatch")
+    return bytes(data)
+
+
 def verified_source_sha(claimed_source_sha: str | None) -> str:
     actual_source_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],
@@ -608,6 +628,21 @@ def main() -> None:
         except Exception as restore_error:
             result["profile_restore_failure"] = str(restore_error)
         (args.output / "manifest.json").write_text(json.dumps(result, indent=2) + "\n")
+
+
+def scroll_chat_to_bottom(device: Device, swipes: int = 6) -> None:
+    size = device.adb("shell", "wm", "size").strip()
+    match = re.search(r"(\d+)x(\d+)", size)
+    if match is None:
+        raise AssertionError(f"Emulator did not report its size: {size!r}")
+    width, height = int(match.group(1)), int(match.group(2))
+    center_x, lower_y, upper_y = width // 2, int(height * 0.72), int(height * 0.28)
+    for _ in range(swipes):
+        device.adb(
+            "shell", "input", "swipe", str(center_x), str(lower_y),
+            str(center_x), str(upper_y), "250",
+        )
+    time.sleep(0.5)
 
 
 if __name__ == "__main__":

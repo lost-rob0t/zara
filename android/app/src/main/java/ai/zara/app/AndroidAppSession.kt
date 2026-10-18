@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.model.CloudModelHistory
+
 import ai.zara.app.assistant.AndroidAssistantRolePlatform
 import ai.zara.app.assistant.AssistantRoleController
 import ai.zara.app.assistant.AssistantRoleVoiceGuard
@@ -690,6 +692,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         text: String,
         localConversationId: String = "local-device",
         remoteConversationId: String? = null,
+        cloudHistory: CloudModelHistory? = null,
     ): CompletableFuture<TextTurnResult> {
         val remoteConnected = state().server is ServerConnection.Connected
         val cloudEnabled = cloudAi.state().config.enabled
@@ -715,7 +718,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     return submitRemoteText(text, remoteConversationId)
                 }
                 if (cloudEnabled) {
-                    return submitCloudModelText(text, localConversationId)
+                    return submitCloudModelText(text, localConversationId, cloudHistory)
                 }
                 val failure = RemoteUnavailableException()
                 recordRemotePreconditionFailure(failure)
@@ -765,6 +768,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
     private fun submitCloudModelText(
         text: String,
         conversationId: String = "cloud-model",
+        history: CloudModelHistory? = null,
     ): CompletableFuture<TextTurnResult> {
         val state = cloudAi.state()
         diagnostics.record(
@@ -778,6 +782,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         return cloudAi.generate(
             prompt = text,
             purpose = CloudModelPurpose.GENERAL,
+            history = history?.forConversation(conversationId).orEmpty(),
         ).thenApply { generated ->
             diagnostics.record(
                 "cloud_model.generate.complete",
@@ -834,6 +839,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         projectId: String,
         conversationId: String?,
         localConversationId: String = "local-project:$projectId",
+        cloudHistory: CloudModelHistory? = null,
     ): CompletableFuture<TextTurnResult> {
         val normalizedProjectId = projectId.trim()
         require(normalizedProjectId.isNotEmpty()) { "Project id is required" }
@@ -850,7 +856,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
             RuntimeMode.Local -> submitLocalText(text, localConversationId)
             RuntimeMode.Remote -> when {
                 remoteConnected -> submitRemoteText(text, conversationId)
-                cloudEnabled -> submitCloudModelText(text, localConversationId)
+                cloudEnabled -> submitCloudModelText(text, localConversationId, cloudHistory)
                 else -> {
                     val failure = RemoteUnavailableException()
                     recordRemotePreconditionFailure(failure)

@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import ai.zara.app.conversations.cloudModelHistory
+
 import ai.zara.app.assistant.AssistantLifecycleFence
 import ai.zara.app.assistant.LocalAssistantVoiceController
 import ai.zara.app.auth.PairingProgress
@@ -342,6 +344,7 @@ class MainActivity : ComponentActivity() {
                                         appSession.submitText(
                                             text = text,
                                             localConversationId = conversation.localConversationId,
+                                            cloudHistory = checkNotNull(conversationStore.state().conversation(conversationId)).cloudModelHistory(),
                                             remoteConversationId = conversation.remoteConversationId,
                                         )
                                     } else {
@@ -350,6 +353,7 @@ class MainActivity : ComponentActivity() {
                                             projectId = project.id,
                                             conversationId = conversation.remoteConversationId,
                                             localConversationId = conversation.localConversationId,
+                                            cloudHistory = checkNotNull(conversationStore.state().conversation(conversationId)).cloudModelHistory(),
                                         )
                                     }
                                 },
