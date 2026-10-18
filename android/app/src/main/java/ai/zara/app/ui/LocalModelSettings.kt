@@ -1,6 +1,7 @@
 package ai.zara.app.ui
 
 import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalAiPhase
 import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelQuantization
 import ai.zara.app.localai.LocalModelSpec
@@ -58,7 +59,7 @@ internal fun LocalModelSettingsCard(
     SectionCard("LOCAL LANGUAGE MODEL") {
         KeyValueRow("state", state.phase.name.lowercase())
         KeyValueRow(
-            "active",
+            "selected",
             state.model?.let { "${it.id}@${it.version}" } ?: "none",
         )
         state.model?.let { active ->
@@ -81,6 +82,7 @@ internal fun LocalModelSettingsCard(
                 LocalModelRow(
                     model = model,
                     active = state.model?.let { it.id == model.id && it.version == model.version } == true,
+                    phase = state.phase,
                     busy = busy,
                     onSelect = onSelect,
                 )
@@ -192,6 +194,7 @@ internal fun LocalModelSettingsCard(
 private fun LocalModelRow(
     model: LocalModelSpec,
     active: Boolean,
+    phase: LocalAiPhase,
     busy: Boolean,
     onSelect: (String, String) -> Unit,
 ) {
@@ -220,11 +223,22 @@ private fun LocalModelRow(
                 )
             }
             SecondaryAction(
-                label = if (active) "Active" else "Use",
+                label = localModelActionLabel(phase, active),
                 enabled = !active && !busy,
             ) {
                 onSelect(model.id, model.version)
             }
         }
+    }
+}
+
+internal fun localModelActionLabel(phase: LocalAiPhase, selected: Boolean): String {
+    if (!selected) return "Use"
+    return when (phase) {
+        LocalAiPhase.LOADING -> "Loading…"
+        LocalAiPhase.READY -> "Active"
+        LocalAiPhase.GENERATING -> "Responding…"
+        LocalAiPhase.FAILED -> "Failed"
+        LocalAiPhase.STOPPED -> "Use"
     }
 }
