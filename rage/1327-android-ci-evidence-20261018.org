@@ -23,3 +23,10 @@ GREEN: 16 tests in test_android_three_menu_device_acceptance.py,
 test_android_remote_acceptance_packaging.py, and
 test_android_symbolic_migration_device_gate.py. git diff --check passes.
 Paid provider verification remains manual/release-only, not a merge gate.
+
+* Cold Nix setup failure
+Run 39147143311 job 117733175777 failed before Gradle/emulator: the
+60-second fixture deadline elapsed while Nix was still downloading/building
+the root Python environment. Prepare that environment synchronously before
+launching the fixture; retain its existing readiness deadline. The ordering
+regression failed before this change and passes afterward.

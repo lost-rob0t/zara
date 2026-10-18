@@ -41,3 +41,13 @@ def test_stock_fixture_traces_every_canonical_runtime_event() -> None:
 
     assert fixture.count('self.bus.publish(\n                events.') == len(expected)
     assert fixture.count('_trace("runtime.event", "published:') == len(expected)
+
+
+def test_fixture_readiness_deadline_excludes_nix_environment_build() -> None:
+    for path in (Path("scripts/test-android.sh"), EMULATOR_GATE):
+        gate = path.read_text()
+        prepare = gate.index('nix develop "$repo_root" -c true')
+        launch = gate.index('nix develop "$repo_root" -c env')
+        deadline = gate.index('for _ in $(seq 1 1200)')
+        assert prepare < launch < deadline
+        assert 'sleep 0.05' in gate[deadline:]
