@@ -20,6 +20,7 @@ from zara.actors import (
     TurnStartedReply,
 )
 from zara.latency import JSONLMetricsSink, LatencyTrace, metrics_path
+from zara.context import validate_context_reference
 from zara.plugins.api import RuntimeStatus
 from zara.plugins.manager import PluginDiagnostic, PluginManager, PluginState
 
@@ -27,12 +28,16 @@ from . import bridge, events
 from .backend import AgentRuntimeBackend, RuntimeBackend, RuntimeTurnResult, UnsupportedRuntimeCommand
 from .clarification import ClarificationCoordinator, SessionCloseReason
 from .commands import (
+    AcquireTextContext,
     ApproveTool,
     CancelTurn,
     CommandReceipt,
+    ContextAcquiredReceipt,
+    ContextRevokedReceipt,
     MuteSpeech,
     PrologQueryReceipt,
     RejectTool,
+    RevokeTextContext,
     RestartRuntime,
     RuntimeCommand,
     RunPrologQuery,
@@ -778,8 +783,36 @@ class RuntimeHost:
             if not future.done():
                 future.set_exception(error)
 
+    def _update_text_context(
+        self, command: AcquireTextContext | RevokeTextContext,
+    ) -> CommandReceipt:
+        if self.state is not RuntimeHostState.RUNNING:
+            raise RuntimeNotReady("runtime is not ready for context acquisition")
+        backend = self._require_backend()
+        if isinstance(command, AcquireTextContext):
+            reference = backend.acquire_text_context(
+                command.text, conversation_id=command.conversation_id,
+                display_name=command.display_name, sensitivity=command.sensitivity,
+            )
+            if not isinstance(reference, str) or not reference.startswith("ctx-") or len(reference) > 128:
+                raise RuntimeHostError("runtime backend returned an invalid context reference")
+            validate_context_reference(reference, command.conversation_id)
+            return ContextAcquiredReceipt(
+                request_id=command.request_id, detail="context acquired",
+                context_id=reference, conversation_id=command.conversation_id,
+            )
+        revoked = backend.revoke_text_context(command.context_id, conversation_id=command.conversation_id)
+        if type(revoked) is not bool:
+            raise RuntimeHostError("runtime backend returned an invalid context revocation")
+        return ContextRevokedReceipt(
+            request_id=command.request_id, detail="context revocation checked",
+            context_id=command.context_id, revoked=revoked,
+        )
+
     async def _dispatch(self, command: RuntimeCommand) -> CommandReceipt:
         try:
+            if isinstance(command, (AcquireTextContext, RevokeTextContext)):
+                return self._update_text_context(command)
             if isinstance(command, SubmitTurn):
                 return await self._submit_turn(command)
             if isinstance(command, CancelTurn):
@@ -815,12 +848,16 @@ class RuntimeHost:
                 return await self._shutdown(command)
             raise TypeError(f"unsupported runtime command type: {type(command).__name__}")
         except UnsupportedRuntimeCommand:
+            if isinstance(command, (AcquireTextContext, RevokeTextContext)):
+                raise UnsupportedRuntimeCommand("text context is unavailable in this runtime backend") from None
             raise
         except Exception as error:
             if not isinstance(command, SubmitTurn):
                 reason = str(error)
                 if isinstance(command, RunPrologQuery):
                     reason = "Prolog query failed"
+                if isinstance(command, (AcquireTextContext, RevokeTextContext)):
+                    reason = "Text context update failed. Check input limits and runtime state."
                 self._publisher(
                     events.RuntimeError(
                         reason=reason,
@@ -828,6 +865,8 @@ class RuntimeHost:
                         label=type(command).__name__,
                     )
                 )
+                if isinstance(command, (AcquireTextContext, RevokeTextContext)):
+                    raise RuntimeHostError(reason) from None
             raise
 
     async def _submit_turn(self, command: SubmitTurn) -> CommandReceipt:

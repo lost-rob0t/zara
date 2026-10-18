@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 from .. import command_gate
-from ..context import ContextAttachmentStore
+from ..context import ContextAttachmentStore, ContextAttachmentScope, ContextSensitivity, validate_context_acquisition
+from ..principals import PrincipalContext
 from ..latency import LatencyTrace
 from . import events
 
@@ -160,6 +161,15 @@ class RuntimeBackend:
     async def bind_memory_provider(self, provider) -> None:
         raise UnsupportedRuntimeCommand("plugin memory is not available in this runtime backend")
 
+    def acquire_text_context(
+        self, text: str, *, conversation_id: str, display_name: str,
+        sensitivity: ContextSensitivity,
+    ) -> str:
+        raise UnsupportedRuntimeCommand("text context acquisition is not available in this runtime backend")
+
+    def revoke_text_context(self, context_id: str, *, conversation_id: str) -> bool:
+        raise UnsupportedRuntimeCommand("text context revocation is not available in this runtime backend")
+
 
 class LangGraphRuntimeBackend(RuntimeBackend):
     """Thin adapter over Zara's existing :class:`AgentManager`."""
@@ -210,7 +220,7 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         if self._manager_factory is None:
             from zara.agent import AgentManager
 
-            self._manager_factory = AgentManager
+            self._manager_factory = lambda: AgentManager(principal=PrincipalContext.local_owner())
         manager = self._manager_factory()
         if self._attachment_store is not None:
             try:
@@ -239,6 +249,37 @@ class LangGraphRuntimeBackend(RuntimeBackend):
     def bind_context_summary_work(self, work=None):
         binder = getattr(self._manager, "bind_context_summary_work", None)
         return binder(work) if callable(binder) else work
+
+    def _context_acquisition_store(self) -> ContextAttachmentStore:
+        manager = self._manager
+        if manager is None:
+            raise RuntimeError("runtime backend is not started")
+        principal = getattr(manager, "principal", None)
+        if not isinstance(principal, PrincipalContext):
+            raise ValueError("context acquisition requires a canonical runtime principal")
+        store = self._attachment_store
+        if store is None:
+            store = ContextAttachmentStore(principal=principal)
+            store.bind_runtime(self._attachment_owner)
+            self._attachment_store = store
+            self._owns_attachment_store = True
+        if store.principal != principal:
+            raise ValueError("context store principal does not match runtime principal")
+        return store
+
+    def acquire_text_context(
+        self, text: str, *, conversation_id: str, display_name: str,
+        sensitivity: ContextSensitivity,
+    ) -> str:
+        validate_context_acquisition(text, conversation_id, display_name, sensitivity)
+        store = self._context_acquisition_store()
+        return store.acquire_text(
+            text, conversation_id=conversation_id, display_name=display_name,
+            sensitivity=sensitivity, scope=ContextAttachmentScope.CONVERSATION,
+        ).id
+
+    def revoke_text_context(self, context_id: str, *, conversation_id: str) -> bool:
+        return self._context_acquisition_store().revoke_conversation(context_id, conversation_id=conversation_id)
 
     async def submit_turn(
         self,
@@ -638,7 +679,7 @@ def create_runtime_backend(config=None, *, semantic_first: bool = False) -> Runt
     def manager_factory():
         from zara.agent import AgentManager
 
-        return AgentManager(config=config)
+        return AgentManager(config=config, principal=PrincipalContext.local_owner())
 
     return LangGraphRuntimeBackend(
         manager_factory,
@@ -690,6 +731,17 @@ class AgentRuntimeBackend(RuntimeBackend):
 
     async def bind_memory_provider(self, provider) -> None:
         await self._delegate.bind_memory_provider(provider)
+
+    def acquire_text_context(
+        self, text: str, *, conversation_id: str, display_name: str,
+        sensitivity: ContextSensitivity,
+    ) -> str:
+        return self._delegate.acquire_text_context(
+            text, conversation_id=conversation_id, display_name=display_name, sensitivity=sensitivity,
+        )
+
+    def revoke_text_context(self, context_id: str, *, conversation_id: str) -> bool:
+        return self._delegate.revoke_text_context(context_id, conversation_id=conversation_id)
 
     async def submit_turn(
         self,

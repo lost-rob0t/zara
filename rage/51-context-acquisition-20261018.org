@@ -1,0 +1,83 @@
+#+title: #51 typed local text acquisition through RuntimeHost
+
+* Iteration 1 — issue #51
+- Immutable start:86220c96ebaac389cb57e1618663da0fe806e8e4, ready #1517.
+  Separate stacked codex/51-context-acquisition branch; preserve existing history.
+  #1515 merge remains pending direct approval; no retry. #1513 remains held.
+- Queue/owner check:#51 and published comment6243339070; #1045 already owns
+  Android explicit composer snapshots, #961/#1478 own extension ABI/projections.
+  GitHub open issue/PR search found no separate typed acquisition owner. Initial
+  search omitted required is:issue/is:pull-request and returned422; corrected
+  searches found the existing #51 stack and retained the other owners.
+- Source research: runtime/commands.py typed receipt API; RuntimeHost submit/
+  _dispatch and lifecycle state gate; backend.py default LangGraph construction
+  and AgentRuntimeBackend facade; context.py's reviewed bounded text owner;
+  QtRuntimeBridge generic future/receipt adapter; protocol_runtime.py's closed
+  wire allowlist, ZmqZaraClient.submit codec and connected-only CLI context_ids.
+- Decision: one small core slice. Add explicit AcquireTextContext/RevokeTextContext
+  commands with bounded private payloads and metadata-only receipts. Lazily
+  instantiate the existing store on the backend's canonical principal when a
+  typed acquisition is requested; default clients need no direct store injection.
+  Existing nonempty IDs without acquisition still reject. Route through the
+  canonical RuntimeHost; no model parsing, tool approvals, file reads, binary
+  extraction, duplicate store, UI renderer, network operation or new dependency.
+- Conversation scope only for pre-submit acquisition; actual TURN IDs are owned
+  by Host and cannot be guessed or rebound. Revoke only conversation snapshots.
+  Existing turn-scoped private APIs retain their exact-turn restrictions.
+- Wire/UI boundary: do not invent implicit ZARA/1 operation aliases or serialize
+  command dataclasses by reflection. Current remote client codec remains closed
+  and must reject these local-only commands until its explicitly authorized
+  protocol/correlation/security integration is implemented. Android composer
+  remains with #1045; no false claim that that integration is finished.
+- Lifecycle: commands are synchronous bounded local mutations on the Host loop;
+  no await while acquiring/revoking. NEW/STARTING/STOPPED/DEGRADED reject under
+  existing admission rules. Stop/restart uses the existing backend unbind/clear;
+  old IDs fail closed. Principal comes from manager, never request metadata.
+- Privacy: command repr and receipts/events/errors omit supplied text and private
+  display name. No content echo in failure messages. Secret payload stays withheld.
+- RED/GREEN criteria: command invalid types/UTF8/limits/private repr; Host acquire
+  -> SubmitTurn -> model -> transient-only history -> revoke; facade/default store
+  creation; missing canonical identity; foreign conversation and TURN IDs cannot
+  be revoked; quota/expiry/restart; unsupported backend/codec; lifecycle refusal;
+  repeated explicit references, secret withholding and no provider call on acquire.
+- Full gate: focused/adjacent/context tests, installed packaging, all three Nix
+  commands and complete exact-head CI; independent review before completion.
+
+* Evidence
+- Research/owner boundary does not consume #654 yet: #51's durable rehydration,
+  memory advice reconciliation and typed UI/Compact/skill projections remain.
+- Primary upstream check: https://docs.python.org/3/library/concurrent.futures.html
+  (Future.cancel/result): cancelling/timing out a future does not retract an
+  already completed mutation. Local commands commit synchronously on Host loop;
+  no external actions occur. Unknown-result retries/remote idempotency must be
+  specified at the future wire boundary, not inferred from display receipts.
+- RED: new tests fail importing missing AcquireTextContext; initial GREEN25 pass.
+- Independent preliminary review found private backend exception bodies entering
+  RuntimeError subscriber events. Further analysis showed Qt future failures
+  also expose str(error), including UnsupportedRuntimeCommand. RED8 failures
+  covered error privacy in both channels, invalid backend reference encoding,
+  and missing canonical local principal in default factory creation.
+- Fix generic public events AND future errors with suppressed exception chains
+  for private command failures; unsupported capability errors stay typed but
+  payload-free. Backend-returned reference/boolean receipts validate explicitly.
+- Trusted local factory closure now passes PrincipalContext.local_owner only
+  when constructing its own AgentManager. ServerCore's authenticated manager
+  factory remains unchanged; caller-provided manager with principal=None still
+  fails closed. Test canonical/default-direct/facade paths and foreign rebinding.
+- Shared bounded text/identity validators avoid drift; conversation-only revoke
+  cannot revoke a guessed TURN reference. Refactor dispatch to one bounded
+  synchronous helper under green tests; no new async queue or generation owner.
+- Focused+adjacent167 passed before added default-factory variants and boundary
+  cases; subsequent broader760 passed with34 existing warnings. Context-specific
+ 43 tests passed after refactor; later lifecycle/boundary additions still gating.
+- Mandatory local Nix commands all attempted, exit127:no nix. No claim of local
+  full Nix/Android execution; full exact-head CI remains mandatory.
+- Final candidate:48 new acquisition tests,111 acquisition/store/backend focused
+  tests passed; existing text owner247 statements/76 branches100% covered without
+  exclusions. Added lifecycle race fixture proves an admitted private command
+  cannot mutate while restart is STARTING; all waits bounded and released.
+- Expanded final adjacent suite765 passed,34 existing warnings; context script192
+  passed,seven existing warnings. Whitespace/Python compilation passed. Logs:
+  /workspace/scratch/zara-51-evidence/acquisition-{coverage,broad-final,context-final}.log.
+- Preliminary independent re-review:111 tests passed, original privacyrepro now
+  generic, no remaining blockers; final immutable-head review and CI still gate.
