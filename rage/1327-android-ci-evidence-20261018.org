@@ -29,3 +29,14 @@ Run 39147143311 job 117733175777 failed before Gradle/emulator: the
 the root Python environment. Prepare that environment synchronously before
 launching the fixture; retain its existing readiness deadline. The ordering
 regression failed before this change and passes afterward.
+
+* Bulk evidence transfer falsified; bounded verified transfer
+Runs 39149067672 and 39149082091 still lost ADB at adb pull of the
+complete log dump. Device-file capture alone did not solve the disconnect.
+Artifact 12144618322 proves both hello modes and the remote reply passed;
+the viewport repair is confirmed. The remaining failure is evidence transfer.
+Read the entire fixed dump in 64-KiB binary chunks and require exact device
+size plus SHA-256. Never truncate or reconnect/retry away a failure. Nine
+new tests cover many chunks, invalid sizes/digests, truncation, corruption,
+and transport failure. Preserve host transport traces and both ADB versions
+for the next installed run. Underlying disconnect cause remains unproven.

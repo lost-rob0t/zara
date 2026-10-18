@@ -20,6 +20,17 @@ instrumentation_log="$evidence_dir/connected-debug-android-test.log"
 mkdir -p "$evidence_dir"
 printf 'source_sha=%s\nserial=%s\n' "$source_sha" "$serial" > "$evidence_dir/run-context.txt"
 
+collect_adb_host_logs() {
+  local log
+  for log in "${TMPDIR:-/tmp}"/adb.*.log /tmp/adb.*.log; do
+    if [[ -f "$log" ]]; then
+      cp "$log" "$evidence_dir/host-$(basename "$log")" || true
+    fi
+  done
+}
+trap collect_adb_host_logs EXIT
+{ command -v adb; adb version; } > "$evidence_dir/host-adb-version.txt"
+
 copy_connected_test_diagnostics() {
   local diagnostics_dir="$evidence_dir/instrumentation"
   local reports="android/app/build/reports/androidTests/connected"
@@ -139,6 +150,7 @@ exec 9<>"$interop_control"
 
 cleanup_remote_acceptance() {
   status=$?
+  collect_adb_host_logs
   mkdir -p "$evidence_dir"
   if [[ -f "$interop_log" ]]; then
     cp "$interop_log" "$evidence_dir/remote-stock-server.log" || true
@@ -158,6 +170,7 @@ cleanup_remote_acceptance() {
 trap cleanup_remote_acceptance EXIT
 
 nix develop "$repo_root" -c true
+nix develop "$repo_root" -c adb version > "$evidence_dir/nix-adb-version.txt"
 
 nix develop "$repo_root" -c env \
   PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
@@ -239,6 +252,7 @@ recovery_reverse_port=""
 
 cleanup_recovery_acceptance() {
   status=$?
+  collect_adb_host_logs
   mkdir -p android/app/build/reports/device
   if [[ -f "$recovery_log" ]]; then
     cp "$recovery_log" android/app/build/reports/device/remote-recovery-fixture.log || true

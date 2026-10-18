@@ -20,6 +20,26 @@ UI_DUMP_ATTEMPTS = 3
 UI_DUMP_RETRY_DELAY_SECONDS = 0.2
 
 
+def read_device_file(device: Device, path: str) -> bytes:
+    size = int(device.adb("shell", "stat", "-c", "%s", path).strip())
+    if not 0 < size <= 16 * 1024 * 1024:
+        raise AssertionError("Device evidence file size is empty or exceeds the transfer bound")
+    digest = device.adb("shell", "sha256sum", path).split()[0]
+    if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise AssertionError("Device evidence SHA-256 is invalid")
+    chunk_size = 65536
+    data = bytearray()
+    for offset in range(0, size, chunk_size):
+        chunk = device.adb("exec-out", "dd", f"if={path}", f"bs={chunk_size}",
+                           f"skip={offset // chunk_size}", "count=1", "status=none", binary=True)
+        if len(chunk) != min(chunk_size, size - offset):
+            raise AssertionError("Device evidence transfer returned an incomplete chunk")
+        data.extend(chunk)
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise AssertionError("Device evidence transfer SHA-256 mismatch")
+    return bytes(data)
+
+
 def verified_source_sha(claimed_source_sha: str | None) -> str:
     actual_source_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"],

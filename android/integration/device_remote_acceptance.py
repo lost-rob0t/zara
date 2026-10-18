@@ -11,7 +11,7 @@ import re
 import socket
 import time
 
-from device_acceptance import Device, open_menu, scroll_chat_to_bottom
+from device_acceptance import Device, open_menu, read_device_file, scroll_chat_to_bottom
 from zara.security_admin import SecurityAdminClient
 from zmq.utils import z85
 
@@ -159,8 +159,9 @@ def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
         path.unlink(missing_ok=True)
         device.adb("shell", "rm", "-f", DEVICE_LOGCAT_PATH)
         device.adb("shell", "logcat", "-d", "-b", "main", "-b", "system", "-b", "crash", "-f", DEVICE_LOGCAT_PATH)
-        device.adb("pull", DEVICE_LOGCAT_PATH, str(path))
-        logcat = path.read_text(encoding="utf-8")
+        data = read_device_file(device, DEVICE_LOGCAT_PATH)
+        path.write_bytes(data)
+        logcat = data.decode("utf-8")
         if not logcat.strip():
             raise AssertionError("Device logcat dump is empty")
         evidence["logcat_pid_filtered"] = False
