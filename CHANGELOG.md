@@ -11,6 +11,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android acceptance checks scroll to the latest remote reply and retain full device log dumps, including crashes in the voice process.
+
 - Android LiteRT-LM retains conversation ownership during native close, preventing unload from racing completion and stale completion from closing a replacement conversation.
 
 - Android Local AI Settings now shows Loading, Responding, or Failed for the selected model instead of calling it Active before it is ready.

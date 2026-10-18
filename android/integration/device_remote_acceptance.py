@@ -11,22 +11,25 @@ import re
 import socket
 import time
 
-from device_acceptance import Device, open_menu
+from device_acceptance import Device, open_menu, scroll_chat_to_bottom
 from zara.security_admin import SecurityAdminClient
 from zmq.utils import z85
 
 
 APP_PACKAGE = "ai.zara.app"
+DEVICE_LOGCAT_PATH = "/data/local/tmp/zara-acceptance-logcat.log"
 APP_DIAGNOSTICS_PATH = "no_backup/zara/diagnostics/local-runtime.log"
 _FATAL_LOG_MARKERS = (
     "FATAL EXCEPTION",
     "ANR in ai.zara.app",
     "Process: ai.zara.app, PID:",
+    "Process: ai.zara.app:voice, PID:",
 )
 
 _APP_SCOPED_FATAL_LOG_MARKERS = (
     "ANR in ai.zara.app",
     "Process: ai.zara.app, PID:",
+    "Process: ai.zara.app:voice, PID:",
 )
 
 
@@ -152,27 +155,24 @@ def collect_app_diagnostics(device: Device, output: Path) -> dict[str, object]:
         evidence["app_diagnostics_failure"] = str(error)
 
     try:
-        try:
-            pid = device.adb("shell", "pidof", APP_PACKAGE).strip()
-            if not re.fullmatch(r"\d+", pid):
-                raise AssertionError(f"Zara app pid is unavailable: {pid!r}")
-            logcat = device.adb("shell", "logcat", "-d", "--pid", pid, "-v", "threadtime")
-            evidence["logcat_pid_filtered"] = True
-        except Exception:
-            logcat = device.adb("shell", "logcat", "-d", "-v", "threadtime")
-            evidence["logcat_pid_filtered"] = False
         path = output / "remote-logcat.log"
-        path.write_text(logcat, encoding="utf-8")
+        path.unlink(missing_ok=True)
+        device.adb("shell", "rm", "-f", DEVICE_LOGCAT_PATH)
+        device.adb("shell", "logcat", "-d", "-b", "main", "-b", "system", "-b", "crash", "-f", DEVICE_LOGCAT_PATH)
+        device.adb("pull", DEVICE_LOGCAT_PATH, str(path))
+        logcat = path.read_text(encoding="utf-8")
+        if not logcat.strip():
+            raise AssertionError("Device logcat dump is empty")
+        evidence["logcat_pid_filtered"] = False
         evidence["logcat"] = path.name
-        markers = (
-            _FATAL_LOG_MARKERS
-            if evidence.get("logcat_pid_filtered") is True
-            else _APP_SCOPED_FATAL_LOG_MARKERS
-        )
-        fatal_markers = [marker for marker in markers if marker in logcat]
-        evidence["fatal_log_markers"] = fatal_markers
+        evidence["fatal_log_markers"] = [marker for marker in _APP_SCOPED_FATAL_LOG_MARKERS if marker in logcat]
     except Exception as error:
         evidence["logcat_failure"] = str(error)
+    finally:
+        try:
+            device.adb("shell", "rm", "-f", DEVICE_LOGCAT_PATH)
+        except Exception as error:
+            evidence["logcat_cleanup_failure"] = str(error)
     return evidence
 
 
@@ -259,6 +259,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.press_back()
     device.tap("↑")
     signal_turn_acceptance(fixture)
+    scroll_chat_to_bottom(device)
     device.await_contains("stock server response", timeout=20.0)
     device.await_contains("REMOTE", timeout=5.0)
     device.capture("remote-text-turn")
@@ -320,6 +321,8 @@ def main() -> None:
         result.update(collect_app_diagnostics(device, args.output))
         try:
             device.adb("shell", "am", "force-stop", APP_PACKAGE)
+        except Exception as error:
+            result["force_stop_failure"] = str(error)
         finally:
             (args.output / "remote-manifest.json").write_text(
                 json.dumps(result, indent=2) + "\n",
