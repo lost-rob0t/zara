@@ -11,13 +11,31 @@ import com.google.ai.edge.litertlm.LogSeverity
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import java.io.File
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+
+internal fun dispatchLiteRtCompletion(
+    terminal: AtomicBoolean,
+    closeExecutor: Executor,
+    finish: () -> Unit,
+    notify: () -> Unit,
+) {
+    if (!terminal.compareAndSet(false, true)) return
+    closeExecutor.execute {
+        finish()
+        notify()
+    }
+}
 
 class LiteRtLocalLlmBackend(
     context: Context,
 ) : LocalLlmBackend {
     private val appContext = context.applicationContext
     private val cacheDirectory = File(appContext.cacheDir, "zara/litertlm")
+    private val completionExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "zara-litert-completion").apply { isDaemon = true }
+    }
 
     @Volatile
     private var engine: Engine? = null
@@ -91,15 +109,15 @@ class LiteRtLocalLlmBackend(
                     }
 
                     override fun onDone() {
-                        if (!terminal.compareAndSet(false, true)) return
-                        finishConversation(conversation)
-                        listener.onDone()
+                        dispatchLiteRtCompletion(terminal, completionExecutor, {
+                            finishConversation(conversation)
+                        }, listener::onDone)
                     }
 
                     override fun onError(throwable: Throwable) {
-                        if (!terminal.compareAndSet(false, true)) return
-                        finishConversation(conversation)
-                        listener.onError(throwable)
+                        dispatchLiteRtCompletion(terminal, completionExecutor, {
+                            finishConversation(conversation)
+                        }) { listener.onError(throwable) }
                     }
                 },
                 maxOutputToken = request.maxOutputTokens,
@@ -123,6 +141,7 @@ class LiteRtLocalLlmBackend(
 
     override fun close() {
         unload()
+        completionExecutor.shutdown()
     }
 
     private fun finishConversation(conversation: Conversation) {

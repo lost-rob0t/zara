@@ -1,0 +1,12 @@
+android_local_ai_backend(litert_lm, 'android/app/src/main/java/ai/zara/app/localai/LiteRtLocalLlmBackend.kt').
+android_local_ai_thread(callback_pool, lite_rt_terminal_callback).
+android_local_ai_thread(completion_executor, native_conversation_close).
+android_local_ai_order(native_conversation_close, runtime_terminal_notification).
+android_local_ai_failure(callback_pool_deadline_exceeded, native_conversation_close_on_callback_pool).
+android_local_ai_invariant(native_conversation_close, off_callback_pool).
+android_local_ai_acceptance(real_model, installed_sha256_and_offline_generated_text).
+android_local_ai_ui(selected_model, distinct_from_ready_model).
+android_local_ai_ui_label(loading, 'Loading…').
+android_local_ai_ui_label(ready, 'Active').
+android_local_ai_ui_label(generating, 'Responding…').
+android_local_ai_ui_label(failed, 'Failed').

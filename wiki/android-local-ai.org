@@ -72,6 +72,8 @@ Unknown format or quantization is rejected. Zara never guesses either from a fil
 
 Every install gets a catalog sidecar in app-private storage. The active manifest is only the current selection pointer; switching models does not delete the other verified model files or metadata.
 
+Settings identifies the selected model separately from runtime readiness. Its action label follows the current =loading=, =ready=, =generating=, or =failed= phase, so selection alone does not imply a usable model.
+
 The initial practical real-device lane is a small explicitly quantized =.litertlm= model, such as the Gemma 3 1B IT dynamic-int4 class where its model license is accepted. CI uses fake backends and does not download a large model.
 
 * Routing
@@ -112,6 +114,7 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 - Provider capabilities are explicit; Zara does not claim an engine can execute a format it cannot.
 - No network fallback occurs merely because local inference fails.
 - One actor owns model load/generate/unload ordering.
+- LiteRT-LM terminal callbacks release the native conversation off the callback pool before the actor accepts another turn.
 - Provider selection never grants model output device-action authority.
 - A cancelled LiteRT-LM conversation is discarded rather than reused.
 - Activity recreation does not create another model owner.
