@@ -22,6 +22,7 @@ AUDIO_INPUT_FRAME_SAMPLES = 512
 AUDIO_INPUT_FRAME_BYTES = AUDIO_INPUT_FRAME_SAMPLES * 2
 AUDIO_OUTPUT_CONTENT_TYPE = "audio/pcm;codec=pcm_s16le"
 AUDIO_OUTPUT_CODEC = "pcm_s16le"
+MAX_CONTEXT_WIRE_TEXT_BYTES = 8192
 
 CLIENT_MESSAGE_TYPES = frozenset(
     {
@@ -34,6 +35,8 @@ CLIENT_MESSAGE_TYPES = frozenset(
         "tool.approve",
         "tool.reject",
         "prolog.query",
+        "context.text.acquire",
+        "context.text.revoke",
         "capability.snapshot",
         "device.action.accepted",
         "device.action.result",
@@ -55,6 +58,8 @@ SERVER_MESSAGE_TYPES = frozenset(
         "tool.approve.accepted",
         "tool.reject.accepted",
         "prolog.query.completed",
+        "context.text.acquired",
+        "context.text.revoked",
         "tool.queued",
         "tool.waiting",
         "tool.started",
@@ -492,7 +497,11 @@ def _validate_visible_stt_envelope(message: ProtocolMessage) -> None:
 def _bounded_safe_text(name: str, value: Any, *, max_bytes: int) -> str:
     if not isinstance(value, str):
         raise ProtocolValidationError(f"{name} must be a string")
-    if len(value.encode("utf-8")) > max_bytes:
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeError:
+        raise ProtocolValidationError(f"{name} must contain valid UTF-8") from None
+    if size > max_bytes:
         raise ProtocolValidationError(f"{name} exceeds byte limit")
     if any(ord(character) < 0x20 or ord(character) == 0x7F for character in value):
         raise ProtocolValidationError(f"{name} contains control characters")
@@ -597,6 +606,48 @@ def _validate_capability_snapshot(body: Mapping[str, Any]) -> None:
         if capability in seen:
             raise ProtocolValidationError("duplicate device capability")
         seen.add(capability)
+
+
+def _validate_context_envelope(message: ProtocolMessage) -> None:
+    if message.type not in {
+        "context.text.acquire", "context.text.revoke",
+        "context.text.acquired", "context.text.revoked",
+    }:
+        return
+    response = message.type in {"context.text.acquired", "context.text.revoked"}
+    if (message.session_id is None or message.conversation_id is None
+            or (message.reply_to is not None) != response):
+        raise ProtocolValidationError("context message requires session and conversation correlation")
+    if (any(value is not None for value in (
+            message.turn_id, message.stream_id, message.seq, message.trace_id, message.content_type,
+        )) or message.flags or message.payload_count != 0):
+        raise ProtocolValidationError("context message has invalid fields")
+    body = dict(message.body or {})
+    expected = {
+        "context.text.acquire": {"text", "display_name", "sensitivity"},
+        "context.text.revoke": {"context_id"},
+        "context.text.acquired": {"context_id"},
+        "context.text.revoked": {"context_id", "revoked"},
+    }[message.type]
+    if set(body) != expected:
+        raise ProtocolValidationError("context message body has invalid fields")
+    if message.type == "context.text.acquire":
+        text = body["text"]
+        try:
+            valid = isinstance(text, str) and bool(text.strip()) and len(text.encode("utf-8")) <= MAX_CONTEXT_WIRE_TEXT_BYTES
+        except UnicodeError:
+            valid = False
+        if not valid:
+            raise ProtocolValidationError("context text must contain 1..8192 UTF-8 bytes")
+        name = _bounded_safe_text("context display name", body["display_name"], max_bytes=256)
+        if not name or name.strip() != name or body["sensitivity"] not in ("public", "private", "secret"):
+            raise ProtocolValidationError("context metadata is invalid")
+    else:
+        reference = _bounded_safe_text("context reference", body["context_id"], max_bytes=128)
+        if not reference or reference.strip() != reference:
+            raise ProtocolValidationError("context reference is invalid")
+    if message.type == "context.text.revoked" and type(body["revoked"]) is not bool:
+        raise ProtocolValidationError("context revoked must be boolean")
 
 
 def _validate_prolog_envelope(message: ProtocolMessage) -> None:
@@ -830,6 +881,7 @@ def _message_from_mapping(data: Mapping[str, Any], limits: ProtocolLimits) -> Pr
     _validate_visible_stt_envelope(message)
     _validate_tool_envelope(message)
     _validate_prolog_envelope(message)
+    _validate_context_envelope(message)
     _validate_device_envelope(message)
     return message
 
