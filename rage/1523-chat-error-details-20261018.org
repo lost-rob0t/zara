@@ -136,3 +136,34 @@ Minimal harnessrepair exception toordinaryRED-first: thisenvironment lacks
 actualtestAPK/SDK/emulator, so no inventedmock manifestproof; officialplatform
 contract and shell/Pythonadjacentchecks justifyrepair, actualCIstillrequired.
 No installedclipboard acceptanceclaimedfromprevioushead.
+
+* Uploaded evidence / recovery driver reachability iteration
+User supplied android-ui-evidence.zip via Library libfile_6187c454ab888191a9caf1450df29da4.
+Parent successfully materialized and reported remote-app-diagnostics.log:
+19:11:20.914586 local submission, explicit_query;19:11:20.939355
+local_server.query.complete terms=1;19:11:20.940769 local_symbolic.complete
+terms=1. This contradicts treating the timeout as provenPrologrecoveryfailure.
+Parent reports visible_device_text includes initialhistory/error/recoveryquery,
+but notexpectedreply. No laterchatfailure evidencewasreported.
+Selectedcontainer stillcannot materialize evenuserupload: prepare_materialize
+returns signedtransferURL and no workspace_path; normalreadreturnsCONNECT403.
+Do notbypassproxy orclaimfullarchive/screenshot/logcatreview here.
+Source mapping: localPrologTurn joins returnedterms into successfulTextTurnResult;
+MainActivity completes samependingturn; ChatSurface renders allpersistedturns
+in rememberScrollState verticalScroll without auto-scroll. Driverawait_contains
+onlychecks currentlyvisiblenodes. Longretainederror pushesnewassistantresponse
+belowviewport: reachability is a concreteharnessgap, viewportcause remainsan
+inference until acceptance/screenshotconfirmation.
+Design: reuseexistingbounded bidirectionalscroll reveal helper forsubstring
+response. Keep exactexpectedmarker absentfromquery, samepayload retention,
+restoration and instrumentedlast.success/exactclipboardchecks. A backend/log
+completion alone mustnever passacceptance. Missingrenderedresponse mustfail
+afterboundedscroll. RED2 missingreveal_contains while4existingUIAutomator tests
+pass. Add driverreachability, notruntimepolicychange or weakenedassertion.
+GREEN: focused pytest suite 18 passed (chat error acceptance, UIAutomator,
+three-menu device acceptance, remote acceptance packaging); py_compile and
+ git diff --check passed. Full Nix gate attempted: nix unavailable (127).
+Independent reviewer found no blockers; independently ran 4 helper tests and
+Python compilation. Supported Library transfer helper also failed download;
+full uploaded screenshot/logcat inspection remains unavailable here. Exact-head
+Android CI, persisted restoration and actual clipboard acceptance remain required.

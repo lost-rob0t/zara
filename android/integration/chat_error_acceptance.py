@@ -57,6 +57,7 @@ def exercise_chat_error(device: Device, type_text) -> dict[str, object]:
     type_text(device, '?- atom_concat(zara_error_, recovery_1523, Result).')
     device.press_back()
     device.tap('↑')
+    device.reveal_contains('zara_error_recovery_1523')
     device.await_contains('zara_error_recovery_1523')
     if read_saved_error(device) != original:
         raise AssertionError('Later success or diagnostics clearing replaced saved error details')
