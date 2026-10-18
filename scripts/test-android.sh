@@ -34,6 +34,8 @@ cleanup_interop() {
 }
 trap cleanup_interop EXIT
 
+nix develop "$repo_root" -c true
+
 nix develop "$repo_root" -c env \
   PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}" \
   python3 "$repo_root/android/integration/stock_zara_server_fixture.py" \
