@@ -272,6 +272,7 @@ class TurnCoordinator(BoundedActor):
         super().__init__()
         self._turns: dict[str, TurnState] = {}
         self._telemetry_ref = telemetry_ref
+        self._turn_namespace = uuid.uuid4().hex[:12]
         self._turn_counter = 0
 
     def on_start(self) -> None:
@@ -294,7 +295,7 @@ class TurnCoordinator(BoundedActor):
 
     def _handle_start_turn(self) -> TurnStartedReply:
         self._turn_counter += 1
-        turn_id = f"turn-{self._turn_counter:04d}"
+        turn_id = f"turn-{self._turn_namespace}-{self._turn_counter:04d}"
         state = TurnState(turn_id=turn_id, started=True)
         self._turns[turn_id] = state
         logger.info("[TurnCoordinator] started turn %s", turn_id)

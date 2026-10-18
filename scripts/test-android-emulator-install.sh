@@ -8,6 +8,8 @@ cd "$repo_root"
 
 code_apk="android/code-editor/build/outputs/apk/debug/code-editor-debug.apk"
 phone_apk="android/app/build/outputs/apk/debug/app-debug.apk"
+llm_serve_apk="android/llm-serve/build/outputs/apk/debug/llm-serve-debug.apk"
+llm_serve_adversary_apk="android/llm-serve/build/outputs/apk/adversary/llm-serve-adversary.apk"
 trealla_library_root="$repo_root/android/app/build/trealla"
 evidence_dir="android/app/build/reports/device"
 instrumentation_log="$evidence_dir/connected-debug-android-test.log"
@@ -45,6 +47,17 @@ adb -s "$serial" shell pidof ai.zara.code.editor >/dev/null
 adb -s "$serial" shell am force-stop ai.zara.code.editor
 
 adb -s "$serial" install -r "$phone_apk"
+test -f "$llm_serve_apk"
+test -f "$llm_serve_adversary_apk"
+python android/integration/device_local_ai_ipc_acceptance.py \
+  --serial "$serial" \
+  --source-sha "$source_sha" \
+  --phone-apk "$phone_apk" \
+  --llm-serve-apk "$llm_serve_apk" \
+  --adversary-apk "$llm_serve_adversary_apk" \
+  --output "$evidence_dir"
+adb -s "$serial" shell am force-stop ai.zara.llmserve || true
+adb -s "$serial" uninstall ai.zara.llmserve >/dev/null 2>&1 || true
 # GitHub's hosted Pixel image can leave its launcher process in an ANR dialog over
 # an otherwise healthy Zara activity. Quiesce only that OS-owned package before
 # acceptance instead of hiding global error dialogs or masking Zara failures.
@@ -62,24 +75,29 @@ test -f "$trealla_library_root/x86_64/libtrealla.a"
 # :voice MainActivity from the default app process, migrates the legacy toggle,
 # verifies both process declarations resolve one canonical file, and proves an
 # unavailable preference directory returns a typed main-thread failure instead
-# of crashing the process. The v2 fixture proves history plus a new zero-call
-# projection survives migration/reopen. The v3 fixture proves fail-closed policy
-# defaults can be replaced only by authoritative false/0 policy and that
-# REAL/TEXT counter corruption stays rejected after recreation. The legacy-owner
-# fixture proves numeric-UID projection state follows canonical local history to
-# local:owner without losing clarification or zero-call ledgers. The restart
-# fixture proves a recovered streaming turn terminalizes both canonical history
-# and its matching symbolic projection before any late completion/effect
-# callback can land. The verified-outcome v2 fixture proves 80+ verified turns
-# remain bounded at 64 live receipts, survive process recreation, accept fresh
-# evidence, and reject retired/stale replay with exact zero provider/model
-# accounting.
+# of crashing the process. The
+# v2 fixture proves history plus a new zero-call projection survives
+# migration/reopen. The v3 fixture proves fail-closed policy defaults can be
+# replaced only by authoritative false/0 policy and that REAL/TEXT counter
+# corruption stays rejected after recreation. The legacy-owner fixture proves
+# numeric-UID projection state follows canonical local history to local:owner
+# without losing clarification or zero-call ledgers. The restart fixture proves
+# a recovered streaming turn terminalizes both canonical history and its
+# matching symbolic projection before any late completion/effect callback can
+# land. The verified-outcome v2 fixture proves 80+ verified turns remain bounded
+# at 64 live receipts, survive process recreation, accept fresh evidence, and
+# reject retired/stale replay with exact zero provider/model accounting. The
+# edge duplicate-reference fixture proves repeated canonical references remain
+# readable by the edge/Wear projection after process recreation with the same
+# hard-zero provider/model accounting. The expert-evidence fixture proves typed
+# symbolic evidence remains trusted across canonical store recreation while
+# provider-shaped nested metadata fails closed with the same exact-zero ledger.
 set +e
 ANDROID_SERIAL="$serial" ZARA_SOURCE_SHA="$source_sha" \
   ZARA_TREALLA_LIBRARY_ROOT="$trealla_library_root" \
   nix develop ./android -c bash -lc \
   'cd android && gradle :app:connectedDebugAndroidTest --no-daemon \
-    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.ui.LocalEmbeddingPreferenceStoreInstrumentedTest' \
+    -Pandroid.testInstrumentationRunnerArguments.class=ai.zara.app.history.PortableConversationMigrationInstrumentedTest,ai.zara.app.history.PortableConversationV3MigrationInstrumentedTest,ai.zara.app.history.PortableConversationRestartFenceInstrumentedTest,ai.zara.app.history.PortableConversationLegacyPrincipalInstrumentedTest,ai.zara.app.history.SymbolicVerifiedOutcomeV2RestartInstrumentedTest,ai.zara.app.history.SymbolicConversationEdgeDuplicateReferenceInstrumentedTest,ai.zara.app.history.SymbolicExpertEvidenceTrustEnvelopeInstrumentedTest,ai.zara.app.ui.LocalEmbeddingPreferenceStoreInstrumentedTest' \
   2>&1 | tee "$instrumentation_log"
 instrumentation_status=${PIPESTATUS[0]}
 set -e

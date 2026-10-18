@@ -1,0 +1,62 @@
+#+title: Android LLM Serve APK
+
+* What it is
+
+=llm-serve= is a separate Android APK that exposes a small
+Ollama-compatible loopback HTTP surface while delegating local-AI work to
+Zara's canonical on-device runtime.
+
+It is compatibility, not a bundled copy of upstream Ollama. The server binds
+only =127.0.0.1:11434= and implements the subset Zara needs:
+
+- =GET /api/version=
+- =GET /api/tags=
+- =GET /api/ps=
+- =POST /api/chat=
+- =POST /api/generate=
+
+Both buffered JSON and NDJSON streaming are supported for generation.
+
+* Runtime ownership
+
+=llm-serve= is a client of the canonical Zara owner, not a second model/runtime
+owner. It uses =LocalAiRemoteClient= to bind the same-signing-lineage,
+signature-protected IPC facade owned by the Zara app. The canonical
+=LocalModelStore=, =LocalAiRuntime=, and =LiteRtLocalLlmBackend= remain owned by
+Zara =:voice=.
+
+The compatibility APK delegates model list/state, generation, and cancellation
+through that IPC facade. It does not instantiate or own =LocalModelStore=,
+=LocalAiRuntime=, or =LiteRtLocalLlmBackend=, and it does not receive model file
+paths.
+
+Model bytes and the model catalog remain Zara-app-private. Import and
+installation are performed by the canonical Zara owner with SHA-256
+verification and explicit model metadata, including declared quantization.
+Unknown or omitted quantization is not guessed.
+
+* Loopback use
+
+The compatibility endpoint is local to the device at =127.0.0.1:11434=. This
+APK does not own Zara's host/provider routing configuration and does not store
+provider credentials.
+
+* Acceptance boundary
+
+A reachable loopback endpoint, signer/rebind success, model metadata, or runtime
+readiness is not proof that a real local model executed inference. Real selected
+=.litertlm= strict-Local semantic-miss inference with outbound networking
+denied, exact model/backend/quantization identity, and proof that no
+Remote/provider route fired is not yet proven by this release-facing
+documentation.
+
+* Security boundary
+
+- no wildcard/LAN bind;
+- service component is not exported;
+- request body/header/message sizes are bounded;
+- cross-package local-AI IPC is restricted to the approved signing lineage;
+- model bytes and catalog stay in Zara app-private storage;
+- model file paths are not exported to =llm-serve=;
+- model output has no device-action authority;
+- provider/API credentials are not stored by LLM Serve.

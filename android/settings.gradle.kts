@@ -41,3 +41,5 @@ include(":org-graph")
 include(":org-home")
 include(":wear-app")
 include(":wear-voice")
+
+include(":llm-serve")

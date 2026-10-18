@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationStore
 from zara.desktop.conversation.symbolic_runtime import PureSymbolicProjectionAdapter
-from zara.runtime.pure_symbolic_backend import PureSymbolicRuntimeBackend
+from zara.runtime.pure_symbolic_backend import (
+    PURE_SYMBOLIC_RENDER_ERROR,
+    PureSymbolicRuntimeBackend,
+)
+
+
+class RendererGapEngine:
+    """Canonical-engine seam that deterministically simulates a render/query gap."""
+
+    def consult(self, _path: Path) -> None:
+        return None
+
+    def query_once(self, _goal: str):
+        return None
 
 
 @pytest.mark.asyncio
@@ -78,6 +92,99 @@ async def test_pure_symbolic_dialogue_context_survives_backend_restart(tmp_path)
     assert second_projection.max_model_calls == 0
     assert second_projection.provider_calls == 0
     assert second_projection.model_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_renderer_gap_preserves_clarification_context_across_restart(tmp_path) -> None:
+    """A deterministic renderer/query gap must not consume durable conversation context."""
+    store = ConversationStore(DatabaseManager(tmp_path / "symbolic-renderer-gap.db"))
+    conversation = store.create_conversation(
+        "Symbolic renderer gap",
+        conversation_id="conv-symbolic-renderer-gap",
+    )
+    adapter = PureSymbolicProjectionAdapter(store)
+
+    first_backend = PureSymbolicRuntimeBackend(projection_adapter=adapter)
+    await first_backend.start()
+    try:
+        clarification = await first_backend.submit_turn(
+            "timer",
+            turn_id="turn-renderer-gap-1",
+            conversation_id=conversation.id,
+        )
+        assert clarification.response == "How long should I set the timer for?"
+        first_backend.commit_turn_result(
+            clarification,
+            turn_id="turn-renderer-gap-1",
+            conversation_id=conversation.id,
+        )
+    finally:
+        await first_backend.stop()
+
+    before_gap = store.load_symbolic_projection(conversation.id)
+    assert before_gap is not None
+    before_gap.assert_pure_symbolic()
+    prior_context = before_gap.dialogue_state["prolog_context_term"]
+    prior_questions = list(before_gap.unresolved_questions)
+    assert "partial_frame" in prior_context
+    assert prior_questions
+
+    gap_backend = PureSymbolicRuntimeBackend(
+        engine_factory=RendererGapEngine,
+        projection_adapter=adapter,
+    )
+    await gap_backend.start()
+    try:
+        gap = await gap_backend.submit_turn(
+            "5 minutes",
+            turn_id="turn-renderer-gap-2",
+            conversation_id=conversation.id,
+        )
+        assert gap.response == PURE_SYMBOLIC_RENDER_ERROR
+        assert gap.metadata["response_act"] == "error(renderer_unavailable)"
+        assert gap.metadata["providers_enabled"] is False
+        assert gap.metadata["max_provider_calls"] == 0
+        assert gap.metadata["max_model_calls"] == 0
+        assert gap.metadata["provider_calls"] == 0
+        assert gap.metadata["model_calls"] == 0
+        gap_backend.commit_turn_result(
+            gap,
+            turn_id="turn-renderer-gap-2",
+            conversation_id=conversation.id,
+        )
+    finally:
+        await gap_backend.stop()
+
+    after_gap = store.load_symbolic_projection(conversation.id)
+    assert after_gap is not None
+    after_gap.assert_pure_symbolic()
+    assert after_gap.outcome == "error"
+    assert after_gap.dialogue_act == "error"
+    assert after_gap.dialogue_state["prolog_context_term"] == prior_context
+    assert after_gap.unresolved_questions == prior_questions
+    assert after_gap.providers_enabled is False
+    assert after_gap.max_model_calls == 0
+    assert after_gap.provider_calls == 0
+    assert after_gap.model_calls == 0
+
+    restarted_backend = PureSymbolicRuntimeBackend(projection_adapter=adapter)
+    await restarted_backend.start()
+    try:
+        recovered = await restarted_backend.submit_turn(
+            "5 minutes",
+            turn_id="turn-renderer-gap-3",
+            conversation_id=conversation.id,
+        )
+        assert recovered.response == (
+            "That action needs capability-checked execution before I can report success."
+        )
+        assert recovered.metadata["response_act"].startswith("dispatch_required(")
+        assert recovered.metadata["providers_enabled"] is False
+        assert recovered.metadata["max_model_calls"] == 0
+        assert recovered.metadata["provider_calls"] == 0
+        assert recovered.metadata["model_calls"] == 0
+    finally:
+        await restarted_backend.stop()
 
 
 @pytest.mark.asyncio
