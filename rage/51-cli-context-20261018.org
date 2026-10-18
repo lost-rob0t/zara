@@ -75,3 +75,16 @@ rehydration; do not begin #654 or capture.
   Do not mark ready before terminal success; all dependencies stay unmerged.
 - Context script final252 passed,10 existing warnings. Diagnostic logs retained
   under /workspace/scratch/zara-51-evidence/cli-context-*.log.
+* CI fixture portability correction
+Exact head8e91b362 CI39084431432 deep seeds1/31337 each passed3308 tests but
+reported5 newfixture setup errors: Nix pytest temp paths exceeded Unix socket's
+107-byte sun_path cap. Local --basetemp=/tmp/zara-ci-long-temporary-directory-
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa reproduced the failure (RED1error).
+This fixture also startedHost before its cleanup guard, leaving resources alive
+when gateway startup failed. Corrected onlytestfixture: explicit short isolated
+/tmp/zctx-* directory; Host/gateway start inside try/finally; directory removed
+with other resources. No product behavior changed or assertion weakened.
+Re-run long-path61tests, adjacent620/context252; independent review and all
+exact-head CI required again. Earlier green head/review is stale for finalgate.
+- Portability GREEN:61 tests passed with deliberatelylong --basetemp; final620
+  adjacent and252 contextscript pass. Exact-head independent/CI gate pending.

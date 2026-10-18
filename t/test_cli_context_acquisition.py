@@ -77,8 +77,9 @@ def test_cli_accepts_explicit_bounded_stdin_context(monkeypatch):
 
 
 @pytest.fixture
-def live_context_runtime(monkeypatch, tmp_path):
+def live_context_runtime(monkeypatch):
     from types import SimpleNamespace
+    import tempfile
     import zmq
     from zara.runtime.bridge import RuntimeEventBus
     from zara.runtime.host import RuntimeHost
@@ -100,18 +101,20 @@ def live_context_runtime(monkeypatch, tmp_path):
     supervisor = SimpleNamespace(state=ServerState.READY, submit=submit,
         subscribe=lambda principal, **kwargs: bus.subscribe(**kwargs))
     context = zmq.Context()
-    endpoint = f"ipc://{tmp_path}/context.sock"
+    directory = tempfile.TemporaryDirectory(prefix="zctx-", dir="/tmp")
+    endpoint = f"ipc://{directory.name}/context.sock"
     config = TransportConfig(request_timeout=3.0)
     gateway = ZaraZmqGateway(endpoint, supervisor=supervisor, principal=PrincipalContext("owner"), context=context, config=config)
-    host.start().result(timeout=5)
-    gateway.start().result(timeout=5)
     try:
+        host.start().result(timeout=5)
+        gateway.start().result(timeout=5)
         yield SimpleNamespace(endpoint=endpoint, context=context, config=config,
             host=host, manager=manager, memory=memory, llm=llm, commands=commands, backend=backend, gateway=gateway)
     finally:
         gateway.close()
         stop_host(host)
         context.term()
+        directory.cleanup()
 
 
 def test_real_client_acquire_replay_submit_revoke_and_restart(live_context_runtime):
