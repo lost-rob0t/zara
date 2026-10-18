@@ -10,6 +10,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
+from zara.context import (
+    ContextAttachmentError, ContextSensitivity, validate_context_acquisition, validate_context_reference,
+)
 
 MAX_CONTEXT_IDS = 32
 MAX_CONTEXT_ID_CHARS = 128
@@ -60,6 +63,29 @@ class SubmitTurn(RuntimeCommand):
         if not self.text.strip():
             raise ValueError("turn text must not be empty")
         object.__setattr__(self, "context_ids", _normalize_context_ids(self.context_ids))
+
+
+@dataclass(frozen=True, kw_only=True)
+class AcquireTextContext(RuntimeCommand):
+    text: str = field(repr=False)
+    conversation_id: str = field(repr=False)
+    display_name: str = field(default="Context", repr=False)
+    sensitivity: ContextSensitivity = ContextSensitivity.PRIVATE
+
+    def __post_init__(self) -> None:
+        try:
+            validate_context_acquisition(self.text, self.conversation_id, self.display_name, self.sensitivity)
+        except ContextAttachmentError as error:
+            raise ValueError(str(error)) from None
+
+
+@dataclass(frozen=True, kw_only=True)
+class RevokeTextContext(RuntimeCommand):
+    context_id: str
+    conversation_id: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        validate_context_reference(self.context_id, self.conversation_id)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -141,3 +167,15 @@ class CommandReceipt:
 @dataclass(frozen=True)
 class PrologQueryReceipt(CommandReceipt):
     solutions: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class ContextAcquiredReceipt(CommandReceipt):
+    context_id: str = ""
+    conversation_id: str = ""
+
+
+@dataclass(frozen=True)
+class ContextRevokedReceipt(CommandReceipt):
+    context_id: str = ""
+    revoked: bool = False

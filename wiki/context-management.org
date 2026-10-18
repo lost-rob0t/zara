@@ -119,6 +119,61 @@ not register tools, grant permissions, approve actions or execute code.
 
 * Remaining #51 integration
 
+** Typed local acquisition
+
+Local RuntimeHost clients can use =AcquireTextContext(text=..., conversation_id=...)=
+to acquire an already-authorized pasted text snapshot, then pass the returned
+=ContextAcquiredReceipt.context_id= to =SubmitTurn.context_ids=. This operation
+does not invoke a model or execute text. The store is created lazily on the
+backend's canonical principal; clients need no direct store injection. Defaults
+remain the preceding bounded text-owner contract. An explicit reference is
+required for each model turn; acquiring alone never changes active context.
+
+=RevokeTextContext(context_id=..., conversation_id=...)= returns a metadata-only
+=ContextRevokedReceipt.revoked= boolean. Wrong/missing/expired/revoked references
+return false, and conversation revocation cannot remove a TURN snapshot. Stop
+and restart clear the existing owner; stale IDs fail closed. These bounded local
+mutations run on the canonical Host loop with existing lifecycle admission.
+
+Commands validate UTF-8 text and canonical identifiers, max64KiB text, bounded display
+name and typed sensitivity before dispatch. Command repr hides text/private
+display name, receipts contain no supplied content, and acquisition/revocation
+failure events and future errors use generic messages rather than backend error
+payloads. Secret text remains withheld from the model. Validation errors do not
+echo the supplied value. This privacy contract includes the Qt bridge's generic
+future/receipt path; no new UI signal or approval channel is created.
+
+Trusted local default factories now construct AgentManager with the canonical
+=PrincipalContext.local_owner()=, matching the existing memory fallback identity.
+Caller-supplied factories still require an explicit canonical principal for
+acquisition; missing remote/plugin identity is never upgraded to local owner.
+The server's authenticated per-principal manager factory remains authoritative.
+
+This is a local typed API slice. ZARA/1 remains a closed codec and rejects these
+commands; no remote operation, security scope, CLI flag or graphical composer
+control is invented here. #1045 owns Android composer snapshots; #961/#1478 own
+extension presentation. They must consume the typed boundary with explicit
+protocol/authorization integration before claiming remote/composer acquisition.
+No filesystem path/URL reads, binary extraction, persistent attachments or new
+service/runtime/dependency are introduced.
+
+Local client example (the client owns any waits outside the UI thread):
+
+#+begin_src python
+reference = host.submit(AcquireTextContext(
+    text="Pasted reference data", conversation_id="my-chat",
+)).result()
+host.submit(SubmitTurn(text="Summarize the reference", conversation_id="my-chat",
+                     context_ids=(reference.context_id,))).result()
+host.submit(RevokeTextContext(context_id=reference.context_id,
+                             conversation_id="my-chat")).result()
+#+end_src
+
+Cancelling/timing out a future cannot retract a mutation that already completed.
+An unacknowledged local acquisition remains bounded by the same retention/TTL or
+stop cleanup. Remote retry/idempotency semantics must be specified before wire
+or composer integration; a UI must not infer rollback from a cancelled future.
+
 ** Explicit text attachment owner
 
 =zara.context.ContextAttachmentStore(principal=PrincipalContext(...))= is an

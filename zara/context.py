@@ -18,6 +18,9 @@ from typing import Callable, Optional, Sequence
 from .principals import PrincipalContext
 
 
+MAX_CONTEXT_TEXT_BYTES = 64 * 1024
+
+
 class ContextAttachmentError(RuntimeError):
     pass
 
@@ -78,7 +81,38 @@ def _label(value: str, name: str, limit: int) -> str:
     if (not isinstance(value, str) or not value.strip() or len(value) > limit
             or value != value.strip() or any(ord(char) < 32 for char in value)):
         raise ValueError(f"invalid context {name}")
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        raise ValueError(f"invalid context {name}") from None
     return value
+
+
+def validate_context_text(text: str, max_bytes: int = MAX_CONTEXT_TEXT_BYTES) -> int:
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("context text must be nonempty")
+    try:
+        size = len(text.encode("utf-8"))
+    except UnicodeError:
+        raise ValueError("context text must contain valid UTF-8") from None
+    if size > max_bytes:
+        raise ContextAttachmentError("context item byte limit exceeded")
+    return size
+
+
+def validate_context_acquisition(
+    text: str, conversation_id: str, display_name: str, sensitivity: ContextSensitivity,
+) -> None:
+    validate_context_text(text)
+    _label(conversation_id, "conversation", 128)
+    _label(display_name, "display name", 256)
+    if not isinstance(sensitivity, ContextSensitivity):
+        raise TypeError("invalid context sensitivity")
+
+
+def validate_context_reference(context_id: str, conversation_id: str) -> None:
+    _label(context_id, "reference", 128)
+    _label(conversation_id, "conversation", 128)
 
 
 def _bounded_int(value: int, name: str, maximum: int) -> int:
@@ -98,7 +132,7 @@ class ContextAttachmentStore:
 
     def __init__(
         self, *, principal: PrincipalContext, max_items: int = 32,
-        max_item_bytes: int = 64 * 1024, max_total_bytes: int = 256 * 1024,
+        max_item_bytes: int = MAX_CONTEXT_TEXT_BYTES, max_total_bytes: int = 256 * 1024,
         max_render_chars: int = 12_000, ttl_seconds: float = 900,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -172,14 +206,7 @@ class ContextAttachmentStore:
             raise TypeError("invalid context classification")
         display_name = _label(display_name, "display name", 256)
         source = _label(source, "source", 128)
-        if not isinstance(text, str) or not text.strip():
-            raise ValueError("context text must be nonempty")
-        try:
-            size = len(text.encode("utf-8"))
-        except UnicodeError:
-            raise ValueError("context text must contain valid UTF-8") from None
-        if size > self._max_item_bytes:
-            raise ContextAttachmentError("context item byte limit exceeded")
+        size = validate_context_text(text, self._max_item_bytes)
         with self._lock:
             now = self._expire()
             if scope is ContextAttachmentScope.TURN and (conversation_id, turn_id) in self._active_turns:
@@ -276,6 +303,17 @@ class ContextAttachmentStore:
             self._expire()
             item = self._entries.get(attachment_id)
             if item is None or not self._matches(item, conversation_id, turn_id):
+                return False
+            self._remove(attachment_id)
+            return True
+
+    def revoke_conversation(self, attachment_id: str, *, conversation_id: str) -> bool:
+        validate_context_reference(attachment_id, conversation_id)
+        with self._lock:
+            self._expire()
+            item = self._entries.get(attachment_id)
+            if (item is None or item.scope is not ContextAttachmentScope.CONVERSATION
+                    or item.conversation_id != conversation_id):
                 return False
             self._remove(attachment_id)
             return True
