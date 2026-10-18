@@ -14,8 +14,7 @@ Artifacts: 12142563999, 12143750597, 12143996257.
 Reuse recovery's scroll-to-bottom operation before remote response assertion.
 Dump all main/system/crash buffers to a device file, then pull the file, rather
 than streaming the full dump through shell stdout. Empty or unavailable dumps
-remain fatal. Include :voice process crashes; preserve original exception when
-force-stop cleanup fails. Underlying ADB disconnect cause is not established;
+remain fatal. Include :voice process crashes; force-stop cleanup failures remain fatal. Underlying ADB disconnect cause is not established;
 this transport repair must pass hosted execution before acceptance.
 
 Focused test RED: old collector fails the dump/pull and voice-crash assertion.
