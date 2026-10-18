@@ -37,6 +37,9 @@ class ChatErrorAcceptanceTest(unittest.TestCase):
         self.assertTrue(result['clipboard_exact_match'])
         self.assertTrue(result['saved_details_unchanged'])
         self.assertTrue(result['later_success'])
+        failed_query = next(call[1] for call in device.calls if call[0] == 'type')
+        self.assertIn('Result is 1/0', failed_query)
+        self.assertNotIn('throw(', failed_query)
         self.assertIn(('tap', 'Clear diagnostics'), device.calls)
         self.assertIn(('recreate',), device.calls)
         for state in ('chat-error-details', 'chat-error-details-copied', 'chat-error-details-restored'):

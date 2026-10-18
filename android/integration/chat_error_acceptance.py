@@ -38,7 +38,7 @@ def read_saved_error(device: Device) -> str:
 def exercise_chat_error(device: Device, type_text) -> dict[str, object]:
     device.await_label('Ask anything…')
     device.tap('Ask anything…')
-    type_text(device, f'?- throw({PRIVATE_MARKER}).')
+    type_text(device, f'?- Result is 1/0, Result = {PRIVATE_MARKER}.')
     device.press_back()
     device.tap('↑')
     device.await_label('Copy error details', timeout=30.0)

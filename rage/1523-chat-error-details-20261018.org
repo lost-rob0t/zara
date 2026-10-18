@@ -95,3 +95,21 @@ then scoped90s probe with existing default30s unchanged. Instrumented test now
 sets/asserts sentinel immediately before the real accessibility click, then
 requires exact saved payload and accessible feedback. No earlier copy can
 satisfy the assertion. Android execution still pending.
+
+* Exact-head compile recovery / overload forwarding
+CI39153335514 at5b87bd18 passed both shared-mic and both deep-regression
+jobs, but actual Android compile still failed parameter inference inMainActivity.
+The prior two specific compile errors were resolved; remaining cause is the
+pairing-enabled ZaraApp overload in PairingZaraApp.kt missing the newcallback.
+MainActivity supplies onScanPairingQr and onCopyChatErrorDetails, so neither
+oldoverload was applicable. Focused wrapperforwarding RED1/3, then add default
+callback to existingpairingoverload and forward samecallback tobase. No broad
+lambda annotations or UI bypass. Re-run sourcewiringGREEN and exact-headCI.
+No APK/emulator evidence from failedcandidate; no acceptance or completionclaim.
+
+Acceptance fixture research correction before publish: bounded Prolog policy
+rejects throw/1 and requiresResult. Strengthen fixture to actual permitted
+arithmetic query Result is1/0 with private synthetic marker in laterconjunct;
+this reachesnative division-by-zero rather than onlyinput validation. Harness
+RED1 thenGREEN; sourcecontract executes real PrologQueryPolicy onfixture and
+checks runnerusesit. No mobilepolicybypass, dynamiccodeauthorization orpaidcall.

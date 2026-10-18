@@ -114,6 +114,7 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    onCopyChatErrorDetails: (String) -> Boolean = { false },
 ) {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -189,6 +190,7 @@ fun ZaraApp(
                 onClearDiagnostics = onClearDiagnostics,
                 onExportDiagnostics = onExportDiagnostics,
                 onDismissChangelog = onDismissChangelog,
+                onCopyChatErrorDetails = onCopyChatErrorDetails,
             )
         }
 
