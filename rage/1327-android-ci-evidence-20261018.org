@@ -40,3 +40,8 @@ size plus SHA-256. Never truncate or reconnect/retry away a failure. Nine
 new tests cover many chunks, invalid sizes/digests, truncation, corruption,
 and transport failure. Preserve host transport traces and both ADB versions
 for the next installed run. Underlying disconnect cause remains unproven.
+
+Host trace setup review: run 39151312306 failed the strict permission query
+because ADB client diagnostics appeared on stderr. Unset ADB_TRACE inside
+the acceptance script; the already-running server retains tracing. Do not
+relax the permission-query assertion or discard its stderr.
