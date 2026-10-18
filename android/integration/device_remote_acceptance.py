@@ -216,6 +216,39 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
         raise AssertionError("Installed Local symbolic turn completed through the local model")
     device.capture("local-natural-symbolic-turn")
 
+    device.tap("Ask anything…")
+    type_printable_ascii(device, "hello")
+    device.press_back()
+    device.tap("↑")
+    device.await_contains("name(greet)", timeout=20.0)
+    device.capture("local-hello-symbolic-turn")
+    device.tap("Open navigation menu")
+    device.await_label("＋  New chat")
+    device.tap("＋  New chat")
+    device.await_label("Ask anything…")
+    if device.find_contains("name(greet)") is not None:
+        raise AssertionError("New chat retained the previous greeting")
+
+    device.tap("Ask anything…")
+    type_printable_ascii(device, "/symbolic on")
+    device.press_back()
+    device.tap("↑")
+    device.await_contains("Pure symbolic mode enabled", timeout=20.0)
+    device.tap("Ask anything…")
+    type_printable_ascii(device, "hello")
+    device.press_back()
+    device.tap("↑")
+    device.await_contains("name(greet)", timeout=20.0)
+    device.capture("pure-symbolic-hello-turn")
+    local_diagnostics = read_app_diagnostics(device)
+    if "local_model.generate.begin" in local_diagnostics or "cloud_model.generate.begin" in local_diagnostics:
+        raise AssertionError("Installed symbolic greeting entered model inference")
+    device.tap("Ask anything…")
+    type_printable_ascii(device, "/symbolic off")
+    device.press_back()
+    device.tap("↑")
+    device.await_contains("Pure symbolic mode disabled", timeout=20.0)
+
     # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
     device.await_contains("LOCAL RUNTIME", timeout=20.0)
@@ -268,6 +301,8 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
         "reverse_mapping": reverse_mapping.splitlines(),
         "local_turn_completed": True,
         "local_natural_turn_completed": True,
+        "local_hello_completed": True,
+        "pure_symbolic_hello_completed": True,
         "local_model_fallback_observed": False,
         "client_enrolled": True,
         "server_pin_verified": True,

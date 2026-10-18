@@ -11,6 +11,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android verification now checks installed symbolic greetings and provides an explicitly capped manual OpenRouter multi-turn probe.
+
 - Android direct cloud chat now sends bounded completed conversation turns in order, preserving context after restart without mixing separate chats.
 
 - Android Local AI Settings now shows Loading, Responding, or Failed for the selected model instead of calling it Active before it is ready.
