@@ -116,7 +116,7 @@ def advertise(socket: zmq.Socket, session_id: str, *capabilities: str) -> Protoc
 
 
 def test_device_capability_v1_is_closed_and_golden_encoded():
-    assert DEVICE_CAPABILITIES == frozenset({"open_app", "open_uri"})
+    assert DEVICE_CAPABILITIES == frozenset({"open_app", "open_uri", "sms_send"})
 
     message = ProtocolMessage(
         type="capability.snapshot",

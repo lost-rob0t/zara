@@ -49,6 +49,7 @@ class Capability(str, enum.Enum):
     TURN_SUBMIT = "turn.submit"
     TURN_CANCEL = "turn.cancel"
     TOOL_APPROVE = "tool.approve"
+    PHONE_SEND_SMS = "phone.send_sms"
     CONTEXT_READ = "context.read"
     CONTEXT_WRITE = "context.write"
     MEMORY_READ = "memory.read"
