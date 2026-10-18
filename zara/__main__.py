@@ -220,15 +220,20 @@ def _run_connected_text(
     conversation_id: str | None = None,
     context_ids=(),
     emit_json: bool = False,
+    context_text: str | None = None,
 ) -> int:
     from .daemon_client import create_daemon_client
-    from .runtime.commands import SubmitTurn
+    from .runtime.commands import (
+        AcquireTextContext, ContextAcquiredReceipt, ContextRevokedReceipt,
+        RevokeTextContext, SubmitTurn,
+    )
 
     if conversation_id is not None:
         conversation_id = _validate_cli_identifier(conversation_id, "conversation id")
 
     client = None
     subscription = None
+    acquired = None
     exit_code = 0
     try:
         client = create_daemon_client(endpoint)
@@ -236,13 +241,26 @@ def _run_connected_text(
         # Subscribe before submit so an immediately-completing daemon turn
         # cannot publish its terminal event before this CLI is listening.
         subscription = client.subscribe()
-        receipt = client.submit(
+        if context_text is not None:
+            if conversation_id is None:
+                raise ValueError("stdin context requires a conversation id")
+            candidate = client.submit(AcquireTextContext(
+                text=context_text, conversation_id=conversation_id,
+            )).result(timeout=CLI_CONTEXT_TIMEOUT_SECONDS)
+            if not isinstance(candidate, ContextAcquiredReceipt) or candidate.conversation_id != conversation_id:
+                raise RuntimeError("invalid context acquisition response")
+            RevokeTextContext(context_id=candidate.context_id, conversation_id=conversation_id)
+            acquired = candidate
+            context_ids = (*context_ids, acquired.context_id)
+        turn_future = client.submit(
             SubmitTurn(
                 text=command_text,
                 conversation_id=conversation_id,
                 context_ids=context_ids,
             )
-        ).result()
+        )
+        receipt = (turn_future.result(timeout=CLI_CONTEXT_TIMEOUT_SECONDS)
+                   if context_text is not None else turn_future.result())
         turn_id = _validate_cli_identifier(receipt.turn_id, "turn id")
         if emit_json:
             _emit_cli_event(
@@ -261,9 +279,22 @@ def _run_connected_text(
         elif response:
             print(response)
     except Exception as error:
-        print(f"Error: {error}", file=sys.stderr)
+        reason = str(error)
+        if context_text is not None and isinstance(error, TimeoutError):
+            reason = "daemon context operation timed out; retention limits still apply"
+        print(f"Error: {reason}", file=sys.stderr)
         exit_code = 2
     finally:
+        if acquired is not None and client is not None:
+            try:
+                revoked = client.submit(RevokeTextContext(
+                    context_id=acquired.context_id, conversation_id=conversation_id,
+                )).result(timeout=CLI_CONTEXT_TIMEOUT_SECONDS)
+                if not isinstance(revoked, ContextRevokedReceipt) or revoked.context_id != acquired.context_id:
+                    raise RuntimeError("invalid context revocation response")
+            except Exception:
+                print("Error: context cleanup failed; daemon retention limits still apply", file=sys.stderr)
+                exit_code = 2
         if subscription is not None:
             try:
                 subscription.close()
@@ -279,6 +310,22 @@ def _run_connected_text(
                     print(f"Error: {error}", file=sys.stderr)
                     exit_code = 2
     return exit_code
+
+
+CLI_CONTEXT_TIMEOUT_SECONDS = 5.0
+
+
+def _read_stdin_context() -> str:
+    from .context import ContextAttachmentError, validate_context_text
+    from .protocol import MAX_CONTEXT_WIRE_TEXT_BYTES
+
+    try:
+        data = sys.stdin.buffer.read(MAX_CONTEXT_WIRE_TEXT_BYTES + 1)
+        text = data.decode("utf-8")
+        validate_context_text(text, MAX_CONTEXT_WIRE_TEXT_BYTES)
+    except (AttributeError, OSError, ValueError, ContextAttachmentError):
+        raise ValueError("stdin context must contain 1..8192 bytes of UTF-8 text") from None
+    return text
 
 
 def _run_connected_cancel(endpoint: str, turn_id: str) -> int:
@@ -466,6 +513,10 @@ def main():
         help="Emit bounded turn.accepted/assistant.complete JSON events"
     )
     parser.add_argument(
+        "--context-stdin", action="store_true",
+        help="Read at most 8192 UTF-8 bytes of private context from stdin; requires --conversation-id",
+    )
+    parser.add_argument(
         "--cancel-turn",
         metavar="TURN_ID",
         help="Cancel one daemon turn through the canonical runtime boundary"
@@ -533,6 +584,14 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.context_stdin:
+        if (not args.command or not args.conversation_id or args.standalone
+                or args.replay_conversation or args.cancel_turn or args.desktop
+                or args.toggle_desktop or args.show_desktop or args.hide_desktop
+                or args.console or args.voice or args.dictate or args.wake or args.agent
+                or args.pets or args.pets_settings):
+            parser.error("--context-stdin requires a connected text command and --conversation-id")
 
     if args.replay_conversation:
         if args.command:
@@ -676,8 +735,15 @@ def main():
                 args.conversation_id is None
                 and not args.context_id
                 and not args.json_events
+                and not args.context_stdin
             ):
                 sys.exit(_run_connected_text(endpoint, command_text))
+            context_options = {}
+            if args.context_stdin:
+                try:
+                    context_options["context_text"] = _read_stdin_context()
+                except ValueError as error:
+                    parser.error(str(error))
             sys.exit(
                 _run_connected_text(
                     endpoint,
@@ -685,6 +751,7 @@ def main():
                     conversation_id=args.conversation_id,
                     context_ids=args.context_id,
                     emit_json=args.json_events,
+                    **context_options,
                 )
             )
 

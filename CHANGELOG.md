@@ -6,6 +6,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- The connected CLI can attach bounded UTF-8 stdin context with `--context-stdin`, using explicit authorized acquisition and cleanup through the existing daemon protocol.
+
 - Local runtime clients can explicitly acquire and revoke pasted text context through typed commands, with bounded private payloads and metadata-only receipts.
 - Explicitly acquired text snapshots can supply bounded, expiring context through the runtime, with principal/conversation isolation, turn cleanup and no attachment text in transcript history.
 - Agent context now bounds complete turns, isolates task context, supports atomic compaction with bounded summary work across restarts, and selects declarative Python/Prolog skills with metadata-only browser entries.

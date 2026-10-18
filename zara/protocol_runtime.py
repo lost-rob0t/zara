@@ -15,9 +15,11 @@ from zara.protocol import AUDIO_OUTPUT_CONTENT_TYPE, ProtocolMessage
 from zara.runtime import events
 from zara.runtime.bridge import EventEnvelope
 from zara.runtime.commands import (
+    AcquireTextContext,
     ApproveTool,
     CancelTurn,
     RejectTool,
+    RevokeTextContext,
     RunPrologQuery,
     RuntimeCommand,
     SubmitTurn,
@@ -119,6 +121,26 @@ def command_from_message(message: ProtocolMessage) -> RuntimeCommand:
         if not isinstance(message.turn_id, str) or not message.turn_id:
             raise RuntimeCodecError("turn.cancel requires turn_id")
         return CancelTurn(request_id=message.id, turn_id=message.turn_id)
+
+    if message.type in {"context.text.acquire", "context.text.revoke"}:
+        from zara.context import ContextSensitivity
+
+        acquire = message.type == "context.text.acquire"
+        fields = frozenset({"text", "display_name", "sensitivity"} if acquire else {"context_id"})
+        body = _closed_body(message, allowed=fields, required=fields)
+        try:
+            if acquire:
+                return AcquireTextContext(
+                    request_id=message.id, conversation_id=message.conversation_id,
+                    text=body["text"], display_name=body["display_name"],
+                    sensitivity=ContextSensitivity(body["sensitivity"]),
+                )
+            return RevokeTextContext(
+                request_id=message.id, conversation_id=message.conversation_id,
+                context_id=body["context_id"],
+            )
+        except (TypeError, ValueError):
+            raise RuntimeCodecError("invalid context command") from None
 
     if message.type in {"tool.approve", "tool.reject"}:
         allowed = frozenset({"tool_run_id"})

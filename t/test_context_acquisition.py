@@ -121,19 +121,17 @@ def test_invalid_backend_revocation_cannot_be_presented_as_success(value):
         stop_host(host)
 
 
-@pytest.mark.parametrize("revoke", [False, True])
-def test_remote_client_does_not_invent_a_wire_alias_for_local_acquisition(revoke):
+def test_remote_client_still_rejects_commands_without_explicit_wire_support():
     from zara.client import ZaraClientState
+    from zara.runtime.commands import StartVoice
     from zara.zmq_transport import ZmqZaraClient
-
-    client = ZmqZaraClient.__new__(ZmqZaraClient)
-    import threading
-    client._state_lock = threading.RLock()
-    client._state = ZaraClientState.READY
-    command = (RevokeTextContext(context_id="ctx-ref", conversation_id="chat") if revoke
-               else AcquireTextContext(text="private", conversation_id="chat"))
-    with pytest.raises(TypeError, match="does not support"):
-        client.submit(command)
+    client = ZmqZaraClient("inproc://unsupported-command")
+    try:
+        client._state = ZaraClientState.READY
+        with pytest.raises(TypeError, match="does not support"):
+            client.submit(StartVoice())
+    finally:
+        client.close()
 
 
 @pytest.mark.asyncio

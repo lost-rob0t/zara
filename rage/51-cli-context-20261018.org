@@ -1,0 +1,90 @@
+#+title: #51 explicit CLI context over existing ZARA/1
+* Iteration 1
+Consumed issue: https://github.com/lost-rob0t/zara/issues/51
+Immutable start: 27684ff7a7de6471d3dad4ae0ef2d3bb6764456f (#1518).
+Stack remains unmerged behind #1515 direct approval; do not retry that merge.
+* Research scope
+Existing CLI --context-id submits references but cannot acquire them. Inspect closed
+protocol codec, authenticated gateway capability policy, transport replay and
+principal binding before choosing any implementation. Preserve #875 hardened
+transport and #1045/#961/#1478 UI ownership. No scheduler/capture changes.
+Parent explicitly requests installed entry-point tests and independent review.
+* Research/design decision
+#875@0172b362 hardens transport without wire-format changes; preserve its FIFO,
+deadlines, bounded pending/replay maps and route-generation checks. #1518 adds
+local commands; #51 remaining client integration can be tested against that
+stack without merging. No new runtime/store/dependency.
+Add four explicit context.text acquire/revoke request/receipt types. Require
+session + explicit conversation, closed bodies, metadata-only replies, no binary
+payloads/turn IDs. Remote authorization uses existing context.write for both;
+keep pairing defaults unchanged. Bind requests via existing principal supervisor.
+Existing idempotency keys remain principal/request-ID scoped and payload equality
+checked. Bound wire text to 8192 UTF-8 bytes (local store stays 65536); worst-case
+JSON escapes remain below the existing 64KiB envelope limit. Store quotas/TTL
+and restart invalidation still apply; replay caches acknowledgments, not leases.
+CLI --context-stdin explicitly reads at most8193 bytes from stdin, requires a
+conversation ID and connected text mode, acquires private context, submits the
+opaque reference, revokes in finally on success/error/timeout. No argv payload,
+path/URL reads or recorded-speech authorization changes. Older peers fail closed.
+Acceptance tests: strict codec/field/byte limits, request/receipt roundtrip and
+replay, context.write deny/allow + principal isolation, CLI flags and bounded
+stdin, actual client->gateway->Host->fake model evidence with persistence isolation,
+cleanup on errors, installed console-script run outside checkout. Independent
+review and all exact-head CI required. Nix full test/check/build attempted locally;
+use CI when Nix absent. Follow with existing UI owners, memory advice and durable
+rehydration; do not begin #654 or capture.
+* RED/GREEN evidence
+- Initial newtests6 failed/13 passed: missing wiretypes/capability/CLI flag.
+- Four replycorrelation regressions failed before _Pending expected operation,
+  conversation and revokedref checks; two stale-session cases then failed and
+  were fixed with explicit session matching.
+- Independent review found unbounded acquisition/cleanup waits. Hung future RED
+  hit external timeout124; wrong cleanup receipt RED failed. New waits bounded5s
+  and CLI validates typed/canonical receipts; tests use10ms deadline.
+- RealIPC -> canonicalHost -> AgentManager fakeLLM -> persistence tests cover
+  acquisition/replay/conflict, transientcontext/historyisolation, revoke/restart.
+  Terminal model response precedes durable-turn completion; test now waits for
+  AgentCompleted before checking both memory writes (no sleep/persistence change).
+- Retention RED proved replaycache held AcquireTextContext plaintext; now cache
+  stores keyedHMAC of content+chat+display+sensitivity, retains metadatareceipt.
+  Inflight processing still holds bounded supplied input until completion.
+- Three malformed Unicode metadata cases raised raw UnicodeEncodeError; RED fixed
+  bounded safe-text validator to fail as ProtocolValidationError without payload.
+- Existing local-only codec regression replaced by unknown-command failclosed
+  regression because explicit wire support now exists; no reflection/unlistedAPI.
+-279 protocol/CLI/security adjacent tests passed,4 existing graph warnings.
+- Mandatory Nix tests/check/build attempted: all exit127, nix absent. CI gates
+  must run before ready; no local full-Nix/Android or live-provider claim.
+* Candidate verification
+-61 new CLI/protocol/IPC/security tests pass; all added/changed production
+  executable lines covered by focused coverage (whole-module coverage is lower
+  because unrelated daemon/audio/UI paths are not part of these tests).
+-620 broader adjacent tests passed,30 existing graph warnings. One earlier run
+  hit existing inproc gateway immediate-rebind AddressAlreadyInUse; exact test
+  and final broader rerun passed. No timeout/assertion weakened.
+- Built wheel, installed with --no-deps into /tmp/zara-51-cli-package/installed,
+  ran installed bin/zara in separate subprocess outside checkout over realIPC
+  against installed RuntimeHost/AgentManager + syntheticModel. All three commands
+  executed in order; model got reference, history/memory only ordinary turn,
+  snapshotcount0, exit0. Proof /workspace/scratch/zara-51-evidence/cli-context-installed.log.
+- No new dependency, credential/pairing grant, GUI/Android/capture/scheduler work.
+  Acquisitionreplyloss cannot revealref for cleanup; boundedTTL remainsfallback.
+  Existing transport request futures outside this CLI remain #875's owner.
+- New regression added to existing context-management script gate.
+- Pending publication then independent immutable-head review and exact-head CI.
+  Do not mark ready before terminal success; all dependencies stay unmerged.
+- Context script final252 passed,10 existing warnings. Diagnostic logs retained
+  under /workspace/scratch/zara-51-evidence/cli-context-*.log.
+* CI fixture portability correction
+Exact head8e91b362 CI39084431432 deep seeds1/31337 each passed3308 tests but
+reported5 newfixture setup errors: Nix pytest temp paths exceeded Unix socket's
+107-byte sun_path cap. Local --basetemp=/tmp/zara-ci-long-temporary-directory-
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa reproduced the failure (RED1error).
+This fixture also startedHost before its cleanup guard, leaving resources alive
+when gateway startup failed. Corrected onlytestfixture: explicit short isolated
+/tmp/zctx-* directory; Host/gateway start inside try/finally; directory removed
+with other resources. No product behavior changed or assertion weakened.
+Re-run long-path61tests, adjacent620/context252; independent review and all
+exact-head CI required again. Earlier green head/review is stale for finalgate.
+- Portability GREEN:61 tests passed with deliberatelylong --basetemp; final620
+  adjacent and252 contextscript pass. Exact-head independent/CI gate pending.

@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import enum
+import hmac
+import json
 import logging
 import queue
+import secrets
 import threading
 import time
 import uuid
@@ -40,11 +43,15 @@ from zara.protocol import (
 from zara.protocol_runtime import RuntimeCodecError, command_from_message, runtime_event_to_message
 from zara.runtime import bridge, events
 from zara.runtime.commands import (
+    AcquireTextContext,
     ApproveTool,
     CancelTurn,
     CommandReceipt,
+    ContextAcquiredReceipt,
+    ContextRevokedReceipt,
     PrologQueryReceipt,
     RejectTool,
+    RevokeTextContext,
     RuntimeCommand,
     RunPrologQuery,
     SubmitTurn,
@@ -234,7 +241,7 @@ class _RouteState:
 
 @dataclass(frozen=True)
 class _ReplayEntry:
-    command: RuntimeCommand
+    command: RuntimeCommand | bytes
     response: ProtocolMessage
 
 
@@ -315,6 +322,7 @@ class ZaraZmqGateway:
         self._turns_awaiting_accept: set[tuple[str, str]] = set()
         self._approval_owners: dict[tuple[str, str], _ApprovalOwner] = {}
         self._replay: OrderedDict[tuple[str, str], _ReplayEntry] = OrderedDict()
+        self._context_replay_key = secrets.token_bytes(32)
         self._inflight: dict[tuple[str, str], _InflightEntry] = {}
         self._device_actions: dict[str, _DeviceActionPending] = {}
         self._event_subscription = None
@@ -879,6 +887,8 @@ class ZaraZmqGateway:
             "tool.approve",
             "tool.reject",
             "prolog.query",
+            "context.text.acquire",
+            "context.text.revoke",
         }:
             self._dispatch_runtime(socket, route, state, message)
             return
@@ -1201,10 +1211,18 @@ class ZaraZmqGateway:
         command: RuntimeCommand,
         response: ProtocolMessage,
     ) -> None:
-        self._replay[key] = _ReplayEntry(command=command, response=response)
+        self._replay[key] = _ReplayEntry(command=self._replay_identity(command), response=response)
         self._replay.move_to_end(key)
         while len(self._replay) > self._config.idempotency_cache_size:
             self._replay.popitem(last=False)
+
+    def _replay_identity(self, command: RuntimeCommand) -> RuntimeCommand | bytes:
+        if not isinstance(command, AcquireTextContext):
+            return command
+        payload = json.dumps([
+            command.text, command.conversation_id, command.display_name, command.sensitivity.value,
+        ], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return hmac.digest(self._context_replay_key, payload, "sha256")
 
     def _dispatch_runtime(
         self,
@@ -1254,7 +1272,7 @@ class ZaraZmqGateway:
         with self._lock:
             replay = self._replay.get(replay_key)
             if replay is not None:
-                if replay.command != command:
+                if replay.command != self._replay_identity(command):
                     self._send_idempotency_conflict(socket, route, message)
                     return
                 self._replay.move_to_end(replay_key)
@@ -1375,8 +1393,18 @@ class ZaraZmqGateway:
                     "tool.approve": "tool.approve.accepted",
                     "tool.reject": "tool.reject.accepted",
                     "prolog.query": "prolog.query.completed",
+                    "context.text.acquire": "context.text.acquired",
+                    "context.text.revoke": "context.text.revoked",
                 }
                 response_body = None
+                if isinstance(command, AcquireTextContext):
+                    if not isinstance(receipt, ContextAcquiredReceipt) or receipt.conversation_id != command.conversation_id:
+                        raise TypeError("invalid context acquisition receipt")
+                    response_body = {"context_id": receipt.context_id}
+                elif isinstance(command, RevokeTextContext):
+                    if not isinstance(receipt, ContextRevokedReceipt) or receipt.context_id != command.context_id:
+                        raise TypeError("invalid context revocation receipt")
+                    response_body = {"context_id": receipt.context_id, "revoked": receipt.revoked}
                 if isinstance(receipt, PrologQueryReceipt):
                     response_body = {"solutions": list(receipt.solutions)}
                 response = ProtocolMessage(
@@ -1389,6 +1417,8 @@ class ZaraZmqGateway:
                     payload_count=0,
                     body=response_body,
                 )
+                if isinstance(command, (AcquireTextContext, RevokeTextContext)):
+                    encode_message(self._response_for_route(response, route), limits=self._limits)
             except BaseException:
                 response = _protocol_error(
                     reply_to=message.id,
@@ -1847,6 +1877,9 @@ class _PendingKind(str, enum.Enum):
 class _Pending:
     kind: _PendingKind
     future: concurrent.futures.Future
+    context_response_type: Optional[str] = None
+    context_conversation_id: Optional[str] = None
+    context_reference: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -2119,6 +2152,14 @@ class ZmqZaraClient(ZaraClient):
                     self._state = ZaraClientState.FAILED
                 self._stop.set()
             return
+        if pending.context_response_type is not None:
+            if (message.type != pending.context_response_type
+                    or message.session_id != self._session_id
+                    or message.conversation_id != pending.context_conversation_id
+                    or (pending.context_reference is not None
+                        and (message.body or {}).get("context_id") != pending.context_reference)):
+                pending.future.set_exception(ProtocolValidationError("invalid context command response"))
+                return
         if pending.kind is _PendingKind.HELLO:
             if message.type != "hello.ok" or not message.session_id:
                 pending.future.set_exception(ProtocolValidationError("invalid hello response"))
@@ -2174,10 +2215,22 @@ class ZmqZaraClient(ZaraClient):
                 "tool.approve.accepted",
                 "tool.reject.accepted",
                 "prolog.query.completed",
+                "context.text.acquired",
+                "context.text.revoked",
             }:
                 pending.future.set_exception(ProtocolValidationError("invalid command response"))
             else:
-                if message.type == "prolog.query.completed":
+                if message.type == "context.text.acquired":
+                    pending.future.set_result(ContextAcquiredReceipt(
+                        request_id=message.reply_to or "", context_id=message.body["context_id"],
+                        conversation_id=message.conversation_id,
+                    ))
+                elif message.type == "context.text.revoked":
+                    pending.future.set_result(ContextRevokedReceipt(
+                        request_id=message.reply_to or "", context_id=message.body["context_id"],
+                        revoked=message.body["revoked"],
+                    ))
+                elif message.type == "prolog.query.completed":
                     solutions = (message.body or {}).get("solutions")
                     if not isinstance(solutions, list) or any(
                         not isinstance(solution, dict) for solution in solutions
@@ -2320,7 +2373,15 @@ class ZmqZaraClient(ZaraClient):
                 raise ClientBackpressureError("request id is already pending")
             if len(self._pending) >= self._config.pending_request_limit:
                 raise ClientBackpressureError("client pending request limit reached")
-            self._pending[message.id] = _Pending(kind, future)
+            context_response = {
+                "context.text.acquire": "context.text.acquired",
+                "context.text.revoke": "context.text.revoked",
+            }.get(message.type)
+            self._pending[message.id] = _Pending(
+                kind, future, context_response_type=context_response,
+                context_conversation_id=message.conversation_id if context_response else None,
+                context_reference=(message.body or {}).get("context_id") if context_response else None,
+            )
         try:
             self._outbound.put_nowait(_ClientOutbound(message, payloads))
         except queue.Full as error:
@@ -2478,6 +2539,17 @@ class ZmqZaraClient(ZaraClient):
                 payload_count=0,
                 body={"text": command.text, "context_ids": list(command.context_ids)},
             )
+        elif isinstance(command, (AcquireTextContext, RevokeTextContext)):
+            acquire = isinstance(command, AcquireTextContext)
+            message = ProtocolMessage(
+                type="context.text.acquire" if acquire else "context.text.revoke",
+                id=command.request_id, session_id=self._session_id,
+                conversation_id=command.conversation_id, timestamp_ns=_now_ns(), payload_count=0,
+                body=({"text": command.text, "display_name": command.display_name,
+                       "sensitivity": command.sensitivity.value} if acquire
+                      else {"context_id": command.context_id}),
+            )
+            encode_message(message, limits=self._limits)
         elif isinstance(command, CancelTurn):
             message = ProtocolMessage(
                 type="turn.cancel",
