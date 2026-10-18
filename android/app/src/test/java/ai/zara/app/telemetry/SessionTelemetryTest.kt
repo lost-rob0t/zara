@@ -99,6 +99,26 @@ class SessionTelemetryTest {
         assertEquals(3L, context?.lastRxMessageSequence)
     }
 
+    @Test fun `local errors populate export evidence without changing remote connection facts`() {
+        val telemetry = SessionTelemetry()
+        assertEquals(null, telemetry.primaryIncident())
+        assertTrue(telemetry.journal().snapshot().isEmpty())
+        val before = telemetry.remoteContext()
+        val local = failure("local.symbolic.failed", ZaraOperation.SUBMIT, null).copy(
+            subsystem = ZaraSubsystem.PROLOG, turnId = "local-turn", message = "symbolic predicate unavailable",
+        )
+        telemetry.onLocalFailure(local)
+        assertEquals(local, telemetry.primaryIncident()?.failure)
+        assertEquals(ClientEventNames.LOCAL_TURN_FAILED, telemetry.journal().snapshot().single().name)
+        assertEquals(before, telemetry.remoteContext())
+        telemetry.noteSuccess("local.turn.complete")
+        assertEquals(local, telemetry.primaryIncident()?.failure)
+        telemetry.tracker.clear()
+        telemetry.journal().clear()
+        assertEquals(null, telemetry.primaryIncident())
+        assertTrue(telemetry.journal().snapshot().isEmpty())
+    }
+
     private fun failure(
         code: String,
         operation: ZaraOperation,

@@ -1,5 +1,6 @@
 package ai.zara.app.conversations
 
+import ai.zara.app.diagnostics.ChatErrorDetails
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
@@ -13,7 +14,8 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-private const val CONVERSATION_STORE_MAGIC = "ZARA-CONVERSATIONS/1"
+private const val CONVERSATION_STORE_MAGIC = "ZARA-CONVERSATIONS/2"
+private const val LEGACY_CONVERSATION_STORE_MAGIC = "ZARA-CONVERSATIONS/1"
 private const val MAX_CONVERSATION_STORE_BYTES = 4 * 1024 * 1024
 private const val MAX_CONVERSATIONS = 256
 private const val MAX_TURNS_PER_CONVERSATION = 512
@@ -86,6 +88,7 @@ data class ConversationTurn(
     val userText: String,
     val assistantText: String? = null,
     val success: Boolean? = null,
+    val errorDetails: String? = null,
 )
 
 data class ConversationRecord(
@@ -244,8 +247,13 @@ class ConversationStore(
         assistantText: String,
         success: Boolean,
         remoteConversationId: String? = null,
+        errorDetails: String? = null,
     ): ConversationState {
         ensureHealthy()
+        require(errorDetails == null || !success) { "Successful turns cannot contain error details" }
+        require(errorDetails == null || errorDetails.toByteArray(StandardCharsets.UTF_8).size in 1..ChatErrorDetails.MAX_BYTES) {
+            "Error details exceed the bounded diagnostic limit"
+        }
         val response = normalizeText(assistantText, "Assistant text", allowBlank = true)
         val normalizedRemoteId = normalizeOptionalId(
             remoteConversationId,
@@ -258,7 +266,7 @@ class ConversationStore(
             val pending = conversation.turns[index]
             check(pending.success == null) { "Conversation has no running turn" }
             val turns = conversation.turns.toMutableList()
-            turns[index] = pending.copy(assistantText = response, success = success)
+            turns[index] = pending.copy(assistantText = response, success = success, errorDetails = errorDetails)
             conversation.copy(
                 remoteConversationId = normalizedRemoteId ?: conversation.remoteConversationId,
                 status = if (success) ConversationStatus.Success else ConversationStatus.Failed,
@@ -269,8 +277,8 @@ class ConversationStore(
     }
 
     @Synchronized
-    fun failTurn(conversationId: String, message: String): ConversationState =
-        completeTurn(conversationId, message, success = false)
+    fun failTurn(conversationId: String, message: String, errorDetails: String? = null): ConversationState =
+        completeTurn(conversationId, message, success = false, errorDetails = errorDetails)
 
     private fun updateConversation(
         conversationId: String,
@@ -306,7 +314,8 @@ class ConversationStore(
         }
         return try {
             DataInputStream(FileInputStream(file).buffered()).use { input ->
-                require(input.readUTF() == CONVERSATION_STORE_MAGIC)
+                val format = input.readUTF()
+                require(format == CONVERSATION_STORE_MAGIC || format == LEGACY_CONVERSATION_STORE_MAGIC)
                 val selectedConversationId =
                     input.readBoundedString(MAX_CONVERSATION_ID_CHARS).ifEmpty { null }
                 val count = input.readInt()
@@ -314,7 +323,7 @@ class ConversationStore(
                 var recoveredRunningTurn = false
                 val conversations = buildList(count) {
                     repeat(count) {
-                        val conversation = input.readConversation()
+                        val conversation = input.readConversation(format == CONVERSATION_STORE_MAGIC)
                         if (conversation.status == ConversationStatus.Running) {
                             recoveredRunningTurn = true
                         }
@@ -337,7 +346,7 @@ class ConversationStore(
         }
     }
 
-    private fun DataInputStream.readConversation(): ConversationRecord {
+    private fun DataInputStream.readConversation(hasErrorDetails: Boolean): ConversationRecord {
         val id = normalizeId(readBoundedString(MAX_CONVERSATION_ID_CHARS))
         val title = normalizeTitle(readBoundedString(MAX_TITLE_CHARS))
         val pinned = readBoolean()
@@ -374,7 +383,9 @@ class ConversationStore(
                     else -> error("Invalid turn status: $raw")
                 }
                 require((success == null) == (assistantText == null))
-                add(ConversationTurn(userText, assistantText, success))
+                val details = if (hasErrorDetails && readBoolean()) readBoundedString(ChatErrorDetails.MAX_BYTES) else null
+                require(details == null || (success == false && details.toByteArray(StandardCharsets.UTF_8).size in 1..ChatErrorDetails.MAX_BYTES))
+                add(ConversationTurn(userText, assistantText, success, details))
             }
         }
         return ConversationRecord(
@@ -448,6 +459,8 @@ class ConversationStore(
                     true -> 1
                 }
             )
+            writeBoolean(turn.errorDetails != null)
+            turn.errorDetails?.let { writeBoundedString(it, ChatErrorDetails.MAX_BYTES) }
         }
     }
 

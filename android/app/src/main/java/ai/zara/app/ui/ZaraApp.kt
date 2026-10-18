@@ -92,6 +92,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -207,6 +209,7 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    onCopyChatErrorDetails: (String) -> Boolean = { false },
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
         mutableStateOf(AppNavigation())
@@ -319,6 +322,7 @@ fun ZaraApp(
                                                     onRetryTurn = onRetryTurn,
                                                     onReconnectRemote = onReconnectRemote,
                                                     onOpenDiagnostics = onOpenDiagnostics,
+                                                    onCopyChatErrorDetails = onCopyChatErrorDetails,
                                                     padding = padding,
                                                 )
                                             }
@@ -879,6 +883,7 @@ private fun ChatSurface(
     onRetryTurn: (String) -> Unit,
     onReconnectRemote: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onCopyChatErrorDetails: (String) -> Boolean,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -955,6 +960,9 @@ private fun ChatSurface(
                         conversation.status == ConversationStatus.Running &&
                             index == conversation.turns.lastIndex ->
                             AssistantPendingMessage()
+                    }
+                    if (turn.success == false) {
+                        ChatErrorDetailsAction(turn.errorDetails, onCopyChatErrorDetails)
                     }
                     if (index != conversation.turns.lastIndex) {
                         Spacer(Modifier.size(18.dp))
@@ -1148,6 +1156,25 @@ private fun AssistantMessage(text: String, success: Boolean) {
             }
             Text(text, modifier = Modifier.padding(top = 12.dp), color = tokens.text)
         }
+    }
+}
+
+@Composable
+private fun ChatErrorDetailsAction(details: String?, onCopy: (String) -> Boolean) {
+    val tokens = LocalZaraTokens.current
+    if (details == null) {
+        Text("Error details were not saved for this message.", color = tokens.textMuted, fontSize = 12.sp)
+        return
+    }
+    var copied by remember(details) { mutableStateOf<Boolean?>(null) }
+    TextButton(onClick = { copied = onCopy(details) }) { Text("Copy error details") }
+    copied?.let { success ->
+        Text(
+            if (success) "Error details copied" else "Could not copy error details",
+            color = if (success) tokens.success else tokens.error,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            fontSize = 12.sp,
+        )
     }
 }
 

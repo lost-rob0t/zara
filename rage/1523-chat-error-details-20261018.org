@@ -1,0 +1,68 @@
+#+title: #1523 Android failed-turn diagnostic capture and copy
+* Iteration 1
+Consumed issue: https://github.com/lost-rob0t/zara/issues/1523
+Immutable start: d8fdbed9d1fb466c0ce3d700f9fb9a9f5665e731 (fresh master).
+Installed report:370834ccbdacc6be4c63e8396f88b27e09216c82,0.3.1-alpha/code6.
+User explicitly requests Copy error details immediately beneath failed assistant
+bubble, immutable bounded sanitized snapshot, persisted with existing message
+owner, correct after success/navigation/restart/global reset. No paidproviders,
+physical devices, held merges or unrelated scheduler/capture changes.
+* Initial source evidence
+Installed/master local failures write LocalRuntimeDiagnostics persistentfile;
+exportDiagnostics V2 renders separate SessionTelemetry only. Exact emptyincident
+hash SHA256(installedSHA|none|0) first8bytes is diag-b54cd4ebd0d7cf52, matching
+reportedexport. A restart/clear is unnecessary to produce this mismatch. Server
+READY only proves trivial Result=zara_ready boot query; resolve exceptions do
+not change startupstate. Underlying exactexception absent fromprovidedexport.
+Both installed/master resolve_frames calls are unqualified. Existing #1384
+release-line repair qualifies zara_portable_semantic_core:resolve_frames and
+proves packaged timer resolution; do not wholesale merge its stale branch or
+claim it identifies the actual phoneexception. #1521 owns installedhello gates;
+#1470/1471 own remote failuremetadata, notlocalturn capture.
+* Research/design pending
+Inspect message storage/Compose and existing clipboard owners before tests/code.
+Use failure-time snapshot independent of global telemetry reset. Keep diagnostic
+payload bounded and per-turn, avoid copying unrelated logfile/chat contents.
+* Design / acceptance map
+Keep existing ConversationStore binary owner; version2 adds nullable bounded
+8KiB UTF8 errorDetails per failed ConversationTurn, read version1 without details.
+Capture immutable details in runtime failure completion, pass on TextTurnResult
+(defaultnullablefield) and persist atomically with assistant error. MainActivity
+captures otherwise-unhandled/future failures before UI dispatch. Exact perturn
+snapshot includes build,mode,conversation/request/turn correlation, failurecode,
+bounded sanitized cause chain and allowlisted perturn stage/state metadata;
+never global logfile, raw prompt/reply or unrelated global journal. Local failure
+also enters existing SessionTelemetry as PROLOG without mutating remote.close
+state, fixing global primaryincident/timeline visibility going forward.
+Compose Copy error details appears beneath each failed bubble/card; copies that
+stored string through existing clipboard owner and announces success via polite
+live region. Old message without details explicitly says unavailable. Navigation,
+new successful turns, globalreset and process restoration cannot replace payload.
+RED: captureprivacy/limits/identity; store success/failure constraints,legacyread,
+reload/navigation/later-success/reset association; UI wiring/providerfree contract.
+Two layers: actual Kotlin/JUnit capture+store and UI/integration/instrumented
+contracts. Full Nix/Android+Wear/exact-head screenshot gates required. Environment
+has JDK21 but no Nix/Gradle/SDK/ADB; downloaded matching repo Kotlin2.3.21 compiler
+and real JUnit4 into /tmp only for providerfree JVM verification (no prod dep).
+Do not claim actual phoneexception or installedacceptance without evidence.
+Resolver qualification is existing #1384 release repair, not new runtime design;
+keep this PR focused on requested capture/copy, coordinate its port separately.
+
+* Evaluate / review corrections
+Actual Kotlin 2.3.21/JDK21 + real JUnit4: first missing API RED, initial17 GREEN,
+expanded20 GREEN. Independent review reproduced unquoted private input escaping
+regex redaction. New privacy tests RED (3 failures), then excluded arbitrary
+Throwable.message entirely; retain cause class/category/stack only. Local telemetry
+uses fixed summary and typed category. Privacy GREEN21.
+Reviewer found Auto-selected but actual-local explicit Prolog failure missing
+local telemetry. Source wiring RED, retained-wrapper API RED; local explicit
+query/command and parse failures now capture before propagating and carry original
+snapshot through CompletionException to MainActivity. Actual core GREEN22 and
+source wiring GREEN2. Source contracts are not Android rendering/clipboard proof.
+Full gate attempted: nix develop -c bash scripts/test-all.sh ->127 (nix absent).
+Android wrapper attempt ->127 (repo has no gradlew; canonical gate uses gradle,
+also attempted and absent). No SDK, ADB or emulator. SessionTelemetryTest,
+actual Android compile, installed clipboard accessibility, screenshots and
+exact-head CI remain pending. No device recording, provider call, release change
+or held merge. Draft only until remaining gates pass; do not claim phone
+exception identified.

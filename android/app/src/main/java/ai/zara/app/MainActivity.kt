@@ -225,6 +225,8 @@ class MainActivity : ComponentActivity() {
                     operationError = null
                     operationBusy = true
                     val conversationId = conversation.id
+                    val runtimeModeAtSubmit = runtimeMode.name.lowercase()
+                    val localRequestId = java.util.UUID.randomUUID().toString()
                     try {
                         appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
                         conversationState = conversationStore.beginTurn(conversationId, text)
@@ -269,10 +271,21 @@ class MainActivity : ComponentActivity() {
                                 },
                             )
                             future.whenComplete { result, error ->
+                                val capturedErrorDetails = when {
+                                    error != null -> appSession.captureChatError(
+                                        error, conversation.localConversationId, null, runtimeModeAtSubmit,
+                                        requestId = localRequestId,
+                                    )
+                                    result?.success == false -> result.errorDetails ?: appSession.captureChatError(
+                                        null, conversation.localConversationId, result.turnId, runtimeModeAtSubmit,
+                                        requestId = localRequestId,
+                                    )
+                                    else -> null
+                                }
                                 runOnUiThread {
                                     operationBusy = false
                                     if (error != null) {
-                                        recordTurnFailure(conversationId, error)
+                                        recordTurnFailure(conversationId, error, capturedErrorDetails)
                                     } else if (result != null) {
                                         turnFailure = null
                                         val remoteConversationId = result.conversationId
@@ -282,6 +295,7 @@ class MainActivity : ComponentActivity() {
                                                 conversationId = conversationId,
                                                 assistantText = result.text,
                                                 success = result.success,
+                                                errorDetails = capturedErrorDetails,
                                                 remoteConversationId = remoteConversationId,
                                             )
                                             if (project != null && remoteConversationId != null &&
@@ -654,6 +668,7 @@ class MainActivity : ComponentActivity() {
                 },
                 onOpenDiagnostics = ::copyDiagnostics,
                 onCopyDiagnostics = ::copyDiagnostics,
+                onCopyChatErrorDetails = ::copyChatErrorDetails,
                 onExportDiagnostics = { appSession.exportDiagnostics() },
                 onShareDiagnostics = ::shareDiagnostics,
                 onClearDiagnostics = ::clearDiagnostics,
@@ -818,7 +833,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun recordTurnFailure(conversationId: String, error: Throwable) {
+    private fun recordTurnFailure(conversationId: String, error: Throwable, errorDetails: String? = null) {
         val classified = ZaraFailures.classify(error, ZaraOperation.SUBMIT)
         appSession.recordChatBreadcrumb("chat.turn.failed code=${classified.code}", conversationId)
         val connected = appSession.state().server is ServerConnection.Connected
@@ -832,10 +847,24 @@ class MainActivity : ComponentActivity() {
         try {
             val selected = conversationStore.state().conversation(conversationId)
             if (selected?.status == ai.zara.app.conversations.ConversationStatus.Running) {
-                conversationState = conversationStore.failTurn(conversationId, summary)
+                conversationState = conversationStore.failTurn(
+                    conversationId, summary,
+                    errorDetails = errorDetails ?: appSession.captureChatError(
+                        error, selected.localConversationId, classified.turnId, runtimeMode.name.lowercase(),
+                        requestId = classified.requestId,
+                    ),
+                )
             }
         } catch (_: Exception) {
         }
+    }
+
+    private fun copyChatErrorDetails(details: String): Boolean = try {
+        val clipboard = getSystemService(ClipboardManager::class.java)
+        clipboard.setPrimaryClip(ClipData.newPlainText("Zara error details", details))
+        true
+    } catch (_: Exception) {
+        false
     }
 
     private fun copyDiagnostics() {

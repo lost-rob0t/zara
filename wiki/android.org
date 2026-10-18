@@ -265,6 +265,19 @@ telemetry journal. Protocol message records carry metadata only (type,
 sequence, size) — never payloads, credentials, audio, or prompt/response
 text.
 
+Failed chat messages also retain their own immutable =ZARA-CHAT-ERROR/1=
+snapshot (at most 8 KiB UTF-8). =Copy error details= beneath the failed
+message copies that snapshot and announces success accessibly. Build, mode,
+conversation/request/turn identifiers, typed failure code, cause class/category,
+a few stack locations and bounded per-turn stage names are included. Arbitrary
+exception messages, prompts, responses and global log contents are excluded.
+Local failures enter the existing incident tracker and journal independently of
+remote connection state. Clearing Diagnostics clears those global records;
+it does not remove details retained on a failed chat message. Legacy messages
+without a saved snapshot explicitly report that details were not saved.
+Conversation storage reads version 1 and writes version 2; rollback to an older
+app cannot read the upgraded chat file, so retain a backup before downgrading.
+
 The deterministic regression layer for this contract is
 =android/integration/remote_recovery_fixture.py= (failure injection: =ARM
 MALFORMED|VERSION_MISMATCH|OUT_OF_ORDER|CLOSE|STALE=) driving the real

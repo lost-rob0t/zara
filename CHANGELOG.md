@@ -6,6 +6,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Android chat retains bounded, private error details on each failed message with a Copy error details action that survives later turns and app restoration. Local failures now appear in Diagnostics.
+
 - Service plugins now finish startup before building configured tools. Failed tool setup stops the service and cleans owned resources while preserving existing tools.
 - Zara Desktop now includes a full Prolog IDE workspace with approved-source navigation, syntax highlighting, dirty and cursor state, bounded find/replace, validation diagnostics, guided fact management, and a query console with history, bounded results, and honest stale-result cancellation. IDE queries use the canonical runtime through an admin-gated ZARA/1 command instead of creating a second Prolog engine or blocking Qt's main thread.
 - Zara Desktop now mirrors the Android app's design language: Outrun is the default, the Android Outrun, StarIntel, Midnight, Terminal, and Light themes are available in desktop settings, and chat, history, composer, status, tool activity, and Org surfaces share the same semantic colors, borders, spacing, and rounded hierarchy. Existing desktop themes remain selectable.
