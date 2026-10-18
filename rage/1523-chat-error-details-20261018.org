@@ -125,3 +125,14 @@ argument. This strengthens changed-API wiring rather than removing lifecycle
 coverage; actualstorepersistencetests alreadyexercisefailedmetadata. No production
 code changed for this assertion. Androidoverallgate stillfailed; no APK/emulator
 or screenshotacceptance claimed. Re-runfocusedGREEN andlatestfullCIrequired.
+
+* Harness-only test APK install repair
+At60d3 CI39154856775 real Android/Wear unit/native/debugAPK/secretinspection
+step passed and emulator acceptance started. Test APK reinstall must pass
+Android's documented -t flag (https://developer.android.com/tools/adb#move,
+Install an app, and pm install options). Scope -t onlyto already-built
+androidTest APK; phoneAPK installation, permissions and userdevices unchanged.
+Minimal harnessrepair exception toordinaryRED-first: thisenvironment lacks
+actualtestAPK/SDK/emulator, so no inventedmock manifestproof; officialplatform
+contract and shell/Pythonadjacentchecks justifyrepair, actualCIstillrequired.
+No installedclipboard acceptanceclaimedfromprevioushead.
