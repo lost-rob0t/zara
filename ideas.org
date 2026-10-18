@@ -34,3 +34,17 @@
 - Why deferred: XR should consume the shared Geo protocol after the server/map contracts exist.
 - Next proof: Sideloadable fixture build that selects a geo anchor and resolves its canonical StarIntel document.
 - Promoted issue: lost-rob0t/zara#1205
+
+** IDEA First-class Prolog-only skills with custom Prolog actions
+- Captured: 2026-09-19 00:00 America/New_York
+- Source: chat
+- Why deferred: Needs a canonical action ABI, capability policy, and runtime boundary before implementation is promoted.
+- Next proof: Specify skill metadata, typed action declarations, effect/result contracts, and one end-to-end custom Prolog action running without an LLM.
+- Promoted issue: none
+
+** IDEA Canonical DoorDash client driven by Prolog UI, ordering, and saved meals
+- Captured: 2026-09-19 00:00 America/New_York
+- Source: chat
+- Why deferred: Needs a stable service adapter and safe confirmation/payment boundary before implementation is promoted.
+- Next proof: Build a read-only prototype that models restaurants, menus, carts, and saved meals as Prolog facts and renders the flow through Zara UI.
+- Promoted issue: none
