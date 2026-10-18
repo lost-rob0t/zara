@@ -168,7 +168,20 @@ run_phase "S1-mini transcript normalizer" phase_s1_mini_normalizer
 
 # --- Phase 5: Full pytest suite -------------------------------------------
 phase_pytest() {
-  python -m pytest -q -o faulthandler_timeout=15 --junit-xml="$ARTIFACT_DIR/junit.xml" t/
+  python -m pytest \
+    -q \
+    -o faulthandler_timeout=15 \
+    --junit-xml="$ARTIFACT_DIR/junit.xml" \
+    --cov=zara \
+    --cov-branch \
+    --cov-config="$repo_root/.coveragerc" \
+    --cov-report=term-missing \
+    --cov-report="json:$ARTIFACT_DIR/coverage.json" \
+    --cov-report="xml:$ARTIFACT_DIR/coverage.xml" \
+    t/
+  python "$repo_root/scripts/check-coverage-ratchet.py" \
+    --coverage "$ARTIFACT_DIR/coverage.json" \
+    --policy "$repo_root/coverage-baseline.json"
 }
 
 run_phase "Pytest suite" phase_pytest
