@@ -113,3 +113,15 @@ arithmetic query Result is1/0 with private synthetic marker in laterconjunct;
 this reachesnative division-by-zero rather than onlyinput validation. Harness
 RED1 thenGREEN; sourcecontract executes real PrologQueryPolicy onfixture and
 checks runnerusesit. No mobilepolicybypass, dynamiccodeauthorization orpaidcall.
+
+* Exact-head evaluation / legacy contract correction
+CI39154100254 atd012851d now compiles real Android/Compose successfully.
+App unit gate ran782tests:781passed, oneoldsourcecontract failed at
+ConversationHistoryWiringContractTest:69 because it requires exactoldtwoarg
+failTurn call. Reproduced locally RED1/6 using actual Kotlin/JUnit. Updated
+that assertion to retain conversation-store owner/state assignment, same
+conversationId+summary, and require newimmutable errorDetails orfailurecapture
+argument. This strengthens changed-API wiring rather than removing lifecycle
+coverage; actualstorepersistencetests alreadyexercisefailedmetadata. No production
+code changed for this assertion. Androidoverallgate stillfailed; no APK/emulator
+or screenshotacceptance claimed. Re-runfocusedGREEN andlatestfullCIrequired.

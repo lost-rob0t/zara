@@ -66,7 +66,12 @@ class ConversationHistoryWiringContractTest {
         assertTrue(source.contains("conversationStore.moveToProject(conversationId, projectId)"))
         assertTrue(source.contains("conversationStore.beginTurn(conversationId, text)"))
         assertTrue(source.contains("conversationStore.completeTurn("))
-        assertTrue(source.contains("conversationStore.failTurn(conversationId, summary)"))
+        assertTrue(source.contains("conversationState = conversationStore.failTurn("))
+        val failedTurnWrite = source.substringAfter("conversationState = conversationStore.failTurn(")
+            .substringBefore("\n                )")
+        assertTrue(failedTurnWrite.contains("conversationId, summary,"))
+        assertTrue(failedTurnWrite.contains("errorDetails = errorDetails ?: appSession.captureChatError("))
+        assertTrue(failedTurnWrite.contains("error, selected.localConversationId"))
         assertTrue(source.contains("TurnFailures.renderSummary("))
     }
 }
