@@ -163,6 +163,11 @@ class VoiceSpeechStarted(RuntimeEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SpeechInterruptRequested(RuntimeEvent):
+    reason: str = "user_requested"
+
+
+@dataclass(frozen=True, kw_only=True)
 class VoiceTranscriptPartial(RuntimeEvent):
     stream_id: str = ""
     trace_id: Optional[str] = None

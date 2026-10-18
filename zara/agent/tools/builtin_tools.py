@@ -373,14 +373,17 @@ def build_task_tools(task_service) -> List[StructuredTool]:
 
     @tool("task_create", args_schema=TaskCreateArgs)
     async def task_create(goal: str, max_steps: Optional[int] = None) -> str:
-        """Start a persistent multi-step task that runs in the background."""
+        """Queue explicit requested work; inside a task, delegate a bounded child agent.
+
+        Background work survives ordinary conversation and speech interruption.
+        Child results are joined into the parent's next step automatically.
+        """
 
         if len(goal.strip()) > TASK_GOAL_MAX_CHARS:
             return f"Invalid goal: goals are limited to {TASK_GOAL_MAX_CHARS} characters."
         try:
-            created = await task_service.create_task(
-                goal=goal, max_task_steps=max_steps
-            )
+            create = getattr(task_service, "enqueue_task", task_service.create_task)
+            created = await create(goal=goal, max_task_steps=max_steps)
         except Exception as error:
             return f"Could not create task: {error}"
         return (
@@ -416,6 +419,7 @@ def build_task_tools(task_service) -> List[StructuredTool]:
             return f"No task found for {task_id}."
         lines = [
             f"Task {row.task_id}: {row.status.value}",
+            f"Parent: {row.parent_task_id or 'none'}",
             f"Goal: {_short(row.goal, 160)}",
             f"Steps completed: {row.steps_completed}/{row.max_task_steps}",
         ]

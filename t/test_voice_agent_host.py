@@ -1,0 +1,76 @@
+"""Fleet acceptance through the actual host, tool registry and Prolog bridge."""
+
+from pathlib import Path
+
+from zara.prolog_engine import PrologEngine
+from zara.runtime import events
+from zara.runtime.commands import SubmitTurn
+from zara.tasks.store import TaskStatus
+from t.test_task_host_wiring import build_environment, stop_host, wait_until
+
+
+def test_real_task_tool_delegates_and_joins_with_one_worker(monkeypatch, tmp_path):
+    host, store, recorder, llm, effects = build_environment(
+        monkeypatch, tmp_path, required_tools=(),
+    )
+    llm.script = [
+        ("task_create", {"goal": "verify the child result", "max_steps": 2}),
+        "child delegated",
+        ("scripted_effect", {"value": "child evidence"}),
+        "TASK_COMPLETE: child verified",
+        "TASK_COMPLETE: parent verified the child",
+    ]
+    try:
+        host.start().result(timeout=5)
+        async def launch():
+            host.task_runner._max_concurrent = 1
+            return await host.task_runner.enqueue_task(goal="parent report")
+        root = host.run_coroutine(launch()).result(timeout=5)
+        wait_until(lambda: host.task_runner.get_task(root.task_id).status is TaskStatus.COMPLETED)
+        family = host.task_runner.list_tasks()
+        assert len(family) == 2
+        child = next(task for task in family if task.parent_task_id is not None)
+        assert child.parent_task_id == root.task_id
+        assert child.root_task_id == root.task_id
+        assert child.status is TaskStatus.COMPLETED
+        assert child.attempts_started == 1
+        assert host.task_runner.get_task(root.task_id).attempts_started == 2
+        assert effects == ["child evidence"]
+        assert llm.script == []
+        assert not recorder.of_type(events.TaskFailed)
+    finally:
+        stop_host(host)
+
+
+def test_real_voice_routing_keeps_chat_live_and_stop_cancels_approval_and_queue(monkeypatch, tmp_path):
+    engine = PrologEngine(Path(__file__).resolve().parents[1] / "modules" / "voice_agent.pl")
+    host, store, recorder, llm, effects = build_environment(monkeypatch, tmp_path)
+    llm.script = [
+        ("scripted_effect", {"value": "must remain unapproved"}),
+        "Yes, we can keep talking.",
+    ]
+    try:
+        host.start().result(timeout=5)
+        async def launch():
+            host.task_runner._max_concurrent = 1
+            host._backend._voice_agent._resolver = engine.resolve_voice_agent
+            return await host.task_runner.enqueue_task(goal="work requiring approval")
+        root = host.run_coroutine(launch()).result(timeout=5)
+        wait_until(lambda: host.task_runner.get_task(root.task_id).status is TaskStatus.WAITING_APPROVAL)
+
+        def say(text):
+            receipt = host.submit(SubmitTurn(text=text, conversation_id="voice-fleet-test")).result(timeout=5)
+            wait_until(lambda: any(event.turn_id == receipt.turn_id for event in recorder.of_type(events.ResponseText)))
+            return next(event.text for event in recorder.of_type(events.ResponseText) if event.turn_id == receipt.turn_id)
+
+        assert say("nice weather") == "Yes, we can keep talking."
+        assert host.task_runner.get_task(root.task_id).status is TaskStatus.WAITING_APPROVAL
+        assert "pending" in say("also review another project")
+        assert len(host.task_runner.list_tasks()) == 2
+        assert "Stopped 2 tasks" in say("stop all agents")
+        assert all(task.status is TaskStatus.CANCELLED for task in host.task_runner.list_tasks())
+        assert effects == []
+        assert llm.counter == 2
+        assert not recorder.of_type(events.TaskFailed)
+    finally:
+        stop_host(host)

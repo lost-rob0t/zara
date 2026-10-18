@@ -19,6 +19,7 @@
 :- module(server_main, []).
 
 :- use_module('kb/intents').
+:- use_module('modules/voice_agent').
 :- use_module('kb/server_providers').
 :- use_module('modules/capability_plans').
 :- use_module('modules/health_reasoning').

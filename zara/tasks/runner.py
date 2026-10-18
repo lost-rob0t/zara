@@ -11,8 +11,11 @@ independently testable without a runtime host.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Iterable, Optional
 
@@ -28,6 +31,8 @@ REASON_STEP_ERROR = "step_error"
 REASON_APPROVAL_TIMEOUT = "approval_timeout"
 REASON_APPROVAL_REJECTED = "approval_rejected"
 REASON_INTERRUPTED = "runtime_shutdown"
+REASON_NO_PROGRESS = "no_progress"
+REASON_CHILD_FAILED = "child_failed"
 
 REASONS = frozenset(
     {
@@ -37,6 +42,8 @@ REASONS = frozenset(
         REASON_APPROVAL_TIMEOUT,
         REASON_APPROVAL_REJECTED,
         REASON_INTERRUPTED,
+        REASON_NO_PROGRESS,
+        REASON_CHILD_FAILED,
     }
 )
 
@@ -53,6 +60,8 @@ class TaskLimitError(TaskRunnerError):
 
 
 SubmitTurn = Callable[..., Awaitable[object]]
+_CURRENT_TASK: contextvars.ContextVar = contextvars.ContextVar("zara_task_scope", default=None)
+_TERMINAL = frozenset({TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED})
 
 
 @dataclass
@@ -86,6 +95,9 @@ class TaskRunner:
         publisher: Callable[[events.RuntimeEvent], object],
         principal_id: str,
         max_concurrent: int = 2,
+        max_queued: int = 32,
+        max_subagents: int = 8,
+        max_depth: int = 2,
         default_max_task_steps: int = 20,
         wall_clock_seconds: Optional[float] = None,
         step_log_chars: int = DEFAULT_STEP_LOG_CHARS,
@@ -104,6 +116,18 @@ class TaskRunner:
             raise ValueError("step_log_chars must be an integer")
         if step_log_chars < 1:
             raise ValueError("step_log_chars must be at least 1")
+        if type(max_queued) is not int or not 1 <= max_queued <= 1024:
+            raise ValueError("max_queued must be an integer between 1 and 1024")
+        for name, value, maximum in (("max_subagents", max_subagents, 64), ("max_depth", max_depth, 8)):
+            if type(value) is not int or not 1 <= value <= maximum:
+                raise ValueError(f"{name} must be an integer between 1 and {maximum}")
+        self._max_subagents = max_subagents
+        self._max_depth = max_depth
+        self._cancelled_turns: set[str] = set()
+        self._max_queued = max_queued
+        self._queued: deque[str] = deque()
+        self._dispatch_holds = 0
+        self._changed = asyncio.Event()
         self._wall_clock_seconds = _positive_number(wall_clock_seconds, "wall_clock_seconds")
 
         self._store = store
@@ -127,24 +151,24 @@ class TaskRunner:
 
     async def start(self) -> None:
         """Adopt persisted tasks left active by a dead runtime."""
-        recovered = self._store.recover_interrupted()
+        self._stopping = False
+        recovered = self._store.recover_interrupted(principal_id=self._principal_id)
         if recovered:
             logger.info("[TaskRunner] recovered %d interrupted task(s)", recovered)
 
     async def stop(self) -> None:
-        """Interrupt all live tasks (persisted) and release resources."""
+        """Interrupt retained work and revoke active turns before shutdown."""
         self._stopping = True
-        with self._lock:
-            runs = list(self._runs.values())
-        for run in runs:
-            run.cancel()
-        if runs:
-            await asyncio.gather(*runs, return_exceptions=True)
-        with self._lock:
-            self._runs.clear()
-            self._active_steps.clear()
-            self._task_turn.clear()
-        self._stopping = False
+        tasks = self.list_tasks(statuses=[
+            TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL,
+            TaskStatus.WAITING_INPUT, TaskStatus.BLOCKED,
+        ])
+        self._queued.clear()
+        for task in tasks:
+            self._interrupt(task.task_id)
+        for task in tasks:
+            await self._cancel_execution(task.task_id)
+        self._changed.set()
 
     # ------------------------------------------------------------------
     # Task operations
@@ -155,11 +179,10 @@ class TaskRunner:
         goal: str,
         max_task_steps: Optional[int] = None,
     ) -> AgentTask:
-        active = self._store.list_tasks(
-            principal_id=self._principal_id,
-            statuses=[TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL],
-        )
-        if len(active) >= self._max_concurrent:
+        if _CURRENT_TASK.get() is not None:
+            return await self.enqueue_task(goal=goal, max_task_steps=max_task_steps)
+        self._require_accepting()
+        if self._running_count() >= self._max_concurrent:
             raise TaskLimitError(
                 f"task concurrency limit reached ({self._max_concurrent} running)"
             )
@@ -172,6 +195,7 @@ class TaskRunner:
             principal_id=self._principal_id,
             goal=goal,
             max_task_steps=budget,
+            deadline_at=self._new_deadline(),
         )
         task = self._store.transition(
             task.task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING
@@ -182,57 +206,228 @@ class TaskRunner:
         return task
 
     async def resume_task(self, *, task_id: str) -> AgentTask:
-        task = self._store.get_task(task_id, principal_id=self._principal_id)
+        self._require_accepting()
+        self._check_control_scope(task_id)
+        task = self.get_task(task_id)
         if task is None:
             raise TaskRunnerError(f"task not found: {task_id!r}")
         if task.status not in {TaskStatus.PENDING, TaskStatus.INTERRUPTED}:
-            raise TaskRunnerError(
-                f"task {task_id!r} is not resumable (status={task.status.value})"
-            )
-        active = self._store.list_tasks(
-            principal_id=self._principal_id,
-            statuses=[TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL],
-        )
-        if len(active) >= self._max_concurrent:
-            raise TaskLimitError(
-                f"task concurrency limit reached ({self._max_concurrent} running)"
-            )
-        task = self._store.transition(
-            task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING
-        )
-        logger.info("[TaskRunner] task=%s resumed", task_id)
-        self._publish(events.TaskStarted(task_id=task_id, label="tasks"))
-        self._spawn_run(task_id)
-        return task
+            raise TaskRunnerError(f"task {task_id!r} is not resumable (status={task.status.value})")
+        if task.parent_task_id:
+            parent = self.get_task(task.parent_task_id)
+            if parent is None or parent.status in _TERMINAL or parent.status is TaskStatus.INTERRUPTED:
+                raise TaskRunnerError("resume the parent task instead")
+        targets = [child for child in self._descendants(task_id) if child.status is TaskStatus.INTERRUPTED] + [task]
+        targets = [target for target in targets if target.task_id not in self._queued]
+        if len(self._queued) + len(targets) > self._max_queued:
+            raise TaskLimitError("task queue limit reached")
+        for target in targets:
+            run = self._runs.get(target.task_id)
+            if run is not None and not run.done():
+                raise TaskRunnerError("task cancellation has not completed")
+        for target in targets:
+            if target.status is TaskStatus.INTERRUPTED:
+                self._store.transition(target.task_id, principal_id=self._principal_id, status=TaskStatus.PENDING)
+            self._queued.append(target.task_id)
+        self._pump_queue()
+        return self.get_task(task_id)
 
-    async def cancel_task(self, *, task_id: str, reason: str = "cancelled") -> AgentTask:
-        task = self._store.get_task(task_id, principal_id=self._principal_id)
-        if task is None:
-            raise TaskRunnerError(f"task not found: {task_id!r}")
-        turn_id: Optional[str]
+    async def resume_all(self) -> list[AgentTask]:
+        self._check_control_scope()
+        roots = [task for task in self.list_tasks() if task.parent_task_id is None and task.status is TaskStatus.INTERRUPTED]
+        return [await self.resume_task(task_id=task.task_id) for task in roots]
+
+    def _new_deadline(self) -> Optional[float]:
+        return None if self._wall_clock_seconds is None else time.time() + self._wall_clock_seconds
+
+    def _require_accepting(self) -> None:
+        if self._stopping or self._dispatch_holds:
+            raise TaskRunnerError("task admission is stopped")
+
+    def _running_count(self) -> int:
+        count = 0
+        for task_id, run in self._runs.items():
+            task = self.get_task(task_id)
+            waiting = task is not None and task.status is TaskStatus.BLOCKED and task.reason == "waiting_children"
+            if not run.done() and not waiting:
+                count += 1
+        return count
+
+    async def enqueue_task(
+        self, *, goal: str, max_task_steps: Optional[int] = None,
+        parent_task_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+    ) -> AgentTask:
+        """Admit a goal without blocking the conversation when the fleet is busy."""
+        self._require_accepting()
+        scope = _CURRENT_TASK.get()
+        if scope is not None:
+            owner, scoped_task_id = scope
+            if owner is not self or parent_task_id not in {None, scoped_task_id}:
+                raise TaskRunnerError("subagents cannot escape their parent task")
+            parent_task_id = scoped_task_id
+        if parent_task_id is not None:
+            self._validate_parent(parent_task_id)
+        if len(self._queued) >= self._max_queued:
+            raise TaskLimitError(f"task queue limit reached ({self._max_queued})")
+        budget = self._default_max_task_steps if max_task_steps is None else max_task_steps
+        task = self._store.create_task(
+            principal_id=self._principal_id, goal=goal, max_task_steps=budget,
+            parent_task_id=parent_task_id, conversation_id=conversation_id,
+            deadline_at=self._new_deadline(),
+        )
+        self._queued.append(task.task_id)
+        self._pump_queue()
+        return self.get_task(task.task_id)
+
+    async def delegate_task(self, *, goal: str, max_task_steps: Optional[int] = None) -> AgentTask:
+        scope = _CURRENT_TASK.get()
+        if scope is None or scope[0] is not self:
+            raise TaskRunnerError("delegation requires an active parent task")
+        return await self.enqueue_task(goal=goal, max_task_steps=max_task_steps)
+
+    def _validate_parent(self, task_id: str) -> None:
+        parent = self.get_task(task_id)
+        if parent is None or parent.status is not TaskStatus.RUNNING:
+            raise TaskRunnerError("parent task is not running")
+        family = [task for task in self.list_tasks() if task.root_task_id == parent.root_task_id]
+        if len(family) - 1 >= self._max_subagents:
+            raise TaskLimitError("root subagent limit reached")
+        depth = 1
+        ancestor = parent
+        while ancestor.parent_task_id:
+            depth += 1
+            ancestor = self.get_task(ancestor.parent_task_id)
+            if ancestor is None:
+                raise TaskRunnerError("invalid task ancestry")
+        if depth > self._max_depth:
+            raise TaskLimitError("subagent depth limit reached")
+
+    def _descendants(self, task_id: str) -> list[AgentTask]:
+        family = self.list_tasks()
+        children: dict[str, list[str]] = {}
+        for task in family:
+            children.setdefault(task.parent_task_id, []).append(task.task_id)
+        selected = {task_id}
+        pending = deque([task_id])
+        while pending:
+            for child_id in children.get(pending.popleft(), ()):
+                if child_id not in selected:
+                    selected.add(child_id)
+                    pending.append(child_id)
+        return [task for task in family if task.task_id in selected and task.task_id != task_id]
+
+    def _check_control_scope(self, task_id: Optional[str] = None) -> None:
+        scope = _CURRENT_TASK.get()
+        if scope is None:
+            return
+        owner, current = scope
+        if owner is not self or task_id is None:
+            raise TaskRunnerError("task agents cannot control the whole fleet")
+        allowed = {current} | {task.task_id for task in self._descendants(current)}
+        if task_id not in allowed:
+            raise TaskRunnerError("task control is outside the agent's subtree")
+
+    def _pump_queue(self) -> None:
+        if self._stopping or self._dispatch_holds:
+            return
+        while self._queued and self._running_count() < self._max_concurrent:
+            task_id = self._queued.popleft()
+            task = self.get_task(task_id)
+            if task is None or task.status is not TaskStatus.PENDING:
+                continue
+            self._store.transition(
+                task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING,
+            )
+            self._publish(events.TaskStarted(task_id=task_id, label="tasks"))
+            self._spawn_run(task_id)
+        self._changed.set()
+
+    async def _cancel_execution(self, task_id: str) -> None:
         with self._lock:
             turn_id = self._task_turn.get(task_id)
-        task = self._store.transition(
-            task_id,
-            principal_id=self._principal_id,
-            status=TaskStatus.CANCELLED,
-            reason=reason,
-        )
-        self._publish(
-            events.TaskCancelled(task_id=task_id, label="tasks", reason=reason)
-        )
-        logger.info("[TaskRunner] task=%s cancelled", task_id)
+            run = self._runs.get(task_id)
         if turn_id is not None:
-            try:
-                await self._cancel_turn(turn_id)
-            except Exception:
-                logger.warning(
-                    "[TaskRunner] turn cancel failed for task %s", task_id, exc_info=True
-                )
-        run = self._runs.get(task_id)
+            await self._revoke_turn(turn_id)
         if run is not None and not run.done():
             run.cancel()
-        return task
+            if run is not asyncio.current_task():
+                _, pending = await asyncio.wait({run}, timeout=5.0)
+                if pending:
+                    logger.warning("[TaskRunner] task %s has not acknowledged cancellation", task_id)
+        self._changed.set()
+
+    async def _revoke_turn(self, turn_id: str) -> None:
+        if turn_id in self._cancelled_turns:
+            return
+        self._cancelled_turns.add(turn_id)
+        try:
+            async with asyncio.timeout(5.0):
+                await self._cancel_turn(turn_id)
+        except Exception:
+            logger.warning("[TaskRunner] turn cancellation failed for %s", turn_id, exc_info=True)
+
+    async def cancel_task(self, *, task_id: str, reason: str = "cancelled") -> AgentTask:
+        return await self._control_tree(task_id, pause=False, reason=reason)
+
+    async def pause_task(self, *, task_id: str, reason: str = "user_pause") -> AgentTask:
+        return await self._control_tree(task_id, pause=True, reason=reason)
+
+    async def _control_tree(self, task_id: str, *, pause: bool, reason: str) -> AgentTask:
+        self._check_control_scope(task_id)
+        task = self.get_task(task_id)
+        if task is None:
+            raise TaskRunnerError(f"task not found: {task_id!r}")
+        self._dispatch_holds += 1
+        try:
+            targets = [task] + self._descendants(task_id)
+            ids = {target.task_id for target in targets}
+            self._queued = deque(queued for queued in self._queued if queued not in ids)
+            for target in targets:
+                status = TaskStatus.INTERRUPTED if pause else TaskStatus.CANCELLED
+                if target.status in _TERMINAL or target.status is status:
+                    continue
+                self._store.transition(target.task_id, principal_id=self._principal_id, status=status, reason=reason)
+                if not pause:
+                    self._publish(events.TaskCancelled(task_id=target.task_id, label="tasks", reason=reason))
+            for target in targets:
+                await self._cancel_execution(target.task_id)
+            return self.get_task(task_id)
+        finally:
+            self._dispatch_holds -= 1
+            self._pump_queue()
+
+    async def cancel_all(self, *, reason: str = "user_stop_all") -> list[AgentTask]:
+        return await self._control_all(pause=False, reason=reason)
+
+    async def pause_all(self, *, reason: str = "user_pause") -> list[AgentTask]:
+        return await self._control_all(pause=True, reason=reason)
+
+    async def _control_all(self, *, pause: bool, reason: str) -> list[AgentTask]:
+        self._check_control_scope()
+        self._dispatch_holds += 1
+        try:
+            tasks = self.list_tasks()
+            self._queued.clear()
+            changed = []
+            for task in tasks:
+                if task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED}:
+                    continue
+                target = TaskStatus.INTERRUPTED if pause else TaskStatus.CANCELLED
+                if task.status is target:
+                    continue
+                changed.append(self._store.transition(
+                    task.task_id, principal_id=self._principal_id,
+                    status=target, reason=reason,
+                ))
+                if not pause:
+                    self._publish(events.TaskCancelled(task_id=task.task_id, label="tasks", reason=reason))
+            for task in changed:
+                await self._cancel_execution(task.task_id)
+            return changed
+        finally:
+            self._dispatch_holds -= 1
+            self._changed.set()
 
     def get_task(self, task_id: str) -> Optional[AgentTask]:
         return self._store.get_task(task_id, principal_id=self._principal_id)
@@ -245,12 +440,17 @@ class TaskRunner:
         )
 
     async def wait_for_task(self, task_id: str, timeout: Optional[float] = None) -> None:
-        run = self._runs.get(task_id)
-        if run is None:
-            return
-        done, pending = await asyncio.wait({run}, timeout=timeout)
-        if pending:
-            raise TimeoutError(f"task {task_id!r} did not finish in time")
+        async with asyncio.timeout(timeout):
+            while True:
+                self._changed.clear()
+                task = self.get_task(task_id)
+                run = self._runs.get(task_id)
+                if task is None or (
+                    task.status not in {TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING_APPROVAL, TaskStatus.BLOCKED}
+                    and (run is None or run.done())
+                ):
+                    return
+                await self._changed.wait()
 
     # ------------------------------------------------------------------
     # Approval observation
@@ -332,7 +532,7 @@ class TaskRunner:
 
     def _cancel_step(self, task_id: str, turn_id: str) -> None:
         try:
-            asyncio.get_running_loop().create_task(self._cancel_turn(turn_id))
+            asyncio.get_running_loop().create_task(self._revoke_turn(turn_id))
         except RuntimeError:
             return
         run = self._runs.get(task_id)
@@ -343,16 +543,30 @@ class TaskRunner:
     # Step loop
 
     def _spawn_run(self, task_id: str) -> None:
+        context = contextvars.copy_context()
+        context.run(_CURRENT_TASK.set, None)
         run = asyncio.create_task(
-            self._run_task(task_id), name=f"zara-task-{task_id}"
+            self._run_task(task_id), name=f"zara-task-{task_id}", context=context,
         )
         self._runs[task_id] = run
-        run.add_done_callback(lambda _task, tid=task_id: self._runs.pop(tid, None))
+        run.add_done_callback(lambda finished, tid=task_id: self._run_done(tid, finished))
+
+    def _run_done(self, task_id: str, run: asyncio.Task) -> None:
+        if self._runs.get(task_id) is run:
+            self._runs.pop(task_id, None)
+        self._changed.set()
+        self._pump_queue()
 
     async def _run_task(self, task_id: str) -> None:
         try:
-            if self._wall_clock_seconds is not None:
-                async with asyncio.timeout(self._wall_clock_seconds):
+            task = self.get_task(task_id)
+            remaining = self._wall_clock_seconds
+            if task is not None and task.deadline_at is not None:
+                remaining = task.deadline_at - time.time()
+            if remaining is not None:
+                if remaining <= 0:
+                    raise TimeoutError("task deadline expired")
+                async with asyncio.timeout(remaining):
                     await self._step_loop(task_id)
             else:
                 await self._step_loop(task_id)
@@ -369,13 +583,27 @@ class TaskRunner:
                 "[TaskRunner] task %s step failed: %s", task_id, type(error).__name__
             )
             self._finish(task_id, TaskStatus.FAILED, REASON_STEP_ERROR)
+        finally:
+            current = self.get_task(task_id)
+            if current is not None and current.status in {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.INTERRUPTED}:
+                for child in self._descendants(task_id):
+                    if child.status not in _TERMINAL:
+                        await self._control_tree(
+                            child.task_id, pause=current.status is TaskStatus.INTERRUPTED,
+                            reason="parent_" + current.status.value,
+                        )
 
     async def _step_loop(self, task_id: str) -> None:
         while True:
             task = self._store.get_task(task_id, principal_id=self._principal_id)
             if task is None or task.status is not TaskStatus.RUNNING:
                 return
-            if task.steps_completed >= task.max_task_steps:
+            children = [child for child in self.list_tasks() if child.parent_task_id == task_id]
+            if any(child.status not in _TERMINAL for child in children):
+                if not await self._join_children(task_id):
+                    return
+                task = self.get_task(task_id)
+            if not self._store.claim_step(task_id, principal_id=self._principal_id):
                 self._finish(task_id, TaskStatus.FAILED, REASON_STEP_BUDGET)
                 return
             step_index = task.steps_completed
@@ -410,9 +638,38 @@ class TaskRunner:
                     step_index=step_index,
                 )
             )
+            children = [child for child in self.list_tasks() if child.parent_task_id == task_id]
+            if any(child.status not in _TERMINAL for child in children):
+                if not await self._join_children(task_id):
+                    return
+                continue
+            if any(child.status is not TaskStatus.COMPLETED for child in children):
+                self._finish(task_id, TaskStatus.FAILED, REASON_CHILD_FAILED)
+                return
             if completed:
                 self._finish(task_id, TaskStatus.COMPLETED, None)
                 return
+            steps = self._store.list_steps(task_id, principal_id=self._principal_id)
+            if len(steps) >= 3 and len({step.summary for step in steps[-3:]}) == 1:
+                self._finish(task_id, TaskStatus.FAILED, REASON_NO_PROGRESS)
+                return
+
+    async def _join_children(self, task_id: str) -> bool:
+        self._store.transition(task_id, principal_id=self._principal_id, status=TaskStatus.BLOCKED, reason="waiting_children")
+        self._pump_queue()
+        while True:
+            self._changed.clear()
+            task = self.get_task(task_id)
+            if task is None or task.status is not TaskStatus.BLOCKED:
+                return False
+            children = [child for child in self.list_tasks() if child.parent_task_id == task_id]
+            if any(child.status in {TaskStatus.FAILED, TaskStatus.CANCELLED, TaskStatus.INTERRUPTED} for child in children):
+                self._finish(task_id, TaskStatus.FAILED, REASON_CHILD_FAILED)
+                return False
+            if all(child.status is TaskStatus.COMPLETED for child in children) and self._running_count() < self._max_concurrent:
+                self._store.transition(task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING)
+                return True
+            await self._changed.wait()
 
     async def _run_step(self, task: AgentTask, step_index: int):
         turn_id = await self._allocate_turn_id()
@@ -429,6 +686,7 @@ class TaskRunner:
             step_index,
         )
         trace = LatencyTrace(trace_id=turn_id)
+        token = _CURRENT_TASK.set((self, task.task_id))
         try:
             result = await self._submit_turn(
                 self._step_prompt(task, step_index),
@@ -437,13 +695,18 @@ class TaskRunner:
                 system_context=self._task_context(task),
                 latency_trace=trace,
             )
+        except BaseException:
+            await self._revoke_turn(turn_id)
+            raise
         finally:
+            _CURRENT_TASK.reset(token)
+            self._cancelled_turns.discard(turn_id)
             with self._lock:
                 self._active_steps.pop(turn_id, None)
                 if self._task_turn.get(task.task_id) == turn_id:
                     self._task_turn.pop(task.task_id, None)
         response = str(getattr(result, "response", "") or "")
-        completed = response.strip().upper().startswith(COMPLETION_SENTINEL)
+        completed = self._is_complete(response)
         logger.info(
             "[TaskRunner] task=%s turn=%s step=%d status=completed response_len=%d",
             task.task_id,
@@ -526,14 +789,26 @@ class TaskRunner:
             for step in steps[-_CONTEXT_STEP_WINDOW:]:
                 marker = step.summary or "(no summary)"
                 lines.append(f"- step {step.step_index + 1}: {marker}")
+        children = [child for child in self.list_tasks() if child.parent_task_id == task.task_id]
+        if children:
+            lines.append("Subagent results (verify these before completing the parent):")
+            for child in children:
+                records = self._store.list_steps(child.task_id, principal_id=self._principal_id)
+                summary = records[-1].summary if records else "no result yet"
+                lines.append(f"- {child.task_id} [{child.status.value}]: {summary[:300]}")
         context = "\n".join(lines)
         if len(context) > self._step_log_chars:
             context = context[: self._step_log_chars]
         return context
 
+    @staticmethod
+    def _is_complete(response: str) -> bool:
+        normalized = response.strip().upper()
+        return normalized == COMPLETION_SENTINEL or normalized.startswith(COMPLETION_SENTINEL + ":")
+
     def _bounded_summary(self, response: str) -> str:
         stripped = response.strip()
-        if stripped.upper().startswith(COMPLETION_SENTINEL):
+        if self._is_complete(stripped):
             stripped = stripped[len(COMPLETION_SENTINEL):].lstrip(":").strip()
         if not stripped:
             stripped = "completed"

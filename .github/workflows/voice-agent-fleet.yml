@@ -1,0 +1,73 @@
+name: Voice Agent Fleet
+
+on:
+  pull_request:
+    paths:
+      - 'zara/tasks/**'
+      - 'zara/runtime/**'
+      - 'zara/voice_runtime.py'
+      - 'zara/voice_agent.py'
+      - 'zara/config.py'
+      - 'zara/plugins/builtin/agent_mode.py'
+      - 'zara/agent/tools/**'
+      - 'zara/prolog_engine.py'
+      - 'kb/**'
+      - 'modules/**'
+      - 'main.pl'
+      - 'server_main.pl'
+      - 't/test_voice_agent*.py'
+      - 't/test_task*.py'
+      - 't/test_agent_mode*.py'
+      - 't/voice_agent.pl'
+      - '.github/workflows/voice-agent-fleet.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: voice-agent-fleet-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Record exact test source
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p artifacts/voice-fleet
+          git rev-parse HEAD > artifacts/voice-fleet/source-sha.txt
+          git archive --format=tar.gz HEAD > artifacts/voice-fleet/source.tar.gz
+      - uses: cachix/install-nix-action@v31
+      - name: Run voice fleet and adjacent runtime contracts
+        run: |
+          nix develop -c python -m pytest -q \
+            t/test_config.py t/test_tasks_config.py \
+            t/test_voice_agent_fleet.py t/test_voice_agent_routing.py \
+            t/test_voice_agent_barge_regressions.py t/test_voice_agent_host.py \
+            t/test_task_runner.py t/test_task_store.py t/test_task_tools.py \
+            t/test_task_host_wiring.py t/test_task_turn_context.py \
+            t/test_task_approval_flow.py t/test_task_observability.py \
+            t/test_agent_mode_core_plugin.py t/test_agent_mode_voice_barge_in.py \
+            --junitxml=artifacts/voice-fleet/junit.xml
+      - name: Run actual Prolog voice routing contracts
+        if: always()
+        run: |
+          set -euo pipefail
+          nix develop -c swipl -q -s t/voice_agent.pl \
+            -g '(run_tests -> halt(0); halt(1))' -t 'halt(1)' \
+            2>&1 | tee artifacts/voice-fleet/prolog.txt
+      - name: Upload reproducible contract evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-agent-fleet-evidence
+          path: artifacts/voice-fleet/
+          if-no-files-found: error

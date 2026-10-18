@@ -224,6 +224,11 @@ class AgentModePlugin(ServicePlugin):
         self._speech_process: Optional[subprocess.Popen] = None
         self._speech_interrupt_reason = ""
         self._speech_activity_token = ""
+        self._speech_generation = 0
+        self._speech_stopping = False
+        self._speech_queue: queue.Queue = queue.Queue(maxsize=8)
+        self._synthesis_loop = None
+        self._synthesis_task = None
         self._next_question_at: Optional[float] = None
 
     def start(self, runtime) -> None:
@@ -235,9 +240,13 @@ class AgentModePlugin(ServicePlugin):
         )
         self._subscription = runtime.subscribe(maxsize=256)
         runtime.start_worker("scheduler", self._scheduler_loop)
+        self._speech_stopping = False
         runtime.start_worker("events", self._event_loop)
+        runtime.start_worker("speech", self._speech_loop)
 
     def stop(self) -> None:
+        with self._speech_state_lock:
+            self._speech_stopping = True
         self._interrupt_speech("agent mode stopped")
         if self._subscription is not None:
             self._subscription.close()
@@ -416,6 +425,9 @@ class AgentModePlugin(ServicePlugin):
                 return
             event = envelope.event
 
+            if isinstance(event, events.SpeechInterruptRequested):
+                self._interrupt_speech(event.reason)
+                continue
             if isinstance(event, events.VoiceSpeechStarted):
                 if self._barge_in_enabled():
                     self._interrupt_speech("user speech detected")
@@ -432,7 +444,7 @@ class AgentModePlugin(ServicePlugin):
                 )
                 context = agent_mode_hooks.run(context)
                 if bool(self._configuration.get("speak_questions", True)):
-                    self._speak_text(context.text)
+                    self._queue_speech(context.text)
             elif conversation_id.startswith("agent-mode:task:"):
                 task_id = conversation_id.rsplit(":", 1)[-1]
                 context = build_action_context(
@@ -443,7 +455,7 @@ class AgentModePlugin(ServicePlugin):
                 )
                 context = agent_mode_hooks.run(context)
                 if bool(self._configuration.get("speak_task_results", False)):
-                    self._speak_text(context.text)
+                    self._queue_speech(context.text)
 
     def _dispatch_background_turn(self, *, prompt: str, conversation_id: str) -> None:
         runtime = self._runtime
@@ -491,7 +503,53 @@ class AgentModePlugin(ServicePlugin):
             "Return only the question."
         )
 
-    def _speak_text(self, text: str) -> str:
+    def _queue_speech(self, text: str) -> bool:
+        with self._speech_state_lock:
+            if self._speech_stopping:
+                return False
+            work = (self._speech_generation, str(text)[:MAX_SPEAK_CHARS])
+            try:
+                self._speech_queue.put_nowait(work)
+            except queue.Full:
+                return False
+            return True
+
+    def _speech_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.is_set():
+            try:
+                generation, text = self._speech_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self._speak_text(text, generation=generation)
+            finally:
+                self._speech_queue.task_done()
+
+    async def _synthesize_speech(self, engine, text: str, generation: int):
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        with self._speech_state_lock:
+            if self._speech_stopping or generation != self._speech_generation:
+                raise asyncio.CancelledError
+            self._synthesis_loop = loop
+            self._synthesis_task = task
+        try:
+            return await engine.synthesize_async(text)
+        finally:
+            try:
+                await engine.close()
+            finally:
+                with self._speech_state_lock:
+                    if self._synthesis_task is task:
+                        self._synthesis_task = None
+                        self._synthesis_loop = None
+
+    def _speak_text(self, text: str, *, generation: Optional[int] = None) -> str:
+        with self._speech_state_lock:
+            if generation is None:
+                generation = self._speech_generation
+            if self._speech_stopping or generation != self._speech_generation:
+                return "Speech interrupted before synthesis."
         text = str(text).strip()
         if not text:
             return "Nothing to speak."
@@ -507,18 +565,23 @@ class AgentModePlugin(ServicePlugin):
             return "TTS synthesis is available, but mpv is not installed for playback."
 
         with self._speech_lock:
+            with self._speech_state_lock:
+                if self._speech_stopping or generation != self._speech_generation:
+                    return "Speech interrupted before synthesis."
             try:
                 config = get_config()
                 tts_config = dict(config.get_section("tts") or {})
                 provider = str(tts_config.get("provider", "qwen3"))
                 engine = TTSEngine(provider, {"tts": tts_config})
-                try:
-                    result = asyncio.run(engine.synthesize_async(text))
-                finally:
-                    asyncio.run(engine.close())
+                result = asyncio.run(self._synthesize_speech(engine, text, generation))
+            except asyncio.CancelledError:
+                return self._after_speak(text, "Speech interrupted during synthesis.")
             except Exception as error:
                 return self._after_speak(text, f"TTS failed: {error}")
 
+            with self._speech_state_lock:
+                if self._speech_stopping or generation != self._speech_generation:
+                    return self._after_speak(text, "Speech interrupted during synthesis.")
             if not result.success:
                 return self._after_speak(
                     text,
@@ -535,21 +598,23 @@ class AgentModePlugin(ServicePlugin):
                     path = output.name
 
                 activity = speech_activity.begin(source="agent-mode")
-                process = subprocess.Popen(
-                    [
-                        "mpv",
-                        "--no-video",
-                        "--audio-display=no",
-                        "--really-quiet",
-                        "--no-terminal",
-                        path,
-                    ],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
                 with self._speech_state_lock:
+                    if self._speech_stopping or generation != self._speech_generation:
+                        return self._after_speak(text, "Speech interrupted before playback.")
+                    process = subprocess.Popen(
+                        [
+                            "mpv",
+                            "--no-video",
+                            "--audio-display=no",
+                            "--really-quiet",
+                            "--no-terminal",
+                            path,
+                        ],
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
                     self._speech_process = process
                     self._speech_interrupt_reason = ""
                     self._speech_activity_token = activity.token
@@ -603,6 +668,19 @@ class AgentModePlugin(ServicePlugin):
 
     def _interrupt_speech(self, reason: str) -> bool:
         with self._speech_state_lock:
+            self._speech_generation += 1
+            while True:
+                try:
+                    self._speech_queue.get_nowait()
+                    self._speech_queue.task_done()
+                except queue.Empty:
+                    break
+            loop, task = self._synthesis_loop, self._synthesis_task
+            if loop is not None and task is not None:
+                try:
+                    loop.call_soon_threadsafe(task.cancel)
+                except RuntimeError:
+                    pass
             process = self._speech_process
             if process is None or process.poll() is not None:
                 return False

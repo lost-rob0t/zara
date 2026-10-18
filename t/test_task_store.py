@@ -123,6 +123,7 @@ class TestTransitions:
         (TaskStatus.WAITING_INPUT, TaskStatus.RUNNING),
         (TaskStatus.BLOCKED, TaskStatus.RUNNING),
         (TaskStatus.INTERRUPTED, TaskStatus.RUNNING),
+        (TaskStatus.INTERRUPTED, TaskStatus.PENDING),
         (TaskStatus.INTERRUPTED, TaskStatus.CANCELLED),
     ]
 
@@ -145,7 +146,6 @@ class TestTransitions:
         (TaskStatus.CANCELLED, TaskStatus.RUNNING),
         (TaskStatus.CANCELLED, TaskStatus.INTERRUPTED),
         (TaskStatus.INTERRUPTED, TaskStatus.COMPLETED),
-        (TaskStatus.INTERRUPTED, TaskStatus.PENDING),
     ]
 
     @pytest.mark.parametrize("source,target", ILLEGAL)

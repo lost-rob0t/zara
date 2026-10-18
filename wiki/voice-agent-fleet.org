@@ -1,0 +1,107 @@
+#+title: Zara Voice Agent fleet
+
+* Enable
+
+The fleet is the existing RuntimeHost-owned TaskRunner, not a second agent
+runtime. Finalized voice transcripts and typed turns use the same
+LangGraphRuntimeBackend entry point. Conversation turns do not wait for task
+completion. Existing providers, tool approvals and capability execution remain
+in place.
+
+#+begin_src toml
+[tasks]
+enabled = true
+voice_agent = true
+max_concurrent = 4
+max_queued = 32
+max_subagents = 8
+max_depth = 2
+max_task_steps = 20
+wall_clock_minutes = 30.0
+step_log_chars = 2000
+
+[plugins.agent-mode]
+enabled = true
+barge_in = true
+random_questions = false
+#+end_src
+
+Restart the runtime after changing configuration. Tasks remain disabled by
+default. This does not change the selected provider or model and does not
+install an APK or update another machine's configuration.
+
+* Talk while the fleet works
+
+Prolog classifies the finalized utterance; Python executes only the returned
+closed action vocabulary. New explicit requests such as “research this topic”,
+“also review this project”, “start a task to ...” or “have an agent ...” admit
+another durable task. Excess work enters a bounded FIFO queue. Ordinary chatter,
+negation, quoted stop words and questions about commands do not start or stop a
+task. Ambiguous language stays on the existing conversation path, where the
+configured conversational model can use the normal task tools.
+
+Goals retain the original case and punctuation. A missing, invalid, busy or
+failed symbolic router does not silently delegate a control command to a model.
+“Fleet status” and “what are my agents doing?” provide bounded task summaries.
+
+* Stop scopes
+
+| Utterance | Result |
+|-----------+--------|
+| Stop talking | Interrupt output only; agents keep working |
+| Stop / pause | Reversibly pause the principal's task fleet |
+| Pause this task | Pause the unique current conversation task and descendants; ask for an ID when ambiguous |
+| Pause task task-ID | Pause that task tree |
+| Resume task task-ID | Resume that retained tree through the queue |
+| Resume all work | Resume interrupted roots and their interrupted descendants |
+| Cancel task task-ID | Cancel that tree permanently |
+| Stop all agents / stop all work | Cancel running, queued and interrupted work for this principal |
+
+Task cancellation does not undo an already-committed external effect. The
+runtime revokes active turn capabilities and requests backend cancellation;
+external providers and subprocesses still need to acknowledge cancellation.
+Cancelled tasks cannot resume. A later explicit new request is a new task.
+
+* Subagents and stop conditions
+
+Calling task_create inside an active task automatically delegates a child; a
+worker cannot escape its ancestry by requesting a new root. Parents release
+their concurrency slot while joining children, including with a one-worker
+fleet, and receive bounded child results before continuing. Child failure stops
+the parent; parent pause/cancel/shutdown propagates to descendants. Task agents
+cannot issue fleet-wide controls or control unrelated task trees.
+
+The root and descendants share a persisted attempt budget and original
+wall-clock deadline. Pausing, resuming, retries and delegation do not refresh
+those limits. The deadline includes queued and paused time. Per-root descendant
+count and depth limits bound fan-out. Three identical consecutive nonterminal
+step summaries stop a task as no_progress; this is a conservative repetition
+check, not a semantic proof of progress. Existing approval rejection/timeouts,
+backend errors and runtime shutdown remain stop conditions. A standalone
+TASK_COMPLETE or TASK_COMPLETE: marker ends a step loop only after children have
+completed; arbitrary prefixes do not count as completion evidence.
+
+* Barge-in
+
+The managed event consumer never waits for synthesis or playback. A separate
+managed speech worker consumes a bounded eight-item queue. Confirmed user speech
+increments a speech generation, flushes queued output, cancels active synthesis
+and terminates playback. Generation checks suppress audio that arrives after
+interruption. None of those output operations cancels durable fleet tasks.
+Existing playback-aware VAD thresholds and continuous microphone/STT ownership
+are retained. Threshold-based gating is not acoustic echo cancellation.
+
+* Verification
+
+Run the deterministic contracts and the canonical repository gate:
+
+#+begin_src sh
+nix develop -c python -m pytest -q t/test_voice_agent_fleet.py t/test_voice_agent_routing.py t/test_voice_agent_barge_regressions.py t/test_task_runner.py t/test_task_store.py t/test_tasks_config.py
+nix develop -c swipl -q -s t/voice_agent.pl -g "(run_tests -> halt(0); halt(1))" -t "halt(1)"
+nix develop -c bash scripts/test-all.sh
+#+end_src
+
+The Voice Agent Fleet workflow retains the exact source SHA, source archive and
+JUnit. Hardware microphone/speaker echo, Bluetooth routing, Android clients and
+real-provider cancellation require separate live-device acceptance; deterministic
+regressions are not evidence that those environments have been exercised.
