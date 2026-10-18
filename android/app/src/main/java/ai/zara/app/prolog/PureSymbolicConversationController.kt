@@ -56,6 +56,19 @@ class PureSymbolicConversationController(
     fun submit(
         text: String,
         conversationId: String,
+    ): CompletableFuture<PureSymbolicTurnResult> =
+        submitInternal(text, conversationId, allowExplicitProlog = true)
+
+    fun submitConversationOnly(
+        text: String,
+        conversationId: String,
+    ): CompletableFuture<PureSymbolicTurnResult> =
+        submitInternal(text, conversationId, allowExplicitProlog = false)
+
+    private fun submitInternal(
+        text: String,
+        conversationId: String,
+        allowExplicitProlog: Boolean,
     ): CompletableFuture<PureSymbolicTurnResult> {
         val input = text.trim()
         require(input.isNotEmpty()) { "Text is required" }
@@ -67,6 +80,20 @@ class PureSymbolicConversationController(
         }
         require(normalizedConversationId.none(Char::isISOControl)) {
             "Conversation id contains control characters"
+        }
+
+        if (!allowExplicitProlog && isExplicitProlog(input)) {
+            return CompletableFuture.completedFuture(
+                PureSymbolicTurnResult(
+                    turn = TextTurnResult(
+                        conversationId = normalizedConversationId,
+                        turnId = nextTurnId(),
+                        text = "Explicit Prolog commands are disabled in symbolic voice.",
+                        success = false,
+                    ),
+                    route = PureSymbolicRoute.FRAME_RESOLVER,
+                ),
+            )
         }
 
         val routed = try {
@@ -143,6 +170,11 @@ class PureSymbolicConversationController(
             PureSymbolicRoute.EXPLICIT_COMMAND
         else -> PureSymbolicRoute.FRAME_RESOLVER
     }
+
+    private fun isExplicitProlog(input: String): Boolean =
+        input.startsWith("?-") ||
+            input.startsWith("/prolog ") ||
+            input.startsWith("/expert ")
 
     private fun failure(
         conversationId: String,

@@ -42,13 +42,29 @@ class LocalAssistantVoiceContractTest {
     }
 
     @Test
-    fun `local capture remains pinned to local submission after recognition`() {
+    fun `local capture remains pinned to conversation-only symbolic submission after recognition`() {
         val source = File(
             "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
         ).readText()
 
-        assertTrue(source.contains("appSession.submitLocalText(transcript)"))
+        assertTrue(source.contains("symbolicConversation.submitConversationOnly("))
+        assertFalse(source.contains("appSession.submitLocalText(transcript)"))
         assertFalse(source.contains("appSession.submitText(transcript)"))
+    }
+
+
+    @Test
+    fun `assistant announces symbolic identity when shown`() {
+        val controller = File(
+            "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
+        ).readText()
+        val session = File(
+            "src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt"
+        ).readText()
+
+        assertTrue(controller.contains("Hi, I am a symbolic system."))
+        assertTrue(controller.contains("fun announceSymbolicMode()"))
+        assertTrue(session.contains("localVoice.announceSymbolicMode()"))
     }
 
     @Test
