@@ -11,6 +11,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android acceptance checks scroll to the latest remote reply and retain full device log dumps, including crashes in the voice process.
+
 - Android verification now checks installed symbolic greetings and provides an explicitly capped manual OpenRouter multi-turn probe.
 
 - Android direct cloud chat now sends bounded completed conversation turns in order, preserving context after restart without mixing separate chats.

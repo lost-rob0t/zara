@@ -205,7 +205,7 @@ def test_remote_gates_follow_settings_overview_instead_of_removed_tabs():
     assert 'LOCAL ZARA SERVER' not in remote
 
 
-def test_remote_diagnostics_uses_device_shell_logcat_for_hosted_emulator(tmp_path):
+def test_remote_diagnostics_pulls_full_device_dump_and_detects_voice_process_crash(tmp_path):
     import importlib.util
     import sys
     import types
@@ -249,24 +249,29 @@ def test_remote_diagnostics_uses_device_shell_logcat_for_hosted_emulator(tmp_pat
                 module.APP_DIAGNOSTICS_PATH,
             ):
                 return "event=text.submit mode=remote\n"
-            if arguments == ("shell", "pidof", module.APP_PACKAGE):
-                return "4242\n"
-            if arguments == (
-                "shell",
-                "logcat",
-                "-d",
-                "--pid",
-                "4242",
-                "-v",
-                "threadtime",
-            ):
-                return "09-23 19:54:43.678 I Zara: remote turn complete\n"
+            if arguments == ("shell", "rm", "-f", module.DEVICE_LOGCAT_PATH):
+                return ""
+            if arguments == ("shell", "logcat", "-d", "-b", "main", "-b", "system", "-b", "crash", "-f", module.DEVICE_LOGCAT_PATH):
+                return ""
+            if arguments == ("pull", module.DEVICE_LOGCAT_PATH, str(tmp_path / "remote-logcat.log")):
+                (tmp_path / "remote-logcat.log").write_text(
+                    "09-23 19:54:43.678 I Zara: remote turn complete\n"
+                    "Process: ai.zara.app:voice, PID: 4242\n")
+                return "1 file pulled"
             raise AssertionError(f"unexpected adb invocation: {arguments!r}")
 
     evidence = module.collect_app_diagnostics(HostedEmulatorDevice(), tmp_path)
 
     assert evidence["app_diagnostics"] == "remote-app-diagnostics.log"
     assert evidence["logcat"] == "remote-logcat.log"
-    assert evidence["logcat_pid_filtered"] is True
-    assert evidence["fatal_log_markers"] == []
+    assert evidence["logcat_pid_filtered"] is False
+    assert evidence["fatal_log_markers"] == ["Process: ai.zara.app:voice, PID:"]
     assert "logcat_failure" not in evidence
+
+
+def test_remote_response_assertion_scrolls_to_the_latest_turn():
+    text = REMOTE_ACCEPTANCE.read_text()
+    signal = text.index("    signal_turn_acceptance(fixture)")
+    scroll = text.index("    scroll_chat_to_bottom(device)", signal)
+    assertion = text.index('    device.await_contains("stock server response"', signal)
+    assert signal < scroll < assertion

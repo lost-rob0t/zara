@@ -610,5 +610,20 @@ def main() -> None:
         (args.output / "manifest.json").write_text(json.dumps(result, indent=2) + "\n")
 
 
+def scroll_chat_to_bottom(device: Device, swipes: int = 6) -> None:
+    size = device.adb("shell", "wm", "size").strip()
+    match = re.search(r"(\d+)x(\d+)", size)
+    if match is None:
+        raise AssertionError(f"Emulator did not report its size: {size!r}")
+    width, height = int(match.group(1)), int(match.group(2))
+    center_x, lower_y, upper_y = width // 2, int(height * 0.72), int(height * 0.28)
+    for _ in range(swipes):
+        device.adb(
+            "shell", "input", "swipe", str(center_x), str(lower_y),
+            str(center_x), str(upper_y), "250",
+        )
+    time.sleep(0.5)
+
+
 if __name__ == "__main__":
     main()
