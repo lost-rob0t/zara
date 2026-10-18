@@ -18,6 +18,24 @@ SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
 UI_DUMP_PATH = "/data/local/tmp/zara-acceptance.xml"
 UI_DUMP_ATTEMPTS = 3
 UI_DUMP_RETRY_DELAY_SECONDS = 0.2
+SYSTEM_ANR_DIALOGS = (
+    (
+        "com.google.android.apps.nexuslauncher",
+        "Pixel Launcher isn't responding",
+    ),
+    (
+        "com.google.android.googlesdksetup",
+        "com.google.android.googlesdksetup isn't responding",
+    ),
+)
+SYSTEM_ANR_ACTIONS = {
+    "Close app": "android:id/aerr_close",
+    "Wait": "android:id/aerr_wait",
+}
+ANR_HIERARCHY_PATH_ATTR = "zara-anr-hierarchy-path"
+SYSTEM_ANR_DISMISSAL_LIMIT = 2
+SYSTEM_ANR_CLEAR_ATTEMPTS = 3
+SYSTEM_ANR_CLEAR_RETRY_DELAY_SECONDS = 0.1
 
 
 def verified_source_sha(claimed_source_sha: str | None) -> str:
@@ -47,6 +65,7 @@ class Device:
         self.screenshots: list[dict] = []
         self.profiles: list[dict] = []
         self.accessibility_semantics: list[dict] = []
+        self.system_anr_sanitation: list[dict] = []
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
 
@@ -75,20 +94,30 @@ class Device:
                     time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
                     continue
                 break
-            return ET.fromstring(hierarchy).iter("node")
+            root = ET.fromstring(hierarchy)
+            return iter(self.annotate_hierarchy(root))
         raise AssertionError(
             f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
         ) from last_error
 
     def find(self, label: str):
-        return next(
-            (
-                node
-                for node in self.nodes()
-                if label in (node.get("text"), node.get("content-desc"))
-            ),
-            None,
-        )
+        matches = [
+            node
+            for node in self.nodes()
+            if label in (node.get("text"), node.get("content-desc"))
+        ]
+        expected_resource_id = SYSTEM_ANR_ACTIONS.get(label)
+        if expected_resource_id is not None:
+            return next(
+                (
+                    node
+                    for node in matches
+                    if node.get("package") == "android"
+                    and node.get("resource-id") == expected_resource_id
+                ),
+                None,
+            )
+        return matches[0] if matches else None
 
     def find_contains(self, fragment: str):
         return next(
@@ -117,6 +146,175 @@ class Device:
         if len(values) != 4:
             raise AssertionError(f"Malformed bounds: {node.attrib.get('bounds')}")
         return tuple(values)
+
+    @staticmethod
+    def node_label(node) -> str:
+        return (
+            node.get("text")
+            or node.get("content-desc")
+            or "<unknown ANR dialog>"
+        )
+
+    @staticmethod
+    def annotate_hierarchy(root) -> list:
+        nodes: list = []
+
+        def visit(element, path: tuple[int, ...]) -> None:
+            if element.tag == "node":
+                element.set(
+                    ANR_HIERARCHY_PATH_ATTR,
+                    ".".join(str(index) for index in path),
+                )
+                nodes.append(element)
+            for index, child in enumerate(list(element)):
+                visit(child, path + (index,))
+
+        visit(root, ())
+        return nodes
+
+    @staticmethod
+    def hierarchy_path(node) -> tuple[int, ...] | None:
+        raw_path = node.get(ANR_HIERARCHY_PATH_ATTR)
+        if raw_path is None:
+            return None
+        if not raw_path:
+            return ()
+        return tuple(int(index) for index in raw_path.split("."))
+
+    @staticmethod
+    def common_path_depth(left: tuple[int, ...], right: tuple[int, ...]) -> int:
+        depth = 0
+        for left_index, right_index in zip(left, right):
+            if left_index != right_index:
+                break
+            depth += 1
+        return depth
+
+    @classmethod
+    def dialog_owner_boundary(cls, nodes, owner_path: tuple[int, ...]):
+        node_by_path = {
+            path: node
+            for node in nodes
+            for path in (cls.hierarchy_path(node),)
+            if path is not None
+        }
+        owner = node_by_path.get(owner_path)
+        parent = node_by_path.get(owner_path[:-1])
+        if owner is None or parent is None:
+            return None
+        if not (owner.get("resource-id") or "").strip():
+            return None
+        try:
+            owner_bounds = cls.bounds(owner)
+            parent_bounds = cls.bounds(parent)
+        except (AssertionError, KeyError):
+            return None
+        owner_left, owner_top, owner_right, owner_bottom = owner_bounds
+        parent_left, parent_top, parent_right, parent_bottom = parent_bounds
+        if not (
+            parent_left <= owner_left < owner_right <= parent_right
+            and parent_top <= owner_top < owner_bottom <= parent_bottom
+        ):
+            return None
+        if owner_bounds == parent_bounds:
+            return None
+        return owner
+
+    def exact_anr_is_present(self, package: str, dialog_text: str) -> bool:
+        return any(
+            self.node_label(node) == dialog_text and node.get("package") == package
+            for node in self.nodes()
+        )
+
+    def anr_snapshot(self):
+        nodes = list(self.nodes())
+        candidates = [
+            node
+            for node in nodes
+            if "isn't responding" in self.node_label(node)
+        ]
+        if not candidates:
+            return None, nodes
+        unexpected = [
+            node
+            for node in candidates
+            if (node.get("package"), self.node_label(node)) not in SYSTEM_ANR_DIALOGS
+        ]
+        return (unexpected[0] if unexpected else candidates[0]), nodes
+
+    def bound_anr_action(self, nodes, selected_anr, label: str):
+        expected_resource_id = SYSTEM_ANR_ACTIONS[label]
+        matches = [
+            node
+            for node in nodes
+            if label in (node.get("text"), node.get("content-desc"))
+            and node.get("package") == "android"
+            and node.get("resource-id") == expected_resource_id
+        ]
+        if not matches:
+            return None
+
+        anr_candidates = [
+            node
+            for node in nodes
+            if "isn't responding" in self.node_label(node)
+        ]
+        selected_path = self.hierarchy_path(selected_anr)
+        if selected_path is None or not selected_path:
+            raise AssertionError(f"ANR action ownership is not provable: {label}")
+        candidate_paths = {
+            id(candidate): self.hierarchy_path(candidate)
+            for candidate in anr_candidates
+        }
+        if any(path is None or not path for path in candidate_paths.values()):
+            raise AssertionError(f"ANR action ownership is not provable: {label}")
+
+        scored: list[tuple[int, object]] = []
+        for action in matches:
+            action_path = self.hierarchy_path(action)
+            if action_path is None or not action_path:
+                raise AssertionError(f"ANR action ownership is not provable: {label}")
+
+            # The hierarchy root and its top-level window are not dialog ownership
+            # evidence. Require a deeper structural boundary that uniquely contains
+            # both the selected ANR and the candidate Android system action.
+            owner_depth = self.common_path_depth(selected_path, action_path)
+            if owner_depth < 2:
+                continue
+            owner_path = selected_path[:owner_depth]
+            if self.dialog_owner_boundary(nodes, owner_path) is None:
+                continue
+            owned_anrs = [
+                candidate
+                for candidate in anr_candidates
+                for path in (candidate_paths[id(candidate)],)
+                if path is not None and path[:owner_depth] == owner_path
+            ]
+            if len(owned_anrs) != 1 or owned_anrs[0] is not selected_anr:
+                continue
+
+            competing_depth = max(
+                (
+                    self.common_path_depth(path, action_path)
+                    for candidate in anr_candidates
+                    if candidate is not selected_anr
+                    for path in (candidate_paths[id(candidate)],)
+                    if path is not None
+                ),
+                default=-1,
+            )
+            if owner_depth > competing_depth:
+                scored.append((owner_depth, action))
+
+        if not scored:
+            return None
+        best_depth = max(depth for depth, _action in scored)
+        best_matches = [
+            action for depth, action in scored if depth == best_depth
+        ]
+        if len(best_matches) != 1:
+            raise AssertionError(f"Ambiguous system ANR action owner: {label}")
+        return best_matches[0]
 
     def reveal(self, label: str) -> None:
         width, height = self.size()
@@ -190,28 +388,78 @@ class Device:
         time.sleep(0.4)
 
     def dismiss_pixel_launcher_anr(self) -> bool:
-        # The hosted Pixel emulator can surface a launcher ANR over an otherwise
-        # healthy Zara activity. Prefer closing only that OS-owned launcher process
-        # so the same hung launcher cannot immediately re-present the dialog. Keep
-        # Wait only as a compatibility fallback for platform variants that do not
-        # expose Close app. Never hide a Zara crash/ANR or weaken app assertions.
-        if self.find_contains("Pixel Launcher isn't responding") is None:
+        anr, snapshot = self.anr_snapshot()
+        if anr is None:
             return False
-        action = self.find("Close app")
-        if action is None:
-            action = self.find("Wait")
-        if action is None:
-            raise AssertionError("Pixel Launcher ANR did not expose a dismissal action")
-        left, top, right, bottom = self.bounds(action)
-        self.adb(
-            "shell",
-            "input",
-            "tap",
-            str((left + right) // 2),
-            str((top + bottom) // 2),
+        dialog_text = self.node_label(anr)
+        package = anr.get("package")
+        if (package, dialog_text) not in SYSTEM_ANR_DIALOGS:
+            self.system_anr_sanitation.append(
+                {
+                    "package": package,
+                    "dialog": dialog_text,
+                    "action": None,
+                    "cleared": False,
+                }
+            )
+            raise AssertionError(f"Unexpected ANR dialog blocks acceptance: {dialog_text}")
+
+        prior_attempts = sum(
+            1
+            for receipt in self.system_anr_sanitation
+            if receipt["package"] == package
+            and receipt["dialog"] == dialog_text
+            and receipt["action"] is not None
         )
-        time.sleep(0.2)
-        return True
+        while prior_attempts < SYSTEM_ANR_DISMISSAL_LIMIT:
+            action_label = "Close app"
+            action = self.bound_anr_action(snapshot, anr, action_label)
+            if action is None:
+                action_label = "Wait"
+                action = self.bound_anr_action(snapshot, anr, action_label)
+            receipt = {
+                "package": package,
+                "dialog": dialog_text,
+                "action": action_label if action is not None else None,
+                "cleared": False,
+            }
+            self.system_anr_sanitation.append(receipt)
+            if action is None:
+                raise AssertionError(
+                    f"Known system ANR did not expose a dismissal action: {dialog_text}"
+                )
+            left, top, right, bottom = self.bounds(action)
+            self.adb(
+                "shell",
+                "input",
+                "tap",
+                str((left + right) // 2),
+                str((top + bottom) // 2),
+            )
+            for clear_attempt in range(SYSTEM_ANR_CLEAR_ATTEMPTS):
+                if not self.exact_anr_is_present(package, dialog_text):
+                    receipt["cleared"] = True
+                    return True
+                if clear_attempt + 1 < SYSTEM_ANR_CLEAR_ATTEMPTS:
+                    time.sleep(SYSTEM_ANR_CLEAR_RETRY_DELAY_SECONDS)
+            prior_attempts += 1
+            if prior_attempts < SYSTEM_ANR_DISMISSAL_LIMIT:
+                next_anr, snapshot = self.anr_snapshot()
+                if next_anr is None:
+                    receipt["cleared"] = True
+                    return True
+                if (
+                    next_anr.get("package") != package
+                    or self.node_label(next_anr) != dialog_text
+                ):
+                    raise AssertionError(
+                        f"System ANR changed during sanitation: {dialog_text}"
+                    )
+                anr = next_anr
+
+        raise AssertionError(
+            f"System ANR sanitation limit exceeded for {dialog_text}"
+        )
 
     def dismiss_release_notes(self, timeout: float = 2.0) -> bool:
         # A fresh install legitimately opens the versioned changelog before Chat.
@@ -256,7 +504,7 @@ class Device:
         while time.monotonic() < deadline:
             # UIAutomator includes nodes from the activity behind a system ANR
             # dialog. Never accept those background labels as proof that Zara is
-            # interactive; clear only the known Pixel Launcher dialog first.
+            # interactive; clear only explicitly allowlisted system dialogs first.
             if self.dismiss_pixel_launcher_anr():
                 continue
             if self.find(label) is not None:
@@ -543,6 +791,7 @@ def main() -> None:
         "screenshots": device.screenshots,
         "profiles": device.profiles,
         "accessibility_semantics": device.accessibility_semantics,
+        "system_anr_sanitation": device.system_anr_sanitation,
         # UIAutomator semantics are useful accessibility evidence, but they are not
         # proof of real TalkBack spoken traversal. Keep that hardware/service claim false.
         "talkback_spoken_traversal": False,

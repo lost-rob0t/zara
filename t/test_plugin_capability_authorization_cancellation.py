@@ -21,12 +21,16 @@ def _write_plugin(path, *, name: str, tool_name: str | None = None):
             def read(value: str) -> str:
                 return value
 
-            def _tools():
-                return [StructuredTool.from_function(
+            _TOOLS = (
+                StructuredTool.from_function(
                     read,
                     name={tool_name!r},
                     description="composition authorization test tool",
-                )]
+                ),
+            )
+
+            def _tools():
+                return list(_TOOLS)
             """
         )
     else:
