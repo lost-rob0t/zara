@@ -923,7 +923,8 @@ def test_early_audio_is_dropped_when_route_did_not_negotiate_output(
         gateway.close(timeout=1.0)
 
 
-def test_gateway_releases_endpoint_before_deferred_socket_destruction(transport_config):
+@pytest.mark.parametrize("endpoint", ["inproc", "tcp://127.0.0.1:*", "tcp://127.0.0.1:0"])
+def test_gateway_releases_endpoint_before_deferred_socket_destruction(transport_config, endpoint):
     from types import SimpleNamespace
 
     context = zmq.Context()
@@ -937,7 +938,7 @@ def test_gateway_releases_endpoint_before_deferred_socket_destruction(transport_
         socket=lambda kind: context.socket(kind, socket_class=DeferredCloseSocket),
     )
     gateway = _gateway(
-        _endpoint("deferred-socket-restart"),
+        _endpoint("deferred-socket-restart") if endpoint == "inproc" else endpoint,
         InterleavingSupervisor([]),
         delayed_context,
         transport_config,
@@ -947,6 +948,12 @@ def test_gateway_releases_endpoint_before_deferred_socket_destruction(transport_
         gateway.close(timeout=1.0)
         assert len(deferred) == 1
         assert not deferred[0].closed
+        probe = context.socket(zmq.ROUTER)
+        try:
+            probe.bind(deferred[0].getsockopt(zmq.LAST_ENDPOINT))
+            probe.unbind(probe.getsockopt(zmq.LAST_ENDPOINT))
+        finally:
+            probe.close(0)
         gateway.start().result(timeout=1.0)
         gateway.close(timeout=1.0)
         assert len(deferred) == 2

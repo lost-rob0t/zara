@@ -40,3 +40,8 @@ EADDRINUSE; socket close can leave endpoint destruction pending.
 A deterministic real-socket test defers destruction: RED at second start;
 GREEN after explicit owner-thread unbind before close. All 13 demux tests pass.
 The existing one-second restart assertion is unchanged; no sleeps or retries.
+
+Review additionally reproduced unbind failure for wildcard TCP endpoints
+(:* and :0). Use ZMQ_LAST_ENDPOINT to release the resolved address.
+The deterministic deferred-destruction test now covers inproc and both
+wildcard forms and proves another real socket can bind the released address.
