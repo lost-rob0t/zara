@@ -168,3 +168,10 @@ fixture or skipped test as success. Only the explicit class selector invokes
 OpenRouter limit semantics: https://openrouter.ai/docs/api_reference/limits
 Provider price-filter semantics: https://openrouter.ai/docs/guides/routing/provider-selection
 This gate is prepared but UNRUN without credentials and a configured spending cap.
+* Native lifecycle ownership (issue #1327)
+Completion remains off the LiteRT callback thread. Conversation close retains
+the backend monitor and active identity until native close returns; engine
+load, generate, unload, and close use that same monitor. A stale completion is
+a no-op. This prevents overlapping native close/unload operations; it does not
+establish that a device-specific reload hang is fixed. Real model load, two
+turns, unload, reload, and another turn remain required release evidence.

@@ -19,6 +19,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 - Android direct cloud chat now sends bounded completed conversation turns in order, preserving context after restart without mixing separate chats.
 
+- Android LiteRT-LM retains conversation ownership during native close, preventing unload from racing completion and stale completion from closing a replacement conversation.
+
 - Android Local AI Settings now shows Loading, Responding, or Failed for the selected model instead of calling it Active before it is ready.
 - Prolog Studio no longer shows autocomplete suggestions until a predicate name is being typed.
 - Android Local AI now completes on-device LiteRT-LM chat turns without hanging while the model conversation closes.
