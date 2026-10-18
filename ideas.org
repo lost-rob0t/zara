@@ -34,3 +34,10 @@
 - Why deferred: XR should consume the shared Geo protocol after the server/map contracts exist.
 - Next proof: Sideloadable fixture build that selects a geo anchor and resolves its canonical StarIntel document.
 - Promoted issue: lost-rob0t/zara#1205
+
+** IDEA Zara first-class self-building Prolog Knowledge Engine
+- Captured: 2026-09-19 17:56 America/New_York
+- Source: Chat request
+- Why deferred: Architecture requirement captured before implementation slicing.
+- Next proof: Define a namespaced KB package plus deterministic Prolog fetch specifications for Wikidata SPARQL and Wikipedia/MediaWiki pages, with provenance, incremental refresh, offline snapshots, and LLM management disabled by default.
+- Promoted issue: none
