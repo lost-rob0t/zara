@@ -43,6 +43,7 @@ class ZaraTextClientActor(
     private val requestIds: Iterator<String> = generateSequence { java.util.UUID.randomUUID().toString().replace("-", "") }.iterator(),
     private val timestamps: Iterator<Long> = generateSequence { System.nanoTime() }.iterator(),
     private val requestTimeoutMillis: Int = 5_000,
+    private val turnResponseTimeoutMillis: Int = 30 * 60 * 1_000,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "zara-android-text-client").apply { isDaemon = true }
     },
@@ -70,6 +71,7 @@ class ZaraTextClientActor(
 
     init {
         require(requestTimeoutMillis > 0) { "request timeout must be positive" }
+        require(turnResponseTimeoutMillis > 0) { "turn response timeout must be positive" }
         require(audioOutputFormats.size <= 8) { "audio output offer exceeds format limit" }
         require(audioOutputFormats.distinct() == audioOutputFormats) {
             "audio output offer contains duplicates"
@@ -245,7 +247,7 @@ class ZaraTextClientActor(
 
             var assistantCompletion: TextTurnResult? = null
             while (true) {
-                when (val event = receiveMessage(active)) {
+                when (val event = receiveMessage(active, turnResponseTimeoutMillis)) {
                     is TextServerMessage.Progress -> verifyEvent(
                         event.sessionId,
                         event.turnId,
@@ -653,9 +655,12 @@ class ZaraTextClientActor(
         connectionFailureObserver?.invoke(failure)
     }
 
-    private fun receiveMessage(active: TextDealer): TextServerMessage {
+    private fun receiveMessage(
+        active: TextDealer,
+        timeoutMillis: Int = requestTimeoutMillis,
+    ): TextServerMessage {
         while (true) {
-            val frames = active.receive(requestTimeoutMillis)
+            val frames = active.receive(timeoutMillis)
                 ?: throw TextRequestTimeoutException("ZARA/1 response timed out")
             try {
                 val voiceEvent = ai.zara.app.voice.ZaraVoiceStreamCodec.decode(frames)
