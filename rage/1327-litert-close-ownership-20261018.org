@@ -1,0 +1,23 @@
+#+title: #1327 LiteRT native-close ownership
+
+* Finding and scope
+Base: PR #1510, 242acecfb61318b27159d38397b051d63f460e01.
+finishConversation cleared activeConversation before native close, while
+unload could concurrently close the engine. A duplicate/stale finish also
+called native close despite no longer owning the conversation.
+
+* RED and GREEN
+The production lifecycle seam was first extracted with the original behavior.
+Real Kotlin 2.3.21/JUnit 4.13.2 run: 12 tests, two failures (ownership became
+null before close returned; duplicate close count 3 instead of 1).
+With ownership retained under the backend monitor: all 12 tests passed,
+including ten existing LocalAiRuntime tests. The race test uses a blocked
+close and concurrent unload attempt, not sleeps to arrange the race.
+Command: bash /workspace/scratch/zara-checkpoint/run-litert-tests.sh
+Logs: /workspace/scratch/zara-checkpoint/litert-race-{red,green}.log
+
+* Limitations and merge gate
+The selected environment has no Android SDK/emulator/KVM. Nix portable cannot
+build here. Exact-head CI and installed model lifecycle evidence are pending.
+This is not proof that the previously observed reload timeout is repaired.
+No paid API requests, existing-stack edits, merges, or release promotion.

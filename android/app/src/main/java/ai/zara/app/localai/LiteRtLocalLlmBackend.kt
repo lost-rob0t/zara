@@ -43,6 +43,7 @@ class LiteRtLocalLlmBackend(
     @Volatile
     private var activeConversation: Conversation? = null
 
+    @Synchronized
     override fun load(spec: LocalModelSpec) {
         require(spec.format == LocalModelFormat.LITERT_LM) {
             "Embedded LiteRT-LM provider cannot execute ${spec.format.wireName} models"
@@ -68,6 +69,7 @@ class LiteRtLocalLlmBackend(
         }
     }
 
+    @Synchronized
     override fun generate(
         request: LocalGenerationRequest,
         listener: LocalGenerationListener,
@@ -90,8 +92,12 @@ class LiteRtLocalLlmBackend(
         val session = object : LocalGenerationSession {
             override fun cancel() {
                 if (!terminal.compareAndSet(false, true)) return
-                runCatching { conversation.cancelProcess() }
-                finishConversation(conversation)
+                synchronized(this@LiteRtLocalLlmBackend) {
+                    if (activeConversation === conversation) {
+                        runCatching { conversation.cancelProcess() }
+                        finishConversation(conversation)
+                    }
+                }
             }
 
             override fun close() {
@@ -129,6 +135,7 @@ class LiteRtLocalLlmBackend(
         return session
     }
 
+    @Synchronized
     override fun unload() {
         activeConversation?.let { conversation ->
             runCatching { conversation.cancelProcess() }
@@ -139,16 +146,18 @@ class LiteRtLocalLlmBackend(
         if (current != null && current.isInitialized()) current.close()
     }
 
+    @Synchronized
     override fun close() {
         unload()
         completionExecutor.shutdown()
     }
 
     private fun finishConversation(conversation: Conversation) {
-        synchronized(this) {
-            if (activeConversation === conversation) activeConversation = null
-        }
-        runCatching { if (conversation.isAlive) conversation.close() }
+        closeOwnedLiteRtConversation(this,
+            { activeConversation === conversation },
+            { runCatching { if (conversation.isAlive) conversation.close() }; Unit },
+            { activeConversation = null },
+        )
     }
 
     private fun LocalModelBackend.toLiteRtBackend(): Backend = when (this) {
