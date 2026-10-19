@@ -167,3 +167,37 @@ Independent reviewer found no blockers; independently ran 4 helper tests and
 Python compilation. Supported Library transfer helper also failed download;
 full uploaded screenshot/logcat inspection remains unavailable here. Exact-head
 Android CI, persisted restoration and actual clipboard acceptance remain required.
+
+* Exact-head evaluation / remote retained-history reachability
+CI39178135442 at9618ca6ef3148ce5307f251c3c877f9acdd51f5d finished
+FAILED. Five jobs passed (main full tests/formal/flake/build/desktop render,
+two adversarial regression jobs, two audio jobs). Android/Wear unit/native/
+debug APK/secret inspection and initial 11 connected tests passed. Emulator
+step failed 2026-10-19T00:16:02Z at device_remote_acceptance.py:240 waiting
+for stock server response, after exercise_chat_error returned at line200.
+Therefore this installed run passed the unchanged saved snapshot/privacy,
+local recovery marker, exact retained bytes after diagnostics clear/later
+success, process recreation, real ClipboardManager sentinel-to-exact-snapshot
+instrumentation, and restored feedback screenshot. This is narrow installed
+acceptance evidence, not an overall Android gate or current future-head pass.
+Two dependent jobs skipped; no candidate APK artifact uploaded.
+New Android UI artifact12155148437 (4984152 bytes, ZIPsha256
+1bd5f67cfcd6a44b2f6d55b541800a6e52cf244c7e72884a92544d7b85d116fb).
+Desktop artifact12154899705 (476636 bytes). Supported Library helper still
+fails downloading current desktop artifact. Requested parent inspect exact
+new remote-manifest.json visible text, remote-app-diagnostics.log and
+remote-stock-server.log around device_remote_ping, remote-failure.png, and
+chat-error-details-restored.png with manifest/hash bindings. Do not infer
+remote returned/rendered response merely from elapsed time or local success.
+Design: retained history now contains extra error/recovery turns; remote
+await_contains also only checks visible nodes. Reuse same bounded reveal
+before unchanged stock-server assertion; absent response still fails and
+Remote routing/transport barrier/REMOTE label checks remain unchanged.
+RED: execute actual exercise_remote_connection AST function with controlled
+network facades and offscreen/absent response device; 2 failures (2 existing
+packaging tests pass). This isolates driver behavior without inventing native
+or network acceptance in the SDK-less environment. GREEN: 20 focused Python
+tests +5subtests pass, Python compile and diff-check pass. Full gate attempted:
+nix develop -c bash scripts/test-all.sh ->127 nix unavailable. No productcode,
+runtimepolicy, credentials, physical device or heldPR changes. New exacthead
+normal CI and artifact visual review remain mandatory before merge.

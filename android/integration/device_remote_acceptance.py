@@ -237,6 +237,7 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
     device.press_back()
     device.tap("↑")
     signal_turn_acceptance(fixture)
+    device.reveal_contains("stock server response")
     device.await_contains("stock server response", timeout=20.0)
     device.await_contains("REMOTE", timeout=5.0)
     device.capture("remote-text-turn")
