@@ -224,6 +224,18 @@ class SessionTelemetry(
         tracker.record(failure)
     }
 
+    fun onLocalFailure(failure: ZaraFailure) {
+        require(failure.subsystem == ZaraSubsystem.PROLOG)
+        journal.record(
+            ClientEventNames.LOCAL_TURN_FAILED,
+            subsystem = failure.subsystem, operation = failure.operation, phase = failure.phase,
+            requestId = failure.requestId, turnId = failure.turnId,
+            outcome = ClientEventOutcome.FAILURE, code = failure.code,
+            message = failure.message, recovery = failure.recovery,
+        )
+        tracker.record(failure)
+    }
+
     fun onTurnCompleted(turnId: String?) {
         synchronized(lock) { lastCompletedTurnId = turnId }
         tracker.noteSuccess("turn.completed")

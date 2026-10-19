@@ -50,10 +50,10 @@ class Device:
         self._size_before_profile: str | None = None
         self._font_scale_before_profile: str | None = None
 
-    def adb(self, *arguments: str, binary: bool = False):
+    def adb(self, *arguments: str, binary: bool = False, timeout: float = 30):
         return subprocess.check_output(
             ["adb", "-s", self.serial, *arguments],
-            timeout=30,
+            timeout=timeout,
             text=not binary,
         )
 
@@ -119,10 +119,16 @@ class Device:
         return tuple(values)
 
     def reveal(self, label: str) -> None:
+        self._reveal(lambda: self.find(label), label)
+
+    def reveal_contains(self, fragment: str) -> None:
+        self._reveal(lambda: self.find_contains(fragment), fragment)
+
+    def _reveal(self, find, label: str) -> None:
         width, height = self.size()
         for direction in (1, -1):
             for _ in range(6):
-                if self.find(label) is not None:
+                if find() is not None:
                     return
                 start, end = (height * 3 // 4, height // 3)
                 if direction < 0:

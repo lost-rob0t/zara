@@ -36,6 +36,7 @@ data class TextTurnResult(
     val turnId: String,
     val text: String,
     val success: Boolean,
+    val errorDetails: String? = null,
 )
 
 class ZaraTextClientActor(

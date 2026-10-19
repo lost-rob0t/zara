@@ -148,3 +148,35 @@ def test_await_label_dismisses_release_notes_that_appear_after_launch(
     device.await_label("Chat", timeout=0.1)
 
     assert state["dismissals"] == 1
+
+
+def test_reveal_contains_scrolls_to_completed_response_outside_viewport(monkeypatch, tmp_path):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    visible = False
+    swipes = []
+    monkeypatch.setattr(device, "size", lambda: (1080, 2400))
+    monkeypatch.setattr(device, "find_contains", lambda _: object() if visible else None)
+
+    def fake_adb(*args, **kwargs):
+        nonlocal visible
+        swipes.append(args)
+        visible = True
+        return ""
+
+    monkeypatch.setattr(device, "adb", fake_adb)
+    device.reveal_contains("zara_error_recovery_1523")
+    assert len(swipes) == 1
+    assert swipes[0][:3] == ("shell", "input", "swipe")
+
+
+def test_reveal_contains_fails_closed_when_response_was_not_rendered(monkeypatch, tmp_path):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    swipes = []
+    monkeypatch.setattr(device, "size", lambda: (1080, 2400))
+    monkeypatch.setattr(device, "find_contains", lambda _: None)
+    monkeypatch.setattr(device, "adb", lambda *args, **kwargs: swipes.append(args))
+    with pytest.raises(AssertionError, match="zara_error_recovery_1523"):
+        device.reveal_contains("zara_error_recovery_1523")
+    assert len(swipes) == 12

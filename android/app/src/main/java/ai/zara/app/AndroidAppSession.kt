@@ -16,6 +16,7 @@ import ai.zara.app.device.OpenUriAdapter
 import ai.zara.app.device.RegistryDeviceActionHandler
 import ai.zara.app.diagnostics.DiagnosticsSnapshot
 import ai.zara.app.diagnostics.DiagnosticsV2
+import ai.zara.app.diagnostics.ChatErrorDetails
 import ai.zara.app.diagnostics.LocalRuntimeDiagnostics
 import ai.zara.app.localai.LocalAiServiceClient
 import ai.zara.app.localai.LocalAiState
@@ -443,6 +444,47 @@ class AndroidAppSession(context: Context) : AutoCloseable {
 
     fun clearDiagnostics() {
         diagnostics.clear()
+        telemetry.tracker.clear()
+        telemetry.journal().clear()
+    }
+
+    fun captureChatError(
+        error: Throwable?,
+        conversationId: String,
+        turnId: String?,
+        runtimeModeName: String,
+        requestId: String? = null,
+        code: String? = null,
+        secondaryError: Throwable? = null,
+        events: List<String> = listOf("chat.turn.failed"),
+    ): String {
+        ChatErrorDetails.retainedFailure(error)?.let { return it }
+        val classified = error?.let { ZaraFailures.classify(it, ZaraOperation.SUBMIT) }
+        val local = code?.startsWith("local.") == true || runtimeModeName in setOf("local", "symbolic")
+        val failureCode = code ?: if (local) "local.turn.failed" else classified?.code ?: "chat.turn.failed"
+        val failureTurnId = turnId ?: classified?.turnId
+        val failureRequestId = classified?.requestId ?: requestId
+        val server = localServer.state()
+        if (local) {
+            telemetry.onLocalFailure(
+                ZaraFailure(
+                    subsystem = ZaraSubsystem.PROLOG, operation = ZaraOperation.SUBMIT,
+                    phase = events.firstOrNull(), code = failureCode,
+                    message = "Local turn failed (${ChatErrorDetails.causeCode(error)})",
+                    causeClass = classified?.causeClass ?: "unavailable", serverCode = null,
+                    retryable = null, recovery = ai.zara.app.telemetry.ZaraRecovery.UNKNOWN,
+                    connectionGeneration = null, requestId = failureRequestId, turnId = failureTurnId,
+                ),
+            )
+        }
+        return ChatErrorDetails.capture(
+            version = BuildConfig.VERSION_NAME, versionCode = BuildConfig.VERSION_CODE,
+            sourceSha = BuildConfig.SOURCE_SHA, runtimeMode = runtimeModeName,
+            conversationId = conversationId, turnId = failureTurnId, requestId = failureRequestId,
+            code = failureCode, error = error, secondaryError = secondaryError, events = events,
+            localServerPhase = if (local) server.phase.name.lowercase() else null,
+            localServerGeneration = if (local) server.generation else null,
+        )
     }
 
     fun localTtsState(): CompletableFuture<LocalTtsState> = localAi.ttsState()
@@ -737,6 +779,19 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         text: String,
         conversationId: String = "local-device",
     ): CompletableFuture<TextTurnResult> {
+        val runtimeModeAtSubmit = runtimeMode.name.lowercase()
+        fun captureLocalFailure(future: CompletableFuture<TextTurnResult>): CompletableFuture<TextTurnResult> =
+            future.handle { result, error ->
+                if (error != null) {
+                    val details = captureChatError(
+                        error = error, conversationId = conversationId, turnId = null,
+                        runtimeModeName = runtimeModeAtSubmit, code = "local.turn.failed",
+                        events = listOf("local_symbolic.failed"),
+                    )
+                    throw ChatErrorDetails.RetainedFailure(details, error)
+                }
+                result
+            }
         val query = text.trim()
         val catalog = PrologWorkspaceCatalog.from(prologWorkspace.listSources())
         val explicitSymbolic =
@@ -757,7 +812,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                         mapOf("length" to query.length),
                         error,
                     )
-                    return CompletableFuture.failedFuture(error)
+                    return captureLocalFailure(CompletableFuture.failedFuture(error))
                 }
                 localServer.query(command.query)
             }
@@ -784,13 +839,13 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
 
         if (explicitSymbolic) {
-            return future.thenApply { result ->
+            return captureLocalFailure(future.thenApply { result ->
                 diagnostics.record(
                     "local_symbolic.complete",
                     mapOf("route" to route, "terms" to result.terms.size),
                 )
                 localPrologTurn(result, conversationId)
-            }
+            })
         }
 
         return recoverLocalNaturalLanguageTurn(
@@ -822,6 +877,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     query = query,
                     symbolicFailure = error,
                     conversationId = conversationId,
+                    runtimeModeAtSubmit = runtimeModeAtSubmit,
                 )
             },
         )
@@ -831,6 +887,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         query: String,
         symbolicFailure: Throwable?,
         conversationId: String,
+        runtimeModeAtSubmit: String,
     ): CompletableFuture<TextTurnResult> {
         diagnostics.record(
             "local_model.generate.begin",
@@ -853,13 +910,25 @@ class AndroidAppSession(context: Context) : AutoCloseable {
                     ),
                     failure,
                 )
+                val failedTurnId = UUID.randomUUID().toString()
                 TextTurnResult(
                     conversationId = conversationId,
-                    turnId = UUID.randomUUID().toString(),
+                    turnId = failedTurnId,
+                    errorDetails = captureChatError(
+                        error = symbolicFailure ?: failure,
+                        secondaryError = if (symbolicFailure != null) failure else null,
+                        conversationId = conversationId, turnId = failedTurnId,
+                        runtimeModeName = runtimeModeAtSubmit,
+                        code = if (symbolicFailure != null) "local.symbolic.failed" else "local.model.unavailable",
+                        events = listOf(
+                            if (symbolicFailure != null) "local_symbolic.failed" else "local_symbolic.no_match",
+                            "local_model.generate.failed",
+                        ),
+                    ),
                     text = if (symbolicFailure != null) {
-                        "The local symbolic runtime failed and no verified local model completed this turn. Diagnostics captured the failure; open Diagnostics and tap Copy diagnostics."
+                        "The local symbolic runtime failed and no verified local model completed this turn. Copy error details below to share the failure."
                     } else {
-                        "No deterministic local rule matched and no verified local model is ready. Open Diagnostics to inspect or share the local runtime log."
+                        "No deterministic local rule matched and no verified local model is ready. Copy error details below to inspect or share this turn’s failure."
                     },
                     success = false,
                 )

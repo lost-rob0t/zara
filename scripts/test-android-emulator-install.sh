@@ -102,6 +102,8 @@ fi
 adb -s "$serial" install -r "$phone_apk"
 adb -s "$serial" shell cmd package path ai.zara.app | grep -Fq "package:"
 
+adb -s "$serial" install -r -t android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+
 python android/integration/device_acceptance.py \
   --serial "$serial" \
   --source-sha "$source_sha" \

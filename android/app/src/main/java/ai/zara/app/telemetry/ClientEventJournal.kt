@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicLong
 enum class ClientEventOutcome { SUCCESS, FAILURE, CANCELLED }
 
 object ClientEventNames {
+    const val LOCAL_TURN_FAILED = "local.turn.failed"
     const val REMOTE_CONNECT_BEGIN = "remote.connect.begin"
     const val REMOTE_CONNECT_READY = "remote.connect.ready"
     const val REMOTE_CONNECT_FAILED = "remote.connect.failed"
@@ -41,6 +42,7 @@ object ClientEventNames {
     const val SESSION_RESTORE_FAILED = "session.restore.failed"
 
     val ALL: Set<String> = setOf(
+        LOCAL_TURN_FAILED,
         REMOTE_CONNECT_BEGIN, REMOTE_CONNECT_READY, REMOTE_CONNECT_FAILED,
         REMOTE_DISCONNECTED, REMOTE_RECONNECT_BEGIN, REMOTE_RECONNECT_READY,
         REMOTE_RECONNECT_FAILED, PROTOCOL_HANDSHAKE_BEGIN, PROTOCOL_HANDSHAKE_NEGOTIATED,
