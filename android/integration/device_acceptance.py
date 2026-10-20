@@ -113,52 +113,83 @@ class Device:
 
     @staticmethod
     def bounds(node) -> tuple[int, int, int, int]:
-        values = [int(value) for value in re.findall(r"\d+", node.attrib["bounds"])]
+        values = [int(value) for value in re.findall(r"-?\d+", node.attrib["bounds"])]
         if len(values) != 4:
             raise AssertionError(f"Malformed bounds: {node.attrib.get('bounds')}")
         return tuple(values)
 
-    def reveal(self, label: str) -> None:
+    def _locate_control(self, label: str, width: int, height: int):
+        nodes = list(self.nodes())
+        clipped = (None, (0, 0, width, height))
+        for node in nodes:
+            if label not in (node.get("text"), node.get("content-desc")):
+                continue
+            left, top, right, bottom = 0, 0, width, height
+            for container in nodes:
+                is_scroll_view = container.get("class") in (
+                    "android.widget.ScrollView", "android.widget.HorizontalScrollView",
+                ) or container.get("scrollable") == "true"
+                if not is_scroll_view or container is node:
+                    continue
+                if not any(child is node for child in container.iter("node")):
+                    continue
+                scroll_left, scroll_top, scroll_right, scroll_bottom = self.bounds(container)
+                left, top = max(left, scroll_left), max(top, scroll_top)
+                right, bottom = min(right, scroll_right), min(bottom, scroll_bottom)
+            viewport = (left, top, right, bottom)
+            if self._center_visible(node, viewport):
+                return node, viewport
+            if clipped[0] is None:
+                clipped = (node, viewport)
+        return clipped
+
+    @classmethod
+    def _center_visible(cls, node, viewport) -> bool:
+        left, top, right, bottom = cls.bounds(node)
+        x, y = (left + right) // 2, (top + bottom) // 2
+        view_left, view_top, view_right, view_bottom = viewport
+        return (
+            right > left and bottom > top
+            and view_left < x < view_right and view_top < y < view_bottom
+        )
+
+    def _reveal_control(self, label: str, *, horizontal: bool) -> None:
         width, height = self.size()
-        for direction in (1, -1):
-            for _ in range(6):
-                if self.find(label) is not None:
-                    return
-                start, end = (height * 3 // 4, height // 3)
-                if direction < 0:
-                    start, end = end, start
-                self.adb(
-                    "shell",
-                    "input",
-                    "swipe",
-                    str(width // 3),
-                    str(start),
-                    str(width // 3),
-                    str(end),
-                    "250",
-                )
+        max_swipes = 16 if horizontal else 12
+        for attempt in range(max_swipes + 1):
+            node, viewport = self._locate_control(label, width, height)
+            if node is not None and self._center_visible(node, viewport):
+                return
+            if attempt == max_swipes:
+                break
+            left, top, right, bottom = viewport
+            if right <= left or bottom <= top:
+                raise AssertionError(f"Control has no visible scroll viewport: {label}")
+            direction = 1 if attempt < max_swipes // 2 else -1
+            if node is not None:
+                node_left, node_top, node_right, node_bottom = self.bounds(node)
+                center = (node_left + node_right) // 2 if horizontal else (node_top + node_bottom) // 2
+                edge = left if horizontal else top
+                direction = -1 if center <= edge else 1
+            if horizontal:
+                start, end = left + (right - left) * 4 // 5, left + (right - left) // 5
+                y = top + (bottom - top) // 2 if node is not None else max(120, height // 8)
+                coordinates = (start, y, end, y)
+            else:
+                start, end = top + (bottom - top) * 3 // 4, top + (bottom - top) // 3
+                x = left + (right - left) // 3
+                coordinates = (x, start, x, end)
+            if direction < 0:
+                coordinates = (*coordinates[2:], *coordinates[:2])
+            duration = "220" if horizontal else "250"
+            self.adb("shell", "input", "swipe", *(str(value) for value in coordinates), duration)
         raise AssertionError(f"Control is not reachable after scrolling: {label}")
 
+    def reveal(self, label: str) -> None:
+        self._reveal_control(label, horizontal=False)
+
     def reveal_horizontal(self, label: str) -> None:
-        width, height = self.size()
-        for direction in (1, -1):
-            for _ in range(8):
-                if self.find(label) is not None:
-                    return
-                start, end = (width * 4 // 5, width // 5)
-                if direction < 0:
-                    start, end = end, start
-                self.adb(
-                    "shell",
-                    "input",
-                    "swipe",
-                    str(start),
-                    str(max(120, height // 8)),
-                    str(end),
-                    str(max(120, height // 8)),
-                    "220",
-                )
-        raise AssertionError(f"Tab is not reachable after horizontal scrolling: {label}")
+        self._reveal_control(label, horizontal=True)
 
     def tap(self, label: str) -> None:
         self.reveal(label)
@@ -169,12 +200,15 @@ class Device:
         self._tap_found(label)
 
     def _tap_found(self, label: str) -> None:
-        node = self.find(label)
+        width, height = self.size()
+        node, viewport = self._locate_control(label, width, height)
         if node is None:
             raise AssertionError(f"Control is not reachable: {label}")
         left, top, right, bottom = self.bounds(node)
         if right <= left or bottom <= top:
             raise AssertionError(f"Control has empty bounds: {label}")
+        if not self._center_visible(node, viewport):
+            raise AssertionError(f"Control is no longer visible: {label}")
         self.adb(
             "shell",
             "input",
@@ -294,10 +328,78 @@ class Device:
                 }
             )
 
-    def capture(self, name: str) -> None:
+    @staticmethod
+    def _rendered_node(node) -> dict:
+        return {
+            "text": node.get("text") or "",
+            "content_description": node.get("content-desc") or "",
+            "class": node.get("class") or "",
+            "bounds": node.get("bounds") or "",
+            "clickable": node.get("clickable") == "true",
+            "enabled": node.get("enabled") == "true",
+        }
+
+    @staticmethod
+    def _rendered_bounds(node: dict) -> tuple[int, int, int, int]:
+        values = [int(value) for value in re.findall(r"\d+", node["bounds"])]
+        if len(values) != 4:
+            raise AssertionError(f"Malformed rendered bounds: {node['bounds']!r}")
+        return tuple(values)
+
+    @classmethod
+    def _assert_named_action_owner(cls, rendered_nodes: list[dict], label: str) -> None:
+        action = next(
+            (
+                node
+                for node in rendered_nodes
+                if label in (node["text"], node["content_description"])
+                and node["clickable"]
+                and node["enabled"]
+            ),
+            None,
+        )
+        if action is None:
+            raise AssertionError(f"Required rendered action is not usable: {label}")
+
+        left, top, right, bottom = cls._rendered_bounds(action)
+        for node in rendered_nodes:
+            if node is action or not node["clickable"] or not node["enabled"]:
+                continue
+            if node["text"] or node["content_description"]:
+                continue
+            other_left, other_top, other_right, other_bottom = cls._rendered_bounds(node)
+            contains_action = (
+                other_left <= left
+                and other_top <= top
+                and other_right >= right
+                and other_bottom >= bottom
+            )
+            if contains_action:
+                raise AssertionError(
+                    f"Required rendered action has a distinct unlabeled clickable owner: {label}"
+                )
+
+    def capture(self, name: str, *, required_actions: tuple[str, ...] = ()) -> None:
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
+
+        rendered_nodes = [self._rendered_node(node) for node in self.nodes()]
+        for label in required_actions:
+            self._assert_named_action_owner(rendered_nodes, label)
+
+        twin = {
+            "state": name,
+            "asserted_actions": list(required_actions),
+            "nodes": rendered_nodes,
+        }
+        twin_data = (
+            json.dumps(twin, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            + "\n"
+        ).encode("utf-8")
+        twin_path = self.output / f"{name}.ui.json"
+        twin_path.write_bytes(twin_data)
+
         path = self.output / f"{name}.png"
         path.write_bytes(data)
         self.screenshots.append(
@@ -305,6 +407,9 @@ class Device:
                 "state": name,
                 "file": path.name,
                 "sha256": hashlib.sha256(data).hexdigest(),
+                "text_twin_file": twin_path.name,
+                "text_twin_sha256": hashlib.sha256(twin_data).hexdigest(),
+                "asserted_actions": list(required_actions),
             }
         )
 
@@ -465,8 +570,34 @@ def exercise_three_menu_ui(device: Device) -> None:
     ):
         device.tap_tab(tab)
         device.assert_accessible_targets((tab,))
+        if tab == "Plugins":
+            device.await_label("PLUGIN HOST")
+            device.assert_accessible_targets(("Plugins", "Publisher SHA-256", "Choose APK"))
         time.sleep(0.4)
-        device.capture(f"settings-{tab.lower()}")
+        device.capture(
+            f"settings-{tab.lower()}",
+            required_actions=("Choose APK",) if tab == "Plugins" else (),
+        )
+
+    device.tap_tab("Plugins")
+    device.set_display_profile(
+        "plugins-narrow-large-font", target_width_dp=320, font_scale=2.00
+    )
+    device.await_label("PLUGIN HOST")
+    device.reveal("Choose APK")
+    device.capture(
+        "settings-plugins-narrow-large-font",
+        required_actions=("Choose APK",),
+    )
+    device.tap("Choose APK")
+    device.await_contains("Enter the publisher's 64-character SHA-256.")
+    device.reveal("Choose APK")
+    device.capture(
+        "settings-plugins-install-narrow-large-font",
+        required_actions=("Choose APK",),
+    )
+    device.restore_profile()
+    device.await_label("Plugins")
 
     device.tap_tab("Appearance")
     device.tap("Outrun")

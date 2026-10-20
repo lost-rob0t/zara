@@ -105,7 +105,7 @@ enum class AppSurface(val label: String, val glyph: String, val gatedIssue: Stri
     Projects("Projects", "◇", "#653"),
     Remote("Remote", "⇄"),
     Scheduled("Scheduled", "◷", "#654"),
-    Plugins("Plugins", "⬡", "#655"),
+    Plugins("Plugins", "⬡"),
     Themes("Themes", "◐"),
     Diagnostics("Diagnostics", "⌁"),
     Settings("Settings", "⚙"),
@@ -347,7 +347,7 @@ fun ZaraApp(
                                                 padding = padding,
                                             )
                                             AppSurface.Scheduled -> GatedSurface(selected, padding)
-                                            AppSurface.Plugins -> GatedSurface(selected, padding)
+                                            AppSurface.Plugins -> PluginSettingsSurface(padding)
                                             AppSurface.Themes -> ThemesSurface(
                                                 selected = selectedTheme,
                                                 onSelectTheme = onSelectTheme,
@@ -451,9 +451,15 @@ private fun ZaraTopBar(
                 color = tokens.textMuted,
                 style = MaterialTheme.typography.labelLarge,
             )
-            StatusDot(if (localState.phase == LocalServerPhase.READY) tokens.success else tokens.warning)
+            StatusDot(
+                if (localState.phase == LocalServerPhase.READY) tokens.success else tokens.warning,
+                "Local server status: ${localState.phase.name.lowercase()}",
+            )
             Spacer(Modifier.size(6.dp))
-            StatusDot(connectionAccent(tokens, state.server))
+            StatusDot(
+                connectionAccent(tokens, state.server),
+                "Remote connection status: ${connectionLabel(state.server)}",
+            )
             Spacer(Modifier.size(8.dp))
             ZaraSigil(size = 34.dp)
         }
@@ -1786,8 +1792,13 @@ internal fun ErrorBanner(text: String) {
 }
 
 @Composable
-private fun StatusDot(color: Color) {
-    Canvas(Modifier.size(8.dp)) {
+private fun StatusDot(color: Color, description: String? = null) {
+    val modifier = if (description == null) {
+        Modifier.size(8.dp)
+    } else {
+        Modifier.size(8.dp).semantics { contentDescription = description }
+    }
+    Canvas(modifier) {
         drawCircle(color = color, radius = size.minDimension / 2f)
     }
 }
