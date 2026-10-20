@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.state import DesktopRuntimeState, DesktopStatus
 from zara.desktop.theme import apply_desktop_theme
 from zara.desktop.windows import CopilotPresentation, CopilotWindow
 from zara.runtime import events
@@ -130,8 +131,9 @@ def _configure_fixture(state: str, window: CopilotWindow, service: ConversationS
         window.command_error_label.setText("The runtime rejected this turn. Nothing was executed.")
         window.command_error_label.show()
     elif state == "disconnected":
-        window.runtime_status_label.setText("Disconnected")
-        window.runtime_detail_label.setText("Daemon unavailable; reconnecting.")
+        window.set_status(
+            DesktopStatus(DesktopRuntimeState.DISCONNECTED, "Daemon unavailable; reconnecting.")
+        )
     elif state == "tool-running":
         _add_user_messages(service, conversation_id, "Sync my calendar before the next meeting.")
         service.apply_event(

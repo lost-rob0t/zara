@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
 from typing import Optional, Sequence
 
 from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QKeyEvent, QResizeEvent, QShowEvent
+from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QKeyEvent, QPainter, QPixmap, QResizeEvent, QShowEvent
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -130,7 +132,15 @@ class QuickCopilotWindow(QWidget):
 
         self.brand_label = QLabel()
         self.brand_label.setObjectName("zaraBrandName")
-        self.brand_label.hide()
+        brand_icon = files("zara.desktop").joinpath("assets/zara-launcher-icon.svg")
+        icon = QPixmap(28, 28)
+        icon.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(icon)
+        QSvgRenderer(str(brand_icon)).render(painter)
+        painter.end()
+        self.brand_label.setPixmap(icon)
+        self.brand_label.setFixedSize(28, 28)
+        self.brand_label.setAccessibleName("Zara")
         self.title_label = QLabel("New chat")
         self.title_label.setObjectName("zaraQuickTitle")
         self.provider_label = QLabel()
@@ -425,7 +435,6 @@ class QuickCopilotWindow(QWidget):
 
     def _apply_header_density(self) -> None:
         narrow = self.width() < 560
-        self.brand_label.hide()
         self.runtime_status_label.setVisible(not narrow)
         self.new_chat_button.setText("New" if narrow else "New chat")
         self.settings_button.setText("..." if narrow else "Settings")

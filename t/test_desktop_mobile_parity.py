@@ -171,7 +171,7 @@ def test_outrun_stylesheet_uses_android_surface_and_density_vocabulary() -> None
     assert "background: #080F1E" in composer_rule
     assert "border-radius: 20px" in composer_rule
     assert "background: #07101B" in history_rule
-    assert "border: 1px solid #1A2A49" in history_rule
+    assert "border: none" in history_rule
     assert "QScrollArea#zaraThemeStrip" in stylesheet
 
 
@@ -184,12 +184,14 @@ def test_adaptive_copilot_uses_mobile_first_header_hierarchy(tmp_path) -> None:
         window.resize(900, 640)
         window.show()
         qt_app.processEvents()
-        assert window.brand_label.isHidden()
+        assert window.brand_label.isVisible()
+        assert window.brand_label.text() == ""
+        assert not window.brand_label.pixmap().isNull()
         assert window.expand_button.text() == "History"
 
         window.set_presentation(CopilotPresentation.EXPANDED)
         qt_app.processEvents()
-        assert window.brand_label.isHidden()
+        assert window.brand_label.isVisible()
         assert window.expand_button.text() == "Chat"
     finally:
         window.prepare_for_quit()

@@ -42,6 +42,14 @@ def app() -> QApplication:
     return instance or QApplication([])
 
 
+def test_outrun_desktop_actions_use_existing_red_token():
+    stylesheet = desktop_stylesheet("outrun")
+    assert "QPushButton#zaraPrimaryAction {\n    color: #000000;\n    background: #FF6B8B;" in stylesheet
+    assert "QPushButton#zaraComposerAction {" in stylesheet
+    assert "background: #FF6B8B;" in stylesheet
+    assert "background: #B3A4FF;" in desktop_stylesheet("midnight")
+
+
 def set_pair(
     palette: QPalette,
     foreground_role: QPalette.ColorRole,

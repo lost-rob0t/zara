@@ -539,7 +539,15 @@ def build_signal_cabin_palette() -> QPalette:
 
 def desktop_stylesheet(theme_key: str = "outrun") -> str:
     """Return Zara Desktop's complete stylesheet for one theme."""
-    colors = resolve_theme(theme_key).colors
+    theme = resolve_theme(theme_key)
+    colors = theme.colors
+    action_accent = colors["danger"] if theme.key == "outrun" else colors["primary"]
+    action_hover = (
+        _mix_hex(action_accent, "#FFFFFF", 0.16)
+        if theme.key == "outrun"
+        else colors["primary_hover"]
+    )
+    on_action = _contrast_text_hex(action_accent) if theme.key == "outrun" else colors["on_primary"]
     return f"""
 QWidget {{
     background: {colors["ground"]};
@@ -640,7 +648,7 @@ QWidget#zaraConversationSidebar {{
 
 QWidget#zaraConversationHistoryPanel {{
     background: {colors["panel"]};
-    border: 1px solid {colors["line"]};
+    border: none;
     border-radius: 20px;
 }}
 
@@ -685,6 +693,7 @@ QListWidget#zaraConversationHistory::item:hover {{
 QListWidget#zaraConversationHistory::item:selected {{
     color: {colors["text"]};
     background: {colors["primary_deep"]};
+    border-left: 2px solid {action_accent};
 }}
 
 QListWidget#zaraSettingsCategories,
@@ -858,14 +867,14 @@ QPushButton#zaraThemePreview {{
 }}
 
 QPushButton#zaraPrimaryAction {{
-    color: {colors["on_primary"]};
-    background: {colors["primary"]};
-    border-color: {colors["primary"]};
+    color: {on_action};
+    background: {action_accent};
+    border-color: {action_accent};
 }}
 
 QPushButton#zaraPrimaryAction:hover {{
-    background: {colors["primary_hover"]};
-    border-color: {colors["primary_hover"]};
+    background: {action_hover};
+    border-color: {action_hover};
 }}
 
 QPushButton#zaraPrimaryAction:disabled {{
@@ -897,15 +906,15 @@ QPushButton#zaraComposerAction {{
     min-height: 38px;
     max-height: 38px;
     padding: 0;
-    color: {colors["on_primary"]};
-    background: {colors["primary"]};
-    border: 1px solid {colors["primary"]};
+    color: {on_action};
+    background: {action_accent};
+    border: 1px solid {action_accent};
     border-radius: 12px;
 }}
 
 QPushButton#zaraComposerAction:hover {{
-    background: {colors["primary_hover"]};
-    border-color: {colors["primary_hover"]};
+    background: {action_hover};
+    border-color: {action_hover};
 }}
 
 QPushButton#zaraComposerAction:disabled {{

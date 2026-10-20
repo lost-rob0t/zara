@@ -6,6 +6,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Zara Desktop chat now has a centered reading column, collapsible recent conversations, an icon-only Zara mark, and restrained red Outrun action accents.
 - Android chat retains bounded, private error details on each failed message with a Copy error details action that survives later turns and app restoration. Local failures now appear in Diagnostics.
 
 - Service plugins now finish startup before building configured tools. Failed tool setup stops the service and cleans owned resources while preserving existing tools.

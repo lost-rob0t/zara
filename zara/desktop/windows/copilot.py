@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Optional
 
 from PySide6.QtCore import QRect, QSettings, Qt, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -59,7 +61,15 @@ class CopilotWindow(QuickCopilotWindow):
             parent=parent,
         )
         self._presentation = CopilotPresentation.COMPACT
+        self._history_open = True
+        self._history_user_toggled = False
         self.setObjectName("zaraCopilot")
+
+        self.history_toggle_button = QPushButton("Hide history")
+        self.history_toggle_button.setObjectName("zaraSecondaryAction")
+        header = self.header_frame.layout()
+        header.insertWidget(header.indexOf(self.expand_button), self.history_toggle_button)
+        self.history_toggle_button.clicked.connect(self.toggle_history)
 
         self.history_panel = QWidget(self)
         self.history_panel.setObjectName("zaraConversationHistoryPanel")
@@ -98,6 +108,8 @@ class CopilotWindow(QuickCopilotWindow):
         root_layout = self.layout()
         self.chat_column = QWidget(self)
         self.chat_column.setObjectName("zaraCopilotChatColumn")
+        self.chat_column.setMaximumWidth(760)
+        self.chat_column.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         chat_layout = QVBoxLayout(self.chat_column)
         chat_layout.setContentsMargins(0, 0, 0, 0)
         chat_layout.setSpacing(root_layout.spacing())
@@ -116,7 +128,15 @@ class CopilotWindow(QuickCopilotWindow):
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(root_layout.spacing())
         body_layout.addWidget(self.history_panel)
-        body_layout.addWidget(self.chat_column, 1)
+        self.chat_area = QWidget(self.copilot_body)
+        self.chat_area.setObjectName("zaraCopilotChatArea")
+        chat_area_layout = QHBoxLayout(self.chat_area)
+        chat_area_layout.setContentsMargins(0, 0, 0, 0)
+        chat_area_layout.setSpacing(0)
+        chat_area_layout.addStretch(1)
+        chat_area_layout.addWidget(self.chat_column, 100)
+        chat_area_layout.addStretch(1)
+        body_layout.addWidget(self.chat_area, 1)
         root_layout.addWidget(self.copilot_body, 1)
 
         self.search_edit.textChanged.connect(self.refresh_history)
@@ -153,9 +173,23 @@ class CopilotWindow(QuickCopilotWindow):
         )
         self.set_presentation(target)
 
+    def toggle_history(self) -> None:
+        self._history_open = not self.history_panel.isVisible()
+        self._history_user_toggled = True
+        self._update_history_layout()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        if hasattr(self, "history_panel"):
+            self._update_history_layout()
+
     def bind_conversation(self, conversation_id: str) -> None:
         """Rebind the one renderer to durable state without runtime traffic."""
         super().bind_conversation(conversation_id)
+        if self._presentation is CopilotPresentation.EXPANDED and self.width() < 760:
+            self._history_open = False
+            self._history_user_toggled = True
+            self._update_history_layout()
         self._sync_conversation_title()
         self.refresh_history()
 
@@ -229,9 +263,25 @@ class CopilotWindow(QuickCopilotWindow):
         self.setProperty("presentation", self._presentation.value)
         self.expand_button.setText("Chat" if expanded else "History")
         self.expand_button.setToolTip("Hide history" if expanded else "Show history")
-        self.history_panel.setVisible(expanded)
         self.new_chat_button.setVisible(not expanded)
+        self._update_history_layout()
         self._apply_header_density()
         if expanded:
             self.refresh_history()
         self.setWindowTitle("Zara — Copilot" if expanded else "Ask Zara")
+
+    def _update_history_layout(self) -> None:
+        expanded = self._presentation is CopilotPresentation.EXPANDED
+        narrow = self.width() < 760
+        if not self._history_user_toggled:
+            self._history_open = not narrow
+        show_history = expanded and self._history_open
+        self.history_panel.setMaximumWidth(16777215 if narrow else 280)
+        self.history_panel.setVisible(show_history)
+        self.chat_area.setVisible(not (expanded and narrow and show_history))
+        self.expand_button.setVisible(not (expanded and narrow and show_history))
+        self.history_toggle_button.setVisible(expanded)
+        label = "Hide recent conversations" if show_history else "Show recent conversations"
+        self.history_toggle_button.setText("Chat" if narrow and show_history else "Recent")
+        self.history_toggle_button.setAccessibleName(label)
+        self.history_toggle_button.setToolTip(label)

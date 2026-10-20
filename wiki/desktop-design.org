@@ -33,10 +33,14 @@ Android semantic tokens map to the existing Qt roles through one queryable deriv
 - The near-black or light theme ground owns the window; content is not nested in generic cards.
 - Conversation history uses =surface=, the composer uses =surfaceInput=, and raised controls use =surfaceElevated=.
 - Active/focus borders use the theme's focus and primary family; running work uses warning and failures use error.
-- Primary controls and message accents use the Android primary color. Outrun therefore uses restrained magenta with cyan/violet support rather than an independent desktop palette.
+- Outrun desktop actions and selected history use red from the existing error token; other themes use their primary color. Android Outrun tokens remain unchanged.
 - Panels and the composer use the Android rounded hierarchy, while borders stay thin and informative.
-- Compact chat exposes History; expanded chat exposes Chat. The conversation title replaces a separate desktop wordmark so hierarchy matches the mobile shell.
+- Compact chat exposes History; expanded chat exposes Chat and a separate recent-conversations toggle. The header uses the packaged Zara sigil without a wordmark.
 - Appearance previews scroll horizontally, keeping all shared and legacy themes reachable at the existing settings width.
+
+* Chat layout
+
+The canonical Copilot keeps one renderer and one conversation state across compact and expanded presentations. Its chat and composer occupy a centered column no wider than 760 pixels while filling the compact window's usable width. Expanded history can be hidden without losing a draft. Below 760 pixels, history opens as a separate view and selecting a conversation returns to chat.
 
 * Ownership boundary
 
