@@ -56,7 +56,9 @@ class OpenAiCompatibleCloudModelBackend(
                 id
             }.distinct().sorted()
         } catch (error: SocketTimeoutException) {
-            throw CloudModelException(CloudModelFailureReason.TIMEOUT, "Provider connection check timed out")
+            throw CloudModelException(
+                if (cancelled()) CloudModelFailureReason.CANCELLED else CloudModelFailureReason.TIMEOUT,
+                if (cancelled()) "Provider connection check cancelled" else "Provider connection check timed out")
         } catch (error: IOException) {
             throw CloudModelException(if (cancelled()) CloudModelFailureReason.CANCELLED else CloudModelFailureReason.UNAVAILABLE,
                 if (cancelled()) "Connection check cancelled" else "Provider connection failed; check the URL, network, and certificate")
@@ -156,9 +158,13 @@ class OpenAiCompatibleCloudModelBackend(
         } catch (error: CloudModelException) {
             throw error
         } catch (error: SocketTimeoutException) {
-            throw CloudModelException(CloudModelFailureReason.TIMEOUT, "Cloud model timed out", error)
+            throw CloudModelException(
+                if (cancelled()) CloudModelFailureReason.CANCELLED else CloudModelFailureReason.TIMEOUT,
+                if (cancelled()) "Cloud model request was cancelled" else "Cloud model timed out", error)
         } catch (error: ConnectException) {
-            throw CloudModelException(CloudModelFailureReason.UNAVAILABLE, "Cloud model endpoint is unavailable", error)
+            throw CloudModelException(
+                if (cancelled()) CloudModelFailureReason.CANCELLED else CloudModelFailureReason.UNAVAILABLE,
+                if (cancelled()) "Cloud model request was cancelled" else "Cloud model endpoint is unavailable", error)
         } catch (error: IOException) {
             if (cancelled()) {
                 throw CloudModelException(CloudModelFailureReason.CANCELLED, "Cloud model request was cancelled", error)
