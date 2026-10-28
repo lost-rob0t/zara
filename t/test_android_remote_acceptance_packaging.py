@@ -47,7 +47,8 @@ def test_stock_fixture_traces_every_canonical_runtime_event() -> None:
 
 
 @pytest.mark.parametrize("response_exists", [True, False])
-def test_remote_flow_reaches_retained_history_response_without_accepting_absence(response_exists):
+@pytest.mark.parametrize("local_model_used", [False, True])
+def test_remote_flow_reaches_retained_history_response_without_accepting_absence(response_exists, local_model_used):
     tree = ast.parse(REMOTE_ACCEPTANCE.read_text(encoding="utf-8"))
     exercise = next(node for node in tree.body
                     if isinstance(node, ast.FunctionDef) and node.name == "exercise_remote_connection")
@@ -83,10 +84,14 @@ def test_remote_flow_reaches_retained_history_response_without_accepting_absence
         "enroll_live_server": lambda *_: None,
         "visible_device_text": lambda *_: ["fixture-public"],
         "signal_turn_acceptance": lambda *_: None,
+        "read_app_diagnostics": lambda *_: "local_model.generate.begin" if local_model_used else "",
     }
     exec(compile(ast.Module(body=[exercise], type_ignores=[]), str(REMOTE_ACCEPTANCE), "exec"), namespace)
     device = RetainedHistoryDevice()
-    if not response_exists:
+    if local_model_used:
+        with pytest.raises(AssertionError, match="local-model fallback"):
+            namespace["exercise_remote_connection"](device, fixture)
+    elif not response_exists:
         with pytest.raises(AssertionError, match="Missing remote response"):
             namespace["exercise_remote_connection"](device, fixture)
     else:

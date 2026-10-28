@@ -1,5 +1,7 @@
 #+title: Zara
 
+[[https://github.com/lost-rob0t/zara/actions/workflows/coverage.yml][https://github.com/lost-rob0t/zara/actions/workflows/coverage.yml/badge.svg?branch=master]]
+
 * Zara — hybrid symbolic AI assistant and native copilot
 
 Zara is an experimental assistant runtime built around *Prolog, voice, tools, LLMs, durable conversations, and native clients*.

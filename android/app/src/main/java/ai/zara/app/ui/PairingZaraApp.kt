@@ -32,6 +32,83 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import ai.zara.app.BuildConfig
+import ai.zara.app.conversations.ConversationStatus
+import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.localai.LocalTtsPhase
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelBackend
+import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalModelSpec
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelState
+import ai.zara.app.runtime.AssistantRole
+import ai.zara.app.runtime.LocalServerPhase
+import ai.zara.app.runtime.ServerConnection
+import ai.zara.app.update.UpdatePhase
+import ai.zara.ui.theme.ZaraSemanticTokens
+import ai.zara.ui.theme.themeTokens
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 /**
  * Pairing-aware Android shell adapter.
@@ -52,6 +129,8 @@ fun ZaraApp(
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    localVoiceActive: Boolean,
+    localVoiceStatus: String?,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
@@ -64,6 +143,11 @@ fun ZaraApp(
     showChangelog: Boolean,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    localAiState: LocalAiState,
+    localModels: List<LocalModelSpec>,
+    localModelBusy: Boolean,
+    cloudModelState: CloudModelState,
+    cloudModelBusy: Boolean,
     projectState: ProjectContextState,
     healthState: SamsungHealthUiState,
     healthGoals: List<HealthGoalTarget>,
@@ -71,6 +155,11 @@ fun ZaraApp(
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
+    onSelectLocalModel: (String, String) -> Unit,
+    onUnloadLocalModel: () -> Unit,
+    onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
+    onClearCloudModelApiKey: () -> Unit,
     onScanPairingQr: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
@@ -114,7 +203,18 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    localCompanionStatus: String = "not installed",
+    localCompanionTrusted: Boolean = false,
+    onOpenLocalCompanion: () -> Unit = {},
+    onCancelTextReply: () -> Unit = {},
+    onCheckCloudConnection: () -> Unit = {},
     onCopyChatErrorDetails: (String) -> Boolean = { false },
+    localSpeechState: LocalTtsState = LocalTtsState(LocalTtsPhase.STOPPED),
+    onTestLocalSpeech: () -> Unit = {},
+    onStopLocalSpeech: () -> Unit = {},
+    onRefreshLocalSpeech: () -> Unit = {},
+    onInstallSpeechVoices: () -> Unit = {},
+    onOpenSpeechSettings: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -129,6 +229,8 @@ fun ZaraApp(
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
                 voiceState = voiceState,
+                localVoiceActive = localVoiceActive,
+                localVoiceStatus = localVoiceStatus,
                 voiceStreamState = voiceStreamState,
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
@@ -141,6 +243,22 @@ fun ZaraApp(
                 showChangelog = showChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                localAiState = localAiState,
+                localCompanionStatus = localCompanionStatus,
+                localCompanionTrusted = localCompanionTrusted,
+                onOpenLocalCompanion = onOpenLocalCompanion,
+                localSpeechState = localSpeechState,
+                onTestLocalSpeech = onTestLocalSpeech,
+                onStopLocalSpeech = onStopLocalSpeech,
+                onRefreshLocalSpeech = onRefreshLocalSpeech,
+                onInstallSpeechVoices = onInstallSpeechVoices,
+                onOpenSpeechSettings = onOpenSpeechSettings,
+                localModels = localModels,
+                localModelBusy = localModelBusy,
+                cloudModelState = cloudModelState,
+                onCancelTextReply = onCancelTextReply,
+                onCheckCloudConnection = onCheckCloudConnection,
+                cloudModelBusy = cloudModelBusy,
                 projectState = projectState,
                 healthState = healthState,
                 healthGoals = healthGoals,
@@ -148,6 +266,11 @@ fun ZaraApp(
                 onSelectTheme = onSelectTheme,
                 onSelectRuntimeMode = onSelectRuntimeMode,
                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                onImportLocalModel = onImportLocalModel,
+                onSelectLocalModel = onSelectLocalModel,
+                onUnloadLocalModel = onUnloadLocalModel,
+                onConfigureCloudModel = onConfigureCloudModel,
+                onClearCloudModelApiKey = onClearCloudModelApiKey,
                 onCreateIdentity = onCreateIdentity,
                 onPinServer = onPinServer,
                 onReplaceServerPin = onReplaceServerPin,

@@ -4,6 +4,14 @@ import ai.zara.app.BuildConfig
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
+import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.localai.LocalTtsPhase
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelBackend
+import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalModelSpec
+import ai.zara.app.model.CloudModelConfig
+import ai.zara.app.model.CloudModelState
 import ai.zara.app.projects.ProjectContext
 import ai.zara.app.projects.ProjectContextState
 import ai.zara.app.runtime.AssistantRole
@@ -28,7 +36,6 @@ import ai.zara.ui.theme.ZaraTheme
 import ai.zara.ui.theme.themeTokens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -57,7 +64,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DrawerValue
@@ -70,8 +76,10 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
@@ -96,6 +104,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -103,6 +114,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AssistChip
 
 enum class AppSurface(val label: String, val glyph: String, val gatedIssue: String? = null) {
     Chat("Chat", "⌂"),
@@ -149,6 +162,8 @@ fun ZaraApp(
     operationBusy: Boolean,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    localVoiceActive: Boolean,
+    localVoiceStatus: String?,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     selectedTheme: ZaraTheme,
@@ -161,6 +176,11 @@ fun ZaraApp(
     showChangelog: Boolean,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    localAiState: LocalAiState,
+    localModels: List<LocalModelSpec>,
+    localModelBusy: Boolean,
+    cloudModelState: CloudModelState,
+    cloudModelBusy: Boolean,
     projectState: ProjectContextState,
     healthState: SamsungHealthUiState,
     healthGoals: List<HealthGoalTarget>,
@@ -168,6 +188,11 @@ fun ZaraApp(
     onSelectTheme: (ZaraTheme) -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
+    onSelectLocalModel: (String, String) -> Unit,
+    onUnloadLocalModel: () -> Unit,
+    onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
+    onClearCloudModelApiKey: () -> Unit,
     onCreateIdentity: () -> Unit,
     onPinServer: (String) -> Unit,
     onReplaceServerPin: (String) -> Unit,
@@ -210,7 +235,18 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    localCompanionStatus: String = "not installed",
+    localCompanionTrusted: Boolean = false,
+    onOpenLocalCompanion: () -> Unit = {},
+    onCancelTextReply: () -> Unit = {},
+    onCheckCloudConnection: () -> Unit = {},
     onCopyChatErrorDetails: (String) -> Boolean = { false },
+    localSpeechState: LocalTtsState = LocalTtsState(LocalTtsPhase.STOPPED),
+    onTestLocalSpeech: () -> Unit = {},
+    onStopLocalSpeech: () -> Unit = {},
+    onRefreshLocalSpeech: () -> Unit = {},
+    onInstallSpeechVoices: () -> Unit = {},
+    onOpenSpeechSettings: () -> Unit = {},
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
         mutableStateOf(AppNavigation())
@@ -247,10 +283,12 @@ fun ZaraApp(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val showRail = usesNavigationRail(maxWidth.value)
                 ModalNavigationDrawer(
+                    modifier = Modifier.semantics { testTagsAsResourceId = true },
                     drawerState = drawerState,
                     drawerContent = {
                         ZaraDrawer(
                             selected = navigation.menu,
+                            drawerOpen = drawerState.isOpen,
                             state = runtimeState,
                             localState = localServerState,
                             conversationState = conversationState,
@@ -290,6 +328,7 @@ fun ZaraApp(
                                     selected = navigation.menu,
                                     state = runtimeState,
                                     localState = localServerState,
+                                    drawerOpen = drawerState.isOpen,
                                     onMenu = { scope.launch { drawerState.open() } },
                                 )
                             },
@@ -307,6 +346,12 @@ fun ZaraApp(
                                 Box(Modifier.weight(1f).fillMaxWidth()) {
                                     savedContent.SaveableStateProvider(navigation.route.name) {
                                         val padding = PaddingValues(0.dp)
+                                        Box(
+                                            Modifier.fillMaxSize().testTag("zara.screen.${navigation.route.name.lowercase()}")
+                                                .semantics {
+                                                    stateDescription = "menu=${navigation.menu.name.lowercase()};destination=${navigation.route.name.lowercase()};drawer=${if (drawerState.isOpen) "open" else "closed"}"
+                                                },
+                                        ) {
                                         when (selected) {
                                             AppSurface.Chat -> {
                                                 val conversation = conversationState.selectedConversation
@@ -324,6 +369,7 @@ fun ZaraApp(
                                                     onReconnectRemote = onReconnectRemote,
                                                     onOpenDiagnostics = onOpenDiagnostics,
                                                     onCopyChatErrorDetails = onCopyChatErrorDetails,
+                                                onCancelTextReply = onCancelTextReply,
                                                     padding = padding,
                                                 )
                                             }
@@ -358,6 +404,11 @@ fun ZaraApp(
                                                 state = runtimeState,
                                                 microphonePermissionGranted = microphonePermissionGranted,
                                                 voiceState = voiceState,
+                                                localVoiceActive = localVoiceActive,
+                                                localVoiceStatus = localVoiceStatus,
+                                                runtimeMode = runtimeMode,
+                                                localServerReady = localServerState.phase == LocalServerPhase.READY,
+                                                cloudModelReady = cloudModelState.config.enabled && cloudModelState.apiKeyConfigured,
                                                 voiceStreamState = voiceStreamState,
                                                 voiceStreamFailure = voiceStreamFailure,
                                                 operationError = operationError,
@@ -406,6 +457,15 @@ fun ZaraApp(
                                                 updateState = updateState,
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
+                                                localAiState = localAiState,
+                                                localCompanionStatus = localCompanionStatus,
+                                                localCompanionTrusted = localCompanionTrusted,
+                                                onOpenLocalCompanion = onOpenLocalCompanion,
+                                                localModels = localModels,
+                                                localModelBusy = localModelBusy,
+                                                cloudModelState = cloudModelState,
+                                                cloudModelBusy = cloudModelBusy,
+                                                selectedTheme = selectedTheme,
                                                 enrollmentPublicKey = enrollmentPublicKey,
                                                 pinnedServerPublicKey = pinnedServerPublicKey,
                                                 operationError = operationError,
@@ -420,9 +480,23 @@ fun ZaraApp(
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
                                                 onSetLocalEmbeddingEnabled = onSetLocalEmbeddingEnabled,
+                                                onImportLocalModel = onImportLocalModel,
+                                                onSelectLocalModel = onSelectLocalModel,
+                                                onUnloadLocalModel = onUnloadLocalModel,
+                                                localSpeechState = localSpeechState,
+                                                onTestLocalSpeech = onTestLocalSpeech,
+                                                onStopLocalSpeech = onStopLocalSpeech,
+                                                onRefreshLocalSpeech = onRefreshLocalSpeech,
+                                                onInstallSpeechVoices = onInstallSpeechVoices,
+                                                onOpenSpeechSettings = onOpenSpeechSettings,
+                                                onConfigureCloudModel = onConfigureCloudModel,
+                                                onClearCloudModelApiKey = onClearCloudModelApiKey,
+                                                onCheckCloudConnection = onCheckCloudConnection,
+                                                onNavigateSettings = { route -> navigation = navigation.selectRoute(route) },
                                                 padding = padding,
                                             )
                                             AppSurface.About -> AboutSurface(sourceSha, padding)
+                                        }
                                         }
                                     }
                                 }
@@ -447,7 +521,7 @@ internal fun AppRoute.surface(): AppSurface = when (this) {
     AppRoute.Plugins -> AppSurface.Plugins
     AppRoute.Diagnostics -> AppSurface.Diagnostics
     AppRoute.About -> AppSurface.About
-    AppRoute.Runtime, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
+    AppRoute.Settings, AppRoute.Runtime, AppRoute.Permissions, AppRoute.Updates -> AppSurface.Settings
 }
 
 @Composable
@@ -455,6 +529,7 @@ private fun ZaraTopBar(
     selected: AppMenu,
     state: RuntimeState,
     localState: LocalServerState,
+    drawerOpen: Boolean,
     onMenu: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
@@ -472,13 +547,18 @@ private fun ZaraTopBar(
         ) {
             TextButton(
                 onClick = onMenu,
-                modifier = Modifier.semantics { contentDescription = "Open navigation menu" },
+                modifier = Modifier.semantics {
+                    contentDescription = "Open navigation menu"
+                    stateDescription = if (drawerOpen) "Navigation drawer open" else "Navigation drawer closed"
+                }
+                    .testTag("zara.navigation.open-menu"),
             ) {
                 Text("☰", color = tokens.text, fontSize = 23.sp)
             }
             Text(
                 selected.label,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f)
+                    .testTag("zara.menu.active.${selected.name.lowercase()}"),
                 color = tokens.textMuted,
                 style = MaterialTheme.typography.labelLarge,
             )
@@ -494,6 +574,7 @@ private fun ZaraTopBar(
 @Composable
 private fun ZaraDrawer(
     selected: AppMenu,
+    drawerOpen: Boolean,
     state: RuntimeState,
     localState: LocalServerState,
     conversationState: ConversationState,
@@ -509,7 +590,11 @@ private fun ZaraDrawer(
     var showAllPinned by rememberSaveable { mutableStateOf(false) }
     var showAllRecents by rememberSaveable { mutableStateOf(false) }
     ModalDrawerSheet(
-        modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp),
+        modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp)
+            .testTag("zara.navigation.drawer-state")
+            .semantics {
+                contentDescription = if (drawerOpen) "Navigation drawer open" else "Navigation drawer closed"
+            },
         drawerContainerColor = tokens.surfaceElevated,
         drawerContentColor = tokens.text,
     ) {
@@ -544,6 +629,7 @@ private fun ZaraDrawer(
                     },
                     selected = selected == menu,
                     onClick = { onSelect(menu) },
+                    modifier = Modifier.testTag("zara.menu.${menu.name.lowercase()}"),
                     colors = NavigationDrawerItemDefaults.colors(
                         selectedContainerColor = tokens.ambientGlow,
                         unselectedContainerColor = Color.Transparent,
@@ -885,6 +971,7 @@ private fun ChatSurface(
     onReconnectRemote: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onCopyChatErrorDetails: (String) -> Boolean,
+    onCancelTextReply: () -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -957,7 +1044,7 @@ private fun ChatSurface(
                                 onOpenDiagnostics = onOpenDiagnostics,
                             )
                         turn.assistantText != null ->
-                            AssistantMessage(turn.assistantText, turn.success == true)
+                            AssistantMessage(turn.assistantText, turn.success != false)
                         conversation.status == ConversationStatus.Running &&
                             index == conversation.turns.lastIndex ->
                             AssistantPendingMessage()
@@ -970,6 +1057,10 @@ private fun ChatSurface(
                     }
                 }
             }
+        }
+
+        if (operationBusy && runtimeMode == RuntimeMode.Remote && state.server !is ServerConnection.Connected) {
+            SecondaryAction("Stop reply", true, onCancelTextReply)
         }
 
         CompactComposer(
@@ -998,65 +1089,6 @@ private fun ChatSurface(
             fontSize = 9.sp,
             letterSpacing = 1.6.sp,
         )
-    }
-}
-
-@Composable
-private fun TurnFailureCard(
-    failure: TurnFailure,
-    userText: String,
-    onRetry: (String) -> Unit,
-    onReconnect: () -> Unit,
-    onOpenDiagnostics: () -> Unit,
-) {
-    val tokens = LocalZaraTokens.current
-    Surface(
-        color = tokens.surface,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, tokens.error),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                failure.title,
-                color = tokens.error,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 12.sp,
-                letterSpacing = 1.sp,
-            )
-            Text(
-                failure.explanation,
-                color = tokens.text,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-            )
-            Text(
-                "Code: ${failure.code}",
-                color = tokens.textMuted,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-            )
-            Text(
-                "Connection: ${failure.connectionState}  •  Recovery: ${failure.recovery}" +
-                    (failure.incidentId?.let { "  •  $it" } ?: ""),
-                color = tokens.textMuted,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (failure.retryPossible) {
-                    AssistChip(onClick = { onRetry(userText) }, label = { Text("Retry") })
-                }
-                if (failure.reconnectPossible) {
-                    AssistChip(onClick = onReconnect, label = { Text("Reconnect") })
-                }
-                AssistChip(onClick = onOpenDiagnostics, label = { Text("Diagnostics") })
-            }
-        }
     }
 }
 
@@ -1184,6 +1216,11 @@ private fun VoiceSurface(
     state: RuntimeState,
     microphonePermissionGranted: Boolean,
     voiceState: ManualVoiceState,
+    localVoiceActive: Boolean,
+    localVoiceStatus: String?,
+    runtimeMode: RuntimeMode,
+    localServerReady: Boolean,
+    cloudModelReady: Boolean,
     voiceStreamState: VoiceStreamState?,
     voiceStreamFailure: String?,
     operationError: String?,
@@ -1194,14 +1231,16 @@ private fun VoiceSurface(
     onCancelVoice: () -> Unit,
     padding: PaddingValues,
 ) {
-    val capturing = voiceState is ManualVoiceState.Capturing
+    val capturing = localVoiceActive || voiceState is ManualVoiceState.Capturing
     val tokens = LocalZaraTokens.current
     ScreenBody(padding) {
-        ScreenTitle("Voice", "Authenticated capture and playback")
+        ScreenTitle("Voice", "Local-first capture and playback")
         SectionCard("RUNTIME") {
+            KeyValueRow("mode", runtimeMode.name.lowercase())
             KeyValueRow("connection", connectionLabel(state.server))
             KeyValueRow("microphone", if (capturing) "capturing" else "idle")
             KeyValueRow("permission", if (microphonePermissionGranted) "granted" else "required")
+            localVoiceStatus?.let { KeyValueRow("voice", it) }
         }
         voiceStreamState?.let { stream ->
             SectionCard("STREAM") {
@@ -1222,8 +1261,14 @@ private fun VoiceSurface(
                 !operationBusy && !capturing,
                 onRequestMicrophonePermission,
             )
-            !canStartManualVoice(state, microphonePermissionGranted) && !capturing ->
-                MutedNotice("Voice becomes available after an authenticated session connects in Settings → Connection.")
+            !canStartManualVoice(
+                state = state,
+                microphonePermissionGranted = microphonePermissionGranted,
+                mode = runtimeMode,
+                localServerReady = localServerReady,
+                cloudModelReady = cloudModelReady,
+            ) && !capturing ->
+                MutedNotice("Voice needs a ready local symbolic runtime, an authenticated Zara server, or an enabled Remote model provider for the selected mode.")
             capturing -> {
                 PrimaryAction("Stop & send", !operationBusy, onStopVoice)
                 SecondaryAction("Cancel", !operationBusy, onCancelVoice)
@@ -1283,6 +1328,12 @@ private fun SettingsSurface(
     updateState: UpdateState,
     runtimeMode: RuntimeMode,
     localEmbedding: LocalEmbeddingConfiguration,
+    localAiState: LocalAiState,
+    localModels: List<LocalModelSpec>,
+    localModelBusy: Boolean,
+    cloudModelState: CloudModelState,
+    cloudModelBusy: Boolean,
+    selectedTheme: ZaraTheme,
     enrollmentPublicKey: String?,
     pinnedServerPublicKey: String?,
     operationError: String?,
@@ -1297,6 +1348,22 @@ private fun SettingsSurface(
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
     onSetLocalEmbeddingEnabled: (Boolean) -> Unit,
+    onImportLocalModel: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
+    onSelectLocalModel: (String, String) -> Unit,
+    onUnloadLocalModel: () -> Unit,
+    onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
+    onClearCloudModelApiKey: () -> Unit,
+    localCompanionStatus: String,
+    localCompanionTrusted: Boolean,
+    onOpenLocalCompanion: () -> Unit,
+    onCheckCloudConnection: () -> Unit,
+    localSpeechState: LocalTtsState,
+    onTestLocalSpeech: () -> Unit,
+    onStopLocalSpeech: () -> Unit,
+    onRefreshLocalSpeech: () -> Unit,
+    onInstallSpeechVoices: () -> Unit,
+    onOpenSpeechSettings: () -> Unit,
+    onNavigateSettings: (AppRoute) -> Unit,
     padding: PaddingValues,
 ) {
     var serverPin by rememberSaveable { mutableStateOf("") }
@@ -1306,16 +1373,37 @@ private fun SettingsSurface(
     val tokens = LocalZaraTokens.current
 
     ScreenBody(padding) {
-        ScreenTitle(section.label, "Settings")
+        if (section != AppRoute.Settings) {
+            TextButton(onClick = { onNavigateSettings(AppRoute.Settings) }) {
+                Text("‹ Settings")
+            }
+        }
+        ScreenTitle(
+            if (section == AppRoute.Settings) "Settings" else section.label,
+            if (section == AppRoute.Settings) "Private, explicit, device-first controls" else "Settings",
+        )
         when (section) {
+            AppRoute.Settings -> {
+                SettingsOverviewContent(
+                    runtimeMode = runtimeMode,
+                    localAiState = localAiState,
+                    localModels = localModels,
+                    runtimeState = state,
+                    microphonePermissionGranted = microphonePermissionGranted,
+                    selectedTheme = selectedTheme,
+                    updateState = updateState,
+                    onNavigate = onNavigateSettings,
+                )
+            }
             AppRoute.Runtime -> {
-                SectionCard("LOCAL ZARA SERVER") {
+                SectionCard("LOCAL RUNTIME") {
                     KeyValueRow("state", localServerState.phase.name.lowercase())
                     KeyValueRow("generation", localServerState.generation.toString())
                     KeyValueRow("knowledge sources", localServerState.loadedSources.size.toString())
-                    MutedNotice("Runs inside Zara with no account or network. The Logic workspace is app-private and never syncs to a remote server implicitly.")
+                    MutedNotice("The symbolic runtime is app-private and works with no account or network.")
                     localServerState.failure?.let { ErrorBanner(it) }
-                    Text("CHAT BACKEND", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                }
+                SectionCard("CHAT ROUTING") {
                     RuntimeMode.entries.forEach { mode ->
                         Row(
                             modifier = Modifier
@@ -1324,39 +1412,79 @@ private fun SettingsSurface(
                                     selected = mode == runtimeMode,
                                     onClick = { onSelectRuntimeMode(mode) },
                                 )
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            StatusDot(if (mode == runtimeMode) tokens.success else tokens.border)
-                            Text(
-                                mode.name,
-                                modifier = Modifier.padding(start = 10.dp),
-                                color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
+                            RadioButton(
+                                selected = mode == runtimeMode,
+                                onClick = { onSelectRuntimeMode(mode) },
                             )
+                            Column(modifier = Modifier.padding(start = 8.dp)) {
+                                Text(
+                                    mode.name,
+                                    color = if (mode == runtimeMode) tokens.text else tokens.textMuted,
+                                )
+                                Text(
+                                    when (mode) {
+                                        RuntimeMode.Auto -> "Prefer authenticated remote; fall back to local"
+                                        RuntimeMode.Symbolic -> "Prolog/tools/KB only; never call a model or provider"
+                                        RuntimeMode.Local -> "Prolog first, then the verified on-device model; never use network inference"
+                                        RuntimeMode.Remote -> "Require an authenticated remote session or configured remote provider"
+                                    },
+                                    color = tokens.textMuted,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                         }
                     }
-                    MutedNotice("Auto prefers an authenticated remote session and falls back to local. Local never sends the turn to the network. Remote fails closed when disconnected.")
-                    Text("LOCAL EMBEDDINGS", color = tokens.accentCyan, style = MaterialTheme.typography.labelSmall)
+                }
+                LocalSpeechSettingsCard(
+                    state = localSpeechState,
+                    onTest = onTestLocalSpeech,
+                    onStop = onStopLocalSpeech,
+                    onRefresh = onRefreshLocalSpeech,
+                    onInstallVoices = onInstallSpeechVoices,
+                    onOpenSettings = onOpenSpeechSettings,
+                )
+                LocalModelSettingsCard(
+                    state = localAiState,
+                    models = localModels,
+                    busy = localModelBusy,
+                    onImport = onImportLocalModel,
+                    onSelect = onSelectLocalModel,
+                    onUnload = onUnloadLocalModel,
+                    companionStatus = localCompanionStatus,
+                    companionTrusted = localCompanionTrusted,
+                    onOpenCompanion = onOpenLocalCompanion,
+                )
+                RemoteModelSettingsCard(
+                    state = cloudModelState,
+                    busy = cloudModelBusy,
+                    onConfigure = onConfigureCloudModel,
+                    onClearApiKey = onClearCloudModelApiKey,
+                    onCheckConnection = onCheckCloudConnection,
+                )
+                SectionCard("LOCAL EMBEDDINGS") {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = localEmbedding.enabled,
-                                onClick = { onSetLocalEmbeddingEnabled(!localEmbedding.enabled) },
-                            )
-                            .padding(vertical = 8.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        StatusDot(if (localEmbedding.enabled) tokens.success else tokens.border)
-                        Text(
-                            if (localEmbedding.enabled) "Enabled" else "Disabled",
-                            modifier = Modifier.padding(start = 10.dp),
-                            color = tokens.text,
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Semantic indexing", color = tokens.text)
+                            Text(
+                                "On-device only",
+                                color = tokens.textMuted,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Switch(
+                            checked = localEmbedding.enabled,
+                            onCheckedChange = onSetLocalEmbeddingEnabled,
                         )
                     }
                     KeyValueRow("model", localEmbedding.modelVersion)
                     KeyValueRow("dimensions", localEmbedding.dimensions.toString())
-                    MutedNotice("Runs fully on-device. Disabling it returns no vectors and prevents local semantic indexing.")
+                    MutedNotice("Turning this off returns no vectors and prevents local semantic indexing.")
                 }
             }
             AppRoute.Permissions -> {
@@ -1918,11 +2046,21 @@ internal fun canRequestAssistantRole(role: AssistantRole): Boolean = role is Ass
 internal fun canStartManualVoice(
     state: RuntimeState,
     microphonePermissionGranted: Boolean,
-): Boolean =
-    microphonePermissionGranted &&
+    mode: RuntimeMode,
+    localServerReady: Boolean,
+    cloudModelReady: Boolean,
+): Boolean {
+    if (!microphonePermissionGranted) return false
+    val remoteReady =
         state.enrollment == EnrollmentReadiness.Ready &&
-        state.server is ServerConnection.Connected &&
-        state.sessionId != null
+            state.server is ServerConnection.Connected &&
+            state.sessionId != null
+    return when (mode) {
+        RuntimeMode.Symbolic, RuntimeMode.Local -> localServerReady
+        RuntimeMode.Remote -> remoteReady || (localServerReady && cloudModelReady)
+        RuntimeMode.Auto -> remoteReady || localServerReady
+    }
+}
 
 internal fun connectionLabel(connection: ServerConnection): String = when (connection) {
     ServerConnection.Disconnected -> "disconnected"
@@ -1950,7 +2088,8 @@ internal fun chatFooter(
         RuntimeMode.Remote -> "REMOTE  •  " +
             (if (authenticated) "AUTHENTICATED" else "UNENROLLED") +
             "  •  $transport  •  $symbolic"
-        RuntimeMode.Local -> "LOCAL  •  $symbolic  •  PRIVATE"
+        RuntimeMode.Symbolic -> "SYMBOLIC ONLY  •  PRIVATE  •  NO MODEL"
+        RuntimeMode.Local -> "LOCAL AI  •  $symbolic FIRST  •  PRIVATE"
         RuntimeMode.Auto -> if (server is ServerConnection.Connected) {
             "REMOTE AVAILABLE  •  LOCAL $symbolic  •  PRIVATE"
         } else {

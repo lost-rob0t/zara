@@ -58,6 +58,9 @@ class Device:
         )
 
     def nodes(self):
+        return ET.fromstring(self.hierarchy_xml()).iter("node")
+
+    def hierarchy_xml(self) -> str:
         # Hosted API-35 emulators can occasionally report a successful dump before
         # the hierarchy file becomes available. Retry only that exact missing-file
         # condition; command failures and malformed XML still fail immediately.
@@ -75,7 +78,8 @@ class Device:
                     time.sleep(UI_DUMP_RETRY_DELAY_SECONDS)
                     continue
                 break
-            return ET.fromstring(hierarchy).iter("node")
+            ET.fromstring(hierarchy)
+            return hierarchy
         raise AssertionError(
             f"UIAutomator did not create {UI_DUMP_PATH}: {diagnostic}"
         ) from last_error
@@ -89,6 +93,77 @@ class Device:
             ),
             None,
         )
+
+    def find_tag(self, tag: str):
+        return next(
+            (
+                node
+                for node in self.nodes()
+                if node.get("resource-id") == tag
+            ),
+            None,
+        )
+
+    def await_tag(self, tag: str, timeout: float = 20.0):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.dismiss_pixel_launcher_anr():
+                continue
+            node = self.find_tag(tag)
+            if node is not None:
+                return node
+            time.sleep(0.2)
+        raise AssertionError(f"Semantic target did not appear: {tag}")
+
+    def await_navigation(self, menu: str, route: str, drawer_open: bool) -> None:
+        expected_screen = f"zara.screen.{route}"
+        expected_menu = f"zara.menu.active.{menu}"
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline:
+            screen = self.find_tag(expected_screen)
+            active_menu = self.find_tag(expected_menu)
+            drawer = self.find_tag("zara.navigation.drawer-state")
+            drawer_content = drawer.get("content-desc", "") if drawer is not None else ""
+            if drawer_open:
+                drawer_matches = drawer is not None and drawer_content == "Navigation drawer open"
+            else:
+                drawer_matches = (
+                    drawer is None and self.find("Close navigation menu") is None
+                ) or drawer_content == "Navigation drawer closed"
+            if screen is not None and active_menu is not None and drawer_matches:
+                return
+            if self.dismiss_pixel_launcher_anr():
+                continue
+            time.sleep(0.2)
+        raise AssertionError(
+            "Navigation state mismatch: expected "
+            f"menu={menu}, destination={route}, drawer={'open' if drawer_open else 'closed'}"
+        )
+
+    def await_drawer_state(self, opened: bool, timeout: float = 20.0) -> None:
+        state = "open" if opened else "closed"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            node = self.find_tag("zara.navigation.drawer-state")
+            description = node.get("content-desc", "") if node is not None else ""
+            if opened and description == "Navigation drawer open":
+                return
+            if not opened and (
+                description == "Navigation drawer closed"
+                or (node is None and self.find("Close navigation menu") is None)
+            ):
+                return
+            if self.dismiss_pixel_launcher_anr():
+                continue
+            time.sleep(0.2)
+        raise AssertionError(f"Navigation drawer did not reach {state} state")
+
+    def tap_tag(self, tag: str) -> None:
+        node = self.await_tag(tag)
+        left, top, right, bottom = self.bounds(node)
+        if right <= left or bottom <= top:
+            raise AssertionError(f"Semantic target has empty bounds: {tag}")
+        self.adb("shell", "input", "tap", str((left + right) // 2), str((top + bottom) // 2))
 
     def find_contains(self, fragment: str):
         return next(
@@ -171,6 +246,27 @@ class Device:
         self._tap_found(label)
 
     def tap_tab(self, label: str) -> None:
+        route_ids = {
+            "Chat": "chat",
+            "Voice": "voice",
+            "Logic": "logic",
+            "Health": "health",
+            "Projects": "projects",
+            "Scheduled": "scheduled",
+            "Settings": "settings",
+            "Runtime & local AI": "runtime",
+            "Connection": "connection",
+            "Permissions": "permissions",
+            "Appearance": "appearance",
+            "Plugins": "plugins",
+            "Updates": "updates",
+            "Diagnostics": "diagnostics",
+            "About": "about",
+        }
+        route_id = route_ids.get(label)
+        if route_id is not None and self.find_tag(f"zara.route.{route_id}") is not None:
+            self.tap_tag(f"zara.route.{route_id}")
+            return
         self.reveal_horizontal(label)
         self._tap_found(label)
 
@@ -272,6 +368,16 @@ class Device:
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
 
+    def await_absent(self, label: str, timeout: float = 20.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.dismiss_pixel_launcher_anr():
+                continue
+            if self.find(label) is None:
+                return
+            time.sleep(0.2)
+        raise AssertionError(f"Control remained visible after navigation: {label}")
+
     def await_contains(self, fragment: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -293,26 +399,62 @@ class Device:
             self.accessibility_semantics.append(
                 {
                     "label": label,
+                    "resource_id": node.get("resource-id"),
                     "class": node.get("class"),
                     "bounds": node.get("bounds"),
                     "clickable": node.get("clickable"),
                     "enabled": node.get("enabled"),
+                    "content_description": node.get("content-desc"),
                 }
             )
 
     def capture(self, name: str) -> None:
+        path = self.output / f"{name}.png"
+        if path.exists() or any(
+            screenshot.get("state") == name for screenshot in self.screenshots
+        ):
+            raise AssertionError(f"duplicate screenshot evidence state: {name}")
         data = self.adb("exec-out", "screencap", "-p", binary=True)
         if not data.startswith(b"\x89PNG\r\n\x1a\n"):
             raise AssertionError("Device did not produce a PNG screenshot")
-        path = self.output / f"{name}.png"
         path.write_bytes(data)
-        self.screenshots.append(
-            {
-                "state": name,
-                "file": path.name,
-                "sha256": hashlib.sha256(data).hexdigest(),
+        evidence = {
+            "scenario_id": name,
+            "outcome": "captured",
+            "screenshot": {"file": path.name, "sha256": hashlib.sha256(data).hexdigest()},
+        }
+        try:
+            hierarchy = self.hierarchy_xml().encode("utf-8")
+            hierarchy_path = self.output / f"{name}.hierarchy.xml"
+            hierarchy_path.write_bytes(hierarchy)
+            evidence["ui_hierarchy"] = {
+                "file": hierarchy_path.name,
+                "sha256": hashlib.sha256(hierarchy).hexdigest(),
             }
-        )
+        except Exception as error:
+            evidence["ui_hierarchy_error"] = str(error)
+        try:
+            try:
+                pid = self.adb("shell", "pidof", "ai.zara.app").strip().split()
+            except subprocess.CalledProcessError as error:
+                pid = []
+                evidence["app_pid_lookup_error"] = str(error)
+            command = ["shell", "logcat", "-d", "-t", "1000", "-v", "threadtime"]
+            if pid:
+                command.extend(("--pid", pid[0]))
+                evidence["log_scope"] = "zara_process"
+            else:
+                evidence["log_scope"] = "device_logcat_no_pid"
+            logs = self.adb(*command)
+            log_path = self.output / f"{name}.logcat.txt"
+            log_path.write_text(logs, encoding="utf-8")
+            evidence["logs"] = {
+                "file": log_path.name,
+                "sha256": hashlib.sha256(logs.encode("utf-8")).hexdigest(),
+            }
+        except Exception as error:
+            evidence["log_capture_error"] = str(error)
+        self.screenshots.append({"state": name, **evidence})
 
     def launch_surface(self, component: str, label: str) -> None:
         self.adb(
@@ -431,12 +573,23 @@ class Device:
 
 
 def open_menu(device: Device, menu: str) -> None:
-    device.tap("Open navigation menu")
-    for expected in ("Chat", "Workspace", "Settings"):
-        device.await_label(expected)
-    device.tap(menu)
-    device.await_label(menu)
-    time.sleep(0.4)
+    page_content = {
+        "Chat": ("chat", "Ask anything…"),
+        "Workspace": ("logic", "Logic"),
+        "Settings": ("settings", "Runtime & local AI"),
+    }
+    if menu not in page_content:
+        raise ValueError(f"Unsupported navigation destination: {menu}")
+
+    device.tap_tag("zara.navigation.open-menu")
+    device.await_drawer_state(True)
+    for expected in ("chat", "workspace", "settings"):
+        device.await_tag(f"zara.menu.{expected}")
+    device.tap_tag(f"zara.menu.{menu.lower()}")
+    device.await_absent("Close navigation menu")
+    route, label = page_content[menu]
+    device.await_navigation(menu.lower(), route, drawer_open=False)
+    device.await_label(label)
 
 
 def exercise_three_menu_ui(device: Device) -> None:
@@ -445,9 +598,10 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("empty-shell")
     device.assert_accessible_targets(("Open navigation menu", "Chat", "Voice"))
 
-    device.tap("Open navigation menu")
+    device.tap_tag("zara.navigation.open-menu")
+    device.await_drawer_state(True)
     for menu in ("Chat", "Workspace", "Settings"):
-        device.await_label(menu)
+        device.await_tag(f"zara.menu.{menu.lower()}")
     device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
     device.capture("drawer-open")
     device.tap("Workspace")
@@ -459,22 +613,26 @@ def exercise_three_menu_ui(device: Device) -> None:
         device.capture(f"workspace-{tab.lower()}")
 
     open_menu(device, "Settings")
-    for tab in (
-        "Runtime",
-        "Connection",
-        "Permissions",
-        "Appearance",
-        "Plugins",
-        "Updates",
-        "Diagnostics",
-        "About",
+    device.await_label("Runtime & local AI")
+    device.capture("settings-overview")
+    for label, capture_name in (
+        ("Runtime & local AI", "runtime"),
+        ("Connection", "connection"),
+        ("Permissions", "permissions"),
+        ("Appearance", "appearance"),
+        ("Plugins", "plugins"),
+        ("Updates", "updates"),
+        ("Diagnostics", "diagnostics"),
+        ("About", "about"),
     ):
-        device.tap_tab(tab)
-        device.assert_accessible_targets((tab,))
+        device.tap(label)
         time.sleep(0.4)
-        device.capture(f"settings-{tab.lower()}")
+        device.capture(f"settings-{capture_name}")
+        device.press_back()
+        device.reveal("Runtime & local AI")
+        device.await_label("Runtime & local AI")
 
-    device.tap_tab("Appearance")
+    device.tap("Appearance")
     device.tap("Outrun")
     time.sleep(0.4)
     device.capture("theme-outrun")
@@ -482,6 +640,9 @@ def exercise_three_menu_ui(device: Device) -> None:
     time.sleep(0.4)
     device.capture("theme-light")
     device.tap("Outrun")
+    device.press_back()
+    device.reveal("Runtime & local AI")
+    device.await_label("Runtime & local AI")
 
     open_menu(device, "Chat")
     device.set_display_profile(
@@ -491,15 +652,15 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
     device.capture("wide-navigation-rail")
     device.restore_profile()
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
 
     device.set_display_profile(
         "narrow-large-font", target_width_dp=320, font_scale=1.30
     )
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
     device.capture("narrow-large-font")
     device.restore_profile()
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
 
     # Keep a draft only; never submit it. The local chat path must become usable for
     # this lifecycle acceptance or the screenshot gate fails honestly.
@@ -513,7 +674,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-chat-draft")
 
     open_menu(device, "Settings")
-    device.tap_tab("Connection")
+    device.tap_tag("zara.route.connection")
     device.await_label("tcp://host:port")
     device.tap("tcp://host:port")
     device.type_text("ui_connection_draft")
@@ -523,9 +684,10 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.capture("recreated-connection-draft")
 
     device.press_back()
-    device.await_label("Runtime")
+    device.await_tag("zara.route.runtime")
+    device.tap_tag("zara.route.runtime")
     device.press_back()
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
     device.capture("back-to-chat")
 
 
@@ -562,6 +724,15 @@ def main() -> None:
                 "shell", "settings", "get", "system", "font_scale"
             ).strip(),
         }
+        package_info = device.adb("shell", "dumpsys", "package", "ai.zara.app")
+        result["build_identity"] = {
+            "source_sha": source_sha,
+            "package": "ai.zara.app",
+            "version_code": re.search(r"versionCode=([^ ]+)", package_info).group(1)
+            if re.search(r"versionCode=([^ ]+)", package_info) else None,
+            "version_name": re.search(r"versionName=([^ ]+)", package_info).group(1)
+            if re.search(r"versionName=([^ ]+)", package_info) else None,
+        }
         exercise_three_menu_ui(device)
         result["passed"] = True
     except BaseException as error:
@@ -576,6 +747,24 @@ def main() -> None:
             device.restore_profile()
         except Exception as restore_error:
             result["profile_restore_failure"] = str(restore_error)
+        result["acceptance_outcome"] = "passed" if result["passed"] else "failed"
+        result["scenario_results"] = [
+            {
+                "scenario_id": item["scenario_id"],
+                "outcome": item["outcome"],
+                "evidence": {
+                    key: item[key]
+                    for key in ("screenshot", "ui_hierarchy", "logs")
+                    if key in item
+                },
+                "capture_errors": {
+                    key: item[key]
+                    for key in ("ui_hierarchy_error", "log_capture_error")
+                    if key in item
+                },
+            }
+            for item in device.screenshots
+        ]
         (args.output / "manifest.json").write_text(json.dumps(result, indent=2) + "\n")
 
 

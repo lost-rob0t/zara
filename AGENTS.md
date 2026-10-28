@@ -68,6 +68,17 @@ Prioritize tests for:
 
 Do not game coverage. Never weaken assertions, add meaningless execution-only tests, exclude relevant code, or preserve untested reachable branches solely to improve a percentage. If changed reachable behavior remains untested, keep adding useful tests until the practical coverage ceiling is reached or document the specific reason a path cannot be deterministically exercised.
 
+### Coverage ratchet
+
+Python coverage is a monotonic repository contract with statement and branch coverage enabled.
+
+- Run `nix develop -c bash scripts/test-coverage.sh` for the authoritative report.
+- Never lower the committed floors in `coverage-baseline.json`.
+- For reachable production Python changes, the minimum goal is **+2 percentage points** for line, branch, and combined total coverage over the base branch, capped at 100%.
+- The worker target is **+10 percentage points per implementation slice** whenever meaningful reachable paths remain, capped at 100%.
+- +2 is the merge-floor improvement, not the ambition. Keep adding real behavior/failure-path tests toward +10 and ultimately 100%.
+- Once a floor reaches 100%, it stays there.
+
 ## Strict Version Context
 
 - `version.properties` is the canonical Zara product/release version state.

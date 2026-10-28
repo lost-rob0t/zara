@@ -1,5 +1,10 @@
 package ai.zara.app
 
+import ai.zara.app.conversations.withStreamingReply
+import ai.zara.app.conversations.cloudModelHistory
+
+import ai.zara.app.assistant.AssistantLifecycleFence
+import ai.zara.app.assistant.LocalAssistantVoiceController
 import ai.zara.app.auth.PairingProgress
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
@@ -61,6 +66,17 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import java.io.File
+import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.localai.LocalTtsPhase
+import android.speech.tts.TextToSpeech
+import ai.zara.app.localai.LocalAiState
+import ai.zara.app.localai.LocalModelBackend
+import ai.zara.app.localai.LocalModelMetadata
+import ai.zara.app.localai.LocalModelQuantization
+import ai.zara.app.localai.LocalModelSpec
+import java.io.InputStream
+import java.security.MessageDigest
+import java.util.concurrent.CompletableFuture
 
 private data class PairingDialogState(
     val title: String,
@@ -72,11 +88,15 @@ class MainActivity : ComponentActivity() {
     private lateinit var appSession: AndroidAppSession
     private lateinit var pairingCoordinator: AndroidPairingCoordinator
     private lateinit var conversationStore: ConversationStore
+    private lateinit var localVoiceController: LocalAssistantVoiceController
+    private val localVoiceFence = AssistantLifecycleFence()
     private var conversationState by mutableStateOf(ConversationState())
     private var microphonePermissionGranted by mutableStateOf(false)
     private var operationError by mutableStateOf<String?>(null)
     private var turnFailure by mutableStateOf<TurnFailure?>(null)
     private var voiceState by mutableStateOf<ManualVoiceState>(ManualVoiceState.Idle)
+    private var localVoiceActive by mutableStateOf(false)
+    private var localVoiceStatus by mutableStateOf<String?>(null)
     private var enrollmentPublicKey by mutableStateOf<String?>(null)
     private var pinnedServerPublicKey by mutableStateOf<String?>(null)
     private var pairingDialog by mutableStateOf<PairingDialogState?>(null)
@@ -106,9 +126,39 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var localSpeechState by mutableStateOf(LocalTtsState(LocalTtsPhase.STOPPED))
+    private var textTurnUiGeneration = 0L
+    private var activeTextConversation: String? = null
+    private var localCompanionStatus by mutableStateOf("not installed")
+    private var localCompanionTrusted by mutableStateOf(false)
+    private var localSpeechUiGeneration = 0L
+    private var localAiState by mutableStateOf(LocalAiState())
+    private var localModels by mutableStateOf<List<LocalModelSpec>>(emptyList())
+    private var localModelBusy by mutableStateOf(false)
+    private var pendingLocalModelImport: LocalModelImportRequest? = null
+
+    private data class LocalModelImportRequest(
+        val id: String,
+        val version: String,
+        val quantization: LocalModelQuantization,
+        val maxContextTokens: Int,
+        val backend: LocalModelBackend,
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         appSession = (application as ZaraApplication).appSession
+        localVoiceController = LocalAssistantVoiceController(
+            applicationContext,
+            appSession,
+            localVoiceFence,
+        ) { status ->
+            runOnUiThread {
+                localVoiceStatus = status
+                localVoiceActive =
+                    status.startsWith("Listening") || status.startsWith("Heard:")
+            }
+        }
         samsungHealthController = SamsungHealthUiController(
             plugin = (application as ZaraApplication).samsungHealthPlugin,
             publish = { state -> runOnUiThread { samsungHealthState = state } },
@@ -139,6 +189,8 @@ class MainActivity : ComponentActivity() {
         var voiceStreamState by mutableStateOf(appSession.voiceStreamState())
         var voiceStreamFailure by mutableStateOf(appSession.voiceStreamFailure())
         var localServerState by mutableStateOf(appSession.localServerState())
+        var cloudModelState by mutableStateOf(appSession.cloudModelState())
+        var cloudModelBusy by mutableStateOf(false)
         var prologSources by mutableStateOf(appSession.prologSources())
         var prologQueryResult by mutableStateOf<ai.zara.app.runtime.LocalQueryResult?>(null)
         var updateState by mutableStateOf(updateManager.state())
@@ -187,6 +239,44 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        val localModelPicker = registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+            val request = pendingLocalModelImport
+            pendingLocalModelImport = null
+            if (uri == null || request == null) return@registerForActivityResult
+
+            operationError = null
+            localModelBusy = true
+            runCatching {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            CompletableFuture.supplyAsync {
+                val source = contentResolver.openInputStream(uri)
+                    ?: error("Selected local model could not be opened")
+                sha256(source)
+            }.thenCompose { digest ->
+                val metadata = LocalModelMetadata(
+                    id = request.id,
+                    version = request.version,
+                    quantization = request.quantization,
+                    sha256 = digest,
+                    maxContextTokens = request.maxContextTokens,
+                    backend = request.backend,
+                )
+                appSession.installLocalModel(uri, metadata)
+            }.whenComplete { _, error ->
+                runOnUiThread {
+                    localModelBusy = false
+                    operationError = error?.let(UiOperationFailure::summarize)
+                    refreshLocalModels()
+                }
+            }
+        }
+
         appSession.setStateObserver { state ->
             runOnUiThread { runtimeState = state }
         }
@@ -203,6 +293,7 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { updateState = state }
         }
         appSession.assessAssistantRole()
+        refreshLocalModels()
         samsungHealthController.refresh()
 
         setContent {
@@ -229,7 +320,20 @@ class MainActivity : ComponentActivity() {
                     val localRequestId = java.util.UUID.randomUUID().toString()
                     try {
                         appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
+                        val turnUiToken = ++textTurnUiGeneration
+                        activeTextConversation = conversationId
                         conversationState = conversationStore.beginTurn(conversationId, text)
+                        val expectedTurns = conversationState.conversation(conversationId)!!.turns.size
+                        val streamingText = StringBuilder()
+                        val onModelText: (String) -> Unit = { chunk ->
+                            runOnUiThread {
+                                if (!isDestroyed && turnUiToken == textTurnUiGeneration && operationBusy) {
+                                    if (streamingText.length + chunk.length <= 65_536) streamingText.append(chunk)
+                                    conversationState = conversationStore.state().withStreamingReply(
+                                        conversationId, expectedTurns, streamingText.toString())
+                                }
+                            }
+                        }
                         val requestedPolicy = when (text.trim().lowercase()) {
                             "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
                             "/symbolic off" -> ConversationExecutionPolicy.STANDARD
@@ -258,6 +362,8 @@ class MainActivity : ComponentActivity() {
                                         appSession.submitText(
                                             text = text,
                                             localConversationId = conversation.localConversationId,
+                                            cloudHistory = checkNotNull(conversationStore.state().conversation(conversationId)).cloudModelHistory(),
+                                            onText = onModelText,
                                             remoteConversationId = conversation.remoteConversationId,
                                         )
                                     } else {
@@ -266,6 +372,8 @@ class MainActivity : ComponentActivity() {
                                             projectId = project.id,
                                             conversationId = conversation.remoteConversationId,
                                             localConversationId = conversation.localConversationId,
+                                            cloudHistory = checkNotNull(conversationStore.state().conversation(conversationId)).cloudModelHistory(),
+                                            onText = onModelText,
                                         )
                                     }
                                 },
@@ -283,7 +391,9 @@ class MainActivity : ComponentActivity() {
                                     else -> null
                                 }
                                 runOnUiThread {
+                                    if (isDestroyed || turnUiToken != textTurnUiGeneration) return@runOnUiThread
                                     operationBusy = false
+                                    activeTextConversation = null
                                     if (error != null) {
                                         recordTurnFailure(conversationId, error, capturedErrorDetails)
                                     } else if (result != null) {
@@ -329,6 +439,8 @@ class MainActivity : ComponentActivity() {
                 operationBusy = operationBusy,
                 microphonePermissionGranted = microphonePermissionGranted,
                 voiceState = voiceState,
+                localVoiceActive = localVoiceActive,
+                localVoiceStatus = localVoiceStatus,
                 voiceStreamState = voiceStreamState,
                 voiceStreamFailure = voiceStreamFailure,
                 selectedTheme = selectedTheme,
@@ -341,6 +453,58 @@ class MainActivity : ComponentActivity() {
                 showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                localSpeechState = localSpeechState,
+                onCancelTextReply = {
+                    textTurnUiGeneration += 1
+                    appSession.cancelModelReply()
+                    activeTextConversation?.let { id ->
+                        conversationState = conversationStore.failTurn(id, "Reply stopped.")
+                    }
+                    activeTextConversation = null
+                    operationBusy = false
+                },
+                onTestLocalSpeech = {
+                    localSpeechState = localSpeechState.copy(phase = LocalTtsPhase.SPEAKING, failure = null)
+                    appSession.speakLocal("Zara offline speech is working on this device.").whenComplete { _, _ ->
+                        appSession.localTtsState().whenComplete { state, _ ->
+                            runOnUiThread { if (!isDestroyed && state != null) localSpeechState = state }
+                        }
+                    }
+                },
+                onStopLocalSpeech = {
+                    appSession.stopLocalSpeech()
+                    refreshLocalSpeech()
+                },
+                onRefreshLocalSpeech = { refreshLocalSpeech() },
+                onInstallSpeechVoices = {
+                    openSpeechSetup(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
+                },
+                onOpenSpeechSettings = { openSpeechSetup(Intent("com.android.settings.TTS_SETTINGS")) },
+                localCompanionStatus = localCompanionStatus,
+                localCompanionTrusted = localCompanionTrusted,
+                onOpenLocalCompanion = {
+                    refreshLocalCompanion()
+                    if (localCompanionTrusted) {
+                        packageManager.getLaunchIntentForPackage(LOCAL_COMPANION_PACKAGE)?.let(::startActivity)
+                    }
+                },
+                localAiState = localAiState,
+                localModels = localModels,
+                localModelBusy = localModelBusy,
+                onCheckCloudConnection = {
+                    cloudModelBusy = true
+                    appSession.checkCloudModelConnection().whenComplete { state, error ->
+                        runOnUiThread {
+                            if (!isDestroyed) {
+                                cloudModelBusy = false
+                                cloudModelState = state ?: appSession.cloudModelState()
+                                operationError = error?.let(UiOperationFailure::summarize)
+                            }
+                        }
+                    }
+                },
+                cloudModelState = cloudModelState,
+                cloudModelBusy = cloudModelBusy,
                 projectState = projectState,
                 healthState = samsungHealthState,
                 healthGoals = healthGoals,
@@ -361,6 +525,64 @@ class MainActivity : ComponentActivity() {
                         LocalEmbeddingPreferenceSaveResult.Saved -> localEmbedding = nextEmbedding
                         is LocalEmbeddingPreferenceSaveResult.Failed -> {
                             operationError = result.message
+                        }
+                    }
+                },
+                onImportLocalModel = { id, version, quantization, maxContextTokens, backend ->
+                    pendingLocalModelImport = LocalModelImportRequest(
+                        id = id,
+                        version = version,
+                        quantization = quantization,
+                        maxContextTokens = maxContextTokens,
+                        backend = backend,
+                    )
+                    localModelPicker.launch(arrayOf("*/*"))
+                },
+                onSelectLocalModel = { id, version ->
+                    operationError = null
+                    localModelBusy = true
+                    appSession.selectLocalModel(id, version).whenComplete { _, error ->
+                        runOnUiThread {
+                            localModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            refreshLocalModels()
+                        }
+                    }
+                },
+                onUnloadLocalModel = {
+                    operationError = null
+                    localModelBusy = true
+                    appSession.unloadLocalModel().whenComplete { _, error ->
+                        runOnUiThread {
+                            localModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            refreshLocalModels()
+                        }
+                    }
+                },
+                onConfigureCloudModel = { config, apiKey ->
+                    operationError = null
+                    cloudModelBusy = true
+                    CompletableFuture.supplyAsync {
+                        appSession.configureCloudModel(config, apiKey)
+                    }.whenComplete { state, error ->
+                        runOnUiThread {
+                            cloudModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (state != null) cloudModelState = state
+                        }
+                    }
+                },
+                onClearCloudModelApiKey = {
+                    operationError = null
+                    cloudModelBusy = true
+                    CompletableFuture.supplyAsync {
+                        appSession.clearCloudModelApiKey()
+                    }.whenComplete { state, error ->
+                        runOnUiThread {
+                            cloudModelBusy = false
+                            operationError = error?.let(UiOperationFailure::summarize)
+                            if (state != null) cloudModelState = state
                         }
                     }
                 },
@@ -530,34 +752,54 @@ class MainActivity : ComponentActivity() {
                 },
                 onStartVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (shouldUseRemoteVoiceTransport(runtimeMode, runtimeState)) {
+                        operationBusy = true
+                        appSession.pressToTalk(microphonePermissionGranted).whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
+                        }
+                    } else {
+                        try {
+                            localVoiceController.start(microphonePermissionGranted)
+                            localVoiceActive = true
+                        } catch (error: Throwable) {
+                            localVoiceActive = false
+                            operationError = UiOperationFailure.summarize(error)
                         }
                     }
                 },
                 onStopVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.releasePushToTalk().whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (localVoiceActive) {
+                        localVoiceController.stop()
+                        localVoiceActive = false
+                    } else {
+                        operationBusy = true
+                        appSession.releasePushToTalk().whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
                         }
                     }
                 },
                 onCancelVoice = {
                     operationError = null
-                    operationBusy = true
-                    appSession.cancelPushToTalk().whenComplete { _, error ->
-                        runOnUiThread {
-                            operationBusy = false
-                            operationError = error?.let(UiOperationFailure::summarize)
-                            voiceState = appSession.voiceState()
+                    if (localVoiceActive) {
+                        localVoiceController.cancel()
+                        localVoiceActive = false
+                    } else {
+                        operationBusy = true
+                        appSession.cancelPushToTalk().whenComplete { _, error ->
+                            runOnUiThread {
+                                operationBusy = false
+                                operationError = error?.let(UiOperationFailure::summarize)
+                                voiceState = appSession.voiceState()
+                            }
                         }
                     }
                 },
@@ -711,13 +953,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshLocalCompanion()
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
         reconcileMicrophonePermission(hasMicrophonePermission())
+        refreshLocalModels()
+        refreshLocalSpeech()
     }
 
     override fun onStop() {
+        localSpeechUiGeneration += 1
         if (::appSession.isInitialized) {
+            appSession.stopLocalSpeech()
             appSession.onHostStopped().whenComplete { _, error ->
                 runOnUiThread {
                     if (error != null) operationError = UiOperationFailure.summarize(error)
@@ -737,8 +984,25 @@ class MainActivity : ComponentActivity() {
             appSession.setLocalServerObserver(null)
             (application as ZaraApplication).updateManager.setObserver(null)
         }
+        if (::localVoiceController.isInitialized) {
+            localVoiceFence.invalidate()
+            localVoiceController.close()
+        }
         if (::pairingCoordinator.isInitialized) pairingCoordinator.close()
         super.onDestroy()
+    }
+
+    private fun shouldUseRemoteVoiceTransport(
+        mode: ai.zara.app.runtime.RuntimeMode,
+        state: ai.zara.app.runtime.RuntimeState,
+    ): Boolean {
+        val remoteReady =
+            state.enrollment == ai.zara.app.runtime.EnrollmentReadiness.Ready &&
+                state.server is ServerConnection.Connected &&
+                state.sessionId != null
+        return remoteReady &&
+            (mode == ai.zara.app.runtime.RuntimeMode.Remote ||
+                mode == ai.zara.app.runtime.RuntimeMode.Auto)
     }
 
     private fun scanPairingQr() {
@@ -822,6 +1086,67 @@ class MainActivity : ComponentActivity() {
 
     private fun isPairingUiCurrent(pairingGeneration: Long): Boolean =
         !isDestroyed && pairingUiGeneration == pairingGeneration
+
+    private fun refreshLocalCompanion() {
+        localCompanionTrusted = packageManager.checkSignatures(packageName, LOCAL_COMPANION_PACKAGE) ==
+            android.content.pm.PackageManager.SIGNATURE_MATCH
+        localCompanionStatus = when {
+            packageManager.getLaunchIntentForPackage(LOCAL_COMPANION_PACKAGE) == null -> "not installed"
+            !localCompanionTrusted -> "incompatible signing certificate; install the APK from the same Zara build"
+            else -> "installed; shares Zara's on-device model and catalog"
+        }
+    }
+
+    private fun openSpeechSetup(intent: Intent) {
+        appSession.stopLocalSpeech()
+        try { startActivity(intent) } catch (_: android.content.ActivityNotFoundException) {
+            try { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+            catch (_: android.content.ActivityNotFoundException) {
+                operationError = "Android speech settings are unavailable. Install an offline TTS engine and voice."
+            }
+        }
+    }
+
+    private fun refreshLocalSpeech() {
+        if (!::appSession.isInitialized || isDestroyed) return
+        val token = ++localSpeechUiGeneration
+        appSession.refreshLocalSpeech().whenComplete { state, error ->
+            runOnUiThread {
+                if (isDestroyed || token != localSpeechUiGeneration) return@runOnUiThread
+                localSpeechState = state ?: LocalTtsState(LocalTtsPhase.UNAVAILABLE,
+                    failure = "Offline speech is unavailable. Check Android speech settings.")
+            }
+        }
+    }
+
+    private fun refreshLocalModels() {
+        if (!::appSession.isInitialized) return
+        appSession.localAiState()
+            .thenCombine(appSession.localAiModels()) { state, models -> state to models }
+            .whenComplete { snapshot, error ->
+                runOnUiThread {
+                    if (error != null) {
+                        operationError = UiOperationFailure.summarize(error)
+                    } else if (snapshot != null) {
+                        localAiState = snapshot.first
+                        localModels = snapshot.second
+                    }
+                }
+            }
+    }
+
+    private fun sha256(source: InputStream): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        source.use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
 
     private fun reconcileMicrophonePermission(granted: Boolean) {
         microphonePermissionGranted = granted
@@ -921,3 +1246,5 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 }
+
+private const val LOCAL_COMPANION_PACKAGE = "ai.zara.llmserve"

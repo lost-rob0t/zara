@@ -41,15 +41,19 @@ def exercise_chat_error(device: Device, type_text) -> dict[str, object]:
     type_text(device, f'?- Result is 1/0, Result = {PRIVATE_MARKER}.')
     device.press_back()
     device.tap('↑')
+    # The error card can extend below the composer after preceding turns.
+    # Reveal the actual action before asserting or tapping it.
+    device.reveal_contains('Copy error details')
     device.await_label('Copy error details', timeout=30.0)
     original = read_saved_error(device)
     device.capture('chat-error-details')
     device.tap('Copy error details')
+    device.reveal_contains('Error details copied')
     device.await_label('Error details copied')
     device.capture('chat-error-details-copied')
 
     open_menu(device, 'Settings')
-    device.tap_tab('Diagnostics')
+    device.tap_tag('zara.route.diagnostics')
     device.tap('Clear diagnostics')
     open_menu(device, 'Chat')
     device.await_label('Ask anything…')
@@ -74,7 +78,9 @@ def exercise_chat_error(device: Device, type_text) -> dict[str, object]:
     if 'OK (1 test)' not in probe or 'FAILURES!!!' in probe or 'INSTRUMENTATION_FAILED' in probe:
         raise AssertionError(f'Android clipboard exact-match probe failed: {probe}')
     device.start()
+    device.reveal_contains('Copy error details')
     device.tap('Copy error details')
+    device.reveal_contains('Error details copied')
     device.await_label('Error details copied')
     device.capture('chat-error-details-restored')
     return {

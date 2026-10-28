@@ -83,22 +83,24 @@ class LocalAiRuntime(
                     request,
                     object : LocalGenerationListener {
                         override fun onChunk(text: String) {
-                            enqueueIfOpen { acceptChunk(text) }
+                            enqueueIfOpen { acceptChunk(result, text) }
                         }
 
                         override fun onDone() {
-                            enqueueIfOpen { finishGeneration(spec) }
+                            enqueueIfOpen { finishGeneration(result, spec) }
                         }
 
                         override fun onError(error: Throwable) {
-                            enqueueIfOpen { failGeneration(error) }
+                            enqueueIfOpen { failGeneration(result, error) }
                         }
                     },
                 )
             } catch (error: Throwable) {
-                activeFuture = null
-                activeChunkObserver = null
-                result.completeExceptionally(error)
+                if (activeFuture === result) {
+                    rollbackGenerationStart(result, error)
+                } else {
+                    result.completeExceptionally(error)
+                }
             }
         }
         if (!accepted) {
@@ -129,18 +131,24 @@ class LocalAiRuntime(
         ).also(::update)
     }
 
-    private fun acceptChunk(text: String) {
-        if (activeFuture == null || current.phase != LocalAiPhase.GENERATING) return
+    private fun acceptChunk(
+        owner: CompletableFuture<LocalGenerationResult>,
+        text: String,
+    ) {
+        if (activeFuture !== owner || current.phase != LocalAiPhase.GENERATING) return
         activeText.append(text)
         runCatching { activeChunkObserver?.invoke(text) }
     }
 
-    private fun finishGeneration(spec: LocalModelSpec) {
-        val future = activeFuture ?: return
+    private fun finishGeneration(
+        owner: CompletableFuture<LocalGenerationResult>,
+        spec: LocalModelSpec,
+    ) {
+        if (activeFuture !== owner) return
         val text = activeText.toString()
         clearActiveSession()
         update(current.copy(phase = LocalAiPhase.READY, failure = null))
-        future.complete(
+        owner.complete(
             LocalGenerationResult(
                 text = text,
                 modelId = spec.id,
@@ -151,11 +159,32 @@ class LocalAiRuntime(
         )
     }
 
-    private fun failGeneration(error: Throwable) {
-        val future = activeFuture ?: return
+    private fun failGeneration(
+        owner: CompletableFuture<LocalGenerationResult>,
+        error: Throwable,
+    ) {
+        if (activeFuture !== owner) return
         clearActiveSession()
         update(current.copy(phase = LocalAiPhase.READY, failure = boundedMessage(error)))
-        future.completeExceptionally(error)
+        owner.completeExceptionally(error)
+    }
+
+    private fun rollbackGenerationStart(
+        owner: CompletableFuture<LocalGenerationResult>,
+        error: Throwable,
+    ) {
+        if (activeFuture !== owner) {
+            owner.completeExceptionally(error)
+            return
+        }
+        val session = activeSession
+        activeSession = null
+        activeFuture = null
+        activeChunkObserver = null
+        activeText = StringBuilder()
+        runCatching { session?.close() }
+        update(current.copy(phase = LocalAiPhase.READY, failure = boundedMessage(error)))
+        owner.completeExceptionally(error)
     }
 
     private fun clearActiveSession() {

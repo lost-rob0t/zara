@@ -37,6 +37,12 @@ class ChatErrorAcceptanceTest(unittest.TestCase):
         self.assertTrue(result['clipboard_exact_match'])
         self.assertTrue(result['saved_details_unchanged'])
         self.assertTrue(result['later_success'])
+        feedback_reveals = [i for i,c in enumerate(device.calls) if c == ('reveal_contains', 'Error details copied')]
+        feedback_waits = [i for i,c in enumerate(device.calls) if c == ('await_label', 'Error details copied')]
+        self.assertEqual(2, len(feedback_reveals))
+        self.assertTrue(all(reveal < wait for reveal,wait in zip(feedback_reveals,feedback_waits)))
+        self.assertLess(device.calls.index(('reveal_contains', 'Copy error details')),
+                        device.calls.index(('await_label', 'Copy error details')))
         marker = 'zara_error_recovery_1523'
         self.assertIn(('reveal_contains', marker), device.calls)
         self.assertLess(device.calls.index(('reveal_contains', marker)),
@@ -45,6 +51,9 @@ class ChatErrorAcceptanceTest(unittest.TestCase):
         self.assertIn('Result is 1/0', failed_query)
         self.assertNotIn('throw(', failed_query)
         self.assertIn(('tap', 'Clear diagnostics'), device.calls)
+        self.assertIn(('tap_tag', 'zara.route.diagnostics'), device.calls)
+        self.assertNotIn(('tap', 'Diagnostics'), device.calls)
+        self.assertNotIn(('tap_tab', 'Diagnostics'), device.calls)
         self.assertIn(('recreate',), device.calls)
         for state in ('chat-error-details', 'chat-error-details-copied', 'chat-error-details-restored'):
             self.assertIn(('capture', state), device.calls)
