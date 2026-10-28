@@ -9,6 +9,26 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CloudModelConnectionTest {
+    @Test fun connectionRuntimeInterruptionIsStillCancellation() {
+        val cancelled = AtomicBoolean(false)
+        val backend = OpenAiCompatibleCloudModelBackend { url ->
+            object : HttpURLConnection(url) {
+                override fun connect() = Unit
+                override fun disconnect() = Unit
+                override fun usingProxy() = false
+                override fun getResponseCode(): Int {
+                    cancelled.set(true)
+                    throw IllegalStateException("Connection implementation interrupted")
+                }
+            }
+        }
+        val failure = assertThrows(CloudModelException::class.java) {
+            backend.models(CloudModelConfig(enabled = true, endpoint = "https://fixture.invalid", model = "x"),
+                "fixture-key", cancelled::get)
+        }
+        assertEquals(CloudModelFailureReason.CANCELLED, failure.reason)
+    }
+
     @Test fun localHttpFixtureChecksCredentialsListsModelsAndStreamsChat() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         val authenticated = AtomicBoolean(false)

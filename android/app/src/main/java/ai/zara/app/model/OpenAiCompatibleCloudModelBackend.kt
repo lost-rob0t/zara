@@ -62,6 +62,11 @@ class OpenAiCompatibleCloudModelBackend(
         } catch (error: IOException) {
             throw CloudModelException(if (cancelled()) CloudModelFailureReason.CANCELLED else CloudModelFailureReason.UNAVAILABLE,
                 if (cancelled()) "Connection check cancelled" else "Provider connection failed; check the URL, network, and certificate")
+        } catch (error: RuntimeException) {
+            if (error is CloudModelException) throw error
+            throw CloudModelException(
+                if (cancelled()) CloudModelFailureReason.CANCELLED else CloudModelFailureReason.UNAVAILABLE,
+                if (cancelled()) "Provider request was cancelled" else "Provider connection failed", error)
         } finally {
             if (activeConnection === connection) activeConnection = null
             connection.disconnect()
@@ -170,6 +175,11 @@ class OpenAiCompatibleCloudModelBackend(
                 throw CloudModelException(CloudModelFailureReason.CANCELLED, "Cloud model request was cancelled", error)
             }
             throw CloudModelException(CloudModelFailureReason.UNAVAILABLE, "Cloud model connection failed", error)
+        } catch (error: RuntimeException) {
+            if (error is CloudModelException) throw error
+            throw CloudModelException(
+                if (cancelled()) CloudModelFailureReason.CANCELLED else CloudModelFailureReason.UNAVAILABLE,
+                if (cancelled()) "Provider request was cancelled" else "Provider connection failed", error)
         } finally {
             if (activeConnection === connection) activeConnection = null
             connection.disconnect()
