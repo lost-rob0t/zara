@@ -11,6 +11,9 @@ import android.os.IBinder
 import android.os.HandlerThread
 import android.os.Message
 import android.os.Messenger
+import android.os.ParcelFileDescriptor
+import java.io.InputStream
+import java.util.concurrent.TimeUnit
 import android.os.RemoteException
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicLong
@@ -27,6 +30,9 @@ class LocalAiRemoteClient(
     private val appContext = context.applicationContext
     private val lock = Any()
     private val requestIds = AtomicLong(1L)
+    private val speechLock = Any()
+    private var speechGeneration = 0L
+    private var speechStop = CompletableFuture.completedFuture(Unit)
     private val pending = linkedMapOf<Long, Pending>()
 
     @Volatile
@@ -107,6 +113,67 @@ class LocalAiRemoteClient(
                 )
             }
     }
+
+    fun installModel(source: InputStream, metadata: LocalModelMetadata): CompletableFuture<LocalModelSpec> {
+        val pipe = ParcelFileDescriptor.createPipe()
+        val result = request(LocalAiRemoteProtocol.MSG_INSTALL_MODEL, Bundle().apply {
+            putBundle(LocalAiRemoteProtocol.KEY_METADATA, LocalAiRemoteProtocol.metadataToBundle(metadata))
+            putParcelable(LocalAiRemoteProtocol.KEY_MODEL_FD, pipe[0])
+        }).orTimeout(180, TimeUnit.SECONDS)
+        val copied = CompletableFuture.runAsync {
+            source.use { input -> ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { input.copyTo(it) } }
+        }
+        copied.whenComplete { _, error -> if (error != null) result.completeExceptionally(error) }
+        return result.whenComplete { _, _ ->
+            runCatching { pipe[0].close() }
+            runCatching { pipe[1].close() }
+            runCatching { source.close() }
+        }.thenApply { LocalAiRemoteProtocol.modelFromBundle(requireBundle(it, LocalAiRemoteProtocol.KEY_MODEL)) }
+    }
+
+    fun loadActiveModel(): CompletableFuture<LocalAiState> =
+        request(LocalAiRemoteProtocol.MSG_LOAD_ACTIVE).thenApply {
+            LocalAiRemoteProtocol.stateFromBundle(requireBundle(it, LocalAiRemoteProtocol.KEY_STATE))
+        }
+
+    fun ttsState(): CompletableFuture<LocalTtsState> =
+        request(LocalAiRemoteProtocol.MSG_TTS_STATE).thenApply(LocalAiRemoteProtocol::ttsStateFromBundle)
+
+    fun refreshSpeech(): CompletableFuture<LocalTtsState> =
+        request(LocalAiRemoteProtocol.MSG_TTS_REFRESH).thenApply(LocalAiRemoteProtocol::ttsStateFromBundle)
+
+    fun speak(text: String): CompletableFuture<Unit> = synchronized(speechLock) {
+        val token = speechGeneration
+        speechStop.handle { _, _ -> Unit }.thenCompose {
+            service().thenCompose {
+                synchronized(speechLock) {
+                    if (closed || token != speechGeneration) {
+                        CompletableFuture.failedFuture(java.util.concurrent.CancellationException("Speech cancelled before binding"))
+                    } else request(LocalAiRemoteProtocol.MSG_TTS_SPEAK,
+                        Bundle().apply { putString("text", text) }).thenApply { Unit }
+                }
+            }
+        }
+    }
+
+    fun stopSpeech(): CompletableFuture<Unit> = synchronized(speechLock) {
+        speechGeneration += 1
+        request(LocalAiRemoteProtocol.MSG_TTS_STOP).thenApply { Unit }.also { speechStop = it }
+    }
+
+    fun ttsProviders(): CompletableFuture<List<LocalTtsProviderCapabilities>> =
+        request(LocalAiRemoteProtocol.MSG_TTS_PROVIDERS).thenApply { payload ->
+            @Suppress("DEPRECATION")
+            val providers = payload.getParcelableArrayList<Bundle>("providers").orEmpty()
+            providers.map { LocalTtsProviderCapabilities(
+                it.getString("id").orEmpty(), it.getString("name").orEmpty(),
+                it.getBoolean("offline"), it.getBoolean("model_backed"),
+            ) }
+        }
+
+    fun selectTtsProvider(id: String): CompletableFuture<LocalTtsState> = request(
+        LocalAiRemoteProtocol.MSG_TTS_SELECT, Bundle().apply { putString("id", id) },
+    ).thenApply(LocalAiRemoteProtocol::ttsStateFromBundle)
 
     fun selectModel(
         id: String,

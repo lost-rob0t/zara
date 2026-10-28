@@ -78,6 +78,8 @@ class LocalAiService : Service() {
 
         fun ttsState(): LocalTtsState = tts.state()
 
+        fun refreshSpeech(): CompletableFuture<LocalTtsState> = tts.initialize()
+
         fun ttsProviders(): List<LocalTtsProviderCapabilities> = ttsRegistry.capabilities()
 
         fun selectTtsProvider(id: String): CompletableFuture<LocalTtsState> =
@@ -188,6 +190,33 @@ class LocalAiService : Service() {
                         Bundle().apply {
                             putBundle(LocalAiRemoteProtocol.KEY_STATE, LocalAiRemoteProtocol.stateToBundle(state))
                         }
+                    }
+
+                    LocalAiRemoteProtocol.MSG_LOAD_ACTIVE -> replyFuture(requestId, replyTo, loadActiveModel()) {
+                        Bundle().apply { putBundle(LocalAiRemoteProtocol.KEY_STATE, LocalAiRemoteProtocol.stateToBundle(it)) }
+                    }
+                    LocalAiRemoteProtocol.MSG_TTS_STATE -> replyFuture(requestId, replyTo,
+                        CompletableFuture.completedFuture(tts.state()), LocalAiRemoteProtocol::ttsStateToBundle)
+                    LocalAiRemoteProtocol.MSG_TTS_REFRESH -> replyFuture(requestId, replyTo,
+                        tts.initialize(), LocalAiRemoteProtocol::ttsStateToBundle)
+                    LocalAiRemoteProtocol.MSG_TTS_SPEAK -> replyFuture(requestId, replyTo,
+                        tts.speak(requireRemoteString(message.data, "text"))) { Bundle() }
+                    LocalAiRemoteProtocol.MSG_TTS_STOP -> {
+                        tts.stop()
+                        replyFuture(requestId, replyTo, CompletableFuture.completedFuture(Unit)) { Bundle() }
+                    }
+                    LocalAiRemoteProtocol.MSG_TTS_SELECT -> replyFuture(requestId, replyTo,
+                        selectTtsProvider(requireRemoteString(message.data, "id")), LocalAiRemoteProtocol::ttsStateToBundle)
+                    LocalAiRemoteProtocol.MSG_TTS_PROVIDERS -> replyFuture(requestId, replyTo,
+                        CompletableFuture.completedFuture(ttsRegistry.capabilities())) { providers ->
+                        Bundle().apply { putParcelableArrayList("providers", ArrayList(providers.map { provider ->
+                            Bundle().apply {
+                                putString("id", provider.id)
+                                putString("name", provider.displayName)
+                                putBoolean("offline", provider.offlineOnly)
+                                putBoolean("model_backed", provider.modelBacked)
+                            }
+                        })) }
                     }
 
                     else -> sendRemoteError(

@@ -40,7 +40,7 @@ class ConversationHistoryWiringContractTest {
 
         assertTrue(source.contains("conversation.turns.forEachIndexed"))
         assertTrue(source.contains("UserMessage(turn.userText)"))
-        assertTrue(source.contains("AssistantMessage(turn.assistantText, turn.success == true)"))
+        assertTrue(source.contains("AssistantMessage(turn.assistantText, turn.success != false)"))
         assertTrue(source.contains("AssistantPendingMessage()"))
         assertTrue(source.contains("onSendText(message, conversation, project)"))
     }
@@ -67,7 +67,7 @@ class ConversationHistoryWiringContractTest {
         assertTrue(source.contains("conversationStore.beginTurn(conversationId, text)"))
         assertTrue(source.contains("conversationStore.completeTurn("))
         assertTrue(source.contains("conversationState = conversationStore.failTurn("))
-        val failedTurnWrite = source.substringAfter("conversationState = conversationStore.failTurn(")
+        val failedTurnWrite = source.substringAfter("private fun recordTurnFailure(").substringAfter("conversationState = conversationStore.failTurn(")
             .substringBefore("\n                )")
         assertTrue(failedTurnWrite.contains("conversationId, summary,"))
         assertTrue(failedTurnWrite.contains("errorDetails = errorDetails ?: appSession.captureChatError("))

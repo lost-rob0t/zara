@@ -34,7 +34,7 @@ The portable =local-ai-v1= operation vocabulary includes provider discovery, mod
 
 * Android service boundary
 
-The phone hosts model and TTS lifetime in the non-exported =LocalAiService= running in Zara's =:voice= process.
+The phone hosts model and TTS lifetime in the signature-protected =LocalAiService= running in Zara's =:voice= process.
 
 #+begin_example
 Compose / VoiceInteractionService / AndroidAppSession
@@ -124,3 +124,38 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 - Google LiteRT-LM Web API: https://developers.google.com/edge/litert-lm/js
 - Android =Voice.isNetworkConnectionRequired=: https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired()
 - sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
+
+* Android setup and recovery
+
+Install the Zara phone APK first. It owns the model catalog, inference, and
+speech service in the =:voice= process. Both the main app and LLM Serve use
+the same Messenger IPC facade; a local Binder cast cannot cross that process
+boundary. The service's exported facade requires Zara's signature permission.
+
+Open Settings -> Runtime & local AI. Select Local for symbolic-first on-device
+chat, or Symbolic to forbid all model calls. Import a compatible =.litertlm=
+file with its explicit quantization, context limit, and CPU/GPU/NPU backend.
+A file extension or a successful import is not proof of inference: complete a
+semantic-miss chat turn and verify the actual selected model response.
+
+The Offline Speech card is independent of model installation and accounts.
+Use Android speech settings to enable an engine and install an offline voice.
+Return to Zara, select Refresh voices, then Test offline speech. Stop speech
+cancels queued and active speech. Network-required and not-installed voices
+are excluded. Missing engines/voices show setup instructions. Speech is stopped
+when the activity leaves the foreground; assistant replies share the canonical
+speech owner and surface synthesis failures.
+
+For a direct remote model, save the HTTPS API base URL, exact model id, and API
+key under Runtime & local AI, enable the profile, and use Check saved connection
+/ load models. This check calls =GET /models=; it does not generate a reply.
+Select a returned model (or enter an exact id when catalog discovery is not
+supported), save it, and choose Remote. A connected authenticated Zara server
+still takes precedence in Remote. Direct provider replies stream into a
+transient chat draft; Stop reply cancels the provider and fences later chunks.
+Only completed successful turns enter future model context. Keys are wrapped
+by Android Keystore and are not saved in Compose restoration state.
+
+Local and Symbolic startup do not restore a remote connection merely because
+an old server profile exists. An unavailable local model never enables a
+remote provider implicitly.

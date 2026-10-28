@@ -1,5 +1,8 @@
 package ai.zara.app
 
+import ai.zara.app.conversations.withStreamingReply
+import ai.zara.app.conversations.cloudModelHistory
+
 import ai.zara.app.assistant.AssistantLifecycleFence
 import ai.zara.app.assistant.LocalAssistantVoiceController
 import ai.zara.app.auth.PairingProgress
@@ -63,6 +66,9 @@ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import java.io.File
+import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.localai.LocalTtsPhase
+import android.speech.tts.TextToSpeech
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelMetadata
@@ -120,6 +126,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var localSpeechState by mutableStateOf(LocalTtsState(LocalTtsPhase.STOPPED))
+    private var textTurnUiGeneration = 0L
+    private var activeTextConversation: String? = null
+    private var localCompanionStatus by mutableStateOf("not installed")
+    private var localCompanionTrusted by mutableStateOf(false)
+    private var localSpeechUiGeneration = 0L
     private var localAiState by mutableStateOf(LocalAiState())
     private var localModels by mutableStateOf<List<LocalModelSpec>>(emptyList())
     private var localModelBusy by mutableStateOf(false)
@@ -315,7 +327,20 @@ class MainActivity : ComponentActivity() {
                     val localRequestId = java.util.UUID.randomUUID().toString()
                     try {
                         appSession.recordChatBreadcrumb("chat.turn.begin", conversationId)
+                        val turnUiToken = ++textTurnUiGeneration
+                        activeTextConversation = conversationId
                         conversationState = conversationStore.beginTurn(conversationId, text)
+                        val expectedTurns = conversationState.conversation(conversationId)!!.turns.size
+                        val streamingText = StringBuilder()
+                        val onModelText: (String) -> Unit = { chunk ->
+                            runOnUiThread {
+                                if (!isDestroyed && turnUiToken == textTurnUiGeneration && operationBusy) {
+                                    if (streamingText.length + chunk.length <= 65_536) streamingText.append(chunk)
+                                    conversationState = conversationStore.state().withStreamingReply(
+                                        conversationId, expectedTurns, streamingText.toString())
+                                }
+                            }
+                        }
                         val requestedPolicy = when (text.trim().lowercase()) {
                             "/symbolic on" -> ConversationExecutionPolicy.PURE_SYMBOLIC
                             "/symbolic off" -> ConversationExecutionPolicy.STANDARD
@@ -344,6 +369,8 @@ class MainActivity : ComponentActivity() {
                                         appSession.submitText(
                                             text = text,
                                             localConversationId = conversation.localConversationId,
+                                            cloudHistory = checkNotNull(conversationStore.state().conversation(conversationId)).cloudModelHistory(),
+                                            onText = onModelText,
                                             remoteConversationId = conversation.remoteConversationId,
                                         )
                                     } else {
@@ -352,6 +379,8 @@ class MainActivity : ComponentActivity() {
                                             projectId = project.id,
                                             conversationId = conversation.remoteConversationId,
                                             localConversationId = conversation.localConversationId,
+                                            cloudHistory = checkNotNull(conversationStore.state().conversation(conversationId)).cloudModelHistory(),
+                                            onText = onModelText,
                                         )
                                     }
                                 },
@@ -369,7 +398,9 @@ class MainActivity : ComponentActivity() {
                                     else -> null
                                 }
                                 runOnUiThread {
+                                    if (isDestroyed || turnUiToken != textTurnUiGeneration) return@runOnUiThread
                                     operationBusy = false
+                                    activeTextConversation = null
                                     if (error != null) {
                                         recordTurnFailure(conversationId, error, capturedErrorDetails)
                                     } else if (result != null) {
@@ -429,9 +460,56 @@ class MainActivity : ComponentActivity() {
                 showChangelog = showCurrentChangelog,
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
+                localSpeechState = localSpeechState,
+                onCancelTextReply = {
+                    textTurnUiGeneration += 1
+                    appSession.cancelModelReply()
+                    activeTextConversation?.let { id ->
+                        conversationState = conversationStore.failTurn(id, "Reply stopped.")
+                    }
+                    activeTextConversation = null
+                    operationBusy = false
+                },
+                onTestLocalSpeech = {
+                    localSpeechState = localSpeechState.copy(phase = LocalTtsPhase.SPEAKING, failure = null)
+                    appSession.speakLocal("Zara offline speech is working on this device.").whenComplete { _, _ ->
+                        appSession.localTtsState().whenComplete { state, _ ->
+                            runOnUiThread { if (!isDestroyed && state != null) localSpeechState = state }
+                        }
+                    }
+                },
+                onStopLocalSpeech = {
+                    appSession.stopLocalSpeech()
+                    refreshLocalSpeech()
+                },
+                onRefreshLocalSpeech = { refreshLocalSpeech() },
+                onInstallSpeechVoices = {
+                    openSpeechSetup(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA))
+                },
+                onOpenSpeechSettings = { openSpeechSetup(Intent("com.android.settings.TTS_SETTINGS")) },
+                localCompanionStatus = localCompanionStatus,
+                localCompanionTrusted = localCompanionTrusted,
+                onOpenLocalCompanion = {
+                    refreshLocalCompanion()
+                    if (localCompanionTrusted) {
+                        packageManager.getLaunchIntentForPackage(LOCAL_COMPANION_PACKAGE)?.let(::startActivity)
+                    }
+                },
                 localAiState = localAiState,
                 localModels = localModels,
                 localModelBusy = localModelBusy,
+                onCheckCloudConnection = {
+                    cloudModelBusy = true
+                    appSession.checkCloudModelConnection().whenComplete { state, error ->
+                        runOnUiThread {
+                            if (!isDestroyed) {
+                                cloudModelBusy = false
+                                cloudModelState = state ?: appSession.cloudModelState()
+                                operationError = error?.let(UiOperationFailure::summarize)
+                            }
+                        }
+                    }
+                },
                 cloudModelState = cloudModelState,
                 cloudModelBusy = cloudModelBusy,
                 projectState = projectState,
@@ -882,14 +960,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        refreshLocalCompanion()
         if (!::appSession.isInitialized) return
         appSession.assessAssistantRole()
         reconcileMicrophonePermission(hasMicrophonePermission())
         refreshLocalModels()
+        refreshLocalSpeech()
     }
 
     override fun onStop() {
+        localSpeechUiGeneration += 1
         if (::appSession.isInitialized) {
+            appSession.stopLocalSpeech()
             appSession.onHostStopped().whenComplete { _, error ->
                 runOnUiThread {
                     if (error != null) operationError = UiOperationFailure.summarize(error)
@@ -1011,6 +1093,38 @@ class MainActivity : ComponentActivity() {
 
     private fun isPairingUiCurrent(pairingGeneration: Long): Boolean =
         !isDestroyed && pairingUiGeneration == pairingGeneration
+
+    private fun refreshLocalCompanion() {
+        localCompanionTrusted = packageManager.checkSignatures(packageName, LOCAL_COMPANION_PACKAGE) ==
+            android.content.pm.PackageManager.SIGNATURE_MATCH
+        localCompanionStatus = when {
+            packageManager.getLaunchIntentForPackage(LOCAL_COMPANION_PACKAGE) == null -> "not installed"
+            !localCompanionTrusted -> "incompatible signing certificate; install the APK from the same Zara build"
+            else -> "installed; shares Zara's on-device model and catalog"
+        }
+    }
+
+    private fun openSpeechSetup(intent: Intent) {
+        appSession.stopLocalSpeech()
+        try { startActivity(intent) } catch (_: android.content.ActivityNotFoundException) {
+            try { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) }
+            catch (_: android.content.ActivityNotFoundException) {
+                operationError = "Android speech settings are unavailable. Install an offline TTS engine and voice."
+            }
+        }
+    }
+
+    private fun refreshLocalSpeech() {
+        if (!::appSession.isInitialized || isDestroyed) return
+        val token = ++localSpeechUiGeneration
+        appSession.refreshLocalSpeech().whenComplete { state, error ->
+            runOnUiThread {
+                if (isDestroyed || token != localSpeechUiGeneration) return@runOnUiThread
+                localSpeechState = state ?: LocalTtsState(LocalTtsPhase.UNAVAILABLE,
+                    failure = "Offline speech is unavailable. Check Android speech settings.")
+            }
+        }
+    }
 
     private fun refreshLocalModels() {
         if (!::appSession.isInitialized) return
@@ -1139,3 +1253,5 @@ class MainActivity : ComponentActivity() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 }
+
+private const val LOCAL_COMPANION_PACKAGE = "ai.zara.llmserve"

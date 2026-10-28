@@ -238,14 +238,39 @@ data class CloudModelConfig(
     }
 }
 
+data class CloudModelTurn(val userText: String, val assistantText: String) {
+    init {
+        require(userText.isNotBlank() && assistantText.isNotBlank()) { "Cloud history requires complete turns" }
+        require(userText.length <= CloudModelRequest.MAX_PROMPT_CHARS &&
+            assistantText.length <= CloudModelRequest.MAX_PROMPT_CHARS) { "Cloud history turn is too large" }
+    }
+}
+
+class CloudModelHistory(conversationId: String, turns: List<CloudModelTurn>) {
+    private val conversationId = conversationId
+    private val turns = turns.toList()
+
+    init {
+        require(conversationId.isNotBlank()) { "Cloud history conversation is required" }
+        require(turns.size <= 512) { "Cloud history exceeds conversation limit" }
+    }
+
+    fun forConversation(conversationId: String): List<CloudModelTurn> {
+        require(conversationId == this.conversationId) { "Cloud history belongs to another conversation" }
+        return turns.toList()
+    }
+}
+
 data class CloudModelRequest(
     val prompt: String,
     val purpose: CloudModelPurpose,
     val maxOutputTokens: Int,
     val deadlineMs: Long,
     val appName: String,
+    val history: List<CloudModelTurn> = emptyList(),
 ) {
     init {
+        require(history.size <= 512) { "Cloud history exceeds conversation limit" }
         require(prompt.isNotBlank()) { "Cloud model prompt is required" }
         require(prompt.length <= MAX_PROMPT_CHARS) { "Cloud model prompt is too large" }
     }
@@ -279,6 +304,9 @@ data class CloudModelResult(
 )
 
 interface CloudModelBackend : AutoCloseable {
+    fun models(config: CloudModelConfig, apiKey: String, cancelled: () -> Boolean): List<String> =
+        throw CloudModelException(CloudModelFailureReason.UNSUPPORTED, "This provider cannot list models")
+
     fun generate(
         config: CloudModelConfig,
         apiKey: String,

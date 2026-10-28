@@ -16,6 +16,13 @@ object LocalAiRemoteProtocol {
     const val MSG_GENERATE = 6
     const val MSG_CANCEL = 7
     const val MSG_UNLOAD = 8
+    const val MSG_TTS_STATE = 9
+    const val MSG_TTS_REFRESH = 10
+    const val MSG_TTS_SPEAK = 11
+    const val MSG_TTS_STOP = 12
+    const val MSG_TTS_PROVIDERS = 13
+    const val MSG_TTS_SELECT = 14
+    const val MSG_LOAD_ACTIVE = 15
 
     const val EVENT_CHUNK = 100
     const val RESULT_OK = 200
@@ -47,6 +54,18 @@ object LocalAiRemoteProtocol {
     private const val KEY_TEXT = "text"
     private const val KEY_MODEL_ID = "model_id"
     private const val KEY_MODEL_VERSION = "model_version"
+
+    fun ttsStateToBundle(state: LocalTtsState): Bundle = Bundle().apply {
+        putString("phase", state.phase.name)
+        putString("voice", state.voiceId)
+        putString("locale", state.locale)
+        putString("failure", state.failure)
+    }
+
+    fun ttsStateFromBundle(bundle: Bundle) = LocalTtsState(
+        LocalTtsPhase.valueOf(requireString(bundle, "phase")),
+        bundle.getString("voice"), bundle.getString("locale"), bundle.getString("failure"),
+    )
 
     fun metadataToBundle(metadata: LocalModelMetadata): Bundle = Bundle().apply {
         putString(KEY_ID, metadata.id)

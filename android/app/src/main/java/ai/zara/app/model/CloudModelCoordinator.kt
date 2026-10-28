@@ -14,6 +14,8 @@ data class CloudModelState(
     val apiKeyConfigured: Boolean,
     val lastFailure: CloudModelFailureReason? = null,
     val message: String? = null,
+    val modelIds: List<String> = emptyList(),
+    val connectionChecked: Boolean = false,
 )
 
 class CloudModelCoordinator(
@@ -69,10 +71,45 @@ class CloudModelCoordinator(
         return initialState(configStore.load(), current.generation + 1).also(::update)
     }
 
+    fun checkConnection(): CompletableFuture<CloudModelState> {
+        val snapshot = try { reloadConfig() } catch (error: Exception) {
+            return CompletableFuture.failedFuture(error)
+        }
+        if (!snapshot.config.enabled) return CompletableFuture.failedFuture(
+            CloudModelException(CloudModelFailureReason.DISABLED, "Save and enable a remote model profile first"))
+        val future = CompletableFuture<CloudModelState>()
+        val cancellation = AtomicBoolean(false)
+        actor.execute {
+            try {
+                if (closed || snapshot.generation != current.generation) throw CloudModelException(
+                    CloudModelFailureReason.CANCELLED, "Provider settings changed")
+                activeCancellation = cancellation
+                val key = apiKeyStore.load() ?: throw CloudModelException(
+                    CloudModelFailureReason.AUTHENTICATION, "Save an API key before checking the provider")
+                val models = backend.models(snapshot.config, key, cancellation::get)
+                if (closed || cancellation.get() || snapshot.generation != current.generation) throw CloudModelException(
+                    CloudModelFailureReason.CANCELLED, "Provider check became stale")
+                val next = current.copy(phase = CloudModelPhase.READY, connectionChecked = true,
+                    modelIds = models, lastFailure = null, message = "Connection checked; ${models.size} models available")
+                update(next)
+                future.complete(next)
+            } catch (error: Exception) {
+                if (!closed && snapshot.generation == current.generation) update(current.copy(
+                    phase = CloudModelPhase.DEGRADED, connectionChecked = false,
+                    lastFailure = (error as? CloudModelException)?.reason ?: CloudModelFailureReason.UNAVAILABLE,
+                    message = error.message,
+                ))
+                future.completeExceptionally(error)
+            } finally { if (activeCancellation === cancellation) activeCancellation = null }
+        }
+        return future
+    }
+
     fun generate(
         prompt: String,
         purpose: CloudModelPurpose,
         effectiveAppName: String? = null,
+        history: List<CloudModelTurn> = emptyList(),
         onText: (String) -> Unit = {},
     ): CompletableFuture<CloudModelResult> {
         val refreshed = try {
@@ -95,6 +132,7 @@ class CloudModelCoordinator(
         }
         val appName = effectiveAppName?.trim()?.takeIf(String::isNotEmpty) ?: refreshed.config.appName
         require(appName.length <= CloudModelConfig.MAX_APP_NAME_CHARS) { "LLM app name is too long" }
+        val historySnapshot = history.toList()
         val snapshot = refreshed
         val cancellation = AtomicBoolean(false)
         val future = CompletableFuture<CloudModelResult>()
@@ -131,6 +169,7 @@ class CloudModelCoordinator(
                         maxOutputTokens = snapshot.config.maxOutputTokens,
                         deadlineMs = snapshot.config.deadlineMs,
                         appName = appName,
+                        history = historySnapshot,
                     ),
                     cancelled = cancellation::get,
                     onText = onText,

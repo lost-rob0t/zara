@@ -29,20 +29,28 @@ internal fun RemoteModelSettingsCard(
     busy: Boolean,
     onConfigure: (CloudModelConfig, String?) -> Unit,
     onClearApiKey: () -> Unit,
+    onCheckConnection: () -> Unit = {},
 ) {
     val config = state.config
     var enabled by rememberSaveable(config) { mutableStateOf(config.enabled) }
     var providerName by rememberSaveable(config) { mutableStateOf(config.provider.name) }
     var endpoint by rememberSaveable(config) { mutableStateOf(config.endpoint) }
     var model by rememberSaveable(config) { mutableStateOf(config.model) }
-    var apiKey by rememberSaveable { mutableStateOf("") }
+    var apiKey by androidx.compose.runtime.remember { mutableStateOf("") }
     val provider = runCatching { CloudModelProvider.valueOf(providerName) }
         .getOrDefault(CloudModelProvider.OPENAI_COMPATIBLE)
 
     SectionCard("REMOTE MODEL API") {
         KeyValueRow("state", state.phase.name.lowercase())
         KeyValueRow("credential", if (state.apiKeyConfigured) "stored in Android Keystore" else "not configured")
+        KeyValueRow("connection", if (state.connectionChecked) "checked" else "not checked")
         state.lastFailure?.let { KeyValueRow("last failure", it.name.lowercase()) }
+        state.message?.let { MutedNotice(it) }
+        SecondaryAction("Check saved connection / load models", !busy && config.enabled, onCheckConnection)
+        MutedNotice("Save your URL and key before checking. The check lists models and does not generate a paid reply.")
+        state.modelIds.filter { model.isBlank() || it.contains(model, ignoreCase = true) }.take(12).forEach { id ->
+            SecondaryAction("Use $id", !busy) { model = id }
+        }
 
         Text("Provider", color = LocalZaraTokens.current.text)
         listOf(

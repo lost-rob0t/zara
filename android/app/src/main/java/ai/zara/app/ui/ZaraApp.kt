@@ -4,6 +4,8 @@ import ai.zara.app.BuildConfig
 import ai.zara.app.conversations.ConversationRecord
 import ai.zara.app.conversations.ConversationState
 import ai.zara.app.conversations.ConversationStatus
+import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.localai.LocalTtsPhase
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelQuantization
@@ -230,7 +232,18 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    localCompanionStatus: String = "not installed",
+    localCompanionTrusted: Boolean = false,
+    onOpenLocalCompanion: () -> Unit = {},
+    onCancelTextReply: () -> Unit = {},
+    onCheckCloudConnection: () -> Unit = {},
     onCopyChatErrorDetails: (String) -> Boolean = { false },
+    localSpeechState: LocalTtsState = LocalTtsState(LocalTtsPhase.STOPPED),
+    onTestLocalSpeech: () -> Unit = {},
+    onStopLocalSpeech: () -> Unit = {},
+    onRefreshLocalSpeech: () -> Unit = {},
+    onInstallSpeechVoices: () -> Unit = {},
+    onOpenSpeechSettings: () -> Unit = {},
 ) {
     var navigation by rememberSaveable(stateSaver = AppNavigationSaver) {
         mutableStateOf(AppNavigation())
@@ -344,6 +357,7 @@ fun ZaraApp(
                                                     onReconnectRemote = onReconnectRemote,
                                                     onOpenDiagnostics = onOpenDiagnostics,
                                                     onCopyChatErrorDetails = onCopyChatErrorDetails,
+                                                onCancelTextReply = onCancelTextReply,
                                                     padding = padding,
                                                 )
                                             }
@@ -432,6 +446,9 @@ fun ZaraApp(
                                                 runtimeMode = runtimeMode,
                                                 localEmbedding = localEmbedding,
                                                 localAiState = localAiState,
+                                                localCompanionStatus = localCompanionStatus,
+                                                localCompanionTrusted = localCompanionTrusted,
+                                                onOpenLocalCompanion = onOpenLocalCompanion,
                                                 localModels = localModels,
                                                 localModelBusy = localModelBusy,
                                                 cloudModelState = cloudModelState,
@@ -454,8 +471,15 @@ fun ZaraApp(
                                                 onImportLocalModel = onImportLocalModel,
                                                 onSelectLocalModel = onSelectLocalModel,
                                                 onUnloadLocalModel = onUnloadLocalModel,
+                                                localSpeechState = localSpeechState,
+                                                onTestLocalSpeech = onTestLocalSpeech,
+                                                onStopLocalSpeech = onStopLocalSpeech,
+                                                onRefreshLocalSpeech = onRefreshLocalSpeech,
+                                                onInstallSpeechVoices = onInstallSpeechVoices,
+                                                onOpenSpeechSettings = onOpenSpeechSettings,
                                                 onConfigureCloudModel = onConfigureCloudModel,
                                                 onClearCloudModelApiKey = onClearCloudModelApiKey,
+                                                onCheckCloudConnection = onCheckCloudConnection,
                                                 onNavigateSettings = { route -> navigation = navigation.selectRoute(route) },
                                                 padding = padding,
                                             )
@@ -922,6 +946,7 @@ private fun ChatSurface(
     onReconnectRemote: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onCopyChatErrorDetails: (String) -> Boolean,
+    onCancelTextReply: () -> Unit,
     padding: PaddingValues,
 ) {
     var input by rememberSaveable { mutableStateOf("") }
@@ -994,7 +1019,7 @@ private fun ChatSurface(
                                 onOpenDiagnostics = onOpenDiagnostics,
                             )
                         turn.assistantText != null ->
-                            AssistantMessage(turn.assistantText, turn.success == true)
+                            AssistantMessage(turn.assistantText, turn.success != false)
                         conversation.status == ConversationStatus.Running &&
                             index == conversation.turns.lastIndex ->
                             AssistantPendingMessage()
@@ -1007,6 +1032,10 @@ private fun ChatSurface(
                     }
                 }
             }
+        }
+
+        if (operationBusy && runtimeMode == RuntimeMode.Remote && state.server !is ServerConnection.Connected) {
+            SecondaryAction("Stop reply", true, onCancelTextReply)
         }
 
         CompactComposer(
@@ -1299,6 +1328,16 @@ private fun SettingsSurface(
     onUnloadLocalModel: () -> Unit,
     onConfigureCloudModel: (CloudModelConfig, String?) -> Unit,
     onClearCloudModelApiKey: () -> Unit,
+    localCompanionStatus: String,
+    localCompanionTrusted: Boolean,
+    onOpenLocalCompanion: () -> Unit,
+    onCheckCloudConnection: () -> Unit,
+    localSpeechState: LocalTtsState,
+    onTestLocalSpeech: () -> Unit,
+    onStopLocalSpeech: () -> Unit,
+    onRefreshLocalSpeech: () -> Unit,
+    onInstallSpeechVoices: () -> Unit,
+    onOpenSpeechSettings: () -> Unit,
     onNavigateSettings: (AppRoute) -> Unit,
     padding: PaddingValues,
 ) {
@@ -1374,6 +1413,14 @@ private fun SettingsSurface(
                         }
                     }
                 }
+                LocalSpeechSettingsCard(
+                    state = localSpeechState,
+                    onTest = onTestLocalSpeech,
+                    onStop = onStopLocalSpeech,
+                    onRefresh = onRefreshLocalSpeech,
+                    onInstallVoices = onInstallSpeechVoices,
+                    onOpenSettings = onOpenSpeechSettings,
+                )
                 LocalModelSettingsCard(
                     state = localAiState,
                     models = localModels,
@@ -1381,12 +1428,16 @@ private fun SettingsSurface(
                     onImport = onImportLocalModel,
                     onSelect = onSelectLocalModel,
                     onUnload = onUnloadLocalModel,
+                    companionStatus = localCompanionStatus,
+                    companionTrusted = localCompanionTrusted,
+                    onOpenCompanion = onOpenLocalCompanion,
                 )
                 RemoteModelSettingsCard(
                     state = cloudModelState,
                     busy = cloudModelBusy,
                     onConfigure = onConfigureCloudModel,
                     onClearApiKey = onClearCloudModelApiKey,
+                    onCheckConnection = onCheckCloudConnection,
                 )
                 SectionCard("LOCAL EMBEDDINGS") {
                     Row(

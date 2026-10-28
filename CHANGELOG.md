@@ -14,6 +14,10 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android local models and offline speech now use the cross-process service protocol correctly. Speech settings expose installed voice status, a test/stop control, voice installation, and retry after setup.
+- Android remote model setup can check a saved HTTPS connection, list and select models, stream replies, and stop pending replies while retaining bounded per-chat context. Provider errors no longer display untrusted response bodies.
+- Android discovers the matching LLM Serve companion APK and opens it only when its signing certificate matches Zara. The companion reports a missing model instead of claiming readiness.
+
 - Security management with an explicit state directory now targets that directory's live Zara daemon instead of an unrelated daemon on the default runtime socket.
 
 ## 0.4.0-alpha

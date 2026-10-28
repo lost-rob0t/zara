@@ -34,6 +34,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import ai.zara.app.BuildConfig
 import ai.zara.app.conversations.ConversationStatus
+import ai.zara.app.localai.LocalTtsState
+import ai.zara.app.localai.LocalTtsPhase
 import ai.zara.app.localai.LocalAiState
 import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelQuantization
@@ -201,7 +203,18 @@ fun ZaraApp(
     onClearDiagnostics: () -> Unit,
     onExportDiagnostics: () -> String,
     onDismissChangelog: () -> Unit,
+    localCompanionStatus: String = "not installed",
+    localCompanionTrusted: Boolean = false,
+    onOpenLocalCompanion: () -> Unit = {},
+    onCancelTextReply: () -> Unit = {},
+    onCheckCloudConnection: () -> Unit = {},
     onCopyChatErrorDetails: (String) -> Boolean = { false },
+    localSpeechState: LocalTtsState = LocalTtsState(LocalTtsPhase.STOPPED),
+    onTestLocalSpeech: () -> Unit = {},
+    onStopLocalSpeech: () -> Unit = {},
+    onRefreshLocalSpeech: () -> Unit = {},
+    onInstallSpeechVoices: () -> Unit = {},
+    onOpenSpeechSettings: () -> Unit = {},
 ) {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -231,9 +244,20 @@ fun ZaraApp(
                 runtimeMode = runtimeMode,
                 localEmbedding = localEmbedding,
                 localAiState = localAiState,
+                localCompanionStatus = localCompanionStatus,
+                localCompanionTrusted = localCompanionTrusted,
+                onOpenLocalCompanion = onOpenLocalCompanion,
+                localSpeechState = localSpeechState,
+                onTestLocalSpeech = onTestLocalSpeech,
+                onStopLocalSpeech = onStopLocalSpeech,
+                onRefreshLocalSpeech = onRefreshLocalSpeech,
+                onInstallSpeechVoices = onInstallSpeechVoices,
+                onOpenSpeechSettings = onOpenSpeechSettings,
                 localModels = localModels,
                 localModelBusy = localModelBusy,
                 cloudModelState = cloudModelState,
+                onCancelTextReply = onCancelTextReply,
+                onCheckCloudConnection = onCheckCloudConnection,
                 cloudModelBusy = cloudModelBusy,
                 projectState = projectState,
                 healthState = healthState,

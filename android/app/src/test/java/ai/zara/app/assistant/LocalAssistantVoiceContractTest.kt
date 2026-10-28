@@ -26,7 +26,9 @@ class LocalAssistantVoiceContractTest {
             "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
         ).readText()
 
-        assertTrue(source.contains("!it.isNetworkConnectionRequired"))
+        assertTrue(source.contains("appSession.speakLocal(result.text)"))
+        val backend = File("src/main/java/ai/zara/app/localai/OfflineSpeechSession.kt").readText()
+        assertTrue(backend.contains("!it.networkRequired && it.installed"))
     }
 
     @Test

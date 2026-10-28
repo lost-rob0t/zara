@@ -1,5 +1,6 @@
 package ai.zara.llmserve
 
+import ai.zara.app.localai.LocalAiPhase
 import ai.zara.app.localai.LocalModelBackend
 import ai.zara.app.localai.LocalModelFormat
 import ai.zara.app.localai.LocalModelMetadata
@@ -57,7 +58,8 @@ class LlmServeService : Service() {
         )
         worker.execute {
             try {
-                engine.loadActiveModel()
+                val state = engine.loadActiveModel()
+                check(state.phase != LocalAiPhase.FAILED) { state.failure ?: "Local model could not be loaded" }
                 server.start()
                 val active = engine.activeModel()
                 val model = if (active == null) {
@@ -66,7 +68,7 @@ class LlmServeService : Service() {
                     active.id + ":" + active.version
                 }
                 val status =
-                    "ready • http://" +
+                    (if (state.phase == LocalAiPhase.READY) "ready" else "waiting_for_model") + " • http://" +
                         OllamaLoopbackServer.LOOPBACK_HOST +
                         ":" +
                         OllamaLoopbackServer.DEFAULT_PORT +

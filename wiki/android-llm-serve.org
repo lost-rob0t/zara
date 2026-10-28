@@ -60,3 +60,21 @@ documentation.
 - model file paths are not exported to =llm-serve=;
 - model output has no device-action authority;
 - provider/API credentials are not stored by LLM Serve.
+
+* Install and use the APK pair
+
+Install =app-debug.apk= (=ai.zara.app=) and =llm-serve-debug.apk=
+(=ai.zara.llmserve=) from the same build/signing key. Open Zara once and use
+Settings -> Runtime & local AI to inspect the companion status and Open LLM
+Serve. A missing launcher or mismatched signing certificate disables that
+launch action.
+
+Import a compatible =.litertlm= model in either app using explicit metadata.
+The model is stored and executed by Zara's canonical =:voice= owner. Open LLM
+Serve and select Start server; the loopback endpoint is =http://127.0.0.1:11434=.
+With no verified model the listener reports =waiting_for_model=. Installing a
+companion APK alone does not supply model weights or prove inference.
+
+These debug artifacts are development candidates, not a signed release or
+proof of physical-phone compatibility. Keep mock-provider tests, installed
+IPC tests, actual model inference, and physical-device acceptance distinct.

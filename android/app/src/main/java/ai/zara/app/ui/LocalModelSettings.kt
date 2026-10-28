@@ -34,6 +34,9 @@ internal fun LocalModelSettingsCard(
     onImport: (String, String, LocalModelQuantization, Int, LocalModelBackend) -> Unit,
     onSelect: (String, String) -> Unit,
     onUnload: () -> Unit,
+    companionStatus: String = "not installed",
+    companionTrusted: Boolean = false,
+    onOpenCompanion: () -> Unit = {},
 ) {
     var modelId by rememberSaveable { mutableStateOf("local-model") }
     var modelVersion by rememberSaveable { mutableStateOf("1") }
@@ -56,6 +59,9 @@ internal fun LocalModelSettingsCard(
             !busy
 
     SectionCard("LOCAL LANGUAGE MODEL") {
+        KeyValueRow("LLM Serve companion", companionStatus)
+        SecondaryAction("Open LLM Serve", companionTrusted, onOpenCompanion)
+        if (!companionTrusted) MutedNotice("Install the matching ai.zara.llmserve APK alongside Zara to provide a loopback model API to other local apps.")
         KeyValueRow("state", state.phase.name.lowercase())
         KeyValueRow(
             "active",
