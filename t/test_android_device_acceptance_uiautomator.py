@@ -150,6 +150,71 @@ def test_await_label_dismisses_release_notes_that_appear_after_launch(
     assert state["dismissals"] == 1
 
 
+def test_await_absent_waits_for_navigation_drawer_to_close(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    drawer = {"open": True}
+    clock = {"value": 0.0}
+    observations = 0
+
+    def fake_monotonic() -> float:
+        clock["value"] += 0.01
+        return clock["value"]
+
+    def fake_find(label: str):
+        nonlocal observations
+        assert label == "Close navigation menu"
+        observations += 1
+        if observations == 2:
+            drawer["open"] = False
+        return object() if drawer["open"] else None
+
+    monkeypatch.setattr(module.time, "monotonic", fake_monotonic)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(device, "find", fake_find)
+    monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", lambda: False)
+
+    device.await_absent("Close navigation menu", timeout=0.1)
+
+    assert observations == 2
+
+
+def test_open_menu_requires_drawer_dismissal_and_destination_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(device, "tap", lambda label: calls.append(("tap", label)))
+    monkeypatch.setattr(
+        device,
+        "await_label",
+        lambda label: calls.append(("await_label", label)),
+    )
+    monkeypatch.setattr(
+        device,
+        "await_absent",
+        lambda label: calls.append(("await_absent", label)),
+    )
+
+    module.open_menu(device, "Settings")
+
+    assert calls == [
+        ("tap", "Open navigation menu"),
+        ("await_label", "Chat"),
+        ("await_label", "Workspace"),
+        ("await_label", "Settings"),
+        ("tap", "Settings"),
+        ("await_absent", "Close navigation menu"),
+        ("await_label", "Runtime & local AI"),
+    ]
+
+
 def test_reveal_contains_scrolls_to_completed_response_outside_viewport(monkeypatch, tmp_path):
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)

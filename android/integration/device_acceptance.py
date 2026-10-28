@@ -272,6 +272,16 @@ class Device:
             time.sleep(0.2)
         raise AssertionError(f"Screen did not show {label}")
 
+    def await_absent(self, label: str, timeout: float = 20.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.dismiss_pixel_launcher_anr():
+                continue
+            if self.find(label) is None:
+                return
+            time.sleep(0.2)
+        raise AssertionError(f"Control remained visible after navigation: {label}")
+
     def await_contains(self, fragment: str, timeout: float = 20.0) -> None:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -435,12 +445,20 @@ class Device:
 
 
 def open_menu(device: Device, menu: str) -> None:
+    page_content = {
+        "Chat": "Ask anything…",
+        "Workspace": "Logic",
+        "Settings": "Runtime & local AI",
+    }
+    if menu not in page_content:
+        raise ValueError(f"Unsupported navigation destination: {menu}")
+
     device.tap("Open navigation menu")
     for expected in ("Chat", "Workspace", "Settings"):
         device.await_label(expected)
     device.tap(menu)
-    device.await_label(menu)
-    time.sleep(0.4)
+    device.await_absent("Close navigation menu")
+    device.await_label(page_content[menu])
 
 
 def exercise_three_menu_ui(device: Device) -> None:
