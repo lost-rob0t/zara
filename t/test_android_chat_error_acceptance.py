@@ -37,6 +37,8 @@ class ChatErrorAcceptanceTest(unittest.TestCase):
         self.assertTrue(result['clipboard_exact_match'])
         self.assertTrue(result['saved_details_unchanged'])
         self.assertTrue(result['later_success'])
+        self.assertLess(device.calls.index(('reveal_contains', 'Copy error details')),
+                        device.calls.index(('await_label', 'Copy error details')))
         marker = 'zara_error_recovery_1523'
         self.assertIn(('reveal_contains', marker), device.calls)
         self.assertLess(device.calls.index(('reveal_contains', marker)),

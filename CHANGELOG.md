@@ -14,6 +14,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android acceptance scrolls long failed conversations to the error action and runs cross-process speech/model and persisted cloud-history checks in CI.
+
 - Android document imports pass a file descriptor to the canonical model owner after checksum calculation, avoiding an extra copy through an IPC pipe.
 - Local transport shutdown releases its resolved endpoint before deferred socket destruction, so immediate gateway restart can rebind reliably.
 - Android local models and offline speech now use the cross-process service protocol correctly. Speech settings expose installed voice status, a test/stop control, voice installation, and retry after setup.

@@ -35,6 +35,16 @@ def git_blob_sha(source: bytes) -> str:
 
 
 class LocalSessionApiContractTest(unittest.TestCase):
+    def test_model_and_history_regressions_are_in_emulator_gate(self) -> None:
+        gate = (ROOT / "scripts/test-android-emulator-install.sh").read_text()
+        match = re.search(r"-Pandroid\.testInstrumentationRunnerArguments\.class=([^'\n]+)", gate)
+        self.assertIsNotNone(match)
+        classes = set(match.group(1).split(","))
+        self.assertTrue({
+            "ai.zara.app.localai.LocalAiProcessInstrumentedTest",
+            "ai.zara.app.model.CloudHistoryInstrumentedTest",
+        }.issubset(classes))
+
     def test_missing_getter_and_setter_are_detected(self) -> None:
         self.assertEqual(
             {"localChatPathEnabled", "setLocalChatPathEnabled"},
