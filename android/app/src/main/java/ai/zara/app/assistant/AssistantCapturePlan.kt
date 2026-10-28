@@ -18,6 +18,7 @@ internal fun planAssistantCapture(
     mode: RuntimeMode,
     localState: LocalServerState,
     runtimeState: RuntimeState,
+    remoteModelReady: Boolean = false,
 ): AssistantCapturePlan {
     if (runtimeState.assistantRole !is AssistantRole.Held) {
         return AssistantCapturePlan.Reject("Zara does not hold the Android Assistant role")
@@ -30,15 +31,15 @@ internal fun planAssistantCapture(
         runtimeState.sessionId?.isNotBlank() == true
 
     return when (mode) {
-        RuntimeMode.Local -> if (localReady) {
+        RuntimeMode.Symbolic, RuntimeMode.Local -> if (localReady) {
             AssistantCapturePlan.Local
         } else {
             AssistantCapturePlan.Reject("Local Zara server is not ready")
         }
-        RuntimeMode.Remote -> if (remoteReady) {
-            AssistantCapturePlan.Remote
-        } else {
-            AssistantCapturePlan.Reject("Remote Zara session is not ready")
+        RuntimeMode.Remote -> when {
+            remoteReady -> AssistantCapturePlan.Remote
+            remoteModelReady && localReady -> AssistantCapturePlan.Local
+            else -> AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready")
         }
         RuntimeMode.Auto -> when {
             remoteReady -> AssistantCapturePlan.Remote

@@ -562,6 +562,20 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
     (force-mode-line-update t)
     process))
 
+(defun zara-conversation--render-switch-fence (conversation-id)
+  "Fence visible chat history after switching to CONVERSATION-ID.
+
+Durable history remains owned by Zara's canonical conversation store.  This
+only clears stale presentation text from the previous conversation and tells
+the operator to replay the newly selected conversation when desired."
+  (when (derived-mode-p 'zara-chat-mode)
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (insert (propertize "Zara\n" 'face '(:height 1.5 :weight bold)))
+      (insert (format "Canonical conversation %s · replay to load durable history\n\n"
+                      conversation-id))
+      (goto-char (point-max)))))
+
 ;;;###autoload
 (defun zara-conversation-switch (conversation-id)
   "Switch the Emacs surface to canonical CONVERSATION-ID while idle."
@@ -576,6 +590,10 @@ must emit `turn.accepted' then matching `assistant.complete' NDJSON."
   ;; Context refs are ephemeral presentation state.  Never carry refs from one
   ;; canonical conversation into another implicitly.
   (setq-local zara-conversation-context-ids nil)
+  ;; The transcript is presentation state too.  Leaving the previous
+  ;; conversation visible under a new canonical id is a cross-conversation
+  ;; semantic leak even though the durable store is correct.
+  (zara-conversation--render-switch-fence zara-conversation-id)
   zara-conversation-id)
 
 ;;;###autoload

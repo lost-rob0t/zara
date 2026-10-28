@@ -25,7 +25,7 @@ internal object AndroidPureSymbolicConversationFactory {
             .replace("\\", "\\\\")
             .replace("\"", "\\\"")
             .replace("\n", "\\n")
-        return "resolve_frames(\"$escaped\", passive, [], Frames), member(Result, Frames)"
+        return "zara_portable_semantic_core:resolve_frames(\"$escaped\", passive, [], Frames), member(Result, Frames)"
     }
 
     private const val MAX_UTTERANCE_CHARS = 8_192

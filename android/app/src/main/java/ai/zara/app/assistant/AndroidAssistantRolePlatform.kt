@@ -4,7 +4,6 @@ import android.app.role.RoleManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.provider.Settings
 import android.service.voice.VoiceInteractionService
 
 class AndroidAssistantRolePlatform(
@@ -25,13 +24,6 @@ class AndroidAssistantRolePlatform(
 
     fun createUserRequestIntent(): Intent? {
         if (!isAvailable() || isHeld()) return null
-
-        return listOf(
-            Settings.ACTION_VOICE_INPUT_SETTINGS,
-            Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
-            Settings.ACTION_SETTINGS,
-        ).asSequence()
-            .map(::Intent)
-            .firstOrNull { it.resolveActivity(context.packageManager) != null }
+        return roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)
     }
 }

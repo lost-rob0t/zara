@@ -30,14 +30,22 @@ class LocalAssistantVoiceContractTest {
     }
 
     @Test
-    fun `assistant session routes local mode before remote voice startup`() {
+    fun `assistant session auto starts on-device voice for local routes and keeps remote explicit`() {
         val source = File(
             "src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt"
         ).readText()
+        val onShow = source.substringAfter("override fun onShow").substringBefore("override fun onHide")
+        val automatic = source.substringAfter("private fun beginAutomaticCapture()")
+            .substringBefore("override fun onHide")
 
-        assertTrue(source.contains("planAssistantCapture("))
-        assertTrue(source.contains("AssistantCapturePlan.Local -> beginLocalPushToTalk"))
-        assertTrue(source.contains("LocalAssistantVoiceController"))
+        assertTrue(onShow.contains("beginAutomaticCapture()"))
+        assertTrue(automatic.contains("planAssistantCapture("))
+        assertTrue(automatic.contains("AssistantCapturePlan.Local ->"))
+        assertTrue(automatic.contains("localVoice.start(permissionGranted)"))
+        assertTrue(automatic.contains("AssistantCapturePlan.Remote ->"))
+        assertTrue(automatic.contains("localVoice.start(permissionGranted)"))
+        assertTrue(automatic.contains("updateStatus(\"Hold to talk to Zara\")"))
+        assertFalse(automatic.contains("appSession.startAssistantVoice"))
         assertTrue(source.contains("appSession.startAssistantVoice"))
     }
 
@@ -47,8 +55,8 @@ class LocalAssistantVoiceContractTest {
             "src/main/java/ai/zara/app/assistant/LocalAssistantVoiceController.kt"
         ).readText()
 
-        assertTrue(source.contains("appSession.submitLocalText(transcript)"))
-        assertFalse(source.contains("appSession.submitText(transcript)"))
+        assertTrue(source.contains("appSession.submitText(transcript)"))
+        assertFalse(source.contains("appSession.submitLocalText(transcript)"))
     }
 
     @Test
