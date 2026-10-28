@@ -51,6 +51,8 @@ class ChatErrorAcceptanceTest(unittest.TestCase):
         self.assertIn('Result is 1/0', failed_query)
         self.assertNotIn('throw(', failed_query)
         self.assertIn(('tap', 'Clear diagnostics'), device.calls)
+        self.assertIn(('tap', 'Diagnostics'), device.calls)
+        self.assertNotIn(('tap_tab', 'Diagnostics'), device.calls)
         self.assertIn(('recreate',), device.calls)
         for state in ('chat-error-details', 'chat-error-details-copied', 'chat-error-details-restored'):
             self.assertIn(('capture', state), device.calls)

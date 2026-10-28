@@ -53,7 +53,7 @@ def exercise_chat_error(device: Device, type_text) -> dict[str, object]:
     device.capture('chat-error-details-copied')
 
     open_menu(device, 'Settings')
-    device.tap_tab('Diagnostics')
+    device.tap('Diagnostics')
     device.tap('Clear diagnostics')
     open_menu(device, 'Chat')
     device.await_label('Ask anything…')
