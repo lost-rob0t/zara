@@ -288,6 +288,7 @@ fun ZaraApp(
                     drawerContent = {
                         ZaraDrawer(
                             selected = navigation.menu,
+                            drawerOpen = drawerState.isOpen,
                             state = runtimeState,
                             localState = localServerState,
                             conversationState = conversationState,
@@ -556,7 +557,8 @@ private fun ZaraTopBar(
             }
             Text(
                 selected.label,
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f)
+                    .testTag("zara.menu.active.${selected.name.lowercase()}"),
                 color = tokens.textMuted,
                 style = MaterialTheme.typography.labelLarge,
             )
@@ -572,6 +574,7 @@ private fun ZaraTopBar(
 @Composable
 private fun ZaraDrawer(
     selected: AppMenu,
+    drawerOpen: Boolean,
     state: RuntimeState,
     localState: LocalServerState,
     conversationState: ConversationState,
@@ -587,7 +590,11 @@ private fun ZaraDrawer(
     var showAllPinned by rememberSaveable { mutableStateOf(false) }
     var showAllRecents by rememberSaveable { mutableStateOf(false) }
     ModalDrawerSheet(
-        modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp),
+        modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp)
+            .testTag("zara.navigation.drawer-state")
+            .semantics {
+                contentDescription = if (drawerOpen) "Navigation drawer open" else "Navigation drawer closed"
+            },
         drawerContainerColor = tokens.surfaceElevated,
         drawerContentColor = tokens.text,
     ) {

@@ -230,7 +230,7 @@ def test_await_drawer_state_fails_if_drawer_remains_open(monkeypatch, tmp_path):
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
     menu = module.ET.fromstring(
-        '<node resource-id="zara.navigation.open-menu" content-desc="Open navigation menu, Navigation drawer open" />'
+        '<node resource-id="zara.navigation.drawer-state" content-desc="Navigation drawer open" />'
     )
     clock = {"value": 0.0}
     monkeypatch.setattr(module.time, "monotonic", lambda: clock.__setitem__("value", clock["value"] + 0.02) or clock["value"])
@@ -242,19 +242,42 @@ def test_await_drawer_state_fails_if_drawer_remains_open(monkeypatch, tmp_path):
         device.await_drawer_state(False, timeout=0.05)
 
 
+def test_await_drawer_state_requires_explicit_open_semantics(monkeypatch, tmp_path):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    drawer = module.ET.fromstring(
+        '<node resource-id="zara.navigation.drawer-state" content-desc="Navigation drawer open" />'
+    )
+    monkeypatch.setattr(device, "find_tag", lambda tag: drawer if tag == "zara.navigation.drawer-state" else None)
+    monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", lambda: False)
+
+    assert device.await_drawer_state(True, timeout=0.05) is None
+
+
 def test_await_navigation_rejects_wrong_destination(monkeypatch, tmp_path):
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
     menu = module.ET.fromstring(
-        '<node resource-id="zara.navigation.open-menu" content-desc="Open navigation menu, Navigation drawer closed" />'
+        '<node resource-id="zara.navigation.drawer-state" content-desc="Navigation drawer closed" />'
     )
     wrong_screen = module.ET.fromstring(
-        '<node resource-id="zara.screen.chat" content-desc="menu=chat;destination=chat;drawer=closed" />'
+        '<node resource-id="zara.screen.chat" />'
     )
+    active_menu = module.ET.fromstring('<node resource-id="zara.menu.active.settings" />')
     clock = {"value": 0.0}
     monkeypatch.setattr(module.time, "monotonic", lambda: clock.__setitem__("value", clock["value"] + 0.02) or clock["value"])
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(device, "find_tag", lambda tag: menu if tag.endswith("open-menu") else wrong_screen)
+    monkeypatch.setattr(
+        device,
+        "find_tag",
+        lambda tag: {
+            "zara.navigation.drawer-state": menu,
+            "zara.screen.settings": None,
+            "zara.screen.chat": wrong_screen,
+            "zara.menu.active.settings": active_menu,
+        }.get(tag),
+    )
+    monkeypatch.setattr(device, "find", lambda _label: None)
     monkeypatch.setattr(device, "dismiss_pixel_launcher_anr", lambda: False)
 
     with pytest.raises(AssertionError, match="Navigation state mismatch"):
@@ -307,7 +330,9 @@ def test_production_compose_exposes_semantic_destination_menu_and_route_ids():
 
     assert "testTagsAsResourceId = true" in app_ui
     assert 'testTag("zara.navigation.open-menu")' in app_ui
+    assert 'testTag("zara.navigation.drawer-state")' in app_ui
     assert 'testTag("zara.menu.${menu.name.lowercase()}")' in app_ui
+    assert 'testTag("zara.menu.active.${selected.name.lowercase()}")' in app_ui
     assert 'testTag("zara.screen.${navigation.route.name.lowercase()}")' in app_ui
     assert 'stateDescription = if (drawerOpen)' in app_ui
     assert 'testTag("zara.route.${route.name.lowercase()}")' in navigation

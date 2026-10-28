@@ -116,37 +116,42 @@ class Device:
         raise AssertionError(f"Semantic target did not appear: {tag}")
 
     def await_navigation(self, menu: str, route: str, drawer_open: bool) -> None:
-        expected = f"menu={menu};destination={route};drawer={'open' if drawer_open else 'closed'}"
+        expected_screen = f"zara.screen.{route}"
+        expected_menu = f"zara.menu.active.{menu}"
         deadline = time.monotonic() + 20.0
         while time.monotonic() < deadline:
-            node = self.find_tag("zara.navigation.open-menu")
-            if node is not None and node.get("content-desc", "").endswith(
-                "Navigation drawer " + ("open" if drawer_open else "closed")
-            ):
-                screen = self.find_tag(f"zara.screen.{route}")
-                if screen is not None:
-                    state = screen.get("content-desc", "")
-                    if expected in state:
-                        return
-                    # Android may expose Compose stateDescription separately from
-                    # content-desc; assert destination identity and drawer state via
-                    # the dedicated menu control when available.
-                    control_state = node.get("content-desc", "")
-                    if f"destination={route}" in state and (
-                        f"Navigation drawer {'open' if drawer_open else 'closed'}" in control_state
-                    ):
-                        return
+            screen = self.find_tag(expected_screen)
+            active_menu = self.find_tag(expected_menu)
+            drawer = self.find_tag("zara.navigation.drawer-state")
+            drawer_content = drawer.get("content-desc", "") if drawer is not None else ""
+            if drawer_open:
+                drawer_matches = drawer is not None and drawer_content == "Navigation drawer open"
+            else:
+                drawer_matches = (
+                    drawer is None and self.find("Close navigation menu") is None
+                ) or drawer_content == "Navigation drawer closed"
+            if screen is not None and active_menu is not None and drawer_matches:
+                return
             if self.dismiss_pixel_launcher_anr():
                 continue
             time.sleep(0.2)
-        raise AssertionError(f"Navigation state mismatch: expected {expected}")
+        raise AssertionError(
+            "Navigation state mismatch: expected "
+            f"menu={menu}, destination={route}, drawer={'open' if drawer_open else 'closed'}"
+        )
 
     def await_drawer_state(self, opened: bool, timeout: float = 20.0) -> None:
         state = "open" if opened else "closed"
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            node = self.find_tag("zara.navigation.open-menu")
-            if node is not None and f"Navigation drawer {state}" in node.get("content-desc", ""):
+            node = self.find_tag("zara.navigation.drawer-state")
+            description = node.get("content-desc", "") if node is not None else ""
+            if opened and description == "Navigation drawer open":
+                return
+            if not opened and (
+                description == "Navigation drawer closed"
+                or (node is None and self.find("Close navigation menu") is None)
+            ):
                 return
             if self.dismiss_pixel_launcher_anr():
                 continue
