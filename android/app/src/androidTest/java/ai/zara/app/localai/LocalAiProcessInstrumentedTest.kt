@@ -28,7 +28,7 @@ class LocalAiProcessInstrumentedTest {
         val metadata = LocalModelMetadata("qwen2-0.5b-fixture", "13aab3e5", LocalModelQuantization.INT8,
             "0f01cc004b8eb62b92ba6be85ed05a248ba0d2f78af94c4949b313eccfb4c157", 1024, LocalModelBackend.CPU)
         LocalAiServiceClient(context).use { client ->
-            client.installModel(source.inputStream(), metadata).get(180, TimeUnit.SECONDS)
+            client.installModel(android.net.Uri.fromFile(source), metadata).get(180, TimeUnit.SECONDS)
             for (iteration in 0..1) {
                 if (iteration == 1) client.selectModel(metadata.id, metadata.version).get(180, TimeUnit.SECONDS)
                 val chunks = mutableListOf<String>()

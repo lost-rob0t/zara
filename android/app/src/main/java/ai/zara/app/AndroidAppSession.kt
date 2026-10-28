@@ -1,5 +1,7 @@
 package ai.zara.app
 
+import android.net.Uri
+
 import ai.zara.app.model.CloudModelHistory
 
 import ai.zara.app.assistant.AndroidAssistantRolePlatform
@@ -392,6 +394,9 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         source: InputStream,
         metadata: LocalModelMetadata,
     ): CompletableFuture<LocalModelSpec> = localAi.installModel(source, metadata)
+
+    fun installLocalModel(uri: Uri, metadata: LocalModelMetadata): CompletableFuture<LocalModelSpec> =
+        localAi.installModel(uri, metadata)
 
     fun selectLocalModel(
         id: String,

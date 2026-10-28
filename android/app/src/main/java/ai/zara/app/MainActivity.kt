@@ -259,8 +259,6 @@ class MainActivity : ComponentActivity() {
                     ?: error("Selected local model could not be opened")
                 sha256(source)
             }.thenCompose { digest ->
-                val source = contentResolver.openInputStream(uri)
-                    ?: error("Selected local model could not be reopened")
                 val metadata = LocalModelMetadata(
                     id = request.id,
                     version = request.version,
@@ -269,12 +267,7 @@ class MainActivity : ComponentActivity() {
                     maxContextTokens = request.maxContextTokens,
                     backend = request.backend,
                 )
-                try {
-                    appSession.installLocalModel(source, metadata)
-                } catch (error: Throwable) {
-                    source.close()
-                    throw error
-                }
+                appSession.installLocalModel(uri, metadata)
             }.whenComplete { _, error ->
                 runOnUiThread {
                     localModelBusy = false

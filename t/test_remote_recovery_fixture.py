@@ -33,9 +33,13 @@ def test_arm_waits_for_fixture_acknowledgement(monkeypatch):
     server.values = {"control_fifo": "fixture-only"}
     server.trace_events = queue.Queue()
     written = threading.Event()
-    monkeypatch.setattr(os, "open", lambda *_: 1000000)
-    monkeypatch.setattr(os, "write", lambda *args: written.set() or len(args[1]))
-    monkeypatch.setattr(os, "close", lambda *_: None)
+    from types import SimpleNamespace
+    monkeypatch.setattr(sys.modules[__name__], "os", SimpleNamespace(
+        O_WRONLY=os.O_WRONLY,
+        open=lambda *_: 1000000,
+        write=lambda *args: written.set() or len(args[1]),
+        close=lambda *_: None,
+    ))
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         armed = executor.submit(server.arm, "STALE")
         assert written.wait(1)

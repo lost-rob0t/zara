@@ -42,3 +42,11 @@ def test_companion_launch_requires_matching_signature_and_visible_package():
     activity = (APP / "java/ai/zara/app/MainActivity.kt").read_text()
     assert "packageManager.checkSignatures(packageName, LOCAL_COMPANION_PACKAGE)" in activity
     assert "PackageManager.SIGNATURE_MATCH" in activity
+
+
+def test_document_import_reuses_descriptor_after_checksum_pass():
+    source = (APP / "java/ai/zara/app/MainActivity.kt").read_text()
+    picker = source.split("val localModelPicker =", 1)[1].split("appSession.setStateObserver", 1)[0]
+    assert "sha256(source)" in picker
+    assert "appSession.installLocalModel(uri, metadata)" in picker
+    assert picker.count("contentResolver.openInputStream(uri)") == 1

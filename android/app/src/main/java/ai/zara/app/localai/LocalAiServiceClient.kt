@@ -1,6 +1,7 @@
 package ai.zara.app.localai
 
 import android.content.Context
+import android.net.Uri
 import java.io.InputStream
 import java.util.concurrent.CompletableFuture
 
@@ -20,6 +21,7 @@ class LocalAiServiceClient(context: Context) : LocalAiProvider {
     override fun activeModel() = remote.activeModel()
     fun loadActiveModel() = remote.loadActiveModel()
     override fun installModel(source: InputStream, metadata: LocalModelMetadata) = remote.installModel(source, metadata)
+    fun installModel(uri: Uri, metadata: LocalModelMetadata) = remote.installModel(uri, metadata)
     override fun selectModel(id: String, version: String) = remote.selectModel(id, version)
     fun ttsState() = remote.ttsState()
     fun refreshSpeech() = remote.refreshSpeech()

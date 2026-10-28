@@ -14,6 +14,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android document imports pass a file descriptor to the canonical model owner after checksum calculation, avoiding an extra copy through an IPC pipe.
 - Local transport shutdown releases its resolved endpoint before deferred socket destruction, so immediate gateway restart can rebind reliably.
 - Android local models and offline speech now use the cross-process service protocol correctly. Speech settings expose installed voice status, a test/stop control, voice installation, and retry after setup.
 - Android remote model setup can check a saved HTTPS connection, list and select models, stream replies, and stop pending replies while retaining bounded per-chat context. Provider errors no longer display untrusted response bodies.
