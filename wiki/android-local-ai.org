@@ -159,3 +159,23 @@ by Android Keystore and are not saved in Compose restoration state.
 Local and Symbolic startup do not restore a remote connection merely because
 an old server profile exists. An unavailable local model never enables a
 remote provider implicitly.
+
+* Debug acceptance downloads
+
+CI publishes =android-test-unverified-<source SHA>= after a successful APK build,
+even if later installed acceptance fails. This bundle contains the Zara and LLM
+Serve debug APKs, SHA-256 checksums, installation notes, and the acceptance outcome.
+It is explicitly not a validated release. Release-candidate uploads still require
+the green gate. Offline audio and real inference are not certified by the bundle.
+
+External Android TTS engines run behind a worker so a slow engine cannot hold
+Zara's main IPC thread. Initialization reports an unavailable engine after 15
+seconds; state/stop remain responsive. If the engine itself is stuck, check Android
+speech settings and its offline voice data before refreshing. This does not make
+a missing voice available or substitute network speech.
+
+The opt-in installed real-model test accepts pinned =qwen2-0.5b= or
+=smollm2-135m= fixtures via =realModelFixture=. =reuseInstalledModel=true= verifies
+an existing catalog model before the same generation, streaming, unload/reload
+assertions; it does not claim a fresh import. Ordinary CI skips real-model tests
+unless their external fixture is explicitly supplied.

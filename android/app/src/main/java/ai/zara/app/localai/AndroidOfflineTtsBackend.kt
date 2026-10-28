@@ -6,6 +6,7 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicReference
 
 class AndroidOfflineTtsBackend(context: Context) : LocalTtsProvider {
     override val capabilities = LocalTtsProviderCapabilities(
@@ -15,7 +16,7 @@ class AndroidOfflineTtsBackend(context: Context) : LocalTtsProvider {
         modelBacked = false,
     )
     private val appContext = context.applicationContext
-    private val session = OfflineSpeechSession(::createEngine)
+    private val session = IsolatedSpeechBackend(OfflineSpeechSession(::createEngine))
 
     override fun state() = session.state()
     override fun initialize() = session.initialize()
@@ -26,21 +27,26 @@ class AndroidOfflineTtsBackend(context: Context) : LocalTtsProvider {
     private fun createEngine(): CompletableFuture<OfflineSpeechEngine> {
         val ready = CompletableFuture<OfflineSpeechEngine>()
         val main = Handler(Looper.getMainLooper())
-        var engine: TextToSpeech? = null
+        val engine = AtomicReference<TextToSpeech?>()
         ready.orTimeout(15, java.util.concurrent.TimeUnit.SECONDS).whenComplete { _, error ->
-            if (error != null) main.post { engine?.shutdown() }
+            if (error != null) CompletableFuture.runAsync { engine.get()?.shutdown() }
         }
         main.post {
             try {
-                engine = TextToSpeech(appContext) { status ->
+                val created = TextToSpeech(appContext) { status ->
+                    // Voice enumeration/selection may call an external engine over Binder.
+                    // Completing on main would execute OfflineSpeechSession callbacks there.
                     main.post {
-                        val initialized = engine
-                        if (status != TextToSpeech.SUCCESS || initialized == null) {
-                            initialized?.shutdown()
-                            ready.completeExceptionally(IllegalStateException("Android speech engine is unavailable"))
-                        } else if (!ready.complete(AndroidSpeechEngine(initialized))) initialized.shutdown()
+                        val initialized = engine.get()
+                        CompletableFuture.runAsync {
+                            if (status != TextToSpeech.SUCCESS || initialized == null) {
+                                initialized?.shutdown()
+                                ready.completeExceptionally(IllegalStateException("Android speech engine is unavailable"))
+                            } else if (!ready.complete(AndroidSpeechEngine(initialized))) initialized.shutdown()
+                        }
                     }
                 }
+                engine.set(created)
             } catch (error: Exception) { ready.completeExceptionally(error) }
         }
         return ready

@@ -272,6 +272,7 @@ jobs:
             android/wear-app/libs/samsung-health-sensor-api-1.4.1.aar
 
       - name: Run Android/Wear gate (unit tests + native Trealla + debug APKs + secret inspection)
+        id: android_build
         run: nix develop ./android -c bash scripts/test-android.sh
 
       - name: Upload Android parity diagnostics
@@ -362,6 +363,7 @@ jobs:
           exit 1
 
       - name: Capture Android screenshot evidence and verify Zara Code install
+        id: android_acceptance
         uses: reactivecircus/android-emulator-runner@v2
         env:
           SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -381,6 +383,21 @@ jobs:
         with:
           name: android-ui-evidence
           path: android/app/build/reports/device/
+          if-no-files-found: error
+
+      - name: Prepare unverified Android test APKs
+        if: always() && steps.android_build.outcome == 'success'
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ACCEPTANCE_STATUS: ${{ steps.android_acceptance.outcome }}
+        run: python scripts/prepare-android-test-artifacts.py --source-sha "$SOURCE_SHA" --acceptance-status "$ACCEPTANCE_STATUS" --output artifacts/android-test
+
+      - name: Upload unverified Android test APKs
+        if: always() && steps.android_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-unverified-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/android-test/
           if-no-files-found: error
 
       - name: Prepare exact-SHA phone APK artifact

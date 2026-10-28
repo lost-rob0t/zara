@@ -48,6 +48,7 @@ def exercise_chat_error(device: Device, type_text) -> dict[str, object]:
     original = read_saved_error(device)
     device.capture('chat-error-details')
     device.tap('Copy error details')
+    device.reveal_contains('Error details copied')
     device.await_label('Error details copied')
     device.capture('chat-error-details-copied')
 
@@ -77,7 +78,9 @@ def exercise_chat_error(device: Device, type_text) -> dict[str, object]:
     if 'OK (1 test)' not in probe or 'FAILURES!!!' in probe or 'INSTRUMENTATION_FAILED' in probe:
         raise AssertionError(f'Android clipboard exact-match probe failed: {probe}')
     device.start()
+    device.reveal_contains('Copy error details')
     device.tap('Copy error details')
+    device.reveal_contains('Error details copied')
     device.await_label('Error details copied')
     device.capture('chat-error-details-restored')
     return {

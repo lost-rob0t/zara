@@ -23,17 +23,37 @@ class LocalAiProcessInstrumentedTest {
         assumeTrue("Requires the pinned external model fixture; fake models do not satisfy this gate",
             InstrumentationRegistry.getArguments().getString("realModel") == "true")
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val source = java.io.File(context.cacheDir, "Qwen2_0.5B_Instruct.litertlm")
+        // Both fixtures are real, immutable LiteRT-LM weights. The smaller fixture
+        // permits the same assertions/deadlines on a software-only emulator.
+        val fixture = InstrumentationRegistry.getArguments().getString("realModelFixture") ?: "qwen2-0.5b"
+        val (filename, metadata) = when (fixture) {
+            "qwen2-0.5b" -> "Qwen2_0.5B_Instruct.litertlm" to LocalModelMetadata(
+                "qwen2-0.5b-fixture", "13aab3e5", LocalModelQuantization.INT8,
+                "0f01cc004b8eb62b92ba6be85ed05a248ba0d2f78af94c4949b313eccfb4c157", 1024, LocalModelBackend.CPU)
+            "smollm2-135m" -> "SmolLM2_135M_Instruct.litertlm" to LocalModelMetadata(
+                "smollm2-135m-fixture", "8111e0a6", LocalModelQuantization.INT8,
+                "ccdc5c85735743f081b7d44ca309cab569f76c0f2f0e8e163449a63721969c37", 1024, LocalModelBackend.CPU)
+            else -> error("Unknown pinned real-model fixture: $fixture")
+        }
+        val source = java.io.File(context.cacheDir, filename)
         assertTrue("Copy the pinned model into the target app cache before running", source.isFile)
-        val metadata = LocalModelMetadata("qwen2-0.5b-fixture", "13aab3e5", LocalModelQuantization.INT8,
-            "0f01cc004b8eb62b92ba6be85ed05a248ba0d2f78af94c4949b313eccfb4c157", 1024, LocalModelBackend.CPU)
         LocalAiServiceClient(context).use { client ->
-            client.installModel(android.net.Uri.fromFile(source), metadata).get(180, TimeUnit.SECONDS)
+            if (InstrumentationRegistry.getArguments().getString("reuseInstalledModel") == "true") {
+                client.selectModel(metadata.id, metadata.version).get(180, TimeUnit.SECONDS)
+            } else client.installModel(android.net.Uri.fromFile(source), metadata).get(180, TimeUnit.SECONDS)
+            println("REAL_MODEL loaded ${metadata.id}; phase=${client.state().get(5, TimeUnit.SECONDS).phase}")
             for (iteration in 0..1) {
                 if (iteration == 1) client.selectModel(metadata.id, metadata.version).get(180, TimeUnit.SECONDS)
                 val chunks = mutableListOf<String>()
-                val answer = client.generate(LocalGenerationRequest("Write a short greeting.", 32), chunks::add)
-                    .get(180, TimeUnit.SECONDS)
+                val generation = client.generate(LocalGenerationRequest("Write a short greeting.", 32)) {
+                    chunks.add(it)
+                    println("REAL_MODEL chunk chars=${it.length}")
+                }.orTimeout(180, TimeUnit.SECONDS)
+                Thread.sleep(1000)
+                try { println("REAL_MODEL during-generation phase=${client.state().get(5, TimeUnit.SECONDS).phase}") }
+                catch (error: Exception) { println("REAL_MODEL IPC_STATE_UNRESPONSIVE ${error.javaClass.simpleName}") }
+                val answer = generation.get(180, TimeUnit.SECONDS)
+                println("REAL_MODEL generated chars=${answer.text.length}")
                 assertTrue(answer.text.isNotBlank())
                 assertEquals(metadata.id, answer.modelId)
                 assertEquals(metadata.version, answer.modelVersion)

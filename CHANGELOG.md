@@ -14,6 +14,11 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Android isolates external speech-engine calls from its UI/IPC thread, bounds unavailable-engine initialization, and fences stopped speech during late startup.
+
+- Android test downloads now include both debug APKs and exact-source checksums even when installed acceptance fails, clearly labeled as unverified. Failed acceptance still blocks release-candidate artifacts.
+- Android chat-error acceptance scrolls to copy feedback and restored actions in long conversations.
+
 - Android acceptance scrolls long failed conversations to the error action and runs cross-process speech/model and persisted cloud-history checks in CI.
 
 - Android document imports pass a file descriptor to the canonical model owner after checksum calculation, avoiding an extra copy through an IPC pipe.

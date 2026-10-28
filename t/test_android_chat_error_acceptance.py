@@ -37,6 +37,10 @@ class ChatErrorAcceptanceTest(unittest.TestCase):
         self.assertTrue(result['clipboard_exact_match'])
         self.assertTrue(result['saved_details_unchanged'])
         self.assertTrue(result['later_success'])
+        feedback_reveals = [i for i,c in enumerate(device.calls) if c == ('reveal_contains', 'Error details copied')]
+        feedback_waits = [i for i,c in enumerate(device.calls) if c == ('await_label', 'Error details copied')]
+        self.assertEqual(2, len(feedback_reveals))
+        self.assertTrue(all(reveal < wait for reveal,wait in zip(feedback_reveals,feedback_waits)))
         self.assertLess(device.calls.index(('reveal_contains', 'Copy error details')),
                         device.calls.index(('await_label', 'Copy error details')))
         marker = 'zara_error_recovery_1523'
