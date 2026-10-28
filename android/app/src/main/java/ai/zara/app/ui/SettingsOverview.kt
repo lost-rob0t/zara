@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -35,6 +36,7 @@ internal fun SettingsOverviewContent(
         ?: if (localModels.isEmpty()) "no model installed" else "${localModels.size} installed"
     SectionCard("INTELLIGENCE") {
         SettingsOverviewRow(
+            destination = AppRoute.Runtime,
             title = "Runtime & local AI",
             summary = "${runtimeMode.name} · $modelSummary",
             onClick = { onNavigate(AppRoute.Runtime) },
@@ -42,6 +44,7 @@ internal fun SettingsOverviewContent(
     }
     SectionCard("CONNECTIVITY") {
         SettingsOverviewRow(
+            destination = AppRoute.Connection,
             title = "Connection",
             summary = connectionLabel(runtimeState.server),
             onClick = { onNavigate(AppRoute.Connection) },
@@ -49,11 +52,13 @@ internal fun SettingsOverviewContent(
     }
     SectionCard("DEVICE") {
         SettingsOverviewRow(
+            destination = AppRoute.Permissions,
             title = "Permissions",
             summary = if (microphonePermissionGranted) "Microphone granted" else "Microphone required",
             onClick = { onNavigate(AppRoute.Permissions) },
         )
         SettingsOverviewRow(
+            destination = AppRoute.Appearance,
             title = "Appearance",
             summary = selectedTheme.name,
             onClick = { onNavigate(AppRoute.Appearance) },
@@ -61,6 +66,7 @@ internal fun SettingsOverviewContent(
     }
     SectionCard("EXTENSIONS") {
         SettingsOverviewRow(
+            destination = AppRoute.Plugins,
             title = "Plugins",
             summary = "Capabilities and integrations",
             onClick = { onNavigate(AppRoute.Plugins) },
@@ -68,16 +74,19 @@ internal fun SettingsOverviewContent(
     }
     SectionCard("SYSTEM") {
         SettingsOverviewRow(
+            destination = AppRoute.Updates,
             title = "Updates",
             summary = updateState.phase.name.lowercase(),
             onClick = { onNavigate(AppRoute.Updates) },
         )
         SettingsOverviewRow(
+            destination = AppRoute.Diagnostics,
             title = "Diagnostics",
             summary = "Runtime state and safe export",
             onClick = { onNavigate(AppRoute.Diagnostics) },
         )
         SettingsOverviewRow(
+            destination = AppRoute.About,
             title = "About",
             summary = "Build and version information",
             onClick = { onNavigate(AppRoute.About) },
@@ -87,13 +96,15 @@ internal fun SettingsOverviewContent(
 
 @Composable
 private fun SettingsOverviewRow(
+    destination: AppRoute,
     title: String,
     summary: String,
     onClick: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().testTag("zara.route.${destination.name.lowercase()}")
+            .clickable(onClick = onClick),
         color = tokens.surfaceInput,
         shape = MaterialTheme.shapes.medium,
     ) {

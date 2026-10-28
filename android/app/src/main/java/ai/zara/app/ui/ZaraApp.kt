@@ -104,6 +104,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -280,6 +282,7 @@ fun ZaraApp(
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val showRail = usesNavigationRail(maxWidth.value)
                 ModalNavigationDrawer(
+                    modifier = Modifier.semantics { testTagsAsResourceId = true },
                     drawerState = drawerState,
                     drawerContent = {
                         ZaraDrawer(
@@ -323,6 +326,7 @@ fun ZaraApp(
                                     selected = navigation.menu,
                                     state = runtimeState,
                                     localState = localServerState,
+                                    drawerOpen = drawerState.isOpen,
                                     onMenu = { scope.launch { drawerState.open() } },
                                 )
                             },
@@ -340,6 +344,12 @@ fun ZaraApp(
                                 Box(Modifier.weight(1f).fillMaxWidth()) {
                                     savedContent.SaveableStateProvider(navigation.route.name) {
                                         val padding = PaddingValues(0.dp)
+                                        Box(
+                                            Modifier.fillMaxSize().testTag("zara.screen.${navigation.route.name.lowercase()}")
+                                                .semantics {
+                                                    stateDescription = "menu=${navigation.menu.name.lowercase()};destination=${navigation.route.name.lowercase()};drawer=${if (drawerState.isOpen) "open" else "closed"}"
+                                                },
+                                        ) {
                                         when (selected) {
                                             AppSurface.Chat -> {
                                                 val conversation = conversationState.selectedConversation
@@ -485,6 +495,7 @@ fun ZaraApp(
                                             )
                                             AppSurface.About -> AboutSurface(sourceSha, padding)
                                         }
+                                        }
                                     }
                                 }
                             }
@@ -516,6 +527,7 @@ private fun ZaraTopBar(
     selected: AppMenu,
     state: RuntimeState,
     localState: LocalServerState,
+    drawerOpen: Boolean,
     onMenu: () -> Unit,
 ) {
     val tokens = LocalZaraTokens.current
@@ -533,7 +545,11 @@ private fun ZaraTopBar(
         ) {
             TextButton(
                 onClick = onMenu,
-                modifier = Modifier.semantics { contentDescription = "Open navigation menu" },
+                modifier = Modifier.semantics {
+                    contentDescription = "Open navigation menu"
+                    stateDescription = if (drawerOpen) "Navigation drawer open" else "Navigation drawer closed"
+                }
+                    .testTag("zara.navigation.open-menu"),
             ) {
                 Text("☰", color = tokens.text, fontSize = 23.sp)
             }
@@ -605,6 +621,7 @@ private fun ZaraDrawer(
                     },
                     selected = selected == menu,
                     onClick = { onSelect(menu) },
+                    modifier = Modifier.testTag("zara.menu.${menu.name.lowercase()}"),
                     colors = NavigationDrawerItemDefaults.colors(
                         selectedContainerColor = tokens.ambientGlow,
                         unselectedContainerColor = Color.Transparent,

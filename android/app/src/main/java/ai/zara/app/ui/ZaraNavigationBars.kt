@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
 internal val AppNavigationSaver = listSaver<AppNavigation, String>(
@@ -38,7 +39,8 @@ internal fun ZaraNavigationRail(selected: AppMenu, onSelect: (AppMenu) -> Unit) 
                 onClick = { onSelect(menu) },
                 icon = { Text(menu.glyph, modifier = Modifier.clearAndSetSemantics { }) },
                 label = { Text(menu.label, maxLines = 2) },
-                modifier = Modifier.padding(vertical = 4.dp).heightIn(min = 64.dp),
+                modifier = Modifier.padding(vertical = 4.dp).heightIn(min = 64.dp)
+                    .testTag("zara.menu.${menu.name.lowercase()}"),
                 colors = NavigationRailItemDefaults.colors(
                     selectedIconColor = tokens.accentCyan,
                     selectedTextColor = tokens.text,
@@ -69,7 +71,8 @@ internal fun ZaraRouteTabs(navigation: AppNavigation, onSelect: (AppRoute) -> Un
             Tab(
                 selected = route == navigation.route,
                 onClick = { onSelect(route) },
-                modifier = Modifier.heightIn(min = 48.dp),
+                modifier = Modifier.heightIn(min = 48.dp)
+                    .testTag("zara.route.${route.name.lowercase()}"),
                 selectedContentColor = tokens.accentCyan,
                 unselectedContentColor = tokens.textMuted,
                 text = { Text(route.label, style = MaterialTheme.typography.labelLarge) },

@@ -12,7 +12,9 @@ def source() -> str:
 
 def test_acceptance_uses_three_primary_menus_not_legacy_drawer_routes():
     text = source()
-    assert 'device.tap("Open navigation menu")' in text
+    assert 'device.tap_tag("zara.navigation.open-menu")' in text
+    assert 'device.await_drawer_state(True)' in text
+    assert 'device.await_navigation(menu.lower(), route, drawer_open=False)' in text
     assert '("Chat", "Workspace", "Settings")' in text
     assert 'for route in ("Chat", "Logic", "Voice", "Projects", "Remote", "Scheduled"' not in text
 
