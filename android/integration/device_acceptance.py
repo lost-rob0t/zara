@@ -434,7 +434,11 @@ class Device:
         except Exception as error:
             evidence["ui_hierarchy_error"] = str(error)
         try:
-            pid = self.adb("shell", "pidof", "ai.zara.app").strip().split()
+            try:
+                pid = self.adb("shell", "pidof", "ai.zara.app").strip().split()
+            except subprocess.CalledProcessError as error:
+                pid = []
+                evidence["app_pid_lookup_error"] = str(error)
             command = ["shell", "logcat", "-d", "-t", "1000", "-v", "threadtime"]
             if pid:
                 command.extend(("--pid", pid[0]))
@@ -648,15 +652,15 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.assert_accessible_targets(("Chat", "Workspace", "Settings"))
     device.capture("wide-navigation-rail")
     device.restore_profile()
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
 
     device.set_display_profile(
         "narrow-large-font", target_width_dp=320, font_scale=1.30
     )
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
     device.capture("narrow-large-font")
     device.restore_profile()
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
 
     # Keep a draft only; never submit it. The local chat path must become usable for
     # this lifecycle acceptance or the screenshot gate fails honestly.
@@ -683,7 +687,7 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.await_tag("zara.route.runtime")
     device.tap_tag("zara.route.runtime")
     device.press_back()
-    device.await_label("Chat")
+    device.await_navigation("chat", "chat", drawer_open=False)
     device.capture("back-to-chat")
 
 

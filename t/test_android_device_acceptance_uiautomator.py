@@ -317,6 +317,44 @@ def test_failure_capture_bundles_screenshot_hierarchy_and_logs(tmp_path, monkeyp
     assert "Zara failure fixture" in (tmp_path / evidence["logs"]["file"]).read_text()
 
 
+def test_failure_capture_falls_back_to_device_log_when_app_process_exited(tmp_path, monkeypatch):
+    module = _load_device_acceptance_module()
+    device = module.Device("emulator-5554", tmp_path)
+    hierarchy = '<hierarchy><node resource-id="zara.screen.chat" /></hierarchy>'
+    screenshot = b"\x89PNG\r\n\x1a\nfixture"
+    calls = []
+
+    def fake_adb(*args, **kwargs):
+        calls.append(args)
+        if args[:3] == ("exec-out", "screencap", "-p"):
+            return screenshot
+        if args[:3] == ("shell", "uiautomator", "dump"):
+            return "dumped"
+        if args[:2] == ("shell", "cat"):
+            return hierarchy
+        if args[:2] == ("shell", "pidof"):
+            raise subprocess.CalledProcessError(1, args)
+        if args[:2] == ("shell", "logcat"):
+            return "FATAL EXCEPTION: main"
+        return ""
+
+    monkeypatch.setattr(device, "adb", fake_adb)
+    device.capture("process-exited")
+
+    evidence = device.screenshots[0]
+    assert evidence["log_scope"] == "device_logcat_no_pid"
+    assert "pidof" in evidence["app_pid_lookup_error"]
+    assert "FATAL EXCEPTION" in (tmp_path / evidence["logs"]["file"]).read_text()
+    assert calls[-1][:3] == ("shell", "logcat", "-d")
+
+
+def test_three_menu_display_profile_journey_asserts_exact_chat_state():
+    source = Path("android/integration/device_acceptance.py").read_text(encoding="utf-8")
+
+    assert 'device.await_navigation("chat", "chat", drawer_open=False)' in source
+    assert 'device.await_label("Chat")' not in source[source.index("def exercise_three_menu_ui"):]
+
+
 def test_production_compose_exposes_semantic_destination_menu_and_route_ids():
     app_ui = Path(
         "android/app/src/main/java/ai/zara/app/ui/ZaraApp.kt"

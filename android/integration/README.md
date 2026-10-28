@@ -4,7 +4,7 @@
 
 Compose exposes stable `resource-id` values to UIAutomator for primary menu entries (`zara.menu.<menu>`), route tabs (`zara.route.<route>`), the menu control (`zara.navigation.open-menu`), selected menu (`zara.menu.active.<menu>`), destination (`zara.screen.<route>`), and drawer state (`zara.navigation.drawer-state`). The destination tag identifies the visible route; the selected-menu tag and drawer's `content-desc` identify the other navigation state explicitly. Feature scenarios should select controls by these IDs where labels can repeat, then assert all three state values. Visible text remains useful for checking user-facing content and accessibility; it is not a substitute for asserting the destination.
 
-Each `capture(name)` writes `name.png`, `name.hierarchy.xml`, and a bounded app-process log (`name.logcat.txt`) when the app process is available. `manifest.json` ties each evidence set to its scenario ID and records source SHA, installed package/version identity, device profile, and pass/fail outcome. Capture is attempted on the failure path too; hierarchy or log collection errors are recorded instead of hiding the original test failure.
+Each `capture(name)` writes `name.png`, `name.hierarchy.xml`, and a bounded log (`name.logcat.txt`). It scopes logs to Zara when the process is running and falls back to device logcat when Zara has exited, recording that distinction in the manifest. `manifest.json` ties each evidence set to its scenario ID and records source SHA, installed package/version identity, device profile, and pass/fail outcome. Capture is attempted on the failure path too; hierarchy or log collection errors are recorded instead of hiding the original test failure.
 
 Run against an explicitly selected emulator:
 
