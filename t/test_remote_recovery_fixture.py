@@ -13,6 +13,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import concurrent.futures
+import queue
+import threading
 from pathlib import Path
 
 import pytest
@@ -23,6 +26,25 @@ from zara.protocol import ProtocolMessage, decode_message, encode_message
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = REPO_ROOT / "android" / "integration" / "remote_recovery_fixture.py"
+
+
+def test_arm_waits_for_fixture_acknowledgement(monkeypatch):
+    server = FixtureServer.__new__(FixtureServer)
+    server.values = {"control_fifo": "fixture-only"}
+    server.trace_events = queue.Queue()
+    written = threading.Event()
+    monkeypatch.setattr(os, "open", lambda *_: 1000000)
+    monkeypatch.setattr(os, "write", lambda *args: written.set() or len(args[1]))
+    monkeypatch.setattr(os, "close", lambda *_: None)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        armed = executor.submit(server.arm, "STALE")
+        assert written.wait(1)
+        try:
+            with pytest.raises(concurrent.futures.TimeoutError):
+                armed.result(timeout=0.05)
+        finally:
+            server.trace_events.put("FIXTURE phase=arm outcome=stale\n")
+        armed.result(timeout=1)
 
 
 class FixtureServer:
@@ -38,6 +60,14 @@ class FixtureServer:
             bufsize=1,
             cwd=str(REPO_ROOT),
         )
+        self.trace_events = queue.Queue()
+        self.trace_lines = []
+        def collect_traces():
+            for line in self.process.stderr:
+                self.trace_lines.append(line)
+                self.trace_events.put(line)
+        self.trace_thread = threading.Thread(target=collect_traces, daemon=True)
+        self.trace_thread.start()
         ready = self.process.stdout.readline().strip()
         assert ready == "READY", f"fixture did not become ready: {ready}"
         values = {}
@@ -58,6 +88,16 @@ class FixtureServer:
             os.write(descriptor, f"ARM {mode}\n".encode())
         finally:
             os.close(descriptor)
+        deadline = time.monotonic() + 5
+        acknowledgement = f"FIXTURE phase=arm outcome={mode.lower()}"
+        while time.monotonic() < deadline:
+            try:
+                line = self.trace_events.get(timeout=max(0.001, deadline - time.monotonic()))
+            except queue.Empty:
+                break
+            if line.startswith(acknowledgement):
+                return
+        raise AssertionError(f"Fixture did not acknowledge {mode}")
 
     def client(self) -> zmq.Socket:
         dealer = zmq.Context.instance().socket(zmq.DEALER)
@@ -77,7 +117,9 @@ class FixtureServer:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self.process.kill()
-        stderr = self.process.stderr.read()
+        self.trace_thread.join(timeout=5)
+        assert not self.trace_thread.is_alive(), "Fixture trace stream did not close"
+        stderr = "".join(self.trace_lines)
         self.directory.cleanup()
         return stderr
 

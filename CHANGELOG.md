@@ -14,6 +14,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Local transport shutdown releases its resolved endpoint before deferred socket destruction, so immediate gateway restart can rebind reliably.
 - Android local models and offline speech now use the cross-process service protocol correctly. Speech settings expose installed voice status, a test/stop control, voice installation, and retry after setup.
 - Android remote model setup can check a saved HTTPS connection, list and select models, stream replies, and stop pending replies while retaining bounded per-chat context. Provider errors no longer display untrusted response bodies.
 - Android discovers the matching LLM Serve companion APK and opens it only when its signing certificate matches Zara. The companion reports a missing model instead of claiming readiness.
