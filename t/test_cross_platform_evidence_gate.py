@@ -256,31 +256,51 @@ def test_android_acceptance_dismisses_only_pixel_launcher_anr(
 ) -> None:
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
-    launcher_anr = module.ET.fromstring(
-        '<node text="Pixel Launcher isn\'t responding" bounds="[10,10][90,90]" />'
-    )
-    wait = module.ET.fromstring('<node text="Wait" bounds="[20,30][80,70]" />')
+    visible = {"dialog": True}
     adb_calls: list[tuple[str, ...]] = []
 
-    monkeypatch.setattr(
-        device,
-        "find_contains",
-        lambda fragment: launcher_anr
-        if fragment == "Pixel Launcher isn't responding"
-        else None,
-    )
-    monkeypatch.setattr(device, "find", lambda label: wait if label == "Wait" else None)
-    monkeypatch.setattr(
-        device,
-        "adb",
-        lambda *arguments, **kwargs: adb_calls.append(arguments) or "",
-    )
+    def nodes():
+        if not visible["dialog"]:
+            return iter(())
+        root = module.ET.fromstring(
+            """
+            <hierarchy>
+              <node package="android" bounds="[0,0][200,200]">
+                <node resource-id="pixel-anr-owner" bounds="[0,0][100,130]">
+                  <node text="Pixel Launcher isn't responding"
+                        package="com.google.android.apps.nexuslauncher"
+                        bounds="[10,10][90,90]" />
+                  <node text="Close app" package="android"
+                        resource-id="android:id/aerr_close"
+                        bounds="[20,30][80,70]" />
+                </node>
+              </node>
+            </hierarchy>
+            """
+        )
+        return iter(device.annotate_hierarchy(root))
+
+    def adb(*arguments: str, **_kwargs):
+        adb_calls.append(arguments)
+        if arguments[:3] == ("shell", "input", "tap"):
+            visible["dialog"] = False
+        return ""
+
+    monkeypatch.setattr(device, "nodes", nodes)
+    monkeypatch.setattr(device, "adb", adb)
     monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
 
     assert device.dismiss_pixel_launcher_anr() is True
     assert adb_calls == [("shell", "input", "tap", "50", "50")]
+    assert device.system_anr_sanitation == [
+        {
+            "package": "com.google.android.apps.nexuslauncher",
+            "dialog": "Pixel Launcher isn't responding",
+            "action": "Close app",
+            "cleared": True,
+        }
+    ]
 
-    monkeypatch.setattr(device, "find_contains", lambda _fragment: None)
     adb_calls.clear()
     assert device.dismiss_pixel_launcher_anr() is False
     assert adb_calls == []
@@ -341,6 +361,7 @@ def test_android_acceptance_waits_for_delayed_release_notes_button_semantics(
     attempts = {"continue": 0}
     adb_calls: list[tuple[str, ...]] = []
 
+    monkeypatch.setattr(device, "nodes", lambda: iter(()))
     monkeypatch.setattr(
         device,
         "find_contains",
@@ -377,6 +398,7 @@ def test_android_acceptance_release_notes_button_timeout_still_fails_closed(
     )
     monotonic_values = iter((0.0, 0.0, 0.5, 1.1))
 
+    monkeypatch.setattr(device, "nodes", lambda: iter(()))
     monkeypatch.setattr(
         device,
         "find_contains",
