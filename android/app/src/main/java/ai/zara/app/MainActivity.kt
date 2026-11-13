@@ -877,6 +877,12 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 },
+                onSelectUpdateChannel = { channel ->
+                    operationError = null
+                    updateManager.selectChannel(channel).whenComplete { _, error ->
+                        runOnUiThread { operationError = error?.let(UiOperationFailure::summarize) }
+                    }
+                },
                 onSelectUpdate = { selectionId ->
                     operationError = null
                     updateManager.select(selectionId).whenComplete { _, error ->

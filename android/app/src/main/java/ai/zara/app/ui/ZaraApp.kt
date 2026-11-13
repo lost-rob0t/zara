@@ -28,6 +28,7 @@ import ai.zara.ui.health.HealthGoalTarget
 import ai.zara.app.prolog.PrologSource
 import ai.zara.app.prolog.LocalEmbeddingConfiguration
 import ai.zara.app.update.UpdatePhase
+import ai.zara.app.update.UpdateChannel
 import ai.zara.app.update.UpdateState
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.VoiceStreamState
@@ -228,6 +229,7 @@ fun ZaraApp(
     onExportPrologWorkspace: () -> String,
     onCheckForUpdate: () -> Unit,
     onSelectUpdate: (String) -> Unit,
+    onSelectUpdateChannel: (UpdateChannel) -> Unit = {},
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onCopyDiagnostics: () -> Unit,
@@ -476,6 +478,7 @@ fun ZaraApp(
                                                 onRequestAssistantRole = onRequestAssistantRole,
                                                 onCheckForUpdate = onCheckForUpdate,
                                                 onSelectUpdate = onSelectUpdate,
+                                                onSelectUpdateChannel = onSelectUpdateChannel,
                                                 onDownloadUpdate = onDownloadUpdate,
                                                 onInstallUpdate = onInstallUpdate,
                                                 onSelectRuntimeMode = onSelectRuntimeMode,
@@ -1344,6 +1347,7 @@ private fun SettingsSurface(
     onRequestAssistantRole: () -> Unit,
     onCheckForUpdate: () -> Unit,
     onSelectUpdate: (String) -> Unit,
+    onSelectUpdateChannel: (UpdateChannel) -> Unit = {},
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onSelectRuntimeMode: (RuntimeMode) -> Unit,
@@ -1607,13 +1611,26 @@ private fun SettingsSurface(
                     KeyValueRow("source", BuildConfig.SOURCE_SHA.take(12))
                     KeyValueRow("status", updateState.phase.name.lowercase())
 
-                    if (updateState.choices.isNotEmpty()) {
+                    val updateBusy = updateState.phase in setOf(
+                        UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING,
+                    )
+                    Text("UPDATE CHANNEL", color = tokens.accentCyan,
+                        style = MaterialTheme.typography.labelSmall)
+                    UpdateChannel.entries.forEach { channel ->
+                        SecondaryAction(
+                            label = if (channel == updateState.channel) "✓ ${channel.label}" else channel.label,
+                            enabled = !updateBusy,
+                        ) { onSelectUpdateChannel(channel) }
+                    }
+                    SecondaryAction("Refresh versions", !updateBusy, onCheckForUpdate)
+                    val channelChoices = updateState.choices.filter { it.channel == updateState.channel }
+                    if (channelChoices.isNotEmpty()) {
                         Text(
-                            "VERSION / CHANNEL",
+                            "VERSION",
                             color = tokens.accentCyan,
                             style = MaterialTheme.typography.labelSmall,
                         )
-                        updateState.choices.forEach { release ->
+                        channelChoices.forEach { release ->
                             val selected = updateState.selectedId == release.selectionId
                             SecondaryAction(
                                 label = if (selected) "✓ ${release.displayName}" else release.displayName,
@@ -1628,6 +1645,8 @@ private fun SettingsSurface(
 
                     updateState.release?.let { release ->
                         KeyValueRow("selected", release.displayName)
+                        KeyValueRow("selected version", release.productVersion)
+                        release.versionCode?.let { KeyValueRow("version code", it.toString()) }
                         KeyValueRow("selected source", release.sourceSha.take(12))
                     }
                     updateState.progressPercent?.let { progress ->
@@ -1639,7 +1658,7 @@ private fun SettingsSurface(
                         UpdatePhase.READY -> PrimaryAction("Install update", true, onInstallUpdate)
                         UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING ->
                             PrimaryAction("Working…", false) { }
-                        else -> PrimaryAction("Refresh versions", true, onCheckForUpdate)
+                        else -> Unit
                     }
                     MutedNotice(
                         "Master (fastest green) tracks the newest fully green master APK through the mutable android-latest channel. " +

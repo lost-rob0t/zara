@@ -223,3 +223,20 @@ The opt-in installed real-model test accepts pinned =qwen2-0.5b= or
 an existing catalog model before the same generation, streaming, unload/reload
 assertions; it does not claim a fresh import. Ordinary CI skips real-model tests
 unless their external fixture is explicitly supplied.
+
+* Update channels and versions
+
+Settings -> Updates has independent Master (fastest green) and Versioned release
+channel controls. Refresh versions loads the published catalogs. The selected
+channel and version persist across refresh and process restart; a missing channel
+never silently switches to the other one.
+
+Master resolves =android-latest/zara-latest.manifest.txt= and downloads the exact
+=zara-latest.apk= whose checksum it records. Its displayed product version and
+Android version code come from that manifest, not from the mutable tag's target.
+Versioned entries use =zara-android-<version>.manifest.txt= and the exact phone APK;
+Code Editor, Wear, LLM Serve and Org APKs are never selected for the phone updater.
+The user can inspect older releases, but an already installed or older version
+has no download/install action. A master APK with a lower Android version code
+is also rejected. Android's package installer retains signer verification and
+user confirmation. Selecting a channel or version never installs automatically.

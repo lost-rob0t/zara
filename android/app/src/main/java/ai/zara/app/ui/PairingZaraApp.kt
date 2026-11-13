@@ -14,6 +14,7 @@ import ai.zara.app.runtime.RuntimeState
 import ai.zara.app.samsunghealth.SamsungHealthMetric
 import ai.zara.app.samsunghealth.SamsungHealthUiState
 import ai.zara.ui.health.HealthGoalTarget
+import ai.zara.app.update.UpdateChannel
 import ai.zara.app.update.UpdateState
 import ai.zara.app.voice.ManualVoiceState
 import ai.zara.app.voice.VoiceStreamState
@@ -196,6 +197,7 @@ fun ZaraApp(
     onExportPrologWorkspace: () -> String,
     onCheckForUpdate: () -> Unit,
     onSelectUpdate: (String) -> Unit,
+    onSelectUpdateChannel: (UpdateChannel) -> Unit = {},
     onDownloadUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onCopyDiagnostics: () -> Unit,
@@ -306,6 +308,7 @@ fun ZaraApp(
                 onExportPrologWorkspace = onExportPrologWorkspace,
                 onCheckForUpdate = onCheckForUpdate,
                 onSelectUpdate = onSelectUpdate,
+                onSelectUpdateChannel = onSelectUpdateChannel,
                 onDownloadUpdate = onDownloadUpdate,
                 onInstallUpdate = onInstallUpdate,
                 onCopyDiagnostics = onCopyDiagnostics,
