@@ -1,0 +1,142 @@
+#+title: Wraith
+#+startup: overview
+
+* What Wraith is
+
+Wraith is Zara's supervised subagent society.
+
+Zara remains the assistant. Wraith is the typed machinery underneath Zara that
+lets it represent supervisors, workers, reviewers, researchers, graders and
+other child agents without making an LLM framework the source of truth.
+
+The core rule is:
+
+#+begin_example
+Prolog defines what an agent is allowed to be and do.
+WRAITH/1 records typed logical state.
+ZARA-RUNTIME/1 chooses and fences the executor.
+The backend executes.
+#+end_example
+
+The first backend is expected to be Python, using Pykka where active actor
+mailboxes and supervision are required. The contract is intentionally not
+Python-specific so a later Zara language runtime can implement the same
+semantics.
+
+* Why Wraith is separate from the existing conversational agent
+
+The current conversational agent is an application feature. Wraith is a lower
+level substrate.
+
+Wraith must not create a second:
+
+- conversation store;
+- plugin registry;
+- task store;
+- permission system;
+- runtime registry;
+- provider configuration authority.
+
+Long-horizon user tasks continue to use Zara's canonical task subsystem.
+Wraith workers may execute pieces of work, but do not replace that durable task
+authority.
+
+* Current WRAITH/1 slice
+
+The first slice defines:
+
+- immutable agent specifications;
+- explicit parent identity;
+- runtime generation binding;
+- capabilities as bounded names, not ambient authority;
+- non-negative budgets;
+- typed messages carrying opaque payload references;
+- deterministic task state transitions;
+- deterministic serialization for traces and fixtures;
+- matching Prolog validation primitives.
+
+There is no LLM requirement in this layer.
+
+* Runtime relationship
+
+Wraith consumes the runtime selected by =ZARA-RUNTIME/1=.
+
+An agent therefore binds to:
+
+#+begin_example
+runtime_id
+runtime_generation
+#+end_example
+
+rather than holding a Python object, process handle, provider client, or model
+session as its identity.
+
+When the runtime generation becomes stale, execution layers must reject the
+stale binding rather than letting an old worker publish into a newer Zara
+runtime selection.
+
+* Prolog ownership
+
+=modules/wraith.pl= is the beginning of the deterministic policy surface.
+
+It currently provides the closed vocabulary and validation needed for the typed
+contract. Follow-on work moves real spawn/delegation/capability decisions into
+Prolog policy before a Python/Pykka backend is asked to start a worker.
+
+Model output is always a proposal. It cannot grant itself:
+
+- a parent;
+- a principal identity;
+- additional children;
+- more budget;
+- filesystem/process/network authority;
+- plugin/tool permissions.
+
+* Relationship to existing projects
+
+Wraith intentionally reuses ideas already present in the surrounding system.
+
+** Prolog-RLM
+
+The existing Prolog-RLM agent runtime already uses supervised mailbox
+processing and exposes Prolog-level spawn/send APIs. Wraith should share or
+adapt those semantics where they fit rather than creating an incompatible
+second Prolog agent world.
+
+** AgentProlog
+
+AgentProlog remains a profile/product above Prolog-RLM. It may consume Wraith
+events and contracts, but does not become Zara's generic subagent authority.
+
+** StarIntel pro-actors
+
+The existing StarIntel pro-actors work contains bounded Pykka supervisor/worker
+patterns. The Wraith Python backend should reuse those lessons while keeping
+Zara's authority in Prolog and Zara's canonical runtime/permission layers.
+
+* Testing
+
+Focused gates:
+
+#+begin_src sh
+pytest -q t/test_wraith_contract_v1.py
+bash scripts/test-wraith.sh
+#+end_src
+
+The full repository gate also runs the Prolog Wraith contract.
+
+* Next
+
+The next implementation slice is the Python/Pykka executor boundary:
+
+#+begin_example
+spawn(spec)
+send(agent_id, message)
+snapshot(agent_id)
+pause(agent_id)
+resume(agent_id)
+terminate(agent_id)
+#+end_example
+
+Those operations will execute an already-authorized Wraith specification. They
+must not become a second policy engine.
