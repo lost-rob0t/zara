@@ -35,6 +35,7 @@ class ChatErrorClipboardInstrumentedTest {
         val deadline = SystemClock.uptimeMillis() + 30_000
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         var clicked = false
+        var scrollDirection = AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
         while (SystemClock.uptimeMillis() < deadline && !clicked) {
             val root = automation.rootInActiveWindow
             val label = find(root, "Copy error details")
@@ -47,7 +48,14 @@ class ChatErrorClipboardInstrumentedTest {
                 assertEquals("zara_clipboard_sentinel_1523", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
                 clicked = action?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
             } else {
-                findScrollable(root)?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)
+                val scroller = findScrollable(root)
+                if (scroller != null && !scroller.performAction(scrollDirection)) {
+                    scrollDirection = if (scrollDirection == AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) {
+                        AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                    } else {
+                        AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                    }
+                }
             }
             if (!clicked) SystemClock.sleep(200)
         }
@@ -77,7 +85,7 @@ class ChatErrorClipboardInstrumentedTest {
 
     private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (node == null) return null
-        if (node.isScrollable) return node
+        if (node.isScrollable && node.className?.toString() == "android.widget.ScrollView") return node
         for (index in 0 until node.childCount) findScrollable(node.getChild(index))?.let { return it }
         return null
     }
