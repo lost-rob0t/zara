@@ -52,6 +52,8 @@ class ChatErrorAcceptanceTest(unittest.TestCase):
         self.assertNotIn('throw(', failed_query)
         self.assertIn(('tap', 'Clear diagnostics'), device.calls)
         self.assertIn(('tap_tag', 'zara.route.diagnostics'), device.calls)
+        self.assertLess(device.calls.index(('reveal', 'Diagnostics')),
+                        device.calls.index(('tap_tag', 'zara.route.diagnostics')))
         self.assertNotIn(('tap', 'Diagnostics'), device.calls)
         self.assertNotIn(('tap_tab', 'Diagnostics'), device.calls)
         self.assertIn(('recreate',), device.calls)

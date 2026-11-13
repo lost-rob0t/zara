@@ -595,6 +595,8 @@ def open_menu(device: Device, menu: str) -> None:
         else:
             device.tap_tag(f"zara.route.{route}")
     device.await_navigation(menu.lower(), route, drawer_open=False)
+    if menu == "Settings":
+        device.reveal(label)
     device.await_label(label)
 
 

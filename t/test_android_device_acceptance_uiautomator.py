@@ -58,6 +58,7 @@ def test_open_menu_returns_to_root_from_remembered_child(menu, restored, root):
         route = restored
         back_count = 0
         checked = False
+        root_visible = menu != "Settings"
 
         def tap_tag(self, tag):
             if tag.startswith("zara.route."):
@@ -88,6 +89,11 @@ def test_open_menu_returns_to_root_from_remembered_child(menu, restored, root):
 
         def await_label(self, label):
             assert self.checked
+            assert self.root_visible
+
+        def reveal(self, label):
+            assert self.route == root
+            self.root_visible = True
 
     device = RememberedNavigationDevice()
     module.open_menu(device, menu)
@@ -261,7 +267,7 @@ def test_open_menu_requires_drawer_dismissal_and_destination_content(
     module = _load_device_acceptance_module()
     device = module.Device("emulator-5554", tmp_path)
     calls: list[tuple] = []
-    for name in ("tap_tag", "await_drawer_state", "await_tag", "await_absent", "await_navigation", "await_label"):
+    for name in ("tap_tag", "await_drawer_state", "await_tag", "await_absent", "await_navigation", "reveal", "await_label"):
         monkeypatch.setattr(device, name, lambda *args, _name=name, **kwargs: calls.append((_name, args, kwargs)))
     monkeypatch.setattr(device, "find_tag", lambda tag: object())
 
@@ -277,6 +283,7 @@ def test_open_menu_requires_drawer_dismissal_and_destination_content(
         ("await_absent", ("Close navigation menu",), {}),
         ("await_tag", ("zara.menu.active.settings",), {}),
         ("await_navigation", ("settings", "settings"), {"drawer_open": False}),
+        ("reveal", ("Runtime & local AI",), {}),
         ("await_label", ("Runtime & local AI",), {}),
     ]
 
