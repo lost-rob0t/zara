@@ -12,6 +12,45 @@ import org.junit.Test
 
 class AssistantCapturePlanTest {
     @Test
+    fun `remote provider can use local STT and TTS when Zara server is absent`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Remote,
+                localState = readyLocalState(),
+                runtimeState = state,
+                remoteModelReady = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `symbolic mode uses embedded runtime without model or remote requirements`() {
+        val state = RuntimeState.initial().copy(
+            enrollment = EnrollmentReadiness.Unenrolled,
+            assistantRole = AssistantRole.Held,
+            server = ServerConnection.Disconnected,
+            sessionId = null,
+        )
+
+        assertEquals(
+            AssistantCapturePlan.Local,
+            planAssistantCapture(
+                mode = RuntimeMode.Symbolic,
+                localState = readyLocalState(),
+                runtimeState = state,
+            ),
+        )
+    }
+
+    @Test
     fun `strict local mode uses embedded runtime without remote enrollment or connection`() {
         val state = RuntimeState.initial().copy(
             enrollment = EnrollmentReadiness.Unenrolled,
@@ -79,7 +118,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),
@@ -107,7 +146,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),
@@ -135,7 +174,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),
@@ -162,7 +201,7 @@ class AssistantCapturePlanTest {
         )
 
         assertEquals(
-            AssistantCapturePlan.Reject("Remote Zara session is not ready"),
+            AssistantCapturePlan.Reject("Remote Zara session or model provider is not ready"),
             planAssistantCapture(
                 mode = RuntimeMode.Remote,
                 localState = readyLocalState(),

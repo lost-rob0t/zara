@@ -39,7 +39,7 @@ data class SymbolicConversationEdgeSnapshot(
         require(runtimeGeneration >= 0) { "runtimeGeneration must be >= 0" }
         require(projectGeneration >= 0) { "projectGeneration must be >= 0" }
         projectId?.let {
-            requireBoundedText(it, MAX_ID_CHARS, "projectId", allowBlank = false)
+            requireBoundedText(it, MAX_PROJECT_ID_CHARS, "projectId", allowBlank = false)
         }
         requireBoundedText(dialogueAct, MAX_ACT_CHARS, "dialogueAct", allowBlank = true)
         validateRefs(discourseEntityRefs, "discourseEntityRefs")
@@ -137,6 +137,7 @@ data class SymbolicConversationEdgeSnapshot(
         const val MAX_REFS = 16
         const val MAX_VERIFIED_OUTCOME_REFS = 64
         internal const val MAX_ID_CHARS = 128
+        internal const val MAX_PROJECT_ID_CHARS = 512
         internal const val MAX_ACT_CHARS = 96
         internal const val MAX_REF_CHARS = 128
         internal const val MAX_VERIFIED_OUTCOME_REF_CHARS = 448
@@ -191,7 +192,7 @@ object SymbolicConversationEdgeCodec {
             output.writeLong(snapshot.runtimeGeneration)
             output.writeNullableString(
                 snapshot.projectId,
-                SymbolicConversationEdgeSnapshot.MAX_ID_CHARS,
+                SymbolicConversationEdgeSnapshot.MAX_PROJECT_ID_CHARS,
             )
             output.writeLong(snapshot.projectGeneration)
             output.writeString(
@@ -235,7 +236,7 @@ object SymbolicConversationEdgeCodec {
                     conversationId = input.readString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
                     projectionGeneration = input.readLong(),
                     runtimeGeneration = input.readLong(),
-                    projectId = input.readNullableString(SymbolicConversationEdgeSnapshot.MAX_ID_CHARS),
+                    projectId = input.readNullableString(SymbolicConversationEdgeSnapshot.MAX_PROJECT_ID_CHARS),
                     projectGeneration = input.readLong(),
                     dialogueAct = input.readString(SymbolicConversationEdgeSnapshot.MAX_ACT_CHARS),
                     discourseEntityRefs = input.readRefs(

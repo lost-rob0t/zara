@@ -483,11 +483,11 @@ def _security_state(args):
 def _live_security_admin(state, *, runtime_dir: Path | str | None = None):
     from zara.security_admin import SecurityAdminClient
 
+    if os.path.lexists(state.control_socket_path):
+        return SecurityAdminClient(state.control_socket_path)
     runtime_path = default_control_socket_path(runtime_dir)
     if os.path.lexists(runtime_path):
         return SecurityAdminClient(runtime_path)
-    if os.path.lexists(state.control_socket_path):
-        return SecurityAdminClient(state.control_socket_path)
     return None
 
 

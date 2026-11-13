@@ -99,8 +99,8 @@ async def test_persisted_expert_answer_routes_why_after_restart(tmp_path) -> Non
     current = reopened_store.load_symbolic_projection(conversation.id)
     assert current is not None
     current.assert_pure_symbolic()
-    assert current.dialogue_act == "answer"
-    assert current.expert_evidence == expert_evidence
+    assert current.dialogue_act == "expert_answer"
+    assert current.expert_evidence == [{"ref": evidence_ref}]
     assert current.dialogue_state["prolog_context_term"] == "[]"
     assert evidence_ref in current.dialogue_state["response_act_term"]
     assert current.providers_enabled is False

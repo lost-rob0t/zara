@@ -11,7 +11,6 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
 
@@ -26,7 +25,6 @@ internal class LocalAssistantVoiceController(
     private var generation = 0L
     private var listening = false
     private var closed = false
-    private val speaker = OfflineSpeaker(appContext)
     private val pendingTurn = PendingLocalTurn()
 
     @SuppressLint("NewApi")
@@ -43,7 +41,7 @@ internal class LocalAssistantVoiceController(
             "On-device speech recognition is unavailable"
         }
 
-        speaker.stop()
+        appSession.stopLocalSpeech()
         cancelRecognizer(invalidate = true)
         pendingTurn.cancel()
         val token = generation
@@ -77,7 +75,7 @@ internal class LocalAssistantVoiceController(
         if (closed) return
         cancelRecognizer(invalidate = true)
         pendingTurn.cancel()
-        speaker.stop()
+        appSession.stopLocalSpeech()
         if (notify) statusObserver("Voice cancelled")
     }
 
@@ -86,7 +84,7 @@ internal class LocalAssistantVoiceController(
         closed = true
         cancelRecognizer(invalidate = true)
         pendingTurn.cancel()
-        speaker.close()
+        appSession.stopLocalSpeech()
     }
 
     private fun listener(
@@ -127,8 +125,14 @@ internal class LocalAssistantVoiceController(
                 statusObserver("Local voice did not hear a usable utterance")
                 return
             }
-            statusObserver("Thinking locally…")
-            val turn = appSession.submitLocalText(transcript)
+            statusObserver(
+                if (appSession.runtimeMode() == ai.zara.app.runtime.RuntimeMode.Remote) {
+                    "Thinking remotely…"
+                } else {
+                    "Thinking locally…"
+                }
+            )
+            val turn = appSession.submitText(transcript)
             pendingTurn.track(turn)
             turn.whenComplete { result, error ->
                 appContext.mainExecutor.execute {
@@ -136,10 +140,14 @@ internal class LocalAssistantVoiceController(
                     pendingTurn.clear(turn)
                     if (!isCurrent(token, lifecycleToken)) return@execute
                     if (error != null) {
-                        statusObserver("Local assistant failed: ${UiOperationFailure.summarize(error)}")
+                        statusObserver("Assistant failed: ${UiOperationFailure.summarize(error)}")
                     } else if (result != null) {
                         statusObserver(result.text)
-                        if (result.text.isNotBlank()) speaker.speak(result.text)
+                        if (result.text.isNotBlank()) appSession.speakLocal(result.text).whenComplete { _, speechError ->
+                            if (speechError != null) appContext.mainExecutor.execute {
+                                if (isCurrent(token, lifecycleToken)) statusObserver("Speech unavailable: ${UiOperationFailure.summarize(speechError)}")
+                            }
+                        }
                     }
                 }
             }
@@ -207,66 +215,6 @@ internal class PendingLocalTurn {
             current
         }
         pending?.cancel(true)
-    }
-}
-
-private class OfflineSpeaker(
-    private val context: Context,
-) : AutoCloseable {
-    private var engine: TextToSpeech? = null
-    private var ready = false
-    private var closed = false
-    private var pending: String? = null
-
-    fun speak(text: String) {
-        if (closed || text.isBlank()) return
-        if (ready) {
-            speakReady(text)
-            return
-        }
-        pending = text
-        if (engine != null) return
-        engine = TextToSpeech(context) ttsInit@{ status ->
-            if (closed || status != TextToSpeech.SUCCESS) return@ttsInit
-            val tts = engine ?: return@ttsInit
-            val language = Locale.getDefault().language
-            val offlineVoice = tts.voices
-                ?.asSequence()
-                ?.filter { !it.isNetworkConnectionRequired }
-                ?.sortedByDescending { it.locale.language == language }
-                ?.firstOrNull()
-                ?: return@ttsInit
-            if (tts.setVoice(offlineVoice) != TextToSpeech.SUCCESS) return@ttsInit
-            ready = true
-            pending?.also {
-                pending = null
-                speakReady(it)
-            }
-        }
-    }
-
-    fun stop() {
-        engine?.stop()
-        pending = null
-    }
-
-    override fun close() {
-        if (closed) return
-        closed = true
-        pending = null
-        engine?.stop()
-        engine?.shutdown()
-        engine = null
-        ready = false
-    }
-
-    private fun speakReady(text: String) {
-        engine?.speak(
-            text,
-            TextToSpeech.QUEUE_FLUSH,
-            null,
-            "zara-local-assistant-${System.nanoTime()}",
-        )
     }
 }
 

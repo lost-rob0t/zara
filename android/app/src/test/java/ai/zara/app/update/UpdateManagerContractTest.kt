@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UpdateManagerContractTest {
+    @Test fun `channel callbacks and persistent selection reach the updater`() {
+        val source = File("src/main/java/ai/zara/app/update/AndroidUpdateManager.kt").readText()
+        assertTrue(source.contains("getSharedPreferences(\"zara-updates\""))
+        assertTrue(source.contains("fun selectChannel("))
+        assertTrue(source.contains("preferredSelection(channel)"))
+        assertTrue(source.contains("UpdateCatalog.versioned(json)"))
+        val activity = File("src/main/java/ai/zara/app/MainActivity.kt").readText()
+        assertTrue(activity.contains("updateManager.selectChannel(channel)"))
+        val ui = File("src/main/java/ai/zara/app/ui/ZaraApp.kt").readText()
+        assertTrue(ui.contains("it.channel == updateState.channel"))
+        assertTrue(ui.contains("onSelectUpdateChannel(channel)"))
+    }
+
     @Test
     fun `updater exposes master fast lane and selectable version catalog`() {
         val source = File(

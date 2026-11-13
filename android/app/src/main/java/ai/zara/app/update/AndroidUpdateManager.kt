@@ -36,15 +36,18 @@ data class UpdateState(
     val message: String? = null,
     val choices: List<UpdateRelease> = emptyList(),
     val selectedId: String? = null,
+    val channel: UpdateChannel = UpdateChannel.Master,
 )
 
 class AndroidUpdateManager(
     private val context: Context,
     private val currentVersion: String,
     private val currentSourceSha: String,
+    private val currentVersionCode: Int = ai.zara.app.BuildConfig.VERSION_CODE,
     private val releasesUrl: String = "https://api.github.com/repos/lost-rob0t/zara/releases?per_page=20",
     private val rollingManifestUrl: String =
         "https://github.com/lost-rob0t/zara/releases/download/android-latest/zara-latest.manifest.txt",
+    private val metadataReader: ((String, Int) -> String)? = null,
 ) : AutoCloseable {
     private data class Candidate(
         val release: UpdateRelease,
@@ -54,7 +57,13 @@ class AndroidUpdateManager(
         Thread(runnable, "zara-update").apply { isDaemon = true }
     }
     private val updateDirectory = File(context.cacheDir, "verified-updates")
-    @Volatile private var current = UpdateState(UpdatePhase.IDLE)
+    private val preferences = context.getSharedPreferences("zara-updates", Context.MODE_PRIVATE)
+    private fun preferredChannel(): UpdateChannel = UpdateChannel.entries.firstOrNull {
+        it.name == preferences.getString("channel", null)
+    } ?: UpdateChannel.Master
+    private fun preferredSelection(channel: UpdateChannel): String? =
+        preferences.getString("selection-${channel.name}", null)
+    @Volatile private var current = UpdateState(UpdatePhase.IDLE, channel = preferredChannel())
     @Volatile private var candidate: Candidate? = null
     @Volatile private var observer: ((UpdateState) -> Unit)? = null
     @Volatile private var closed = false
@@ -67,83 +76,80 @@ class AndroidUpdateManager(
     }
 
     fun check(): CompletableFuture<UpdateState> = submit {
+        val channel = preferredChannel()
         candidate = null
-        update(UpdateState(UpdatePhase.CHECKING))
-        try {
+        update(UpdateState(UpdatePhase.CHECKING, channel = channel))
+        val failures = mutableListOf<String>()
+        val versioned = runCatching {
             val releases = JSONArray(readText(releasesUrl, MAX_METADATA_BYTES))
-            val versioned = (0 until releases.length())
-                .mapNotNull { index -> releaseCandidate(releases.getJSONObject(index))?.release }
-                .filter { release ->
-                    UpdateSecurity.isInstallCandidate(release, currentVersion, currentSourceSha)
+            (0 until releases.length()).mapNotNull { index ->
+                runCatching { releaseCandidate(releases.getJSONObject(index))?.release }
+                    .onFailure { failures.add("A versioned release could not be verified") }.getOrNull()
+            }.sortedWith { left, right ->
+                when {
+                    UpdateSecurity.isNewer(left.version, right.version) -> -1
+                    UpdateSecurity.isNewer(right.version, left.version) -> 1
+                    else -> 0
                 }
-                .sortedWith { left, right ->
-                    when {
-                        UpdateSecurity.isNewer(left.version, right.version) -> -1
-                        UpdateSecurity.isNewer(right.version, left.version) -> 1
-                        else -> 0
-                    }
-                }
-            val rolling = runCatching { rollingMasterCandidate() }
-                .getOrNull()
-                ?.takeIf { release ->
-                    UpdateSecurity.isInstallCandidate(release, currentVersion, currentSourceSha)
-                }
-            val choices = buildList {
-                rolling?.let(::add)
-                addAll(versioned)
             }
-            val selected = choices.firstOrNull()
-            candidate = selected?.let(::Candidate)
-            if (selected == null) {
-                UpdateState(
-                    phase = UpdatePhase.CURRENT,
-                    message = "Zara is current",
-                    choices = choices,
-                )
-            } else {
-                UpdateState(
-                    phase = UpdatePhase.AVAILABLE,
-                    release = selected,
-                    message = if (selected.channel == UpdateChannel.Master) {
-                        "Master (fastest green) selected"
-                    } else {
-                        "Versioned release selected"
-                    },
-                    choices = choices,
-                    selectedId = selected.selectionId,
-                )
-            }.also(::update)
-        } catch (error: Throwable) {
-            candidate = null
-            UpdateState(
-                UpdatePhase.FAILED,
-                message = error.message ?: "Update check failed",
-            ).also(::update)
-        }
+        }.onFailure { failures.add("Versioned catalog unavailable") }.getOrDefault(emptyList())
+        val rolling = runCatching { rollingMasterCandidate() }
+            .onFailure { failures.add("Latest master manifest unavailable") }.getOrNull()
+        val choices = listOfNotNull(rolling) + versioned
+        val selected = UpdateCatalog.select(choices, channel, preferredSelection(channel))
+        selectionState(selected, choices, channel, failures.joinToString(". ").ifBlank { null }).also(::update)
+    }
+
+    fun selectChannel(channel: UpdateChannel): CompletableFuture<UpdateState> = submit {
+        requireIdleSelection()
+        preferences.edit().putString("channel", channel.name).apply()
+        val selected = UpdateCatalog.select(current.choices, channel, preferredSelection(channel))
+        selectionState(selected, current.choices, channel).also(::update)
     }
 
     fun select(selectionId: String): CompletableFuture<UpdateState> = submit {
+        requireIdleSelection()
+        val selected = current.choices.firstOrNull { it.selectionId == selectionId }
+            ?: error("Selected update is no longer available")
+        preferences.edit().putString("channel", selected.channel.name)
+            .putString("selection-${selected.channel.name}", selected.selectionId).apply()
+        selectionState(selected, current.choices, selected.channel).also(::update)
+    }
+
+    private fun requireIdleSelection() {
         check(current.phase !in setOf(UpdatePhase.CHECKING, UpdatePhase.DOWNLOADING, UpdatePhase.INSTALLING)) {
             "Updater is busy"
         }
-        val selected = current.choices.firstOrNull { it.selectionId == selectionId }
-            ?: error("Selected update is no longer available")
-        check(UpdateSecurity.isInstallCandidate(selected, currentVersion, currentSourceSha)) {
-            "Selected update is already installed or older"
+    }
+
+    private fun selectionState(
+        selected: UpdateRelease?,
+        choices: List<UpdateRelease>,
+        channel: UpdateChannel,
+        warning: String? = null,
+    ): UpdateState {
+        val installable = selected != null && UpdateSecurity.isInstallCandidate(
+            selected, currentVersion, currentSourceSha, currentVersionCode,
+        )
+        candidate = selected?.takeIf { installable }?.let(::Candidate)
+        val message = when {
+            selected == null -> "No verified build in this channel. Refresh versions to retry."
+            !installable -> "Selected build is installed or older; Android downgrades are not supported."
+            channel == UpdateChannel.Master -> "Master (fastest green) selected"
+            else -> "Versioned release selected"
         }
-        candidate = Candidate(selected)
-        current.copy(
-            phase = UpdatePhase.AVAILABLE,
-            release = selected,
-            progressPercent = null,
-            downloadedApk = null,
-            message = if (selected.channel == UpdateChannel.Master) {
-                "Master (fastest green) selected"
-            } else {
-                "Versioned release selected"
+        return UpdateState(
+            phase = when {
+                selected == null -> UpdatePhase.FAILED
+                installable -> UpdatePhase.AVAILABLE
+                else -> UpdatePhase.CURRENT
             },
-            selectedId = selected.selectionId,
-        ).also(::update)
+            release = selected,
+            choices = choices,
+            selectedId = selected?.selectionId,
+            channel = channel,
+            message = listOfNotNull(message, warning).joinToString(" "),
+        )
     }
 
     fun download(): CompletableFuture<UpdateState> = submit {
@@ -160,6 +166,7 @@ class AndroidUpdateManager(
                 progressPercent = 0,
                 choices = choices,
                 selectedId = selectedId,
+                channel = selected.release.channel,
             )
         )
         try {
@@ -175,6 +182,7 @@ class AndroidUpdateManager(
                         progressPercent = percent,
                         choices = choices,
                         selectedId = selectedId,
+                        channel = selected.release.channel,
                     )
                 )
             }
@@ -190,6 +198,7 @@ class AndroidUpdateManager(
                 message = "Verified and ready for Android confirmation",
                 choices = choices,
                 selectedId = selectedId,
+                channel = selected.release.channel,
             ).also(::update)
         } catch (error: Throwable) {
             UpdateState(
@@ -198,6 +207,7 @@ class AndroidUpdateManager(
                 message = error.message ?: "Update download failed",
                 choices = choices,
                 selectedId = selectedId,
+                channel = selected.release.channel,
             ).also(::update)
         }
     }
@@ -301,62 +311,15 @@ class AndroidUpdateManager(
         }
     }
 
-    private fun rollingMasterCandidate(): UpdateRelease {
-        val manifest = readText(rollingManifestUrl, MAX_MANIFEST_BYTES)
-            .lineSequence()
-            .map(String::trim)
-            .filter { it.isNotEmpty() && !it.startsWith("#") }
-            .associate { line ->
-                val separator = line.indexOf('=')
-                require(separator > 0) { "Rolling master manifest is malformed" }
-                line.substring(0, separator) to line.substring(separator + 1)
-            }
-        require(manifest["schema"] == "1") { "Rolling master manifest schema is unsupported" }
-        require(manifest["channel"] == "android-latest") { "Rolling master channel is invalid" }
-        require(manifest["mutable"] == "true") { "Rolling master manifest must declare mutability" }
-        val sourceSha = manifest["source_sha"] ?: error("Rolling master source SHA is missing")
-        val apkName = manifest["phone_apk"] ?: error("Rolling master APK name is missing")
-        require(apkName == "zara-latest.apk") { "Rolling master APK name is unexpected" }
-        val sha256 = manifest["phone_sha256"] ?: error("Rolling master checksum is missing")
-        val apkUrl = rollingManifestUrl.substringBeforeLast('/') + "/" + apkName
-        val release = UpdateRelease(
-            version = "master",
-            sourceSha = sourceSha,
-            apkUrl = apkUrl,
-            sha256 = sha256,
-            channel = UpdateChannel.Master,
-        )
-        return UpdateSecurity.validate(release).getOrThrow()
-    }
+    private fun rollingMasterCandidate(): UpdateRelease = UpdateCatalog.master(
+        readText(rollingManifestUrl, MAX_MANIFEST_BYTES), rollingManifestUrl,
+    )
 
-    private fun releaseCandidate(json: JSONObject): Candidate? {
-        if (json.optBoolean("draft", false)) return null
-        val version = json.optString("tag_name").removePrefix("v")
-        val sourceSha = json.optString("target_commitish")
-        val assets = json.optJSONArray("assets") ?: return null
-        val apk = (0 until assets.length())
-            .map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name").endsWith(".apk") }
-            ?: return null
-        val checksum = (0 until assets.length())
-            .map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name") == "${apk.optString("name")}.sha256" }
-            ?: return null
-        val checksumUrl = UpdateSecurity.requireTrustedTransport(
-            checksum.optString("browser_download_url")
-        )
-        val checksumText = readText(checksumUrl, MAX_CHECKSUM_BYTES)
-        val sha256 = checksumText.trim().substringBefore(' ').lowercase()
-        val release = UpdateRelease(
-            version = version,
-            sourceSha = sourceSha,
-            apkUrl = apk.optString("browser_download_url"),
-            sha256 = sha256,
-        )
-        return UpdateSecurity.validate(release).getOrNull()?.let(::Candidate)
-    }
+    private fun releaseCandidate(json: JSONObject): Candidate? =
+        UpdateCatalog.versioned(json) { url -> readText(url, MAX_MANIFEST_BYTES) }?.let(::Candidate)
 
     private fun readText(url: String, maxBytes: Int): String {
+        metadataReader?.let { return it(url, maxBytes) }
         val connection = openTrusted(url)
         return try {
             check(connection.responseCode in 200..299) { "GitHub returned ${connection.responseCode}" }

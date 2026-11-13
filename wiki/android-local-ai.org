@@ -34,7 +34,7 @@ The portable =local-ai-v1= operation vocabulary includes provider discovery, mod
 
 * Android service boundary
 
-The phone hosts model and TTS lifetime in the non-exported =LocalAiService= running in Zara's =:voice= process.
+The phone hosts model and TTS lifetime in the signature-protected =LocalAiService= running in Zara's =:voice= process.
 
 #+begin_example
 Compose / VoiceInteractionService / AndroidAppSession
@@ -90,6 +90,50 @@ Model text is conversational output only. It cannot call Android capabilities or
 
 * Local TTS
 
+** Small on-device neural voice: Kitten Nano
+
+The supported integration path is a sherpa-onnx *Android TTS engine* APK,
+consumed by Zara's existing =android-offline= provider. This is an installed
+on-device model, not an HTTP endpoint or a Zara server dependency. It is not
+bundled into Zara's APK. Use an engine APK, not the standalone demo APK.
+
+Verified download on 2026-11-13:
+
+- Runtime/package: sherpa-onnx 1.12.22, Android =arm64-v8a=.
+- Model: =kitten-nano-en-v0_2-fp16=, English, eight voices.
+- Model ONNX bytes inside APK: 23,804,897 (22.70 MiB).
+- Complete APK: 44,169,844 bytes (42.12 MiB); extracted contents are larger.
+- SHA-256: =09dd1ea58ae08804ef58ecd2bfbfedd6d23b81792b5ad64e1582131f4cd3d8ef=.
+- Official engine catalog: https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html
+- Download: https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.22/sherpa-onnx-1.12.22-arm64-v8a-en-tts-engine-kitten-nano-en-v0_2-fp16.apk
+
+Install the matching architecture APK through Android's package installer,
+open its setup once, and select it as the preferred engine in Android speech
+settings. In Zara, open Settings -> Runtime & local AI -> Offline speech,
+press Refresh voices, then Test offline speech. Repeat the test with network
+disabled. Stop speech must cancel playback. No language model needs loading.
+The ARM64 package above does not run on an x86_64 emulator; use the matching
+architecture from the official catalog for emulator evidence.
+
+Refresh now stops old speech and recreates the engine even when it was already
+ready. Ordinary initialization remains cached. Late callbacks from the retired
+engine cannot replace the new engine or complete a new utterance.
+
+Other small CPU options are Kitten Micro/Mini and Piper low/x-low voices via
+the same sherpa Android engine catalog. Their package sizes, supported languages
+and model licenses vary; do not treat their weights as interchangeable with the
+pinned Nano package. Kitten's lightweight ONNX family is documented at
+https://github.com/KittenML/KittenTTS/blob/main/docs/onnx-models.md .
+
+The exact Nano weights extracted from the APK produced 4.05 seconds of 24 kHz
+audio in 1.12 seconds on this session's Linux x86_64 CPU with two threads
+(sherpa-onnx Python 1.12.26; initialization 1.32 seconds). This is a CPU smoke
+test, not an Android latency, audible-playback or phone acceptance claim.
+Python 2.0.1 rejected this older package's phonemizer configuration; keep the
+packaged engine/model pair together rather than upgrading a runtime blindly.
+
+** Provider behavior
+
 The first local speech provider is Android =TextToSpeech= with an explicitly selected voice whose =Voice.isNetworkConnectionRequired= value is false. If the device has no installed offline voice, Zara reports TTS unavailable. It does not silently switch to network speech.
 
 Speech uses unique utterance ids and =UtteranceProgressListener=. Zara can stop the engine immediately for barge-in/cancellation.
@@ -124,3 +168,75 @@ Android itself deliberately uses native Kotlin LiteRT-LM rather than embedding t
 - Google LiteRT-LM Web API: https://developers.google.com/edge/litert-lm/js
 - Android =Voice.isNetworkConnectionRequired=: https://developer.android.com/reference/android/speech/tts/Voice#isNetworkConnectionRequired()
 - sherpa-onnx Android: https://k2-fsa.github.io/sherpa/onnx/android/index.html
+
+* Android setup and recovery
+
+Install the Zara phone APK first. It owns the model catalog, inference, and
+speech service in the =:voice= process. Both the main app and LLM Serve use
+the same Messenger IPC facade; a local Binder cast cannot cross that process
+boundary. The service's exported facade requires Zara's signature permission.
+
+Open Settings -> Runtime & local AI. Select Local for symbolic-first on-device
+chat, or Symbolic to forbid all model calls. Import a compatible =.litertlm=
+file with its explicit quantization, context limit, and CPU/GPU/NPU backend.
+A file extension or a successful import is not proof of inference: complete a
+semantic-miss chat turn and verify the actual selected model response.
+
+The Offline Speech card is independent of model installation and accounts.
+Use Android speech settings to enable an engine and install an offline voice.
+Return to Zara, select Refresh voices, then Test offline speech. Stop speech
+cancels queued and active speech. Network-required and not-installed voices
+are excluded. Missing engines/voices show setup instructions. Speech is stopped
+when the activity leaves the foreground; assistant replies share the canonical
+speech owner and surface synthesis failures.
+
+For a direct remote model, save the HTTPS API base URL, exact model id, and API
+key under Runtime & local AI, enable the profile, and use Check saved connection
+/ load models. This check calls =GET /models=; it does not generate a reply.
+Select a returned model (or enter an exact id when catalog discovery is not
+supported), save it, and choose Remote. A connected authenticated Zara server
+still takes precedence in Remote. Direct provider replies stream into a
+transient chat draft; Stop reply cancels the provider and fences later chunks.
+Only completed successful turns enter future model context. Keys are wrapped
+by Android Keystore and are not saved in Compose restoration state.
+
+Local and Symbolic startup do not restore a remote connection merely because
+an old server profile exists. An unavailable local model never enables a
+remote provider implicitly.
+
+* Debug acceptance downloads
+
+CI publishes =android-test-unverified-<source SHA>= after a successful APK build,
+even if later installed acceptance fails. This bundle contains the Zara and LLM
+Serve debug APKs, SHA-256 checksums, installation notes, and the acceptance outcome.
+It is explicitly not a validated release. Release-candidate uploads still require
+the green gate. Offline audio and real inference are not certified by the bundle.
+
+External Android TTS engines run behind a worker so a slow engine cannot hold
+Zara's main IPC thread. Initialization reports an unavailable engine after 15
+seconds; state/stop remain responsive. If the engine itself is stuck, check Android
+speech settings and its offline voice data before refreshing. This does not make
+a missing voice available or substitute network speech.
+
+The opt-in installed real-model test accepts pinned =qwen2-0.5b= or
+=smollm2-135m= fixtures via =realModelFixture=. =reuseInstalledModel=true= verifies
+an existing catalog model before the same generation, streaming, unload/reload
+assertions; it does not claim a fresh import. Ordinary CI skips real-model tests
+unless their external fixture is explicitly supplied.
+
+* Update channels and versions
+
+Settings -> Updates has independent Master (fastest green) and Versioned release
+channel controls. Refresh versions loads the published catalogs. The selected
+channel and version persist across refresh and process restart; a missing channel
+never silently switches to the other one.
+
+Master resolves =android-latest/zara-latest.manifest.txt= and downloads the exact
+=zara-latest.apk= whose checksum it records. Its displayed product version and
+Android version code come from that manifest, not from the mutable tag's target.
+Versioned entries use =zara-android-<version>.manifest.txt= and the exact phone APK;
+Code Editor, Wear, LLM Serve and Org APKs are never selected for the phone updater.
+The user can inspect older releases, but an already installed or older version
+has no download/install action. A master APK with a lower Android version code
+is also rejected. Android's package installer retains signer verification and
+user confirmation. Selecting a channel or version never installs automatically.

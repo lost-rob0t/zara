@@ -149,5 +149,56 @@
       (should (null (plist-get status :provider-calls)))
       (should (null (plist-get status :model-calls))))))
 
+(ert-deftest zara-conversation-symbolic-switch-then-inspect-uses-current-project-only ()
+  "Fresh inspection after a switch cannot render stale expert evidence."
+  (with-temp-buffer
+    (zara-chat-mode)
+    (setq-local zara-conversation-id "emacs-main")
+    (setq-local zara-conversation-context-ids '("context:flake.nix"))
+    (setq-local zara-conversation-symbolic-projection
+                (zara-conversation-symbolic-inspect-test--projection))
+    (should (equal (zara-conversation-switch "emacs-project-b") "emacs-project-b"))
+    (let ((projection (zara-conversation-symbolic-inspect-test--projection))
+          inspected
+          (refresh-count 0))
+      (puthash "project_id" "project-b" projection)
+      (puthash "project_generation" 5 projection)
+      (puthash "turn_id" "turn-b" projection)
+      (puthash "expert_evidence"
+               (list
+                (let ((entry (make-hash-table :test 'equal)))
+                  (puthash "expert" "ProjectBExpert" entry)
+                  (puthash "ref" "evidence:b" entry)
+                  entry))
+               projection)
+      (unwind-protect
+          (progn
+            (cl-letf (((symbol-function 'zara-conversation-symbolic-refresh-status)
+                       (lambda ()
+                         (cl-incf refresh-count)
+                         (should (equal (zara-conversation--current-id)
+                                        "emacs-project-b"))
+                         (setq-local zara-conversation-symbolic-projection projection)
+                         projection))
+                      ((symbol-function 'pop-to-buffer)
+                       (lambda (buffer &rest _ignored)
+                         (setq inspected buffer)
+                         buffer)))
+              (should (bufferp (zara-conversation-symbolic-inspect))))
+            (should (= refresh-count 1))
+            (should (buffer-live-p inspected))
+            (with-current-buffer inspected
+              (let ((text (buffer-string)))
+                (should (string-match-p "conversation_id=emacs-project-b" text))
+                (should (string-match-p "project_id=project-b" text))
+                (should (string-match-p "ProjectBExpert" text))
+                (should-not (string-match-p "DotfilesExpert" text))
+                (should (string-match-p "providers_enabled=false" text))
+                (should (string-match-p "max_model_calls=0" text))
+                (should (string-match-p "provider_calls=0" text))
+                (should (string-match-p "model_calls=0" text)))))
+        (when (buffer-live-p inspected)
+          (kill-buffer inspected))))))
+
 (provide 'zara-conversation-symbolic-inspect-test)
 ;;; zara-conversation-symbolic-inspect-test.el ends here

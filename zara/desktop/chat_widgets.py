@@ -34,6 +34,9 @@ class _MessageBody(QTextBrowser):
     def __init__(self, *, maximum_height: int = 280) -> None:
         super().__init__()
         self._maximum_body_height = maximum_height
+        self._fit_timer = QTimer(self)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.timeout.connect(self._fit_document)
         self.setObjectName("zaraMessageBody")
         self.setOpenExternalLinks(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -44,7 +47,7 @@ class _MessageBody(QTextBrowser):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt API
         super().resizeEvent(event)
-        QTimer.singleShot(0, self._fit_document)
+        self._fit_timer.start(0)
 
     def _fit_document(self) -> None:
         viewport_width = self.viewport().width()

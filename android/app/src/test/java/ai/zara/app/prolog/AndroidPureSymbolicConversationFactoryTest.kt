@@ -12,7 +12,7 @@ class AndroidPureSymbolicConversationFactoryTest {
         )
 
         assertEquals(
-            "resolve_frames(\"set a timer for \\\"five\\\"\\\\minutes\\nplease\", passive, [], Frames), member(Result, Frames)",
+            "zara_portable_semantic_core:resolve_frames(\"set a timer for \\\"five\\\"\\\\minutes\\nplease\", passive, [], Frames), member(Result, Frames)",
             query,
         )
     }

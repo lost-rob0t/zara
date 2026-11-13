@@ -96,3 +96,55 @@ def test_final_desktop_gate_rejects_missing_org_manifest(tmp_path: Path):
 
     with pytest.raises(validator.EvidenceError, match="Org evidence|manifest"):
         validator.validate_desktop(manifest_path, SOURCE_SHA)
+
+
+def _write_android_evidence(root: Path, *, nested: bool = True) -> Path:
+    metadata = {"file": "launcher.png", "sha256": _write_png(root / "launcher.png", "android")}
+    entry = {"state": "launcher"}
+    if nested:
+        entry["screenshot"] = metadata
+    else:
+        entry.update(metadata)
+    path = root / "manifest.json"
+    path.write_text(json.dumps({"source_sha": SOURCE_SHA, "passed": True, "screenshots": [entry]}))
+    return path
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_android_gate_accepts_capture_and_legacy_metadata(tmp_path: Path, nested: bool):
+    validator = _validator_module()
+    path = _write_android_evidence(tmp_path, nested=nested)
+    assert validator.validate_android(path, SOURCE_SHA) == 1
+
+
+@pytest.mark.parametrize("mutation, message", [
+    ("tampered", "hash mismatch"),
+    ("traversal", "escapes"),
+    ("missing", "screenshot is missing"),
+    ("malformed", "metadata must be an object"),
+    ("conflicting", "conflicting"),
+    ("source", "source SHA mismatch"),
+    ("failed", "passed=true"),
+])
+def test_android_capture_metadata_preserves_integrity_checks(tmp_path: Path, mutation: str, message: str):
+    validator = _validator_module()
+    path = _write_android_evidence(tmp_path)
+    manifest = json.loads(path.read_text())
+    entry = manifest["screenshots"][0]
+    if mutation == "tampered":
+        (tmp_path / "launcher.png").write_bytes(PNG + b"tampered")
+    elif mutation == "traversal":
+        entry["screenshot"]["file"] = "../launcher.png"
+    elif mutation == "missing":
+        (tmp_path / "launcher.png").unlink()
+    elif mutation == "malformed":
+        entry["screenshot"] = None
+    elif mutation == "conflicting":
+        entry["file"] = "other.png"
+    elif mutation == "source":
+        manifest["source_sha"] = "stale"
+    elif mutation == "failed":
+        manifest["passed"] = False
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(validator.EvidenceError, match=message):
+        validator.validate_android(path, SOURCE_SHA)

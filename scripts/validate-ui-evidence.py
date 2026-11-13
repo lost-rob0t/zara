@@ -136,8 +136,15 @@ def validate_android(manifest_path: Path, source_sha: str) -> int:
         if not isinstance(entry, dict):
             raise EvidenceError("android screenshot entry must be an object")
         state = entry.get("state")
-        file_value = entry.get("file")
-        expected_hash = entry.get("sha256")
+        metadata = entry.get("screenshot", entry)
+        if not isinstance(metadata, dict):
+            raise EvidenceError("android screenshot metadata must be an object")
+        if "screenshot" in entry:
+            for key in ("file", "sha256"):
+                if key in entry and entry[key] != metadata.get(key):
+                    raise EvidenceError(f"android screenshot metadata is conflicting: {key}")
+        file_value = metadata.get("file")
+        expected_hash = metadata.get("sha256")
         if not isinstance(state, str) or not state:
             raise EvidenceError("android screenshot state is missing")
         if state in seen_states:

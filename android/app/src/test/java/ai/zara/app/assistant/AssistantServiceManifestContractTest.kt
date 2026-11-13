@@ -57,10 +57,9 @@ class AssistantServiceManifestContractTest {
         assertTrue(activity.contains("appSession.completeAssistantRoleRequest()"))
         assertTrue(activity.contains("appSession.assistantRoleRequestIntent()"))
         assertTrue(activity.contains("onRequestAssistantRole"))
-        assertTrue(platform.contains("Settings.ACTION_VOICE_INPUT_SETTINGS"))
-        assertTrue(platform.contains("Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS"))
+        assertTrue(platform.contains("roleManager.createRequestRoleIntent(RoleManager.ROLE_ASSISTANT)"))
         assertTrue(platform.contains("VoiceInteractionService.isActiveService"))
-        assertFalse(platform.contains("createRequestRoleIntent"))
+        assertFalse(platform.contains("Settings.ACTION_VOICE_INPUT_SETTINGS"))
     }
 
     @Test
@@ -85,7 +84,7 @@ class AssistantServiceManifestContractTest {
     }
 
     @Test
-    fun `voice session uses explicit overlay PTT instead of opening microphone on show`() {
+    fun `voice session auto starts local assistant capture while retaining explicit remote PTT`() {
         val session = File("src/main/java/ai/zara/app/assistant/ZaraVoiceInteractionSession.kt").readText()
 
         assertTrue(session.contains("(context.applicationContext as ZaraApplication).appSession"))
@@ -93,11 +92,15 @@ class AssistantServiceManifestContractTest {
         assertTrue(session.contains("MotionEvent.ACTION_DOWN"))
         assertTrue(session.contains("MotionEvent.ACTION_UP"))
         assertTrue(session.contains("MotionEvent.ACTION_CANCEL"))
+        assertTrue(session.contains("beginAutomaticCapture()"))
+        assertTrue(session.contains("localVoice.start(permissionGranted)"))
         assertTrue(session.contains("appSession.startAssistantVoice"))
         assertTrue(session.contains("appSession.releasePushToTalk"))
         assertTrue(session.contains("appSession.cancelPushToTalk"))
-        val showBody = session.substringAfter("override fun onShow").substringBefore("override fun onHide")
-        assertFalse(showBody.contains("appSession.startAssistantVoice"))
+        val automatic = session.substringAfter("private fun beginAutomaticCapture()")
+            .substringBefore("override fun onHide")
+        assertTrue(automatic.contains("AssistantCapturePlan.Local ->"))
+        assertFalse(automatic.contains("appSession.startAssistantVoice"))
     }
 
     @Test

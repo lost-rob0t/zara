@@ -189,6 +189,18 @@ class ConversationService:
 
             self._last_active_conversation_id = conversation_id
 
+            turn_id = getattr(event, "turn_id", None)
+            if (
+                turn_id
+                and not isinstance(event, events.TurnCancelled)
+                and self._turn_is_cancelled(state, turn_id)
+            ):
+                # Cancellation is a durable terminal fence, not a process-local
+                # UI hint. Ignore every later turn-scoped runtime event so stale
+                # text, tool/effect status, failures, or completion callbacks
+                # cannot mutate history after restart.
+                return None
+
             if isinstance(event, events.TurnStarted):
                 changed: list[str] = []
                 if event.turn_id:
@@ -285,19 +297,40 @@ class ConversationService:
                 )
 
             if isinstance(event, events.TurnCancelled):
-                message = state.latest_message(role=MessageRole.ASSISTANT, turn_id=event.turn_id)
-                changed: tuple[str, ...] = ()
-                if message is not None:
+                changed_ids: list[str] = []
+                cancellation_reason = event.reason or "turn cancelled"
+                for message in state.messages:
+                    if message.turn_id != event.turn_id:
+                        continue
+                    if message.role not in {MessageRole.ASSISTANT, MessageRole.TOOL}:
+                        continue
+                    if message.status not in {MessageStatus.PENDING, MessageStatus.STREAMING}:
+                        continue
                     message.status = MessageStatus.CANCELLED
-                    if event.reason:
-                        message.error = event.reason
+                    message.error = cancellation_reason
                     self.store.save_message(message)
-                    changed = (message.id,)
+                    changed_ids.append(message.id)
+
+                if not self._turn_is_cancelled(state, event.turn_id):
+                    # A turn may be cancelled after receipt binding but before an
+                    # assistant/tool record exists. Reuse the bound user record
+                    # as the durable cancellation marker so a recreated process
+                    # can still reject late output/effects for this turn.
+                    user_message = state.latest_message(
+                        role=MessageRole.USER,
+                        turn_id=event.turn_id,
+                    )
+                    if user_message is not None:
+                        user_message.status = MessageStatus.CANCELLED
+                        user_message.error = cancellation_reason
+                        self.store.save_message(user_message)
+                        changed_ids.append(user_message.id)
+
                 if state.active_turn_id == event.turn_id:
                     state.active_turn_id = None
                 return ConversationUpdate(
                     conversation_id=conversation_id,
-                    message_ids=changed,
+                    message_ids=tuple(changed_ids),
                     active_turn_changed=True,
                 )
 
@@ -432,6 +465,13 @@ class ConversationService:
         state.messages.append(message)
         self.store.save_message(message)
         return message
+
+    @staticmethod
+    def _turn_is_cancelled(state: ConversationState, turn_id: str) -> bool:
+        return any(
+            message.turn_id == turn_id and message.status is MessageStatus.CANCELLED
+            for message in state.messages
+        )
 
     @staticmethod
     def _derive_title(text: str) -> str:

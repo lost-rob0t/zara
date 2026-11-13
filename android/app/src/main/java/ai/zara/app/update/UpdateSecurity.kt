@@ -15,6 +15,8 @@ data class UpdateRelease(
     val apkUrl: String,
     val sha256: String,
     val channel: UpdateChannel = UpdateChannel.Versioned,
+    val versionCode: Int? = null,
+    val productVersion: String = version,
 ) {
     val selectionId: String
         get() = "${channel.name.lowercase()}:$sourceSha"
@@ -45,6 +47,7 @@ object UpdateSecurity {
         }
         require(release.sourceSha.matches(sha)) { "Release source SHA is invalid" }
         require(release.sha256.matches(digest)) { "Release checksum is invalid" }
+        require(release.versionCode == null || release.versionCode > 0) { "Release version code is invalid" }
         requireTrustedTransport(release.apkUrl)
         require(release.apkUrl.substringBefore('?').endsWith(".apk")) { "Update asset must be an APK" }
         release
@@ -82,7 +85,8 @@ object UpdateSecurity {
         release: UpdateRelease,
         currentVersion: String,
         currentSourceSha: String,
-    ): Boolean = when (release.channel) {
+        currentVersionCode: Int = 0,
+    ): Boolean = (release.versionCode == null || release.versionCode >= currentVersionCode) && when (release.channel) {
         UpdateChannel.Master -> release.sourceSha != currentSourceSha
         UpdateChannel.Versioned -> isNewer(release.version, currentVersion)
     }
