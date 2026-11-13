@@ -96,7 +96,6 @@ def open_chat_and_submit(device: Device, text: str) -> None:
 def diagnostics_preview_text(device: Device) -> str:
     try:
         open_menu(device, "Settings")
-        device.press_back()
         device.reveal("Runtime & local AI")
         device.await_label("Runtime & local AI")
         device.tap("Diagnostics")
@@ -193,7 +192,6 @@ def assert_diagnostics_names_primary_failure(
     evidence_state: str,
 ) -> None:
     open_menu(device, "Settings")
-    device.press_back()
     device.reveal("Runtime & local AI")
     device.await_label("Runtime & local AI")
     device.tap("Diagnostics")

@@ -22,7 +22,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Fixed
 
 - Android Refresh voices now reopens the selected offline speech engine after installing or switching voices, cancels old speech, and rejects stale initialization callbacks.
-- Android installed acceptance verifies Back from Runtime through Settings to Chat, matching the application's navigation contract.
+- Android installed acceptance verifies Back from Runtime through Settings to Chat and explicitly returns remembered menu child screens to their roots before remote/error-recovery checks.
 - Android isolates external speech-engine calls from its UI/IPC thread, bounds unavailable-engine initialization, and fences stopped speech during late startup.
 - Android test downloads now include both debug APKs and exact-source checksums even when installed acceptance fails, clearly labeled as unverified. Failed acceptance still blocks release-candidate artifacts.
 - Android chat-error acceptance scrolls to copy feedback and restored actions in long conversations.

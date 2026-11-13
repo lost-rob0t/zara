@@ -44,6 +44,57 @@ def test_settings_return_checks_both_back_transitions():
     assert device.checked == ["settings", "chat"]
 
 
+@pytest.mark.parametrize("menu,restored,root", [
+    ("Settings", "runtime", "settings"),
+    ("Settings", "diagnostics", "settings"),
+    ("Settings", "settings", "settings"),
+    ("Chat", "voice", "chat"),
+    ("Workspace", "scheduled", "logic"),
+])
+def test_open_menu_returns_to_root_from_remembered_child(menu, restored, root):
+    module = _load_device_acceptance_module()
+
+    class RememberedNavigationDevice:
+        route = restored
+        back_count = 0
+        checked = False
+
+        def tap_tag(self, tag):
+            if tag.startswith("zara.route."):
+                self.route = tag.removeprefix("zara.route.")
+
+        def await_drawer_state(self, opened):
+            assert opened
+
+        def await_tag(self, tag):
+            return object()
+
+        def await_absent(self, label):
+            assert label == "Close navigation menu"
+
+        def find_tag(self, tag):
+            return object() if tag == f"zara.screen.{self.route}" else None
+
+        def press_back(self):
+            assert menu == "Settings" and self.route != root
+            self.route = root
+            self.back_count += 1
+
+        def await_navigation(self, selected, destination, drawer_open):
+            assert selected == menu.lower()
+            assert self.route == destination == root
+            assert not drawer_open
+            self.checked = True
+
+        def await_label(self, label):
+            assert self.checked
+
+    device = RememberedNavigationDevice()
+    module.open_menu(device, menu)
+    assert device.checked
+    assert device.back_count == int(menu == "Settings" and restored != root)
+
+
 def test_nodes_uses_fresh_shell_owned_uiautomator_dump(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -212,6 +263,7 @@ def test_open_menu_requires_drawer_dismissal_and_destination_content(
     calls: list[tuple] = []
     for name in ("tap_tag", "await_drawer_state", "await_tag", "await_absent", "await_navigation", "await_label"):
         monkeypatch.setattr(device, name, lambda *args, _name=name, **kwargs: calls.append((_name, args, kwargs)))
+    monkeypatch.setattr(device, "find_tag", lambda tag: object())
 
     module.open_menu(device, "Settings")
 
@@ -223,6 +275,7 @@ def test_open_menu_requires_drawer_dismissal_and_destination_content(
         ("await_tag", ("zara.menu.settings",), {}),
         ("tap_tag", ("zara.menu.settings",), {}),
         ("await_absent", ("Close navigation menu",), {}),
+        ("await_tag", ("zara.menu.active.settings",), {}),
         ("await_navigation", ("settings", "settings"), {"drawer_open": False}),
         ("await_label", ("Runtime & local AI",), {}),
     ]

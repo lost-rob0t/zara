@@ -221,8 +221,6 @@ def exercise_remote_connection(device: Device, fixture: dict[str, str]) -> dict[
 
     # Then enroll the same installed app and prove the desktop/server path.
     open_menu(device, "Settings")
-    device.await_contains("LOCAL RUNTIME", timeout=20.0)
-    device.press_back()
     device.await_label("Runtime & local AI")
     device.tap("Connection")
     device.await_label("Create client identity")
