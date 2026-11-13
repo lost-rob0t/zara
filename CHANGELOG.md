@@ -21,6 +21,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Fixed
 
+- Wear Voice now uses the configured Zara update signing key, matching the rest of the Android app fleet and allowing versioned and master APK publication to pass signature verification.
 - Android Refresh voices now reopens the selected offline speech engine after installing or switching voices, cancels old speech, and rejects stale initialization callbacks.
 - Android installed acceptance verifies Back from Runtime through Settings to Chat and explicitly returns remembered menu child screens to their roots before remote/error-recovery checks.
 - Android isolates external speech-engine calls from its UI/IPC thread, bounds unavailable-engine initialization, and fences stopped speech during late startup.

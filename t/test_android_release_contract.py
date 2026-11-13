@@ -137,3 +137,16 @@ def test_android_latest_verifies_llm_serve_stable_signer_before_publish():
     workflow = (ROOT / ".github/workflows/android-latest.yml").read_text()
 
     assert 'scripts/check-android-apk-signer.sh "$llm_serve_apk"' in workflow
+
+
+def test_wear_voice_release_uses_update_compatible_signing_key():
+    build = (ROOT / "android/wear-voice/build.gradle.kts").read_text()
+
+    assert 'providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE")' in build
+    assert 'signingConfigs' in build
+    assert 'getByName("debug")' in build
+    assert 'require(keyFile.isFile)' in build
+    assert 'storeFile = keyFile' in build
+    assert 'storePassword = "android"' in build
+    assert 'keyAlias = "androiddebugkey"' in build
+    assert 'keyPassword = "android"' in build

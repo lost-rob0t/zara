@@ -31,6 +31,8 @@ require(zaraAndroidVersionCode in 1..2100000000) {
     "version.properties android.versionCode is outside Android's valid range"
 }
 
+val debugSigningKeystore = providers.environmentVariable("ZARA_ANDROID_DEBUG_KEYSTORE").orNull
+
 android {
     namespace = "ai.zara.wear.voice"
     compileSdk = 37
@@ -46,6 +48,19 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            if (debugSigningKeystore != null) {
+                val keyFile = file(debugSigningKeystore)
+                require(keyFile.isFile) { "Zara Android debug signing keystore is missing" }
+                storeFile = keyFile
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
