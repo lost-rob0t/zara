@@ -90,6 +90,50 @@ Model text is conversational output only. It cannot call Android capabilities or
 
 * Local TTS
 
+** Small on-device neural voice: Kitten Nano
+
+The supported integration path is a sherpa-onnx *Android TTS engine* APK,
+consumed by Zara's existing =android-offline= provider. This is an installed
+on-device model, not an HTTP endpoint or a Zara server dependency. It is not
+bundled into Zara's APK. Use an engine APK, not the standalone demo APK.
+
+Verified download on 2026-11-13:
+
+- Runtime/package: sherpa-onnx 1.12.22, Android =arm64-v8a=.
+- Model: =kitten-nano-en-v0_2-fp16=, English, eight voices.
+- Model ONNX bytes inside APK: 23,804,897 (22.70 MiB).
+- Complete APK: 44,169,844 bytes (42.12 MiB); extracted contents are larger.
+- SHA-256: =09dd1ea58ae08804ef58ecd2bfbfedd6d23b81792b5ad64e1582131f4cd3d8ef=.
+- Official engine catalog: https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html
+- Download: https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.22/sherpa-onnx-1.12.22-arm64-v8a-en-tts-engine-kitten-nano-en-v0_2-fp16.apk
+
+Install the matching architecture APK through Android's package installer,
+open its setup once, and select it as the preferred engine in Android speech
+settings. In Zara, open Settings -> Runtime & local AI -> Offline speech,
+press Refresh voices, then Test offline speech. Repeat the test with network
+disabled. Stop speech must cancel playback. No language model needs loading.
+The ARM64 package above does not run on an x86_64 emulator; use the matching
+architecture from the official catalog for emulator evidence.
+
+Refresh now stops old speech and recreates the engine even when it was already
+ready. Ordinary initialization remains cached. Late callbacks from the retired
+engine cannot replace the new engine or complete a new utterance.
+
+Other small CPU options are Kitten Micro/Mini and Piper low/x-low voices via
+the same sherpa Android engine catalog. Their package sizes, supported languages
+and model licenses vary; do not treat their weights as interchangeable with the
+pinned Nano package. Kitten's lightweight ONNX family is documented at
+https://github.com/KittenML/KittenTTS/blob/main/docs/onnx-models.md .
+
+The exact Nano weights extracted from the APK produced 4.05 seconds of 24 kHz
+audio in 1.12 seconds on this session's Linux x86_64 CPU with two threads
+(sherpa-onnx Python 1.12.26; initialization 1.32 seconds). This is a CPU smoke
+test, not an Android latency, audible-playback or phone acceptance claim.
+Python 2.0.1 rejected this older package's phonemizer configuration; keep the
+packaged engine/model pair together rather than upgrading a runtime blindly.
+
+** Provider behavior
+
 The first local speech provider is Android =TextToSpeech= with an explicitly selected voice whose =Voice.isNetworkConnectionRequired= value is false. If the device has no installed offline voice, Zara reports TTS unavailable. It does not silently switch to network speech.
 
 Speech uses unique utterance ids and =UtteranceProgressListener=. Zara can stop the engine immediately for barge-in/cancellation.

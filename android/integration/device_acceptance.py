@@ -686,9 +686,16 @@ def exercise_three_menu_ui(device: Device) -> None:
     device.press_back()
     device.await_tag("zara.route.runtime")
     device.tap_tag("zara.route.runtime")
+    device.await_navigation("settings", "runtime", drawer_open=False)
+    return_from_runtime_to_chat(device)
+    device.capture("back-to-chat")
+
+
+def return_from_runtime_to_chat(device: Device) -> None:
+    device.press_back()
+    device.await_navigation("settings", "settings", drawer_open=False)
     device.press_back()
     device.await_navigation("chat", "chat", drawer_open=False)
-    device.capture("back-to-chat")
 
 
 def main() -> None:

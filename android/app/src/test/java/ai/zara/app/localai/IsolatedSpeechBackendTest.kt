@@ -7,6 +7,44 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class IsolatedSpeechBackendTest {
+    @Test fun refreshReopensTheEngineThroughTheWorkerAndCancelsSpeech() {
+        val first = Engine()
+        val second = Engine()
+        val engines = java.util.concurrent.ConcurrentLinkedQueue(listOf(first, second))
+        val session = OfflineSpeechSession { CompletableFuture.completedFuture(engines.remove()) }
+        val backend = IsolatedSpeechBackend(session)
+        try {
+            val speech = backend.speak("old voice")
+            assertTrue(first.started.await(1, TimeUnit.SECONDS))
+            assertEquals(LocalTtsPhase.READY, backend.refresh().get(1, TimeUnit.SECONDS).phase)
+            assertTrue(first.closed)
+            assertTrue(speech.isCompletedExceptionally)
+            val next = backend.speak("new voice")
+            assertTrue(second.started.await(1, TimeUnit.SECONDS))
+            first.callback!!.done(first.id!!)
+            assertFalse(next.isDone)
+            second.callback!!.done(second.id!!)
+            next.get(1, TimeUnit.SECONDS)
+        } finally { backend.close() }
+    }
+
+    private class Engine : OfflineSpeechEngine {
+        override val voices = listOf(OfflineSpeechVoice("local", "en-US", false, true, 400, 100))
+        val started = CountDownLatch(1)
+        var callback: OfflineSpeechListener? = null
+        var id: String? = null
+        @Volatile var closed = false
+        override fun selectVoice(id: String) = true
+        override fun setListener(value: OfflineSpeechListener) { callback = value }
+        override fun speak(text: String, id: String): Boolean {
+            this.id = id
+            started.countDown()
+            return true
+        }
+        override fun stop() = Unit
+        override fun close() { closed = true }
+    }
+
     @Test fun blockedEngineCannotBlockStateStopOrInitializationDeadline() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)

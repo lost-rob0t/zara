@@ -20,6 +20,7 @@ class AndroidOfflineTtsBackend(context: Context) : LocalTtsProvider {
 
     override fun state() = session.state()
     override fun initialize() = session.initialize()
+    override fun refresh() = session.refresh()
     override fun speak(text: String) = session.speak(text)
     override fun stop() = session.stop()
     override fun close() = session.close()

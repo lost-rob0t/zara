@@ -27,7 +27,14 @@ internal class IsolatedSpeechBackend(
 
     override fun state() = current
 
-    override fun initialize(): CompletableFuture<LocalTtsState> = synchronized(lock) {
+    override fun initialize(): CompletableFuture<LocalTtsState> = initializeEngine(false)
+
+    override fun refresh(): CompletableFuture<LocalTtsState> {
+        stop()
+        return initializeEngine(true)
+    }
+
+    private fun initializeEngine(refresh: Boolean): CompletableFuture<LocalTtsState> = synchronized(lock) {
         if (closed.get()) return@synchronized CompletableFuture.failedFuture(CancellationException("Speech is closed"))
         initialization?.takeIf { !it.isDone }?.let { return@synchronized it }
         // One outstanding engine call is enough. Do not queue retries behind a hung Binder.
@@ -46,7 +53,8 @@ internal class IsolatedSpeechBackend(
         initialization = result
         worker.execute {
             try {
-                backend.initialize().whenComplete { state, error ->
+                val startup = if (refresh) backend.refresh() else backend.initialize()
+                startup.whenComplete { state, error ->
                     engineInitializing = false
                     reply.complete(if (error == null && state != null) state else unavailable())
                 }

@@ -40,6 +40,15 @@ internal class OfflineSpeechSession(
 
     @Synchronized override fun state(): LocalTtsState = current
 
+    @Synchronized override fun refresh(): CompletableFuture<LocalTtsState> {
+        if (closed) return CompletableFuture.failedFuture(IllegalStateException("Offline speech is closed"))
+        stop()
+        initialization?.completeExceptionally(CancellationException("Speech engine refreshed"))
+        initialization = null
+        current = LocalTtsState(LocalTtsPhase.STOPPED)
+        return initialize()
+    }
+
     @Synchronized override fun initialize(): CompletableFuture<LocalTtsState> {
         if (closed) return CompletableFuture.failedFuture(IllegalStateException("Offline speech is closed"))
         initialization?.takeIf { !it.isDone }?.let { return it }
@@ -56,7 +65,7 @@ internal class OfflineSpeechSession(
         }
         creation.whenComplete { next, error ->
             synchronized(this) {
-                if (closed) {
+                if (closed || initialization !== result) {
                     next?.close()
                     result.completeExceptionally(IllegalStateException("Offline speech is closed"))
                 } else if (error != null || next == null) {

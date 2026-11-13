@@ -78,7 +78,7 @@ class LocalAiService : Service() {
 
         fun ttsState(): LocalTtsState = tts.state()
 
-        fun refreshSpeech(): CompletableFuture<LocalTtsState> = tts.initialize()
+        fun refreshSpeech(): CompletableFuture<LocalTtsState> = tts.refresh()
 
         fun ttsProviders(): List<LocalTtsProviderCapabilities> = ttsRegistry.capabilities()
 
@@ -198,7 +198,7 @@ class LocalAiService : Service() {
                     LocalAiRemoteProtocol.MSG_TTS_STATE -> replyFuture(requestId, replyTo,
                         CompletableFuture.completedFuture(tts.state()), LocalAiRemoteProtocol::ttsStateToBundle)
                     LocalAiRemoteProtocol.MSG_TTS_REFRESH -> replyFuture(requestId, replyTo,
-                        tts.initialize(), LocalAiRemoteProtocol::ttsStateToBundle)
+                        tts.refresh(), LocalAiRemoteProtocol::ttsStateToBundle)
                     LocalAiRemoteProtocol.MSG_TTS_SPEAK -> replyFuture(requestId, replyTo,
                         tts.speak(requireRemoteString(message.data, "text"))) { Bundle() }
                     LocalAiRemoteProtocol.MSG_TTS_STOP -> {

@@ -29,6 +29,7 @@ data class LocalTtsProviderCapabilities(
 interface LocalTtsBackend : AutoCloseable {
     fun state(): LocalTtsState
     fun initialize(): CompletableFuture<LocalTtsState>
+    fun refresh(): CompletableFuture<LocalTtsState> = initialize()
     fun speak(text: String): CompletableFuture<Unit>
     fun stop()
 }

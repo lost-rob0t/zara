@@ -5,6 +5,42 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class OfflineSpeechSessionTest {
+    @Test fun refreshReplacesReadyEngineAndCancelsOldSpeech() {
+        val first = FakeEngine(listOf(voice().copy(id = "old")))
+        val second = FakeEngine(listOf(voice().copy(id = "kitten")))
+        val engines = ArrayDeque(listOf(first, second))
+        val session = OfflineSpeechSession { CompletableFuture.completedFuture(engines.removeFirst()) }
+        val speaking = session.speak("old engine")
+        val oldId = first.utterances.keys.single()
+        assertEquals("kitten", session.refresh().join().voiceId)
+        assertTrue(speaking.isCompletedExceptionally)
+        assertTrue(first.closed)
+        val fresh = session.speak("new engine")
+        first.callback!!.done(oldId)
+        assertFalse(fresh.isDone)
+        second.callback!!.done(second.utterances.keys.single())
+        fresh.join()
+        session.close()
+    }
+
+    @Test fun refreshDuringStartupDiscardsLateEngine() {
+        val oldStartup = CompletableFuture<OfflineSpeechEngine>()
+        val oldEngine = FakeEngine(listOf(voice().copy(id = "old")))
+        val newEngine = FakeEngine(listOf(voice().copy(id = "new")))
+        var calls = 0
+        val session = OfflineSpeechSession {
+            if (calls++ == 0) oldStartup else CompletableFuture.completedFuture(newEngine)
+        }
+        val pending = session.initialize()
+        assertEquals("new", session.refresh().join().voiceId)
+        oldStartup.complete(oldEngine)
+        assertTrue(pending.isCompletedExceptionally)
+        assertTrue(oldEngine.closed)
+        assertEquals("new", session.state().voiceId)
+        session.close()
+        assertTrue(session.refresh().isCompletedExceptionally)
+    }
+
     @Test fun missingVoiceCanBeRetriedAfterInstallation() {
         val first = FakeEngine(emptyList())
         val second = FakeEngine(listOf(voice()))

@@ -23,6 +23,27 @@ def _load_device_acceptance_module():
     return module
 
 
+def test_settings_return_checks_both_back_transitions():
+    module = _load_device_acceptance_module()
+
+    class NavigationDevice:
+        route = "runtime"
+        checked = []
+
+        def press_back(self):
+            self.route = {"runtime": "settings", "settings": "chat"}[self.route]
+
+        def await_navigation(self, menu, route, drawer_open):
+            assert self.route == route
+            assert menu == ("chat" if route == "chat" else "settings")
+            assert drawer_open is False
+            self.checked.append(route)
+
+    device = NavigationDevice()
+    module.return_from_runtime_to_chat(device)
+    assert device.checked == ["settings", "chat"]
+
+
 def test_nodes_uses_fresh_shell_owned_uiautomator_dump(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
