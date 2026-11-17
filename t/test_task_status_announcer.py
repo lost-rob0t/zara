@@ -226,3 +226,50 @@ async def test_close_shuts_engine_down():
     await announcer.close()
 
     engine.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reset_engine_drops_cached_engine_so_provider_switch_applies_live():
+    first_engine = FakeEngine()
+    second_engine = FakeEngine()
+    engines = [first_engine, second_engine]
+    factory_calls = 0
+
+    def factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        return engines[factory_calls - 1]
+
+    announcer = TaskStatusAnnouncer(
+        engine_factory=factory,
+        publish=Recorder(),
+        sample_rate=24000,
+    )
+
+    await announcer.handle_event(
+        events.TaskCompleted(task_id="t1", label="First")
+    )
+    assert factory_calls == 1
+    assert first_engine.spoken == ["First done."]
+
+    announcer.reset_engine()
+
+    await announcer.handle_event(
+        events.TaskCompleted(task_id="t2", label="Second")
+    )
+    assert factory_calls == 2
+    assert second_engine.spoken == ["Second done."]
+    assert first_engine.spoken == ["First done."]
+
+
+def test_reset_engine_without_cached_engine_does_not_build_one():
+    def factory():
+        raise AssertionError("reset_engine must not build an engine")
+
+    announcer = TaskStatusAnnouncer(
+        engine_factory=factory,
+        publish=Recorder(),
+        sample_rate=24000,
+    )
+
+    announcer.reset_engine()

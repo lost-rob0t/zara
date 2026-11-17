@@ -193,6 +193,12 @@ slang_map("turn off voice mode", "stopvoice").
 slang_map(" turn off dictation ", " stopdictation ").
 slang_map("turn off dictation", "stopdictation").
 
+% Voice profile switches (game mode uses the low-latency Edge voice)
+slang_map(" game mode ", " gamemode ").
+slang_map("game mode", "gamemode").
+slang_map(" normal mode ", " normalmode ").
+slang_map("normal mode", "normalmode").
+
 
 
 

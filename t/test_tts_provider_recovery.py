@@ -99,3 +99,78 @@ async def test_transient_engine_bootstrap_failure_recovers_on_next_turn():
         and event.turn_id == "recovery-turn"
         for event in published
     )
+
+
+@pytest.mark.asyncio
+async def test_reset_engine_drops_cached_engine_so_provider_switch_applies_live():
+    bus = RuntimeEventBus()
+    published: list[events.RuntimeEvent] = []
+    first_engine = _Engine()
+    second_engine = _Engine()
+    engines = [first_engine, second_engine]
+    factory_calls = 0
+
+    def factory():
+        nonlocal factory_calls
+        factory_calls += 1
+        return engines[factory_calls - 1]
+
+    bridge = TtsOutputBridge(
+        subscription=bus.subscribe(),
+        publish=published.append,
+        engine_factory=factory,
+    )
+
+    await bridge.handle_event(
+        events.AssistantDelta(
+            turn_id="first-turn",
+            conversation_id="conv-29",
+            text="Before switch. ",
+        )
+    )
+    await bridge.handle_event(
+        events.AssistantComplete(
+            turn_id="first-turn",
+            conversation_id="conv-29",
+            text="",
+        )
+    )
+    await bridge.wait_for_idle()
+
+    assert factory_calls == 1
+    assert first_engine.calls == ["Before switch."]
+
+    bridge.reset_engine()
+
+    await bridge.handle_event(
+        events.AssistantDelta(
+            turn_id="second-turn",
+            conversation_id="conv-29",
+            text="After switch.",
+        )
+    )
+    await bridge.handle_event(
+        events.AssistantComplete(
+            turn_id="second-turn",
+            conversation_id="conv-29",
+            text="",
+        )
+    )
+    await bridge.wait_for_idle()
+
+    assert factory_calls == 2
+    assert second_engine.calls == ["After switch."]
+    assert first_engine.calls == ["Before switch."]
+
+
+def test_reset_engine_without_cached_engine_does_not_build_one():
+    def factory():
+        raise AssertionError("reset_engine must not build an engine")
+
+    bridge = TtsOutputBridge(
+        subscription=RuntimeEventBus().subscribe(),
+        publish=lambda event: None,
+        engine_factory=factory,
+    )
+
+    bridge.reset_engine()

@@ -362,6 +362,10 @@ def main():
         from .health_cli import main as health_main
         sys.exit(health_main(sys.argv[2:], config=config))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "voice-mode":
+        from .voice_cli import main as voice_mode_main
+        sys.exit(voice_mode_main(sys.argv[2:], config=config))
+
     parser = argparse.ArgumentParser(
         prog="zara",
         description="Zarathustra Voice Assistant - Unified Interface",
@@ -375,6 +379,7 @@ def main():
                "  zara pair                     # Start server pairing by QR\n"
                "  zara pair-client URI          # Pair this desktop to a server\n"
                "  zara health status            # Inspect the private health store\n"
+               "  zara voice-mode game          # Switch to the low-latency game voice\n"
                "  zara --desktop                # Native desktop / Quick Copilot\n"
                "  zara --toggle-desktop         # Toggle the existing desktop\n"
                "  zara --console                # Interactive REPL\n"

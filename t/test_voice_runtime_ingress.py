@@ -257,3 +257,47 @@ def test_default_server_gateway_injects_daemon_voice_runtime(monkeypatch):
     assert captured["principal"] == principal
     assert captured["voice_ingress"] is not None
     assert captured["voice_ingress"].principal == principal
+
+
+def test_default_gateway_registers_voice_engine_resets(monkeypatch):
+    import queue as queue_module
+
+    import zara.voice_profile as voice_profile
+
+    class FakeSupervisor:
+        def subscribe(self, principal, maxsize=256):
+            return queue_module.Queue(maxsize=8)
+
+        def publish(self, principal, event):
+            return None
+
+    principal = PrincipalContext("user:alice")
+    server = ZaraServer(principal=principal)
+    voice_profile._RESET_CALLBACKS.clear()
+    try:
+        server._build_default_gateway(
+            "ipc:///tmp/zara-voice-reset.sock",
+            supervisor=FakeSupervisor(),
+            principal=principal,
+        )
+
+        assert server._tts_bridge is not None
+        assert server._task_announcer is not None
+        assert voice_profile._RESET_CALLBACKS
+
+        server._tts_bridge._engine = object()
+        server._task_announcer._engine = object()
+        voice_profile._notify_engine_resets()
+        assert server._tts_bridge._engine is None
+        assert server._task_announcer._engine is None
+
+        first_callbacks = list(voice_profile._RESET_CALLBACKS)
+        server._build_default_gateway(
+            "ipc:///tmp/zara-voice-reset-2.sock",
+            supervisor=FakeSupervisor(),
+            principal=principal,
+        )
+        assert list(voice_profile._RESET_CALLBACKS) != first_callbacks
+        assert len(voice_profile._RESET_CALLBACKS) == 2
+    finally:
+        voice_profile._RESET_CALLBACKS.clear()

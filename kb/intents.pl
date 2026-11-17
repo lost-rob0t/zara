@@ -122,6 +122,10 @@ python_skill_intent(greet, say_hello, rest).
 python_skill_intent(weather, noaa_weather, rest).
 python_skill_intent(forecast, noaa_weather, rest).
 
+% Voice profile switches (normal <-> game audio output)
+python_skill_intent(gamemode, set_game_mode, 0).
+python_skill_intent(normalmode, set_normal_mode, 0).
+
 % Built-in human TODO skills are one coherent optional surface. Org is the
 % default canonical backend; SQLite remains available as a legacy backend.
 todo_python_skill_intent(todo, capture_todo, rest).

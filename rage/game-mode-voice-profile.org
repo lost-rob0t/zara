@@ -1,0 +1,35 @@
+* Run identity
+- Slice :: Game-mode voice profile switch (journal todos voice_game_mode_core + voice_bridge_reset + voice_game_mode_triggers + voice_mode_cli)
+- Consumed queue :: .prolog/handoff.pl next_action (voice-agentic roadmap, successor of merged PRs #1530/#1531/#1532); no GitHub issue owns this slice
+- RAGE start commit :: =58a4f13d7103b4603a5e6156e4582072302b502b=
+- Branch :: =rage/game-mode-voice= (opencode worktree)
+
+* Research (evidence-driven)
+- =ZaraConfig= had no persistence API: read-only TOML, only =tomli= in the flake; provider validation at =zara/config.py= supported_providers.
+- Engine caching: =TtsOutputBridge._get_engine= caches the first successful engine forever; =TaskStatusAnnouncer= caches identically and drops only in =close()=. A provider flip without resets never applies live. =TTSEngine= has no =close=, so a reference drop is the whole reset.
+- Routing path: =command_gate.looks_like_command= checks the first 3 tokens against =COMMAND_TRIGGER_WORDS=; "game"/"normal" were absent, so bare "game mode" delegated to the LLM before Prolog ever ran.
+- Multi-word surfaces reach the resolver only as single head tokens via =normalizer= =slang_map= joins (precedent: =" voice mode " -> " voicemode "=); =try_exact= matches =verb_intent= on the head token and =extract_args(0, _, _, [])= ignores trailing tokens.
+
+* Design (validated in SWI Prolog pre-TDD, session 3ec5c6153e40)
+- =slang_map= joins for "game mode"/"normal mode" (spaced + bare forms), =python_skill_intent(gamemode, set_game_mode, 0)= / =(normalmode, set_normal_mode, 0)= materialized through the existing =verb_intent(Word, python(Skill), Arity)= rule, =COMMAND_TRIGGER_WORDS += {game, normal}=.
+- In-session validation: target utterances resolve to =python(set_game_mode)/python(set_normal_mode)=; "voice mode" still =dictation_start=; "stop game mode" keeps =stop= control precedence; bare "game" stays unresolved; "what is game mode" keeps =ask= delegation; findall shows exactly one intent per new head (disjointness).
+- Python side: =zara/voice_profile.py= owns modes {normal: llamacpp, game: edge}, =set_voice_mode= persists via new transactional =ZaraConfig.set_value= and fires reset callbacks; =ServerCore= registers bridge + announcer =reset_engine= per gateway build, replacing registrations on rebuild. Rejected: reaching into daemon internals from skills (coupling), async close ceremonies (TTSEngine has none).
+
+* Realize / TDD (red -> green per behavior)
+- RED 1 :: bridge/announcer =reset_engine= tests failed with =AttributeError: no attribute 'reset_engine'= (4 failed).
+- GREEN 1 :: reference-drop =reset_engine= on both consumers; 15 passed.
+- RED 2 :: =set_value= tests failed with =AttributeError=; =voice_profile= import =ModuleNotFoundError=.
+- GREEN 2 :: =ZaraConfig.set_value= (validate-in-memory first, then section-scoped TOML edit; invalid values change neither file nor memory) + =zara/voice_profile.py=; 64 passed.
+- RED 3 :: gate, real-Prolog intent, router, skills, and server-wiring tests failed for the designed missing pieces (9 failed).
+- GREEN 3 :: command_gate words, =kb/intents.pl= + =modules/normalizer.pl= clauses, python_skills handlers, =ServerCore._install_voice_resets= (rebuild-safe), =unregister_voice_reset=; focused batch 202 passed.
+- RED 4 :: =voice-mode= CLI =ModuleNotFoundError=; GREEN 4 :: =zara/voice_cli.py= + =__main__= dispatch + epilog; 5 passed.
+
+* Evaluate
+- Focused :: 9 suite files green (see prolog-verify observation voice_focused_suites).
+- Prolog design gate :: =voice_prolog_design= swipl -g goal re-proves resolution at the exact candidate digest.
+- Full gate / flake / build / diff :: see prolog-verify observations; =scripts/test-all.sh=, =nix flake check=, =nix build=, =git diff --check=.
+- Docs :: CHANGELOG Unreleased Added entry; wiki/agent-mode.org voice-profile section (documents the CLI daemon-restart caveat honestly).
+
+* Outcome
+- Local acceptance :: pending exact-digest gate results (recorded by prolog-verify).
+- Remote :: pending branch push + exact-head GitHub Actions.

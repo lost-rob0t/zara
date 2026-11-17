@@ -350,3 +350,43 @@ async def test_clarification_capacity_reports_message():
     assert capacity.action == "respond"
     assert capacity.response
     assert capacity.response != "Which app?"
+
+
+@pytest.mark.asyncio
+async def test_game_mode_utterance_executes_voice_skill(monkeypatch):
+    class StubSkills:
+        def __init__(self):
+            self.executed = []
+
+        def execute(self, name, args):
+            self.executed.append((name, list(args)))
+            return "Game mode: voice on edge."
+
+    stub = StubSkills()
+    monkeypatch.setattr("zara.runtime.intent_router.python_skills", stub)
+    prolog = FakeProlog()
+    prolog.results["game mode"] = IntentResult("python", "set_game_mode", [])
+    router = build_router(prolog=prolog)
+
+    decision = await router.route("game mode")
+
+    assert decision.action == "respond"
+    assert "Game mode" in decision.response
+    assert stub.executed == [("set_game_mode", [])]
+    assert prolog.resolve_calls == ["game mode"]
+
+
+@pytest.mark.asyncio
+async def test_voice_skill_failure_delegates(monkeypatch):
+    class FailingSkills:
+        def execute(self, name, args):
+            raise RuntimeError("config write failed")
+
+    monkeypatch.setattr("zara.runtime.intent_router.python_skills", FailingSkills())
+    prolog = FakeProlog()
+    prolog.results["game mode"] = IntentResult("python", "set_game_mode", [])
+    router = build_router(prolog=prolog)
+
+    decision = await router.route("game mode")
+
+    assert decision.action == "delegate"

@@ -339,3 +339,66 @@ def test_api_service_disabled_providers_are_preserved(tmp_path):
         "enabled": True,
         "disabled_providers": ("timer_server",),
     }
+
+
+def test_set_value_replaces_existing_key_and_preserves_rest(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[tts]\nprovider = "llamacpp"\n\n[wake]\nthreshold = 0.4\n'
+    )
+    config = ZaraConfig(str(config_path))
+
+    config.set_value("tts", "provider", "edge")
+
+    assert config.get("tts", "provider") == "edge"
+    assert config.get("wake", "threshold") == 0.4
+    reparsed = tomllib.loads(config_path.read_text())
+    assert reparsed["tts"]["provider"] == "edge"
+    assert reparsed["wake"]["threshold"] == 0.4
+
+
+def test_set_value_persists_for_a_fresh_config_instance(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[tts]\nprovider = "llamacpp"\n')
+    config = ZaraConfig(str(config_path))
+
+    config.set_value("tts", "provider", "edge")
+
+    assert ZaraConfig(str(config_path)).get("tts", "provider") == "edge"
+
+
+def test_set_value_inserts_missing_key_into_existing_section(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[tts]\nprovider = "llamacpp"\n')
+    config = ZaraConfig(str(config_path))
+
+    config.set_value("tts", "rate", 16000)
+
+    reparsed = tomllib.loads(config_path.read_text())
+    assert reparsed["tts"] == {"provider": "llamacpp", "rate": 16000}
+
+
+def test_set_value_appends_missing_section(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('[tts]\nprovider = "llamacpp"\n')
+    config = ZaraConfig(str(config_path))
+
+    config.set_value("tasks", "enabled", False)
+
+    reparsed = tomllib.loads(config_path.read_text())
+    assert reparsed["tasks"]["enabled"] is False
+    assert reparsed["tts"]["provider"] == "llamacpp"
+    assert config.get("tasks", "enabled") is False
+
+
+def test_set_value_rejects_invalid_provider_and_leaves_file_untouched(tmp_path):
+    config_path = tmp_path / "config.toml"
+    original = '[tts]\nprovider = "llamacpp"\n'
+    config_path.write_text(original)
+    config = ZaraConfig(str(config_path))
+
+    with pytest.raises(Exception):
+        config.set_value("tts", "provider", "bogus-provider")
+
+    assert config_path.read_text() == original
+    assert config.get("tts", "provider") == "llamacpp"

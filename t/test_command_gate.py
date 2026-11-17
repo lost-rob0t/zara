@@ -28,6 +28,8 @@ from zara.command_gate import looks_like_command, target_only_candidate
         "goodbye",
         "end conversation",
         "start voice mode",
+        "game mode",
+        "normal mode",
         "dictate",
         "timer 5 minutes",
         "alarm 7am",

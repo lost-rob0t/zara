@@ -32,6 +32,7 @@ COMMAND_TRIGGER_WORDS: FrozenSet[str] = frozenset(
         "plan", "set", "list", "show", "edit", "update", "export", "timer",
         "alarm", "weather", "forecast", "bye", "goodbye", "farewell", "quit",
         "start", "end", "stop", "command",
+        "game", "normal",
     }
 )
 

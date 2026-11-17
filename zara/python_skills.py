@@ -42,6 +42,18 @@ def say_hello(args: List[Any]) -> str:
     return f"Hello, {name}!"
 
 
+def set_game_mode(args: List[Any]) -> str:
+    from .voice_profile import set_voice_mode
+
+    return set_voice_mode("game")
+
+
+def set_normal_mode(args: List[Any]) -> str:
+    from .voice_profile import set_voice_mode
+
+    return set_voice_mode("normal")
+
+
 def noaa_weather(args: List[Any]) -> str:
     return get_noaa_weather()
 
@@ -51,6 +63,8 @@ class PythonSkillRegistry:
         self._skills: Dict[str, Callable[[List[Any]], str]] = {
             "say_hello": say_hello,
             "noaa_weather": noaa_weather,
+            "set_game_mode": set_game_mode,
+            "set_normal_mode": set_normal_mode,
             "capture_todo": capture_todo,
             "complete_todo": complete_todo,
             "list_todos": list_todos,
