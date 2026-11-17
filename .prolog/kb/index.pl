@@ -5,3 +5,4 @@
 :- ensure_loaded(org_fleet_delivery).
 :- ensure_loaded(desktop_prolog_ide).
 :- consult('kb/voice_output_tts.pl').
+:- consult('kb/pet_task_notifier.pl').
