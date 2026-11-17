@@ -165,6 +165,53 @@ def test_pet_adapter_maps_tool_approval_and_cancellation():
     assert isinstance(cancelled.event, pet_events.TaskCancelled)
 
 
+def test_pet_adapter_maps_long_horizon_task_lifecycle():
+    started = adapt_runtime_event(events.TaskStarted(task_id="t1", label="Deploy"))
+    step = adapt_runtime_event(
+        events.TaskStepCompleted(task_id="t1", step_index=2, label="Deploy")
+    )
+    waiting = adapt_runtime_event(
+        events.TaskWaitingApproval(task_id="t1", label="Deploy")
+    )
+    completed = adapt_runtime_event(events.TaskCompleted(task_id="t1", label="Deploy"))
+    failed = adapt_runtime_event(
+        events.TaskFailed(task_id="t1", reason="boom", label="Deploy")
+    )
+
+    assert started is not None
+    assert started.event_name == "TaskStarted"
+    assert started.payload == {"label": "Deploy"}
+    assert started.event == pet_events.TaskStarted(label="Deploy")
+
+    assert step is not None
+    assert step.event_name == "TaskStepCompleted"
+    assert step.event == pet_events.TaskStepCompleted(label="Deploy")
+
+    assert waiting is not None
+    assert waiting.event_name == "TaskWaitingApproval"
+    assert waiting.event == pet_events.TaskWaitingApproval(label="Deploy")
+
+    assert completed is not None
+    assert completed.event_name == "TaskCompleted"
+    assert completed.event == pet_events.TaskCompleted(label="Deploy")
+
+    assert failed is not None
+    assert failed.event_name == "TaskFailed"
+    assert failed.payload == {"reason": "boom", "label": "Deploy"}
+    assert failed.event == pet_events.TaskFailed(reason="boom", label="Deploy")
+
+
+def test_pet_adapter_maps_task_cancellation_to_abort():
+    aborted = adapt_runtime_event(
+        events.TaskCancelled(task_id="t1", reason="user", label="tasks")
+    )
+
+    assert aborted is not None
+    assert aborted.event_name == "TaskAborted"
+    assert aborted.payload == {"label": "tasks"}
+    assert aborted.event == pet_events.TaskAborted(label="tasks")
+
+
 def test_pet_adapter_ignores_events_it_does_not_render_yet():
     assert adapt_runtime_event(events.VoiceStateChanged(state="listening")) is None
 

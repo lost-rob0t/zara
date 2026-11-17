@@ -23,7 +23,7 @@ def test_subscriber_bind_and_publish_round_trip(monkeypatch):
     from zara.pets.state import PetState
 
     received: list = []
-    actor = PetStateActor.start(subscriber=lambda s, l: received.append(s))
+    actor = PetStateActor.start(subscriber=lambda s, l, t: received.append(s))
     try:
         payloads: list = []
 
@@ -75,8 +75,25 @@ def test_payload_map_covers_all_runtime_events():
         "UserInputRequired", "UserResponded",
         "OutputReady", "OutputSeen", "TaskCancelled",
         "RuntimeIdle", "ProviderUnavailable",
+        "TaskStarted", "TaskStepCompleted", "TaskWaitingApproval",
+        "TaskCompleted", "TaskFailed", "TaskAborted",
     }
     assert expected <= set(_PAYLOAD_MAP)
+
+
+def test_payload_map_builds_long_horizon_task_events():
+    from zara.pets.qt_overlay import _PAYLOAD_MAP
+    from zara.pets import events
+
+    started = _PAYLOAD_MAP["TaskStarted"]({"event": "TaskStarted", "label": "Deploy"})
+    failed = _PAYLOAD_MAP["TaskFailed"](
+        {"event": "TaskFailed", "label": "Deploy", "reason": "boom"}
+    )
+    aborted = _PAYLOAD_MAP["TaskAborted"]({"event": "TaskAborted", "label": "tasks"})
+
+    assert started == events.TaskStarted(label="Deploy")
+    assert failed == events.TaskFailed(reason="boom", label="Deploy")
+    assert aborted == events.TaskAborted(label="tasks")
 
 
 def test_dispatch_payload_transitions_actor():

@@ -16,6 +16,8 @@ PySide6 is imported lazily inside ``run_overlay``.
 from __future__ import annotations
 
 import logging
+import math
+import time
 from typing import Callable, Optional
 
 from . import events, runtime_bridge
@@ -59,6 +61,13 @@ _PAYLOAD_MAP = {
         label=p.get("label")),
     "OutputSeen": lambda p: events.OutputSeen(label=p.get("label")),
     "TaskCancelled": lambda p: events.TaskCancelled(label=p.get("label")),
+    "TaskStarted": lambda p: events.TaskStarted(label=p.get("label")),
+    "TaskStepCompleted": lambda p: events.TaskStepCompleted(label=p.get("label")),
+    "TaskWaitingApproval": lambda p: events.TaskWaitingApproval(label=p.get("label")),
+    "TaskCompleted": lambda p: events.TaskCompleted(label=p.get("label")),
+    "TaskFailed": lambda p: events.TaskFailed(
+        reason=p.get("reason", ""), label=p.get("label")),
+    "TaskAborted": lambda p: events.TaskAborted(label=p.get("label")),
     "RuntimeIdle": lambda p: events.RuntimeIdle(label=p.get("label")),
     "ProviderUnavailable": lambda p: events.ProviderUnavailable(
         reason=p.get("reason", ""), label=p.get("label")),
@@ -72,6 +81,40 @@ _EMOTION_LABELS = {
     PetState.READY: "has something ready",
     PetState.BLOCKED: "is stuck",
 }
+
+# Task bubble wording mirrors TaskStatusAnnouncer's spoken lines so the pet
+# is the visual twin of the voice announcement.
+_TASK_BUBBLE_TEMPLATES = {
+    "TaskCompleted": "{label} done.",
+    "TaskFailed": "{label} failed.",
+    "TaskWaitingApproval": "{label} needs approval.",
+}
+
+_TASK_DOT_COUNT = 3
+
+
+def _task_bubble_text(event_name: str, payload: dict) -> Optional[str]:
+    """Bubble line for a machine-task status event, or None otherwise."""
+    template = _TASK_BUBBLE_TEMPLATES.get(event_name)
+    if template is None:
+        return None
+    label = str(payload.get("label") or "").strip() or "Task"
+    return template.format(label=label)
+
+
+def _task_dot_alphas(now: float, reduced_motion: bool) -> list[float]:
+    """Per-dot opacity for the working-dots indicator.
+
+    Dots pulse in a staggered wave while a machine task is running and
+    hold full opacity when reduced motion is requested.
+    """
+    if reduced_motion:
+        return [1.0] * _TASK_DOT_COUNT
+    alphas = []
+    for index in range(_TASK_DOT_COUNT):
+        wave = (math.sin(now * 2.4 - index * 0.9) + 1.0) / 2.0
+        alphas.append(0.35 + 0.65 * wave)
+    return alphas
 
 
 def _screen_rects(qt_screens) -> list[ScreenRect]:
@@ -113,8 +156,8 @@ def run_overlay(
     pet_manifest: PetManifest,
     on_request_focus: Optional[Callable[[], None]] = None,
 ) -> int:
-    from PySide6.QtCore import Qt, QTimer, QPoint
-    from PySide6.QtGui import QPixmap, QPainter, QImage, QAction, QCursor
+    from PySide6.QtCore import Qt, QTimer, QPoint, QRect
+    from PySide6.QtGui import QPixmap, QPainter, QImage, QAction, QCursor, QColor, QBrush
     from PySide6.QtWidgets import (
         QApplication,
         QLabel,
@@ -159,6 +202,7 @@ def run_overlay(
     overlay_state = {
         "pre_drag_state": PetState.IDLE,
         "dragging": False,
+        "task_active": False,
     }
 
     class PetWindow(QWidget):
@@ -186,6 +230,36 @@ def run_overlay(
             painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
             if self._current_pixmap is not None:
                 painter.drawPixmap(self.rect(), self._current_pixmap)
+            if overlay_state["task_active"]:
+                self._paint_task_dots(painter)
+
+        def _paint_task_dots(self, painter) -> None:
+            alphas = _task_dot_alphas(time.monotonic(), controller.reduced_motion)
+            radius = max(3, int(3 * scale))
+            spacing = radius * 3
+            padding = radius + 2
+            total_width = _TASK_DOT_COUNT * (radius * 2) + (_TASK_DOT_COUNT - 1) * spacing
+            pill_height = radius * 2 + padding * 2
+            pill_right = self.width() - padding
+            pill_rect = QRect(
+                pill_right - total_width - padding,
+                padding,
+                total_width + padding * 2,
+                pill_height,
+            )
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(24, 28, 36, 200))
+            painter.drawRoundedRect(
+                pill_rect, pill_height // 2, pill_height // 2
+            )
+            center_y = pill_rect.top() + pill_height // 2
+            for index, alpha in enumerate(alphas):
+                center_x = (
+                    pill_rect.left() + padding + radius
+                    + index * (radius * 2 + spacing)
+                )
+                painter.setBrush(QBrush(QColor(255, 255, 255, int(255 * alpha))))
+                painter.drawEllipse(QPoint(center_x, center_y), radius, radius)
 
         def mousePressEvent(self, event) -> None:
             if event.button() == Qt.LeftButton:
@@ -347,7 +421,20 @@ def run_overlay(
     # --- Pet state actor + ZMQ subscriber -------------------------------
     from .actor import PetStateActor
 
-    def _on_state(state: PetState, labels: list[str]) -> None:
+    pulse_timer = QTimer()
+    pulse_timer.timeout.connect(window.update)
+
+    def _update_task_pulse_timer() -> None:
+        needs_pulse = overlay_state["task_active"] and not controller.reduced_motion
+        if needs_pulse and not pulse_timer.isActive():
+            pulse_timer.start(100)
+        elif not needs_pulse and pulse_timer.isActive():
+            pulse_timer.stop()
+        window.update()
+
+    def _on_state(state: PetState, labels: list[str], task_active: bool) -> None:
+        overlay_state["task_active"] = task_active
+        _update_task_pulse_timer()
         # During a drag, keep the running animation regardless of incoming
         # state; we'll restore on release.
         if overlay_state["dragging"]:
@@ -368,6 +455,9 @@ def run_overlay(
         if event_name == "ResponseText":
             _show_response(str(payload.get("text", "")))
             return
+        bubble_text = _task_bubble_text(str(event_name), payload)
+        if bubble_text is not None:
+            _show_response(bubble_text)
         factory = _PAYLOAD_MAP.get(event_name)
         if factory is None:
             logger.warning("[PetOverlay] unknown event: %s", event_name)
@@ -440,6 +530,7 @@ def run_overlay(
         anim_timer.stop()
         ipc_timer.stop()
         wakeup.stop()
+        pulse_timer.stop()
         response_timer.stop()
         response_bubble.hide()
         _restore_signals()
@@ -452,7 +543,7 @@ def run_overlay(
 
     app.aboutToQuit.connect(_cleanup)
     tray.show()
-    _on_state(PetState.IDLE, [])
+    _on_state(PetState.IDLE, [], False)
     return app.exec()
 
 

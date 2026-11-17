@@ -73,6 +73,7 @@ class ActivityKind(str, Enum):
     INDEXING = "indexing"
     SEARCH = "search"
     BACKGROUND = "background"
+    TASK = "task"
     OTHER = "other"
 
 
