@@ -7,6 +7,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 ### Added
 
 - Long-horizon agent tasks now ship enabled: the voice agent can create, run, and track multiple concurrent tasks, task lifecycle events carry the human-readable goal, and Zara speaks terse spoken summaries ("Plants research done.", "needs approval") as tasks finish. Spoken task status is configurable via `[tasks] status_announcements`.
+- The desktop pet is now a visual task notifier: running tasks show a pulsing working-dots indicator (static under reduced motion), and completion, failure, and approval-gated tasks raise an auto-dismissing bubble with the task goal ("Deploy done.", "Run needs approval."), mirroring the spoken status. Task activity is tracked in its own pet slot so it never disturbs the conversational activity indicator.
 
 ### Changed
 

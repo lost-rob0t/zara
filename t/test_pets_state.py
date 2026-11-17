@@ -52,6 +52,17 @@ def test_priority_running_beats_idle():
     assert d.aggregate() is PetState.RUNNING
 
 
+def test_task_activity_is_isolated_from_agent_activity():
+    d = PetStatusDeriver()
+    d.start(ActivityKind.AGENT, PetState.RUNNING, label="chat")
+    d.start(ActivityKind.TASK, PetState.RUNNING, label="Deploy")
+    assert d.aggregate() is PetState.RUNNING
+    d.transition(ActivityKind.TASK, PetState.READY, label="Deploy")
+    assert d.aggregate() is PetState.READY
+    d.cancel(ActivityKind.TASK)
+    assert d.aggregate() is PetState.RUNNING
+
+
 def test_simultaneous_activities_aggregate_to_highest_priority():
     d = PetStatusDeriver()
     d.start(ActivityKind.MODEL, PetState.RUNNING)

@@ -159,3 +159,51 @@ class RuntimeIdle(PetEvent):
     """Explicit return-to-idle signal (e.g. after OutputSeen)."""
 
     pass
+
+
+# Long-horizon machine tasks -------------------------------------------------
+#
+# These mirror the runtime ``Task*`` events for tasks managed by the
+# long-horizon runner. ``TaskCancelled`` above predates machine tasks and
+# stays the generic activity-cancel event on the wire.
+
+@dataclass(frozen=True)
+class TaskStarted(PetEvent):
+    """A machine task began working."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class TaskStepCompleted(PetEvent):
+    """A machine task finished one step and keeps working."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class TaskWaitingApproval(PetEvent):
+    """A machine task paused to wait for user approval."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class TaskCompleted(PetEvent):
+    """A machine task finished successfully."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class TaskFailed(PetEvent):
+    """A machine task failed and needs intervention."""
+
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class TaskAborted(PetEvent):
+    """A machine task was cancelled; its activity is removed."""
+
+    pass

@@ -29,7 +29,7 @@ class PetStateActor(pykka.ThreadingActor):
     def __init__(
         self,
         deriver: Optional[PetStatusDeriver] = None,
-        subscriber: Optional[Callable[[PetState, list[str]], None]] = None,
+        subscriber: Optional[Callable[[PetState, list[str], bool], None]] = None,
     ) -> None:
         super().__init__()
         self._deriver = deriver or PetStatusDeriver()
@@ -57,9 +57,9 @@ class PetStateActor(pykka.ThreadingActor):
         return super().on_receive(message)
 
     def _handle_event(self, event: events.PetEvent) -> None:
-        if isinstance(event, events.TaskCancelled):
-            # TaskCancelled removes the most recent agent activity so the
-            # aggregate re-derives from whatever remains.
+        if isinstance(event, (events.TaskCancelled, events.TaskAborted)):
+            # Cancellation removes the owning activity so the aggregate
+            # re-derives from whatever remains.
             kind, _ = _map_event(event)
             if kind is not None:
                 self._deriver.cancel(kind)
@@ -82,6 +82,11 @@ class PetStateActor(pykka.ThreadingActor):
     def _publish(self) -> None:
         new_state = self._deriver.aggregate()
         labels = self._deriver.pending_labels()
+        task_active = any(
+            activity.kind is ActivityKind.TASK
+            and activity.state is PetState.RUNNING
+            for activity in self._deriver.activities.values()
+        )
         if new_state is not self._current:
             logger.info(
                 "[PetStateActor] %s -> %s (labels=%s)",
@@ -90,7 +95,7 @@ class PetStateActor(pykka.ThreadingActor):
             self._current = new_state
         if self._subscriber is not None:
             try:
-                self._subscriber(new_state, labels)
+                self._subscriber(new_state, labels, task_active)
             except Exception:
                 logger.exception("[PetStateActor] subscriber raised")
 
@@ -153,6 +158,16 @@ def _map_event(event: events.PetEvent) -> tuple[Optional[ActivityKind], Optional
         return ActivityKind.BACKGROUND, PetState.RUNNING
     if isinstance(event, events.BackgroundCompleted):
         return ActivityKind.BACKGROUND, PetState.READY if event.success else PetState.BLOCKED
+    if isinstance(event, events.TaskStarted):
+        return ActivityKind.TASK, PetState.RUNNING
+    if isinstance(event, events.TaskStepCompleted):
+        return ActivityKind.TASK, PetState.RUNNING
+    if isinstance(event, events.TaskWaitingApproval):
+        return ActivityKind.TASK, PetState.NEEDS_INPUT
+    if isinstance(event, events.TaskCompleted):
+        return ActivityKind.TASK, PetState.READY
+    if isinstance(event, events.TaskFailed):
+        return ActivityKind.TASK, PetState.BLOCKED
     if isinstance(event, events.OutputReady):
         # OutputReady is handled by the kind owner's transition to READY;
         # mark the most recent activity unread. The caller typically emits
@@ -165,6 +180,8 @@ def _map_event(event: events.PetEvent) -> tuple[Optional[ActivityKind], Optional
         return None, None  # handled in _handle_event
     if isinstance(event, events.TaskCancelled):
         return ActivityKind.AGENT, None
+    if isinstance(event, events.TaskAborted):
+        return ActivityKind.TASK, None
     if isinstance(event, events.ProviderUnavailable):
         return ActivityKind.MODEL, PetState.BLOCKED
     return None, None

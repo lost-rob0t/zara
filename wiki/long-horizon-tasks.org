@@ -116,6 +116,20 @@ Announcements are serialized in a single worker thread; synthesis failures
 are logged and never kill the announcer. =TaskStarted= and
 =TaskStepCompleted= are deliberately silent.
 
+* Pet notifier (visual twin)
+
+The desktop pet consumes the same =Task*= events through the pet adapter:
+=zara/pets/runtime_adapter.py= maps them onto the pet vocabulary
+(=TaskStarted=, =TaskStepCompleted=, =TaskWaitingApproval=, =TaskCompleted=,
+=TaskFailed=, =TaskAborted=), and =PetStateActor= classifies them into a
+dedicated =task= activity slot so a machine task never collides with the
+conversational agent activity. While a task is running the pet shows a
+pulsing working-dots indicator (static under reduced motion); completion,
+failure, and approval-gated transitions raise an auto-dismissing bubble
+whose wording mirrors the spoken lines, so the pet is the visual twin of
+=TaskStatusAnnouncer=. Cancelling a task removes its activity and the pet
+aggregate falls back to whatever else is live instead of forcing idle.
+
 * Tools
 
 The agent-facing tools are built by =build_task_tools= in

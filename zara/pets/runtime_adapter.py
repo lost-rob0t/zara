@@ -157,4 +157,34 @@ def adapt_runtime_event(event: runtime_events.RuntimeEvent) -> Optional[PetDispa
             label=label,
         )
 
+    if isinstance(event, runtime_events.TaskStarted):
+        return _dispatch(pet_events.TaskStarted(label=label), "TaskStarted", label=label)
+    if isinstance(event, runtime_events.TaskStepCompleted):
+        return _dispatch(
+            pet_events.TaskStepCompleted(label=label),
+            "TaskStepCompleted",
+            label=label,
+        )
+    if isinstance(event, runtime_events.TaskWaitingApproval):
+        return _dispatch(
+            pet_events.TaskWaitingApproval(label=label),
+            "TaskWaitingApproval",
+            label=label,
+        )
+    if isinstance(event, runtime_events.TaskCompleted):
+        return _dispatch(
+            pet_events.TaskCompleted(label=label),
+            "TaskCompleted",
+            label=label,
+        )
+    if isinstance(event, runtime_events.TaskFailed):
+        return _dispatch(
+            pet_events.TaskFailed(reason=event.reason, label=label),
+            "TaskFailed",
+            reason=event.reason,
+            label=label,
+        )
+    if isinstance(event, runtime_events.TaskCancelled):
+        return _dispatch(pet_events.TaskAborted(label=label), "TaskAborted", label=label)
+
     return None
