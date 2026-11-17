@@ -1,0 +1,11 @@
+% Durable pet task-notifier knowledge (implemented 2026-11-17 on pet/task-notifier @ cd6bde72+).
+pet_notifier_adapter("zara/pets/runtime_adapter.py maps runtime TaskStarted/TaskStepCompleted/TaskWaitingApproval/TaskCompleted/TaskFailed/TaskCancelled onto the pet vocabulary; runtime TaskCancelled dispatches as pet TaskAborted").
+pet_notifier_wire_reserved("pet TaskCancelled predates machine tasks and stays the generic activity-cancel wire event (ToolCancelled/TurnCancelled -> AGENT slot cancel); renaming breaks the ZMQ payload-map contract").
+pet_notifier_kind("ActivityKind.TASK is a dedicated slot; machine tasks never collide with the conversational AGENT slot because kinds share one activity per slot").
+pet_notifier_actor("PetStateActor classifies TaskStarted/TaskStepCompleted -> (TASK, running), TaskWaitingApproval -> (TASK, needs_input), TaskCompleted -> (TASK, ready), TaskFailed -> (TASK, blocked); TaskAborted cancels the TASK activity and the aggregate falls back, never forced idle").
+pet_notifier_subscriber("subscriber contract is (State, Labels, TaskActive); TaskActive is true iff a TASK activity is in RUNNING — dots pulse only then; on_start publishes an initial (IDLE, [], False)").
+pet_notifier_overlay("qt_overlay _task_bubble_text mirrors announcer wording ({label} done./failed./needs approval., fallback label Task) for completed/failed/waiting only; _task_dot_alphas pulses 3 staggered dots (sin phase, alpha 0.35-1.0), static [1.0,1.0,1.0] under reduced motion; 100ms pulse timer runs only while task_active and motion allowed").
+pet_notifier_ipc("payload map + test_pets_ipc vocabulary extended with the six task event names; wire JSON carries label (+ reason on TaskFailed) only; task_id/step_index never cross the wire").
+pet_notifier_invariant(completeness, "every runtime Task* event has exactly one pet dispatch (validated in a SWI Prolog design session pre-TDD)").
+pet_notifier_invariant(terminal_resolution, "every terminal runtime Task* event resolves the TASK activity (ready/blocked/cancel); no non-terminal event maps to a terminal state").
+pet_notifier_invariant(priority, "task states ride the standard PRIORITY table needs_input(4) > blocked(3) > ready(2) > running(1) > idle(0); task approval beats a running model, task completion surfaces as ready").
