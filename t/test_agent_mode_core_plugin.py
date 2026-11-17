@@ -288,6 +288,55 @@ def test_speak_tool_uses_output_only_tts_and_marks_playback(monkeypatch):
     assert "sounddevice" not in agent_mode_module.__dict__
 
 
+def test_speak_text_defaults_to_llamacpp_provider(monkeypatch):
+    calls = {}
+
+    class FakeEngine:
+        def __init__(self, provider, config):
+            calls["provider"] = provider
+
+        async def synthesize_async(self, text):
+            return SimpleNamespace(
+                success=True,
+                cancelled=False,
+                error=None,
+                audio=b"RIFF\x00\x00\x00\x00WAVEaudio",
+                audio_format="wav",
+            )
+
+        async def close(self):
+            calls["closed"] = True
+
+    class EmptyTtsConfig(HookConfig):
+        def get_section(self, name):
+            if name == "tts":
+                return {}
+            return super().get_section(name)
+
+    config = EmptyTtsConfig()
+    monkeypatch.setattr(agent_mode_module, "get_config", lambda: config)
+    monkeypatch.setattr(agent_mode_module, "TTSEngine", FakeEngine)
+    monkeypatch.setattr(agent_mode_module.shutil, "which", lambda name: "/nix/store/mpv/bin/mpv")
+    monkeypatch.setattr(
+        agent_mode_module.subprocess,
+        "Popen",
+        lambda command, **kwargs: SimpleNamespace(
+            returncode=0,
+            communicate=lambda timeout=None: ("", ""),
+            poll=lambda: 0,
+            terminate=lambda: None,
+            kill=lambda: None,
+        ),
+    )
+    speech_activity.clear()
+
+    plugin = AgentModePlugin()
+    result = plugin._speak_text("hello from Zara")
+
+    assert result == "Spoken."
+    assert calls["provider"] == "llamacpp"
+
+
 def test_voice_speech_started_barges_in_on_active_tool_tts():
     class FakeProcess:
         returncode = None

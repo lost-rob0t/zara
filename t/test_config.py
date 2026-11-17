@@ -9,7 +9,8 @@ from zara.tts.engine import TTSEngine
 def test_default_config_is_valid_toml():
     parsed = tomllib.loads(DEFAULT_CONFIG_TOML)
 
-    assert parsed["tts"]["provider"] == "qwen3"
+    assert parsed["tts"]["provider"] == "llamacpp"
+    assert parsed["tasks"]["enabled"] is True
     assert parsed["llm"]["endpoint"] == ""
     assert list(parsed).count("noaa") == 1
     assert parsed["tools"]["file_tools"] is False
@@ -109,7 +110,7 @@ def test_first_run_creates_parseable_config(monkeypatch, tmp_path):
 
     with config.config_file.open("rb") as config_file:
         parsed = tomllib.load(config_file)
-    assert parsed["tts"]["provider"] == "qwen3"
+    assert parsed["tts"]["provider"] == "llamacpp"
     assert config.get("wake", "threshold") == 0.5
 
 

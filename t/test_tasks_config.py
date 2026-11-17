@@ -14,6 +14,7 @@ def test_tasks_defaults_are_gated_off(tmp_path):
     config = ZaraConfig(str(config_path))
     assert config.get_tasks_config() == {
         "enabled": False,
+        "status_announcements": True,
         "max_concurrent": 2,
         "max_task_steps": 20,
         "wall_clock_minutes": 30.0,
@@ -30,6 +31,7 @@ def test_tasks_values_are_preserved(tmp_path):
     config = ZaraConfig(str(config_path))
     assert config.get_tasks_config() == {
         "enabled": True,
+        "status_announcements": True,
         "max_concurrent": 3,
         "max_task_steps": 7,
         "wall_clock_minutes": 1.5,
@@ -69,3 +71,27 @@ def test_tasks_section_must_be_a_table(tmp_path):
     config_path = write_config(tmp_path, 'tasks = "enabled"\n')
     with pytest.raises(ConfigError, match="tasks"):
         ZaraConfig(str(config_path))
+
+
+def test_tasks_status_announcements_default_on(tmp_path):
+    config_path = write_config(tmp_path, "[tasks]\n")
+    config = ZaraConfig(str(config_path))
+    assert config.get_tasks_config()["status_announcements"] is True
+
+
+def test_tasks_status_announcements_must_be_boolean(tmp_path):
+    config_path = write_config(
+        tmp_path, "[tasks]\nstatus_announcements = \"yes\"\n"
+    )
+    with pytest.raises(ConfigError, match="status_announcements"):
+        ZaraConfig(str(config_path))
+
+
+def test_shipped_default_toml_enables_tasks_and_announcements():
+    import tomllib
+
+    from zara.config import DEFAULT_CONFIG_TOML
+
+    parsed = tomllib.loads(DEFAULT_CONFIG_TOML)
+    assert parsed["tasks"]["enabled"] is True
+    assert parsed["tasks"]["status_announcements"] is True

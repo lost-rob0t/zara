@@ -498,6 +498,7 @@ class ZaraServer:
         self._gateway = None
         self._voice_ingress = None
         self._tts_bridge = None
+        self._task_announcer = None
         self._config = config
         self._principal = principal or PrincipalContext.local_owner()
         self._state = ServerState.NEW
@@ -521,6 +522,9 @@ class ZaraServer:
             )
         except AttributeError:
             self._tts_bridge = None
+        self._task_announcer = self._build_task_announcer(
+            supervisor, principal, sample_rate
+        )
         return ZaraZmqGateway(
             endpoint,
             supervisor=supervisor,
@@ -557,8 +561,29 @@ class ZaraServer:
 
             config = get_config()
         tts_section = config.get_section("tts") or {}
-        provider = str(tts_section.get("provider", "qwen3"))
+        provider = str(tts_section.get("provider", "llamacpp"))
         return TTSEngine(provider=provider, config={"tts": tts_section})
+
+    def _build_task_announcer(self, supervisor, principal, sample_rate):
+        config = self._config
+        if config is None:
+            from zara.config import get_config
+
+            config = get_config()
+        tasks_section = config.get_section("tasks") or {}
+        if not bool(tasks_section.get("status_announcements", True)):
+            return None
+        from zara.runtime.task_announcer import TaskStatusAnnouncer
+
+        try:
+            return TaskStatusAnnouncer(
+                subscription=supervisor.subscribe(principal, maxsize=256),
+                engine_factory=self._build_tts_engine,
+                publish=lambda event: supervisor.publish(principal, event),
+                sample_rate=sample_rate,
+            )
+        except AttributeError:
+            return None
 
     @property
     def state(self) -> ServerState:
@@ -592,6 +617,13 @@ class ZaraServer:
             return False
 
     def _close_tts_bridge(self) -> bool:
+        announcer = self._task_announcer
+        self._task_announcer = None
+        if announcer is not None:
+            try:
+                announcer.stop(timeout=self._shutdown_timeout)
+            except BaseException:
+                logger.exception("Failed to stop task status announcer cleanly")
         bridge = self._tts_bridge
         self._tts_bridge = None
         if bridge is None:
@@ -627,6 +659,8 @@ class ZaraServer:
             gateway.start().result(timeout=self._shutdown_timeout)
             if self._tts_bridge is not None:
                 self._tts_bridge.start()
+            if self._task_announcer is not None:
+                self._task_announcer.start()
             supervisor_state = self._supervisor.state
             with self._lock:
                 self._state = (

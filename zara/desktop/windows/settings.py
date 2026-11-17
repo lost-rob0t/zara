@@ -586,7 +586,7 @@ class SettingsWindow(QWidget):
         self._combo_setting(form, "stt.provider", "Speech recognition", [("Faster Whisper", "faster-whisper"), ("whisper.cpp", "whisper-cpp"), ("Whisper", "whisper")], "faster-whisper")
         self._line_setting(form, "stt.model", "Speech model", "small")
         self._combo_setting(form, "stt.device", "Speech device", [("CPU", "cpu"), ("CUDA", "cuda"), ("Vulkan", "vulkan")], "cpu")
-        self._combo_setting(form, "tts.provider", "Voice provider", [("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")], "qwen3")
+        self._combo_setting(form, "tts.provider", "Voice provider", [("LlamaCpp (Pocket)", "llamacpp"), ("Local", "local"), ("ElevenLabs", "11labs"), ("Edge", "edge"), ("Qwen3", "qwen3")], "llamacpp")
         self._check_setting(form, "wake.acknowledgement.enabled", "Immediate acknowledgement", True)
         self._line_setting(form, "wake.acknowledgement.voice", "Acknowledgement voice", "en-US-AriaNeural")
         return page

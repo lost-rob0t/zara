@@ -510,7 +510,7 @@ class AgentModePlugin(ServicePlugin):
             try:
                 config = get_config()
                 tts_config = dict(config.get_section("tts") or {})
-                provider = str(tts_config.get("provider", "qwen3"))
+                provider = str(tts_config.get("provider", "llamacpp"))
                 engine = TTSEngine(provider, {"tts": tts_config})
                 try:
                     result = asyncio.run(engine.synthesize_async(text))

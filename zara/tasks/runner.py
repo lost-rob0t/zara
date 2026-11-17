@@ -177,7 +177,9 @@ class TaskRunner:
             task.task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING
         )
         logger.info("[TaskRunner] task=%s started", task.task_id)
-        self._publish(events.TaskStarted(task_id=task.task_id, label="tasks"))
+        self._publish(
+            events.TaskStarted(task_id=task.task_id, label=self._task_label(task.goal))
+        )
         self._spawn_run(task.task_id)
         return task
 
@@ -201,7 +203,9 @@ class TaskRunner:
             task_id, principal_id=self._principal_id, status=TaskStatus.RUNNING
         )
         logger.info("[TaskRunner] task=%s resumed", task_id)
-        self._publish(events.TaskStarted(task_id=task_id, label="tasks"))
+        self._publish(
+            events.TaskStarted(task_id=task_id, label=self._task_label(task.goal))
+        )
         self._spawn_run(task_id)
         return task
 
@@ -255,6 +259,12 @@ class TaskRunner:
     # ------------------------------------------------------------------
     # Approval observation
 
+    def _task_label(self, goal: str) -> str:
+        text = (goal or "").strip()
+        if len(text) > 48:
+            text = text[:45] + "…"
+        return text or "Task"
+
     def observing_publisher(
         self, base: Callable[[events.RuntimeEvent], object]
     ) -> Callable[[events.RuntimeEvent], object]:
@@ -296,7 +306,7 @@ class TaskRunner:
         if task is None or task.status is not TaskStatus.RUNNING:
             return
         try:
-            self._store.transition(
+            updated = self._store.transition(
                 task_id,
                 principal_id=self._principal_id,
                 status=TaskStatus.WAITING_APPROVAL,
@@ -305,7 +315,9 @@ class TaskRunner:
             return
         self._publish(
             events.TaskWaitingApproval(
-                task_id=task_id, turn_id=turn_id, label="tasks"
+                task_id=task_id,
+                turn_id=turn_id,
+                label=self._task_label(updated.goal),
             )
         )
 
@@ -460,7 +472,7 @@ class TaskRunner:
         self, task_id: str, status: TaskStatus, reason: Optional[str]
     ) -> None:
         try:
-            self._store.transition(
+            updated = self._store.transition(
                 task_id,
                 principal_id=self._principal_id,
                 status=status,
@@ -470,13 +482,21 @@ class TaskRunner:
             return
         if status is TaskStatus.COMPLETED:
             logger.info("[TaskRunner] task=%s completed", task_id)
-            self._publish(events.TaskCompleted(task_id=task_id, label="tasks"))
+            self._publish(
+                events.TaskCompleted(
+                    task_id=task_id, label=self._task_label(updated.goal)
+                )
+            )
         elif status is TaskStatus.FAILED:
             logger.info(
                 "[TaskRunner] task=%s failed reason=%s", task_id, reason or ""
             )
             self._publish(
-                events.TaskFailed(task_id=task_id, label="tasks", reason=reason or "")
+                events.TaskFailed(
+                    task_id=task_id,
+                    label=self._task_label(updated.goal),
+                    reason=reason or "",
+                )
             )
 
     def _interrupt(self, task_id: str) -> None:

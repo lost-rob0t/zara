@@ -115,7 +115,7 @@ partial_transcript_ms = 1000  # partial transcription interval
 
 [tts]
 # Text-to-Speech settings
-provider = "qwen3"  # "local", "11labs", "edge", or "qwen3"
+provider = "llamacpp"  # "local", "11labs", "edge", "qwen3", or "llamacpp"
 model_path = ""
 sample_rate = 16000
 connect_timeout = 5.0
@@ -190,7 +190,8 @@ max_pending = 8
 
 [tasks]
 # Long-horizon agent tasks executed as bounded conversation turns.
-enabled = false
+enabled = true
+status_announcements = true
 max_concurrent = 2
 max_task_steps = 20
 wall_clock_minutes = 30.0
@@ -382,12 +383,12 @@ class ZaraConfig:
         if not isinstance(tts_config, dict):
             raise ConfigError("Invalid [tts] configuration: expected a TOML table")
 
-        provider = tts_config.get("provider", "qwen3")
+        provider = tts_config.get("provider", "llamacpp")
         if provider == "qwen":
             provider = "qwen3"
             tts_config["provider"] = provider
 
-        supported_providers = {"local", "11labs", "edge", "qwen3"}
+        supported_providers = {"local", "11labs", "edge", "qwen3", "llamacpp"}
         if provider not in supported_providers:
             choices = ", ".join(sorted(supported_providers))
             raise ConfigError(f"Unsupported TTS provider {provider!r}; choose one of: {choices}")
@@ -466,6 +467,8 @@ class ZaraConfig:
             raise ConfigError("Invalid [tasks] configuration: expected a TOML table")
         if not isinstance(tasks_config.get("enabled", False), bool):
             raise ConfigError("tasks.enabled must be true or false")
+        if not isinstance(tasks_config.get("status_announcements", True), bool):
+            raise ConfigError("tasks.status_announcements must be true or false")
         max_concurrent = tasks_config.get("max_concurrent", 2)
         if (
             isinstance(max_concurrent, bool)
@@ -797,6 +800,9 @@ class ZaraConfig:
         tasks_config = self.get_section("tasks")
         return {
             "enabled": bool(tasks_config.get("enabled", False)),
+            "status_announcements": bool(
+                tasks_config.get("status_announcements", True)
+            ),
             "max_concurrent": int(tasks_config.get("max_concurrent", 2)),
             "max_task_steps": int(tasks_config.get("max_task_steps", 20)),
             "wall_clock_minutes": float(tasks_config.get("wall_clock_minutes", 30.0)),

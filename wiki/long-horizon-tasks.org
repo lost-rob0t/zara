@@ -11,7 +11,8 @@ ride it — nothing forks LangGraph.
 
 #+begin_src toml
 [tasks]
-enabled = false          # gate for the whole subsystem (runner + tools)
+enabled = true           # gate for the whole subsystem (runner + tools)
+status_announcements = true  # speak terse status lines as tasks finish
 max_concurrent = 2       # running tasks; overflow is rejected, never queued
 max_task_steps = 20      # per-task step budget
 wall_clock_minutes = 30.0
@@ -95,10 +96,25 @@ leave no rows, so resume never collides with a step index.
 * Observability
 
 Additive events: =TaskStarted=, =TaskStepCompleted=, =TaskWaitingApproval=,
-=TaskCompleted=, =TaskFailed=, =TaskCancelled= (label =tasks=). Step boundary
+=TaskCompleted=, =TaskFailed=, =TaskCancelled=. The =label= field carries the
+task goal, truncated to 48 characters, so consumers (spoken status, desktop
+indicators) never need a second lookup. Step boundary
 logs carry task id, turn id, step index, status, and response lengths only —
 never goal text, transcripts, or tool payloads. Failure reasons are bounded
 strings from =zara.tasks.runner.REASONS=.
+
+* Spoken status (TaskStatusAnnouncer)
+
+When =[tasks].status_announcements= is true (default), the daemon constructs
+=zara/runtime/task_announcer.py= =TaskStatusAnnouncer= next to the TTS output
+bridge. It consumes the same runtime event bus and speaks one terse line per
+terminal or approval-gated transition — ="<goal> done."=, ="<goal> failed."=,
+="<goal> needs approval."=, ="<goal> cancelled."= — through the same
+=AudioOutputStarted/Chunk/Finished= pipeline, so playback, cancellation, and
+the negotiated audio contract are identical to assistant speech.
+Announcements are serialized in a single worker thread; synthesis failures
+are logged and never kill the announcer. =TaskStarted= and
+=TaskStepCompleted= are deliberately silent.
 
 * Tools
 
