@@ -839,6 +839,69 @@ class ZaraConfig:
         """Reload configuration from file."""
         self._config = self._load_config()
 
+    def set_value(self, section: str, key: str, value: Any) -> None:
+        """Persist one value into config.toml and the in-memory config.
+
+        Validates the resulting configuration before anything is written;
+        on validation failure neither the file nor memory changes.
+        """
+        previous = self._config
+        self._config = {
+            **self._config,
+            section: {**self._config.get(section, {}), key: value},
+        }
+        try:
+            self._validate_config(self._config)
+        except Exception:
+            self._config = previous
+            raise
+        text = self.config_file.read_text()
+        self.config_file.write_text(
+            _upsert_toml_value(text, section, key, value)
+        )
+
+
+def _format_toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    raise ConfigError(f"Unsupported config value type: {type(value).__name__}")
+
+
+def _upsert_toml_value(text: str, section: str, key: str, value: Any) -> str:
+    formatted = _format_toml_value(value)
+    header = re.compile(rf"^\[{re.escape(section)}\]\s*$", re.MULTILINE)
+    match = header.search(text)
+    if match is None:
+        suffix = "" if text.endswith("\n") or not text else "\n"
+        return f"{text}{suffix}\n[{section}]\n{key} = {formatted}\n"
+
+    section_start = match.end()
+    next_section = re.search(r"^\[", text[section_start:], re.MULTILINE)
+    section_end = (
+        section_start + next_section.start()
+        if next_section is not None
+        else len(text)
+    )
+    body = text[section_start:section_end]
+    key_pattern = re.compile(
+        rf"([ \t]*){re.escape(key)}[ \t]*=.*$", re.MULTILINE
+    )
+    key_match = key_pattern.search(body)
+    if key_match is not None:
+        replacement = f"{key_match.group(1)}{key} = {formatted}"
+        updated_body = key_pattern.sub(replacement, body, count=1)
+        return text[:section_start] + updated_body + text[section_end:]
+
+    insertion = f"{key} = {formatted}\n"
+    if body and not body.endswith("\n"):
+        insertion = "\n" + insertion
+    return text[:section_end] + insertion + text[section_end:]
+
 
 # Global config instance
 _global_config: Optional[ZaraConfig] = None

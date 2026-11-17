@@ -85,6 +85,14 @@ class TtsOutputBridge:
     def sample_rate(self) -> int:
         return self._sample_rate
 
+    def reset_engine(self) -> None:
+        """Drop the cached engine so the next phrase rebuilds it.
+
+        Provider switches (voice profile changes) write fresh config;
+        rebuilding here is what makes the switch apply to live turns.
+        """
+        self._engine = None
+
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return

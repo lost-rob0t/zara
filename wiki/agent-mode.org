@@ -147,6 +147,23 @@ The configured =[tts]= provider and voice are reused. Nix Zara wrappers already
 place =mpv= on =PATH=. A non-Nix installation must provide =mpv= separately for
 playback.
 
+* Voice profiles: game mode and normal mode
+
+Voice output runs through two named profiles. =normal= uses the local
+=llamacpp= provider and =game= switches to the low-latency =edge= voice,
+which frees local GPU capacity while gaming.
+
+Say "game mode" or "normal mode" to Zara (the intent resolves
+deterministically through Prolog), or run =zara voice-mode
+game|normal|status=. A switch persists =[tts] provider= in =config.toml=
+and drops the daemon's cached TTS engines, so the next spoken phrase
+already uses the new provider without a restart.
+
+The CLI form writes the persisted setting from its own process; a running
+daemon picks up a CLI-made switch on its next restart or on the next
+spoken "game mode" / "normal mode" command, which re-reads and re-applies
+config in the daemon itself.
+
 * Task result speech
 
 =speak_task_results=false= is the default because autonomous tasks may produce

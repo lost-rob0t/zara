@@ -117,6 +117,10 @@ class TaskStatusAnnouncer:
                 return None
         return self._engine
 
+    def reset_engine(self) -> None:
+        """Drop the cached engine so the next announcement rebuilds it."""
+        self._engine = None
+
     def _run_thread(self) -> None:
         asyncio.run(self._main())
 

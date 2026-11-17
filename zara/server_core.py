@@ -499,6 +499,7 @@ class ZaraServer:
         self._voice_ingress = None
         self._tts_bridge = None
         self._task_announcer = None
+        self._voice_resets: list = []
         self._config = config
         self._principal = principal or PrincipalContext.local_owner()
         self._state = ServerState.NEW
@@ -525,6 +526,7 @@ class ZaraServer:
         self._task_announcer = self._build_task_announcer(
             supervisor, principal, sample_rate
         )
+        self._install_voice_resets()
         return ZaraZmqGateway(
             endpoint,
             supervisor=supervisor,
@@ -563,6 +565,19 @@ class ZaraServer:
         tts_section = config.get_section("tts") or {}
         provider = str(tts_section.get("provider", "llamacpp"))
         return TTSEngine(provider=provider, config={"tts": tts_section})
+
+    def _install_voice_resets(self) -> None:
+        from zara.voice_profile import register_voice_reset, unregister_voice_reset
+
+        for callback in self._voice_resets:
+            unregister_voice_reset(callback)
+        self._voice_resets = []
+        if self._tts_bridge is not None:
+            register_voice_reset(self._tts_bridge.reset_engine)
+            self._voice_resets.append(self._tts_bridge.reset_engine)
+        if self._task_announcer is not None:
+            register_voice_reset(self._task_announcer.reset_engine)
+            self._voice_resets.append(self._task_announcer.reset_engine)
 
     def _build_task_announcer(self, supervisor, principal, sample_rate):
         config = self._config
