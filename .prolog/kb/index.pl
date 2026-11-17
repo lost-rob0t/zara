@@ -4,3 +4,4 @@
 :- ensure_loaded(desktop_copilot_ui).
 :- ensure_loaded(org_fleet_delivery).
 :- ensure_loaded(desktop_prolog_ide).
+:- consult('kb/voice_output_tts.pl').

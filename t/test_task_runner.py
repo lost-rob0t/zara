@@ -514,3 +514,32 @@ class TestCancellationAndShutdown:
         assert final.steps_completed == 1
         steps = store.list_steps(final.task_id, principal_id="principal-1")
         assert [step.summary for step in steps] == ["finished"]
+
+
+def test_lifecycle_events_carry_goal_label(tmp_path):
+    store = make_store(tmp_path)
+    harness = build_harness(["TASK_COMPLETE: report ready"], store=store)
+
+    async def scenario():
+        await harness.runner.start()
+        try:
+            task = await harness.runner.create_task(goal=GOAL)
+            await harness.runner.wait_for_task(task.task_id)
+            return task
+        finally:
+            await harness.runner.stop()
+
+    task = asyncio.run(scenario())
+
+    started = [
+        event
+        for event in harness.recorder.events
+        if isinstance(event, events.TaskStarted)
+    ]
+    completed = [
+        event
+        for event in harness.recorder.events
+        if isinstance(event, events.TaskCompleted)
+    ]
+    assert started[0].label == GOAL
+    assert completed[0].label == GOAL

@@ -84,7 +84,7 @@ def load_tts_config():
     config = get_config()
     tts_cfg = config.get_section("tts")
 
-    provider = tts_cfg.get("provider", "qwen3")
+    provider = tts_cfg.get("provider", "llamacpp")
     qwen3_url = tts_cfg.get("endpoint", os.getenv("QWEN3_TTS_URL", "http://localhost:7860"))
     qwen3_voice = tts_cfg.get("voice", os.getenv("QWEN3_VOICE", "demo_speaker0"))
 

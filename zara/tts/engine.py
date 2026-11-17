@@ -45,7 +45,7 @@ def supports_streaming(provider: str) -> bool:
 
 
 class TTSEngine:
-    def __init__(self, provider: str = "local", config: Optional[dict] = None):
+    def __init__(self, provider: str = "llamacpp", config: Optional[dict] = None):
         self.provider = "qwen3" if provider == "qwen" else provider
         self.config = config or {}
         self.qwen3_client = None
@@ -62,6 +62,8 @@ class TTSEngine:
             self._init_edge()
         elif self.provider == "qwen3":
             self._init_qwen3()
+        elif self.provider == "llamacpp":
+            self._init_llamacpp()
         else:
             raise ValueError(f"Unknown TTS provider: {self.provider}")
 
@@ -99,6 +101,24 @@ class TTSEngine:
             "endpoint", os.getenv("QWEN3_TTS_URL", "http://localhost:7860")
         )
         self.qwen3_voice = tts_config.get("voice", os.getenv("QWEN3_VOICE", "zara"))
+
+    def _init_llamacpp(self) -> None:
+        tts_config = self.config.get("tts", {}) or {}
+        self.llamacpp_binary = str(tts_config.get("llamacpp_binary", "llama-tts"))
+        self.llamacpp_model = str(
+            tts_config.get(
+                "llamacpp_model",
+                "~/.cache/zara/tts/pocket-tts/pocket-tts-en.gguf",
+            )
+        )
+        self.llamacpp_mmproj = str(
+            tts_config.get(
+                "llamacpp_mmproj",
+                "~/.cache/zara/tts/pocket-tts/mmproj-pocket-tts-en.gguf",
+            )
+        )
+        self.llamacpp_ngl = str(tts_config.get("llamacpp_ngl", 12))
+        self.llamacpp_speaker = tts_config.get("llamacpp_speaker")
 
     async def synthesize_async(self, text: str) -> SynthesisResult:
         if not text or not text.strip():
@@ -219,6 +239,8 @@ class TTSEngine:
             return await self._synthesize_edge(text)
         if self.provider == "qwen3":
             return await self._synthesize_qwen3(text)
+        if self.provider == "llamacpp":
+            return await self._synthesize_llamacpp(text)
         raise RuntimeError(f"Unsupported TTS provider: {self.provider}")
 
     async def _stream_elevenlabs(self, text: str) -> AsyncIterator[StreamChunk]:
@@ -437,6 +459,42 @@ class TTSEngine:
             await client.close()
             if self.qwen3_client is client:
                 self.qwen3_client = None
+
+    async def _synthesize_llamacpp(self, text: str) -> tuple[bytes, str]:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as output:
+            output_path = Path(output.name)
+        argv = [
+            self.llamacpp_binary,
+            "-m",
+            str(Path(self.llamacpp_model).expanduser()),
+            "-mm",
+            str(Path(self.llamacpp_mmproj).expanduser()),
+            "-ngl",
+            self.llamacpp_ngl,
+            "-p",
+            text,
+            "--output",
+            str(output_path),
+        ]
+        speaker = self.llamacpp_speaker
+        if speaker and Path(speaker).expanduser().is_file():
+            argv += ["--tts-speaker-file", str(Path(speaker).expanduser())]
+        # llama-tts decodes speaker references by shelling out to ffprobe;
+        # prefer the system binary over user-profile shims that cannot read
+        # piped buffers.
+        env = dict(os.environ)
+        env["PATH"] = "/usr/bin:" + env.get("PATH", "")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+            await self._communicate(process)
+            return output_path.read_bytes(), "wav"
+        finally:
+            output_path.unlink(missing_ok=True)
 
     def _failure(self, error: str, cancelled: bool = False) -> SynthesisResult:
         return SynthesisResult(

@@ -81,7 +81,7 @@ SETTING_VALIDATORS: Mapping[str, Callable[[Any], bool]] = {
     "stt.provider": _string,
     "stt.model": _string,
     "stt.device": _string,
-    "tts.provider": _choice("local", "11labs", "edge", "qwen3"),
+    "tts.provider": _choice("llamacpp", "local", "11labs", "edge", "qwen3"),
     "tools.calculator": _boolean,
     "tools.get_current_time": _boolean,
     "tools.query_prolog": _boolean,

@@ -283,3 +283,124 @@ async def test_qwen_register_voice_posts_registry_payload(monkeypatch, tmp_path)
     assert body["name"] == "zara"
     assert body["ref_text"] == "words spoken"
     assert base64.b64decode(body["wav_b64"]) == wav_bytes()
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_returns_wav_container(monkeypatch, tmp_path):
+    model = tmp_path / "pocket-tts-en.gguf"
+    model.write_bytes(b"model")
+    mmproj = tmp_path / "mmproj-pocket-tts-en.gguf"
+    mmproj.write_bytes(b"mmproj")
+    calls = []
+
+    async def create_process(*args, **kwargs):
+        calls.append(args)
+        output_path = args[args.index("--output") + 1]
+        with open(output_path, "wb") as output:
+            output.write(wav_bytes())
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    engine = TTSEngine(
+        "llamacpp",
+        {
+            "tts": {
+                "llamacpp_model": str(model),
+                "llamacpp_mmproj": str(mmproj),
+                "llamacpp_ngl": 12,
+            }
+        },
+    )
+
+    result = await engine.synthesize_async("hello")
+
+    assert result.success and result.audio_format == "wav"
+    argv = calls[0]
+    assert "-m" in argv and str(model) in argv
+    assert "-mm" in argv and str(mmproj) in argv
+    assert "-ngl" in argv and "12" in argv
+    assert "-p" in argv and "hello" in argv
+    assert "--output" in argv
+    assert "--tts-speaker-file" not in argv
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_includes_existing_speaker_file(monkeypatch, tmp_path):
+    model = tmp_path / "pocket-tts-en.gguf"
+    model.write_bytes(b"model")
+    speaker = tmp_path / "speaker.wav"
+    speaker.write_bytes(wav_bytes())
+    calls = []
+
+    async def create_process(*args, **kwargs):
+        calls.append(args)
+        output_path = args[args.index("--output") + 1]
+        with open(output_path, "wb") as output:
+            output.write(wav_bytes())
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    engine = TTSEngine(
+        "llamacpp",
+        {"tts": {"llamacpp_model": str(model), "llamacpp_speaker": str(speaker)}},
+    )
+
+    result = await engine.synthesize_async("hello")
+
+    assert result.success
+    argv = calls[0]
+    assert "--tts-speaker-file" in argv and str(speaker) in argv
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_omits_missing_speaker_file(monkeypatch, tmp_path):
+    model = tmp_path / "pocket-tts-en.gguf"
+    model.write_bytes(b"model")
+    calls = []
+
+    async def create_process(*args, **kwargs):
+        calls.append(args)
+        output_path = args[args.index("--output") + 1]
+        with open(output_path, "wb") as output:
+            output.write(wav_bytes())
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    engine = TTSEngine(
+        "llamacpp",
+        {
+            "tts": {
+                "llamacpp_model": str(model),
+                "llamacpp_speaker": str(tmp_path / "absent.wav"),
+            }
+        },
+    )
+
+    result = await engine.synthesize_async("hello")
+
+    assert result.success
+    assert "--tts-speaker-file" not in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_llamacpp_missing_binary_fails_cleanly(monkeypatch, tmp_path):
+    model = tmp_path / "pocket-tts-en.gguf"
+    model.write_bytes(b"model")
+
+    async def create_process(*args, **kwargs):
+        raise FileNotFoundError("llama-tts not found")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    engine = TTSEngine("llamacpp", {"tts": {"llamacpp_model": str(model)}})
+
+    result = await engine.synthesize_async("hello")
+
+    assert not result.success and result.error
+
+
+def test_llamacpp_is_not_a_streaming_provider():
+    assert not engine_module.supports_streaming("llamacpp")
+
+
+def test_default_provider_is_llamacpp():
+    assert TTSEngine().provider == "llamacpp"

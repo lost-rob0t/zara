@@ -4,6 +4,14 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ## Unreleased
 
+### Added
+
+- Long-horizon agent tasks now ship enabled: the voice agent can create, run, and track multiple concurrent tasks, task lifecycle events carry the human-readable goal, and Zara speaks terse spoken summaries ("Plants research done.", "needs approval") as tasks finish. Spoken task status is configurable via `[tasks] status_announcements`.
+
+### Changed
+
+- The default voice output is now the new `llamacpp` TTS provider, which shells the local `llama-tts` binary (Pocket TTS GGUF) and runs fully on the GPU through Vulkan — measured at ~1 GiB VRAM and several times faster than realtime on AMD RADV, with optional voice cloning from a reference clip. The previous local/Edge/Qwen3 providers remain selectable, and `qwen` still aliases to `qwen3`.
+
 ## 0.4.0-alpha
 
 ### Changed
