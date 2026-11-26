@@ -6,6 +6,8 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Added
 
+- The desktop Copilot gains a Prolog inspector drawer (Ctrl+I or the header Inspector button): a live, read-only view of the one authoritative engine with a bounded query console (generation-fenced results, honest cancel, 50-solution and 4096-byte caps), a KB facts browser over allowlisted `desktop_ade:*` projections, and the conversation's live symbolic state — no engine mutation, no new dependencies, and desktop themes keep projecting from the Android authority.
+- Conversation history in expanded mode is now a summoned palette (History button or Ctrl+K) instead of a permanent sidebar, keeping the chat column full width; search still surfaces matching chats and Escape or an outside click dismisses it.
 - Long-horizon agent tasks now ship enabled: the voice agent can create, run, and track multiple concurrent tasks, task lifecycle events carry the human-readable goal, and Zara speaks terse spoken summaries ("Plants research done.", "needs approval") as tasks finish. Spoken task status is configurable via `[tasks] status_announcements`.
 - The desktop pet is now a visual task notifier: running tasks show a pulsing working-dots indicator (static under reduced motion), and completion, failure, and approval-gated tasks raise an auto-dismissing bubble with the task goal ("Deploy done.", "Run needs approval."), mirroring the spoken status. Task activity is tracked in its own pet slot so it never disturbs the conversational activity indicator.
 

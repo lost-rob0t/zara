@@ -18,6 +18,7 @@ from zara.desktop.state import (
     INITIAL_STATUS,
     reduce_runtime_event,
 )
+from zara.desktop.prolog_studio import ManagedFactStore
 from zara.desktop.tray import ZaraTray
 from zara.desktop.theme import apply_desktop_theme
 from zara.desktop.windows import CopilotPresentation, CopilotWindow, SettingsWindow
@@ -52,12 +53,15 @@ class DesktopController(QObject):
         self.tray = tray_factory()
         self.quick_window: Optional[CopilotWindow] = None
         self.settings_window: Optional[object] = None
+        # One query seam for every desktop surface (Copilot inspector and
+        # Settings console): an authenticated ZARA/1 RunPrologQuery submit.
+        self.prolog_query = lambda goal, max_solutions: self.client.submit(
+            RunPrologQuery(goal=goal, max_solutions=max_solutions)
+        )
         self._settings_factory = settings_factory or (
             lambda: SettingsWindow(
                 get_config(),
-                prolog_query=lambda goal, max_solutions: self.client.submit(
-                    RunPrologQuery(goal=goal, max_solutions=max_solutions)
-                ),
+                prolog_query=self.prolog_query,
             )
         )
 
@@ -66,6 +70,8 @@ class DesktopController(QObject):
             self.window = CopilotWindow(
                 self.bridge,
                 self.conversation_service,
+                prolog_query=self.prolog_query,
+                fact_store=self._desktop_fact_store(),
             )
             # Transitional API compatibility only: this is the exact same
             # QWidget, not a second renderer or presentation path.
@@ -113,6 +119,14 @@ class DesktopController(QObject):
         self.app.aboutToQuit.connect(self._about_to_quit)
 
         self._set_status(INITIAL_STATUS)
+
+    def _desktop_fact_store(self):
+        """Saved managed facts for the inspector; None when config is unavailable."""
+        try:
+            config = get_config()
+        except Exception:
+            return None
+        return ManagedFactStore(config.config_dir / "config.pl")
 
     @property
     def quitting(self) -> bool:

@@ -12,6 +12,7 @@
 :- use_module('kb/intents').
 :- use_module('modules/config_loader').
 :- use_module('modules/hooks_loader').
+:- use_module('modules/desktop_ade').
 :- discontiguous handle_input/1.
 
 :- initialization(config_loader:load_user_config).
