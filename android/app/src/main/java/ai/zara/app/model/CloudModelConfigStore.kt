@@ -24,6 +24,11 @@ class CloudModelConfigStore(
                     ?: CloudModelProvider.OPENAI_COMPATIBLE,
                 endpoint = properties.getProperty("endpoint") ?: CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT,
                 model = properties.getProperty("model") ?: "",
+                purpose = properties.getProperty("purpose")
+                    ?.let { value ->
+                        CloudModelPurpose.entries.firstOrNull { it.name.equals(value, ignoreCase = true) }
+                    }
+                    ?: CloudModelPurpose.GENERAL,
                 appName = properties.getProperty("app_name") ?: CloudModelConfig.DEFAULT_APP_NAME,
                 maxOutputTokens = properties.getProperty("max_output_tokens")
                     ?.toInt()
@@ -71,6 +76,7 @@ class CloudModelConfigStore(
             setProperty("provider", safe.provider.wireName)
             setProperty("endpoint", safe.endpoint)
             setProperty("model", safe.model)
+            setProperty("purpose", safe.purpose.name.lowercase())
             setProperty("app_name", safe.appName)
             setProperty("max_output_tokens", safe.maxOutputTokens.toString())
             setProperty("deadline_ms", safe.deadlineMs.toString())

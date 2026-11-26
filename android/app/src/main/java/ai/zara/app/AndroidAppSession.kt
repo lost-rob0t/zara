@@ -30,7 +30,6 @@ import ai.zara.app.localai.LocalModelSpec
 import ai.zara.app.localai.LocalTtsState
 import ai.zara.app.model.AndroidCloudModelStorage
 import ai.zara.app.model.CloudModelConfig
-import ai.zara.app.model.CloudModelPurpose
 import ai.zara.app.model.CloudModelState
 import ai.zara.app.runtime.AndroidTextSessionController
 import ai.zara.app.runtime.AssistantRole
@@ -839,7 +838,7 @@ class AndroidAppSession(context: Context) : AutoCloseable {
         )
         return cloudAi.generate(
             prompt = text,
-            purpose = CloudModelPurpose.GENERAL,
+            purpose = state.config.purpose,
             history = history?.forConversation(conversationId).orEmpty(),
             onText = onText,
         ).thenApply { generated ->

@@ -168,6 +168,7 @@ data class CloudModelConfig(
     val provider: CloudModelProvider = CloudModelProvider.OPENAI_COMPATIBLE,
     val endpoint: String = DEFAULT_STARINTEL_ENDPOINT,
     val model: String = "",
+    val purpose: CloudModelPurpose = CloudModelPurpose.GENERAL,
     val appName: String = DEFAULT_APP_NAME,
     val maxOutputTokens: Int = DEFAULT_MAX_OUTPUT_TOKENS,
     val deadlineMs: Long = DEFAULT_DEADLINE_MS,
@@ -195,6 +196,10 @@ data class CloudModelConfig(
         require(maxOutputTokens in 1..MAX_OUTPUT_TOKENS) { "Cloud model output token limit is invalid" }
         require(deadlineMs in MIN_DEADLINE_MS..MAX_DEADLINE_MS) { "Cloud model deadline is invalid" }
         val safePolicy = openRouterPolicy.validated()
+
+        if (provider.codingOnly) require(purpose == CloudModelPurpose.CODING) {
+            "A coding-plan provider profile must use the coding purpose"
+        }
 
         when (provider) {
             CloudModelProvider.OPENAI_COMPATIBLE -> Unit
