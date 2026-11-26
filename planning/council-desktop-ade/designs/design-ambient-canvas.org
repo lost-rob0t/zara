@@ -1,0 +1,483 @@
+#+title: Ambient Canvas — the desktop as a live projection of the Prolog engine
+#+author: Design council / lens: Ambient Canvas
+#+status: draft
+#+worktree: council/ambient-canvas
+
+* 1. Vision
+
+Kill the chat transcript. Zara Desktop becomes an *ambient canvas*: an
+edge-to-edge, near-chromeless vertical surface where every thing the engine
+does — a fact asserted, a goal answered, a tool run, a task transition, an
+assistant sentence — materializes as a first-class animated card, projected
+from real Prolog state. The knowledge base *is* the UI state store; Qt
+widgets are disposable projections of engine facts, rebuilt or fenced on
+generation change. The only permanent chrome is one floating command bar
+(Raycast-class): type a sentence and it becomes an agent turn; type ~?-
+color(X).~ and it becomes a live query card. The feel is Arc-browser calm
+over engine truth: deep outrun ground, soft elevation shadows, one accent
+that means "the engine is answering you", motion that exists only to
+explain state change. The Prolog ADE is not a settings tab bolted on the
+side — it is the entire window.
+
+* 2. Evidence (verified in this worktree)
+
+Canonical renderer and its seams:
+- =zara/desktop/windows/copilot.py:26-40= — =CopilotPresentation= compact/expanded
+  toggle on *one* renderer; =copilot.py:156-160= =bind_conversation= rebinds
+  durable state without runtime traffic. The "renderer changes, state doesn't"
+  discipline already exists and the canvas generalizes it.
+- =zara/desktop/windows/quick.py:336-349= — =sync_from_shared_state= diffs a
+  rendered-identity tuple (=quick.py:118= =_rendered_message_ids=) and rebuilds
+  only on change. This is the existing generation-diff pattern the canvas
+  promotes to engine generations.
+- =zara/desktop/chat_widgets.py:136-222= — =MessageWidget= renders one message
+  without touching siblings; =:243-251= tool messages with bare status words
+  collapse into content-less activity bubbles (also
+  =.prolog/kb/desktop_copilot_ui.pl:4=). The transcript today *hides* engine
+  activity — the canvas's reason to exist.
+- =zara/desktop/chat_widgets.py:31-57= — =_MessageBody= fits document height
+  with a single-shot timer; reusable for streaming card growth.
+
+Theming is already a deterministic projection:
+- =zara/desktop/theme.py:14= — =ANDROID_THEME_SOURCE= points at
+  =android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt=.
+- =theme.py:142-160= — 15 semantic desktop roles derived from Android tokens;
+  =theme.py:1024-1032= =apply_desktop_theme= installs Fusion + palette +
+  stylesheet app-wide; =theme.py:540-1021= is one stylesheet per theme.
+- Parity is machine-checked: =t/test_desktop_mobile_parity.py:117-131= parses
+  the Kotlin source and asserts token equality; =:163-176= asserts the outrun
+  density vocabulary (composer shell 20px radius, rail #07101B).
+
+How Prolog is actually hosted:
+- =zara/prolog_engine.py:327-335= — one process-wide SWI runtime behind
+  =PrologEngine._runtime_lock=; =:418-442= =query_iter= owns that lock while
+  yielding. Never construct a second engine (invariant =single_engine_authority=,
+  =.prolog/kb/desktop_prolog_ide.pl:10=).
+- =zara/runtime/host.py:687-717= — =RunPrologQuery= dispatches on the runtime
+  worker (host thread created at =host.py:212=), returns =PrologQueryReceipt=
+  with solutions; =zara/runtime/backend.py:407-417= — backend calls
+  =engine.query_all=. So engine work already happens off the Qt thread.
+- =zara/runtime/commands.py:119-129= — =RunPrologQuery= bounds: non-empty goal,
+  ≤4096 bytes, 1≤max_solutions≤100. Matches KB limits
+  (=.prolog/kb/desktop_prolog_ide.pl:20-23=).
+- =zara/desktop/qt_bridge.py:20-98= — UI-free adapter: 16ms QTimer drains the
+  subscription in bounded batches and emits Qt signals; =submit()= never blocks
+  the GUI thread.
+- Remote surface is admin-gated: =t/test_daemon_security_policy.py:12= asserts
+  =SecureZaraZmqGateway._capability_for("prolog.query") is Capability.DAEMON_ADMIN=;
+  the wire codec accepts =prolog.query= at =zara/protocol_runtime.py:146-159=.
+
+Fencing precedents to copy, not invent:
+- =zara/desktop/windows/settings.py:283,896-937= — the settings Prolog console
+  bumps =_prolog_query_generation= per run/cancel and
+  =_finish_prolog_query= drops results whose generation ≠ current
+  (=:935-937=); output capped at 64,000 chars (=:957-959=), per-solution lines
+  capped at 2,000 (=:955-956=).
+- =t/test_desktop_settings_window.py:204-231= proves the query callable runs
+  off the Qt thread; =:234-249= proves a cancelled query discards the late
+  result ("stale" never renders).
+- =zara/desktop/conversation/symbolic_projection.py:1-9= — existing doctrine:
+  a projection is "deliberately not a second history store"; =:481-546=
+  compare-and-swap =projection_generation= writes reject stale/rewound state.
+  The canvas mirror follows exactly this discipline, one layer up.
+
+State and event vocabulary already sufficient for cards:
+- =zara/runtime/events.py:187-199= — =IntentResolved(intent, resolver, arguments)=
+  and =PrologQueryCompleted(success, summary)= exist as runtime events.
+- =events.py:205-258= tool lifecycle; =events.py:303-330= task lifecycle
+  (=TaskStarted/TaskStepCompleted/TaskWaitingApproval/TaskCompleted/Failed/Cancelled=);
+  =events.py:49-54= =TurnStarted/TurnCancelled=.
+- =zara/desktop/state.py:15-24= — =DesktopRuntimeState= nine-state machine the
+  canvas spine color-codes; =zara/desktop/state.py:39-99= pure reducer.
+
+Existing Prolog IDE surface that the canvas absorbs:
+- =zara/desktop/windows/settings.py:609-779= — the "Prolog IDE" settings page
+  (source navigator, highlighter, find/replace, managed facts, query console
+  with history + cancel). The canvas keeps these capabilities; only their
+  location changes. =zara/desktop/prolog_studio.py:22-35= FACT_TYPES,
+  =:179-267= =ManagedFactStore=, =:336-353= =validate_prolog_file= stay
+  untouched as the safety layer.
+- =.prolog/kb/desktop_prolog_ide.pl:10-23= — the four invariants plus the
+  query-limit facts the canvas must honor verbatim.
+
+* 3. UI structure
+
+** Layout
+
+#+begin_src text
+┌────────────────────────────────────────────────────────────────────┐
+│‖                                                                   │  ‖ = engine spine (2px, left edge)
+│‖                          ◌ (ambient glow)                         │     color = DesktopRuntimeState
+│‖  ╭──────────────────────────────────────────────────────╮         │
+│‖  │ ▸ user            "sync my calendar"          14:02  │  card   │  card = rounded panel
+│‖  ╰──────────────────────────────────────────────────────╯         │  (soft shadow, radius 16)
+│‖  ╭──────────────────────────────────────────────────────╮         │
+│‖  │ ⚡ intent   calendar.sync      resolver: prolog       │  chip   │  intent chip row
+│‖  ╰──────────────────────────────────────────────────────╯         │
+│‖  ╭──────────────────────────────────────────────────────╮         │
+│‖  │ ⟳ tool  calendar.sync            ● running            │         │  live tool card
+│‖  │   progress ▮▮▮▮▮▯▯▯  approval? [Approve] [Reject]     │         │
+│‖  ╰──────────────────────────────────────────────────────╯         │
+│‖  ╭──────────────────────────────────────────────────────╮         │
+│‖  │ Z  Zara                                              │         │  assistant card
+│‖  │   Done — your 15:00 sync is scheduled. │streaming ▂   │         │  (grows in place)
+│‖  ╰──────────────────────────────────────────────────────╯         │
+│‖  ╭──────────────────────────────────────────────────────╮         │
+│‖  │ ?- kb_config:wake_word(W)                  gen 41     │         │  query card
+│‖  │   W = 'zara' ; W = 'hey zara'          2 solutions    │         │
+│‖  │   [Rerun] [Copy]                                     │         │
+│‖  ╰──────────────────────────────────────────────────────╯         │
+│‖                                                                   │
+│‖            ╭──────────────────────────────────────╮               │
+│‖            │ ⌘  Ask, or ?- query the engine…   ⏎  │               │  THE command bar
+│‖            ╰──────────────────────────────────────╯               │  (radius 20, elevation 3)
+└────────────────────────────────────────────────────────────────────┘
+#+end_src
+
+- *Canvas*: one =QScrollArea=, =ground= background, no sidebar, no header
+  row, no tabs. History is not a sidebar; it is an overlay palette opened
+  from the command bar (=/history= verb), projected from
+  =ConversationService.list_conversations= (=windows/copilot.py:167-182=
+  logic, re-skinned).
+- *Engine spine*: a 2px vertical strip whose color is
+  =primary= (idle/ready), =active= (listening/thinking/tool-running, slow
+  pulse), =danger= (error/disconnected), =line= (starting). Replaces the
+  =zaraRuntimeRail= (theme.py:594-624) as ambient chrome; states come from
+  the existing =reduce_runtime_event= (state.py:39-99) — zero new
+  interpretation logic.
+- *Command bar*: floating pill, bottom-center, max-width 720px. =panel_deep=
+  fill, 20px radius (same density vocabulary the parity test pins,
+  t/test_desktop_mobile_parity.py:163-176), =line= border → =borderActive=/
+  =primary= on focus, one 24px soft shadow. Hint text: "Ask, or =?- = query
+  the engine…". A mode glyph (⌘ vs ?-) previews the route as you type.
+
+** Card taxonomy (all are projections, none hold truth)
+
+| card     | projected from                                  | widget basis |
+|----------+-------------------------------------------------+--------------|
+| utterance| =SubmitTurn= / MessageRecord USER               | =MessageWidget= reuse |
+| reply    | =AssistantDelta/Complete= records               | =MessageWidget= + =_MessageBody= growth |
+| intent   | =IntentResolved= (events.py:190-194)            | new =IntentChipCard= |
+| tool     | =Tool*= events incl. =ToolWaitingForUser=       | new =ToolCard= with inline Approve/Reject → =ApproveTool/RejectTool= (commands.py:90-105) |
+| task     | =Task*= events (events.py:303-330)              | new =TaskCard= with step list |
+| query    | command-bar =RunPrologQuery= + =PrologQueryReceipt= | new =QueryCard= (solutions table, gen badge, Rerun/Cancel) |
+| fact     | KB pulse: managed-fact add/reload outcomes      | new =FactCard= (=ManagedFactStore= render, prolog_studio.py:128-149) |
+| system   | =RuntimeError= / fence rejections / mirror loss | existing error styling (theme.py:626-634) |
+
+** Tokens, type, spacing, motion
+
+- *Color*: only the 15 roles of =ANDROID_ROLE_DERIVATIONS= (theme.py:142-160).
+  ground=canvas, panel=card, panel_lift=reply card, panel_deep=code/solution
+  wells + command bar fill, line=card hairline, primary=?- mode + focus,
+  primary_deep=utterance card (same rule as user bubbles today, theme.py:742-745),
+  active=streaming/pending, danger=error, danger_deep=error fill.
+  No new hex anywhere; adding one would break
+  =test_all_desktop_roles_have_queryable_android_derivation_provenance=
+  (t/test_desktop_mobile_parity.py:123-132).
+- *Type*: unchanged from =desktop_stylesheet= (theme.py:543-547): Adwaita Sans
+  14px body; Hack Nerd Font Mono 11-13px for goals, solutions, engine states
+  (theme.py:612-619, 939-943 precedents). Card headers 11px mono uppercase,
+  letter-spacing 0.5px (=zaraMessageRole= rule, theme.py:763-770).
+- *Space*: 8pt grid; 16px canvas gutter; 12px card gap; card padding 14/10
+  (identical to today's bubble metrics, chat_widgets.py:175); radius ladder
+  cards 16 / inputs+bar 20 / chips 12.
+- *Depth*: =QGraphicsDropShadowEffect= only (QtWidgets, zero new deps).
+  Elevation: ground 0 → card 1 (y=1, blur 18, 45% black) → focused card 2 →
+  command bar 3. Shadows inherit theme (light theme uses lower opacity).
+- *Motion with purpose* (=QPropertyAnimation=, 120–200ms, one curve):
+  birth = fade + 8px rise (new fact/turn only); streaming = in-place height
+  growth via =_MessageBody= document fit (chat_widgets.py:31-57); cancel/
+  retract = 120ms fade-out; fence rejection = no motion at all (a card that
+  was never born does not animate). A single =desktop.motion= preference
+  gates all of it; =false= must be a supported, screenshot-tested state.
+
+* 4. Prolog ADE architecture
+
+** Process/thread model
+
+#+begin_src text
+Qt GUI thread                      runtime worker(s)                 engine (SWI, process-wide lock)
+─────────────                      ─────────────────                 ───────────────────────────────
+CanvasWindow                       RuntimeHost thread                PrologEngine
+  ├ command bar Enter ──────────► bridge.submit(SubmitTurn |          (prolog_engine.py:327)
+  │                                 RunPrologQuery)  (qt_bridge.py:64)   ▲
+  ├ QTimer 150ms canvas poll ────► RunPrologQuery(goal=                 │ query_all under
+  │  (skip if one in flight)        canvas_delta(SinceGen,Gen,Cards),   │ _runtime_lock
+  │                                 MaxSolutions=50)                    │ (prolog_engine.py:418)
+  ├ diff(gen) → build/patch ─◄── bridge.runtime_event ◄── EventEnvelope ◄┘ backend.query_prolog
+  │  widgets only                     (qt_bridge.py:84-90)                (backend.py:407-417)
+  └ zero pyswip calls ever
+#+end_src
+
+- The desktop never constructs =PrologEngine=. All goals ride
+  =RunPrologQuery= through =ZaraClient=/=RuntimeHost=, exactly like the
+  settings console today (controller.py:55-62 wires
+  =prolog_query=lambda goal, n: client.submit(RunPrologQuery(...))=).
+- The Qt thread's only engine-derived data is a plain solutions tuple that
+  arrived via =bridge.command_completed= (qt_bridge.py:69-82). =no_qt_thread_prolog=
+  holds structurally, and stays testable with the
+  t/test_desktop_settings_window.py:204 pattern.
+
+** Fact→UI projection (the mirror)
+
+New Prolog, logic stays in Prolog per repo rules:
+
+- =kb/desktop_canvas_facts.pl= — fact vocabulary:
+  #+begin_src prolog
+  canvas_card(Id, kind, Attrs).      % Attrs: bounded ground terms, ≤4 KiB
+  canvas_order(Seq, Id).
+  canvas_generation(G).              % bumped by every mirror mutation
+  canvas_surface_invariant(single_engine_authority).
+  canvas_surface_invariant(no_qt_thread_prolog).
+  canvas_surface_invariant(late_query_results_are_fenced).
+  canvas_surface_invariant(admin_gated_remote_query).
+  #+end_src
+- =modules/desktop_canvas.pl= — the logic:
+  - =mirror_event(+EventTerm)= — pure translation of one runtime event
+    (intent/tool/task/assistant lifecycle, mirror-loss) into
+    assert/retract of =canvas_card/=canvas_order= plus a =canvas_generation=
+    bump. Mirrors the reducer discipline of state.py:39-99 and the CAS
+    fencing doctrine of symbolic_projection.py:481-546.
+  - =classify_input(+Text, -Route)= — =query/1= for the =?- = prefix,
+    =palette/1= for =/= verbs, =turn/1= otherwise. The command bar routes by
+    asking the engine, not by Python string logic.
+  - =canvas_delta(+SinceGen, -Gen, -Cards)= — ordered changed-cards projection,
+    bounded =MaxSolutions=; =visible_cards/2= for full rebuilds.
+  - PlUnit tests embedded; loaded from =main.pl=.
+- *Who feeds the mirror*: a host-side seam (runtime process, never desktop,
+  never Qt) — after the host publishes each event (host.py:730-736,745-751),
+  it also translates the event to the portable term and calls
+  =engine.query_once("desktop_canvas:mirror_event(...)")= on its own worker
+  context, wrapped so mirror failure is logged and degrades, never breaks a
+  turn. This keeps *one* engine (=single_engine_authority=: the mirror facts
+  live inside the authoritative engine; nothing forks a second SWI runtime,
+  which =prolog_engine.py:328-334= makes impossible anyway).
+- *The Qt rebuild rule*: =CanvasWindow= renders =visible_cards= /
+  =canvas_delta= results only. If =Gen= is unchanged → patch widgets in place
+  (the quick.py:336-349 diff pattern, now keyed on engine generation instead
+  of message-id tuples). If =Gen= moved → rebuild the affected window of
+  cards. Widgets hold no state that outlives a generation.
+
+** Query lifecycle (submit / fence / cancel / render)
+
+1. *Submit*: bar text → =classify_input= → =RunPrologQuery(goal, 50)=
+   (=ui_requested_solutions= 50 per desktop_prolog_ide.pl:22; wire bounds
+   enforced at commands.py:119-129). A query =QueryCard= is born in =running=
+   state; the bar keeps its draft history like settings does
+   (settings.py:909-915).
+2. *Fence*: the canvas keeps a local monotonic =_submit_generation=, bumped on
+   every new submit and on cancel; completions arrive with
+   =request_id= + generation and render only if current — the
+   settings.py:896-937 mechanism, per-card.
+3. *Engine side*: host dispatches (host.py:708-717) → backend
+   =engine.query_all= (backend.py:407-417) under the process-wide lock;
+   =PrologQueryCompleted(success, summary)= (events.py:196-199) feeds the
+   mirror so other surfaces see the pulse.
+4. *Cancel*: no wire cancel exists for queries (commands.py has none), so
+   cancel = generation bump + "cancelled · late result discarded" state —
+   the exact semantics already tested at t/test_desktop_settings_window.py:234-249.
+   Render caps per card: 50 solutions, 2,000 chars/solution, 64,000 chars/card
+   (settings.py:950-959 limits, reused).
+5. *Render*: =QueryCard= gets goal, solutions table, =gen N= badge, duration,
+   Rerun (re-submits the same goal through the same fence).
+
+** KB browsing, intents, tasks
+
+- *KB pulse*: managed-fact writes (prolog_studio.py add/update/delete paths,
+  settings.py:1051-1134) emit events the mirror turns into =FactCard=s;
+  a =/kb= palette verb queries a bounded overview goal
+  (=desktop_canvas:kb_overview(-Entries)= over =current_predicate/1= counts)
+  rendered as a query card. Deep editing stays in the settings Prolog IDE
+  (settings.py:609-779) — the canvas links to it, it does not duplicate it.
+- *Intents*: =IntentResolved= cards show intent, resolver provenance, and
+  arguments (events.py:190-194 carries all three).
+- *Tasks*: =TaskCard= projects the six task events (events.py:303-330);
+  =TaskWaitingApproval= renders the approve affordance inline, wired to
+  =ApproveTool=/=RejectTool= (commands.py:90-105) through the same bridge.
+
+* 5. Invariants & security
+
+- =single_engine_authority= — one SWI runtime exists per process
+  (prolog_engine.py:328-335 makes a second one impossible anyway); the mirror
+  lives *inside* that engine; the desktop constructs no engine and holds no
+  render state of its own beyond disposable widgets. Precedence on degraded
+  mirror: durable ledger (ConversationService/SQLite) is the rebuild source —
+  the same "projection, not a second store" doctrine the codebase already
+  states at symbolic_projection.py:1-9. New KB facts assert the invariant for
+  the canvas surface explicitly.
+- =no_qt_thread_prolog= — every goal travels =bridge.submit → host → backend=
+  on non-Qt threads; results return as signals. Gated by a new test asserting
+  the canvas query callable never runs on =QApplication.instance()=.thread.
+- =admin_gated_remote_query= — the canvas introduces *no new wire type*; all
+  remote goals ride =prolog.query=, whose capability is =DAEMON_ADMIN=
+  (t/test_daemon_security_policy.py:12, codec at protocol_runtime.py:146-159).
+  A local desktop principal's queries go through the same command path as the
+  settings console today (controller.py:55-62).
+- =late_query_results_are_fenced= — dual fences: engine =canvas_generation=
+  for projections, local submit generation for command-bar queries; stale
+  deltas and late receipts are dropped without rendering (settings.py:935-937
+  semantics, symbolic_projection.py CAS doctrine).
+- *Themes* — desktop projects =ZaraTheme.kt= only; no new tokens, no new
+  themes; parity tests keep passing untouched.
+- *No new dependencies* — cards, shadows, and motion are QtWidgets/QtGui only
+  (=QGraphicsDropShadowEffect=, =QPropertyAnimation=). No WebEngine — the code
+  already avoids it deliberately (chat_widgets.py:137).
+- *Prolog stays in Prolog* — event→fact translation, input routing, delta
+  projection, kb overview: all =modules/desktop_canvas.pl= predicates; Python
+  marshals terms and builds widgets.
+- *Secrecy/abuse bounds* — card payloads bounded (4 KiB attrs, 64000-char
+  render cap, settings.py:957 precedent); no transcript text in structured
+  latency or spine telemetry (AGENTS.md logging rule).
+
+* 6. Failure & recovery
+
+- *Engine crash / error*: =RuntimeError/AgentFailed/...= → state ERROR
+  (state.py:55-65) → spine =danger= + a system card; command bar stays
+  usable for =?- = retries once the runtime returns.
+- *Restart*: =RestartRuntime= (controller.py:246-260) → mirror generations
+  reset; canvas re-projects =visible_cards= from the fresh engine and replays
+  conversation context from the durable ledger into the mirror (bounded
+  replay, newest N cards) — restart recovery is a projection rebuild, not a
+  UI migration.
+- *Stale results*: late query receipts and stale deltas are fenced per §4;
+  the card shows the fence outcome instead of silently vanishing (matches
+  the "Cancelled · late results will be discarded" UX already shipped at
+  settings.py:933).
+- *Barge-in*: =TurnCancelled= (events.py:54) collapses the streaming reply
+  card to cancelled state (status text exists: chat_widgets.py:357);
+  approval cards time out with the turn.
+- *Long queries*: cancel is always available; the mirror poll coalesces so a
+  stuck delta query cannot wedge the canvas (single in-flight poll; skip
+  ticks until it returns).
+- *Mirror loss / degraded mode*: mirror_event failures are swallowed by the
+  host seam and mirrored as one "engine mirror unavailable — projecting from
+  ledger" watermark card; the canvas then renders from a
+  ConversationService snapshot until generations re-sync. Chat never breaks
+  because the ADE layer did.
+- *Disconnect*: =DISCONNECTED= (state.py:51-54) freezes motion, keeps drafts;
+  reconnect re-syncs via full =visible_cards= rebuild.
+
+* 7. Compatibility & migration
+
+** Existing gates and their fate
+
+| gate | what it pins | fate under this design |
+|---|---|---|
+| t/test_adaptive_copilot.py:58-298 | one renderer identity across presentations, composer growth ≤56px compact, geometry restore, sidebar-beside-chat | survives untouched while =CopilotWindow= lives (it remains the fallback presentation through Phase 3) |
+| t/test_desktop_theme.py:129-158 | =THEME_REGISTRY= order and exact keys; every theme readable; stylesheet contains =QWidget#zaraSettings= and the stop-action selector | no registry edits; canvas selectors added without removing any asserted selector |
+| t/test_desktop_theme.py:165-190 | bubble/container/empty-state selectors and no stray hex | untouched rules remain; new canvas selectors append |
+| t/test_desktop_mobile_parity.py:117-176 | Kotlin token equality; outrun density vocabulary (rail color, composer 20px) | command bar reuses the 20px + #07101B/#080F1E vocabulary so =test_outrun_stylesheet_uses_android_surface_and_density_vocabulary= passes unchanged |
+| t/test_copilot_screenshot_fixtures.py:18-75 | closed 13-fixture matrix, sha256 manifest, Qt state restoration | matrix untouched; canvas gets its *own* renderer module + fixture test (new file) |
+| t/test_desktop_settings_window.py:204-266 | off-thread query, cancel fencing, syntax diagnostics | the canvas replicates and extends these patterns; settings IDE stays |
+| t/test_daemon_security_policy.py:9-15 | =prolog.query= is =DAEMON_ADMIN= | no new message type; gate untouched |
+| t/test_symbolic_projection_exact_integers.py | generation fences need exact integers | mirror generation follows the same rule |
+
+** Stepwise path
+
+1. *Phase 0 — Prolog first*: =kb/desktop_canvas_facts.pl= +
+   =modules/desktop_canvas.pl= with =classify_input/2=, =mirror_event/1=,
+   =canvas_delta/3=, =visible_cards/2= + PlUnit tests. Loaded from =main.pl=.
+   No UI change. Gate: =nix flake check= Prolog load + new PlUnit.
+2. *Phase 1 — mirror seam*: host-side event→=mirror_event= hook (fail-open,
+   logged); =canvas_delta= exercised via existing =RunPrologQuery= from a
+   Python test. Still no UI change.
+3. *Phase 2 — canvas window behind a flag*: =CanvasWindow= +
+   =canvas_cards.py= (card widgets) + command bar, enabled by
+   =[desktop].canvas = false= default. =CopilotWindow= stays canonical per
+   =.prolog/kb/desktop_copilot_ui.pl:1-2=.
+4. *Phase 3 — fixtures*: =zara/desktop/canvas_fixtures.py= (mirrors
+   ui_fixtures.py discipline incl. theme-state restore, ui_fixtures.py:248-273)
+   + t/test_desktop_canvas_fixtures.py with a motion-off default state.
+5. *Phase 4 — cutover*: flag default-on; =desktop_copilot_ui.pl= gains
+   canvas facts and the canonical-renderer fact is updated *in the same
+   change*; =CopilotWindow= retained as the accessible/fallback presentation
+   for at least one release. Keyboard-only flows (tray summon,
+   desktop_control toggle, controller.py:182-203) keep identical entry points.
+
+* 8. Acceptance criteria
+
+1. With =[desktop].canvas=true=, typing a sentence in the bar submits
+   =SubmitTurn= and typing =?- parent_child(X,Y).= submits =RunPrologQuery=;
+   the route decision comes from =desktop_canvas:classify_input/2= (Prolog
+   test), not Python string matching.
+2. A canvas rendered after a generation bump is byte-identical (widget
+   identity for unchanged cards, rebuilt for changed) to a canvas built from
+   =visible_cards= at that generation — projection determinism test.
+3. Cancelling a running query guarantees a late =PrologQueryReceipt= with
+   distinct solutions never renders (settings-cancel semantics, per-card).
+4. Every visible pixel color originates from =THEME_REGISTRY[theme].colors=
+   roles; zero literal hex in canvas widget code.
+5. Motion-off mode renders a complete, readable canvas and is a fixture state.
+6. With the mirror disabled at runtime, the canvas shows the degraded
+   watermark and still renders ledger-backed cards; turns still flow.
+7. A query returning >64,000 rendered chars truncates with the documented
+   suffix and never blocks the GUI thread >16ms per tick.
+8. Approval-required tool cards expose Approve/Reject that submit
+   =ApproveTool=/=RejectTool= with the card's =tool_run_id=.
+9. Offscreen fixture set (≥8 states incl. streaming, tool-approval,
+   query-solutions, error, motion-off, disconnected) renders deterministic
+   PNGs with sha256 manifest and restores Qt theme state.
+10. All pre-existing gates in §7 pass unchanged; CI test job green on the
+    candidate SHA.
+
+* 9. Verification gate
+
+#+begin_src bash
+# focused new gates (red→green per behavior)
+nix develop -c pytest t/test_desktop_canvas_prolog.py t/test_desktop_canvas_projection.py
+nix develop -c pytest t/test_desktop_canvas_window.py t/test_desktop_canvas_fixtures.py
+
+# existing UI/security/theme gates that must stay green
+nix develop -c pytest t/test_adaptive_copilot.py t/test_desktop_theme.py \
+  t/test_desktop_mobile_parity.py t/test_copilot_screenshot_fixtures.py \
+  t/test_desktop_settings_window.py t/test_daemon_security_policy.py \
+  t/test_symbolic_projection_exact_integers.py
+
+# full suite + flake checks (ZARA-021; includes Prolog load of new modules)
+nix develop -c bash scripts/test-all.sh
+nix flake check
+
+# coverage ratchet (never lower floors; +2 merge floor, aim +10 per slice)
+nix develop -c bash scripts/test-coverage.sh
+#+end_src
+
+* 10. Rejected alternatives
+
+1. *Web canvas (Electron/Tauri/QtWebEngine) for Raycast-class polish.*
+   Loses: violates the Qt-native/no-new-deps invariant; the repo already
+   avoids WebEngine on principle (chat_widgets.py:137); the Kotlin→Python
+   token parity machinery (test_desktop_mobile_parity.py) would need a third
+   consumer; offscreen determinism (ui_fixtures) is much harder. The same
+   polish is reachable with palette + shadows + motion in QtWidgets.
+2. *Refine the transcript instead (better bubbles, richer activity rows).*
+   Loses the lens: bubbles structurally erase engine life — tool messages
+   with bare status words render *no content* (chat_widgets.py:243-251), and
+   there is no place for a fact, a goal, or a task to be first-class. Polish
+   on a transcript cannot become an ADE; the ADE is a different dataflow
+   (engine generations → widgets), not a different stylesheet.
+3. *Classic dockable IDE shell (QDockWidget panels: KB tree, console,
+   inspector).* Reads "IDE" but fails "simple + modern": docks are permanent
+   chrome, the opposite of minimal; it would also duplicate the settings
+   Prolog IDE instead of absorbing it. The command bar + overlay palette
+   delivers the same capabilities with zero permanent panels.
+
+* 11. Risks
+
+1. *Lock contention between canvas polls and turn processing.*
+   =PrologEngine._runtime_lock= is process-wide (prolog_engine.py:333-335);
+   careless polling could delay turns. Mitigation: single coalesced in-flight
+   =canvas_delta= poll at 150–250ms with bounded =MaxSolutions=, poll paused
+   while =THINKING= bursts are active, and a latency metric through the
+   existing JSONL sink (host.py:760-777) with a budget assertion in tests.
+2. *Widget/perf blow-up on long sessions with animated cards.*
+   Mitigation: render-window virtualization (only ±N cards around the
+   viewport materialize as widgets, like =_MAX_VISIBLE_MESSAGES= at
+   quick.py:29 but windowed), motion only on birth, shadow effects limited to
+   focused card + command bar, and a density fixture (≥200 cards) in the
+   screenshot gate.
+3. *Screenshot-fixture churn from shadows/motion.*
+   Mitigation: fixtures default motion-off and capture with
+   =QT_QPA_PLATFORM=offscreen= (t/test_adaptive_copilot.py:6 pattern); a
+   single dedicated motion fixture; sha256 manifest + full Qt-state restore
+   copied from ui_fixtures.py:219-273; any pixel regression is reviewed as a
+   deliberate design change, not noise.

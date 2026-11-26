@@ -175,8 +175,17 @@ def test_signal_cabin_stylesheet_covers_the_complete_copilot_surface():
         "QPushButton#zaraPrimaryAction:disabled",
         "QPushButton#zaraDangerAction",
         "QScrollBar:vertical",
+        # Prolog inspector drawer (calm-console): styled from existing roles.
+        "QWidget#zaraPrologInspector",
+        "QLabel#zaraInspectorHint",
+        "QLabel#zaraInspectorQueryStatus",
     ):
         assert selector in stylesheet
+
+    for theme_key in THEME_REGISTRY:
+        themed = desktop_stylesheet(theme_key)
+        assert "QWidget#zaraPrologInspector {" in themed
+        assert "QLabel#zaraInspectorQueryStatus" in themed
     assert "#7C3AED" not in stylesheet.upper()
     assert "QWidget#zaraMessageContainer" in stylesheet
     assert "QTextBrowser#zaraMessageBody" in stylesheet

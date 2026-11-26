@@ -1,0 +1,120 @@
+#+TITLE: Design Council Decision — Zara Desktop: Simple + Modern with a Real Prolog ADE
+#+DATE: 2026-11-26
+#+PROCESS: 3 competing designs (independent git worktrees) -> 5 independent voters -> adversarial council
+#+STATUS: DECIDED
+
+* Subject
+
+Redesign the Zara desktop copilot so it looks simple and modern AND is a real
+Prolog ADE (Agent Development Environment): the desktop as a first-class
+environment over the actual Prolog engine/KB, not a mock or debug afterthought.
+
+* Competing designs (preserved in designs/)
+
+| Lane             | Vision                                                                 | Doc                              |
+|------------------+------------------------------------------------------------------------+----------------------------------|
+| calm-console     | Chat-first single column; ADE as summoned inspector drawer             | design-calm-console.org (475 ln) |
+| ade-workbench    | JetBrains-class split workspace; live KB explorer always visible       | design-ade-workbench.org (396 ln)|
+| ambient-canvas   | Transcript abolished; fact->widget card canvas + command bar           | design-ambient-canvas.org (483 ln)|
+
+* Vote tally (7 criteria, 35 max each; citations spot-checked per voter)
+
+| Voter (lens)              | calm-console | ade-workbench | ambient-canvas | Winner       |
+|---------------------------+--------------+---------------+----------------+--------------|
+| V1 prolog correctness     | 33           | 28            | 27             | calm-console |
+| V2 UX simplicity          | 33           | 28            | 27             | calm-console |
+| V3 Qt feasibility/tests   | 33           | 28            | 28             | calm-console |
+| V4 invariants/security    | 33           | 27            | 27             | calm-console |
+| V5 product/migration      | 34           | 29            | 29             | calm-console |
+|---------------------------+--------------+---------------+----------------+--------------|
+| TOTAL                     | *166/175*    | 140/175       | 138/175        | *5/0*        |
+
+Winner: *calm-console*, unanimous. Runner-up: ade-workbench (wins raw PROLOG
+ADE REALITY in 3 of 5 scorings; strongest pure engine binding via the literal
+=intent_resolver:resolve/4= surface). ambient-canvas: boldest modern language,
+exact citations, but largest invariant blast radius (150ms engine poll,
+=assertz/retract= of UI facts inside the authoritative engine, no
+=canvas_delta= saturation rule, CI-flaky timing criteria).
+
+Evidence discipline: calm-console citations verified exact to the line by all
+five voters (stale-generation drop, honest-cancel copy, byte caps, 13-fixture
+matrix). ade-workbench: KB-cap self-contradiction (=max_solutions=100= vs the
+cited =ui_requested_solutions=50=), one cited test file that does not exist
+(=t/test_prolog_load.py=), two wrong line citations. ambient-canvas: one
+overstatement (engine lock = serialization, not impossibility).
+
+* Council adversarial findings (converging objections to the winner)
+
+1. *ADE discoverability / first-classness* (V2, V3, V4, V5): a 400px drawer
+   invisible until Ctrl+I, with allowlisted fixed-goal browsing and a
+   phase-2 tasks surface, risks the exact "debug afterthought" the brief
+   forbids; it repeats the "seven tabs deep" Settings discoverability failure.
+2. *Engine-occupancy honesty* (V3, V5): one process-wide =_runtime_lock= means
+   a heavy user goal can stall live turns; the design defers the server-side
+   deadline. Busy state must come from real receipts and the stall window must
+   be bounded or documented.
+3. *Tasks surface gap* (V2, V4, V5): the brief requires task/agent state
+   visible and interactive; deferral to phase 2 must be explicit, admin-gated,
+   and never mocked from event-stream guesswork.
+
+* Decision
+
+*ADOPT calm-console as the desktop ADE design, conditioned on C1-C10 below.*
+The council folds ade-workbench's strongest element (a genuinely usable live
+KB inventory + intent catalog inside the drawer) into the winner as a hard
+condition, so "hidden depth" cannot degrade into a settings clone. The
+ambient-canvas command bar (=-prefix routing) is recorded as a phase-3
+polish option, out of scope.
+
+** Binding conditions (merged from all 5 voters, deduplicated)
+
+- C1 *Discoverability*: drawer ships with a persistent, labeled header
+  affordance plus a first-run hint. Ctrl+I alone is not sufficient.
+- C2 *First-class ADE*: all three sections (Query console, KB facts, Live
+  state) in the initial release; KB facts render live projections from new
+  =modules/desktop_ade.pl= (loaded via =main.pl=) covering usable per-module
+  inventory (counts + bounded samples) and the intent catalog; KB facts
+  (=desktop_prolog_ide.pl= query-path + feature facts) updated in the same change.
+- C3 *Cap discipline*: =max_solutions=50= and 4096-byte goal caps everywhere,
+  including KB samples; no path silently raises them.
+- C4 *Zero engine mutation*: tests assert the drawer constructs only
+  allowlisted =desktop_ade:*= goals and never =consult/assertz/retract=; no
+  pyswip import in desktop code.
+- C5 *Fence discipline*: UI generation + wire =reply_to= + projection
+  generation, with drawer-path tests replicated from
+  =test_prolog_ide_cancel_discards_late_query_result= semantics including
+  restart/disconnect generation bump and an off-Qt-thread assertion.
+- C6 *Engine-occupancy honesty*: "engine busy" derived from real receipts;
+  ship a server-side solution deadline or document the stall window in the KB
+  before merge.
+- C7 *Tasks surface*: no mock rows ever (enforced by test); either omit the
+  tasks section until the phase-2 admin-gated =tasks.list= ZARA/1 message
+  exists, or land it in scope; the deferral must be a tracked gating issue.
+- C8 *Renderer contract*: renderer-identity + zero-bridge-command tests for
+  drawer/palette toggling; sidebar->palette and header-string migrations with
+  equal-or-stronger assertions, in the same commits; no conversation flow
+  behavior change.
+- C9 *Theme/fixture discipline*: zero new color tokens; only the existing 15
+  semantic roles; fixture matrix grows additively (+3 states) with the
+  manifest schema bump documented; all 13 original states preserved; gated
+  objectNames byte-identical; parity test extended additively only.
+- C10 *No dead code*: =settings.py= console re-based onto the shared
+  =QueryConsoleController=, behavior-identical and gated by
+  =t/test_desktop_settings_window.py= before the old path is removed.
+
+** Realization outline (next step, requires its own implementation slice)
+
+1. TDD slice on a worktree branch from =council/calm-console=, consuming
+   =design-calm-console.org= + this decision's C1-C10 as acceptance criteria.
+2. Focused red/green per behavior; full gate =nix develop -c bash
+   scripts/test-all.sh= and =nix flake check= at exact head; CI green before merge.
+3. Update =CHANGELOG.md= (user-visible UI change) per the changelog contract.
+
+* Process evidence
+
+- Worktrees: =council/calm-console=, =council/ade-workbench=,
+  =council/ambient-canvas= (designs authored there, untracked; copies preserved
+  here; worktrees removed after council).
+- Voters: 5 independent subagent sessions (V1 prolog, V2 UX, V3 Qt/tests,
+  V4 invariants/security, V5 product/migration); full ballots in VOTES.md.
+- Voter instructions + shared brief: /tmp/opencode/council/{brief,voter-instructions}.md

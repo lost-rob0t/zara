@@ -6,6 +6,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QPoint, QRect, QSettings, Qt, Signal
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
@@ -271,7 +272,7 @@ def test_compact_and_expanded_geometry_are_saved_and_restored_independently(tmp_
         dispose(window)
 
 
-def test_expanded_history_is_sidebar_beside_chat_without_stealing_viewport_height(tmp_path):
+def test_expanded_history_is_a_summoned_palette_overlay(tmp_path):
     qt_app, _, _, window = make_window(tmp_path)
     try:
         window.set_presentation(CopilotPresentation.EXPANDED)
@@ -279,20 +280,32 @@ def test_expanded_history_is_sidebar_beside_chat_without_stealing_viewport_heigh
         window.show()
         qt_app.processEvents()
 
+        # The palette is summoned, not a permanent sidebar.
+        assert window.history_panel.isHidden()
+
+        window.toggle_history_palette()
+        qt_app.processEvents()
+
         def window_rect(widget) -> QRect:
             origin = widget.mapTo(window, QPoint(0, 0))
             return QRect(origin, widget.size())
 
-        history_rect = window_rect(window.history_panel)
+        palette_rect = window_rect(window.history_panel)
         message_rect = window_rect(window.message_scroll)
         composer_rect = window_rect(window.composer_shell)
 
-        assert history_rect.right() < message_rect.left()
-        assert history_rect.top() <= message_rect.bottom()
-        assert message_rect.top() <= history_rect.bottom()
-        assert history_rect.width() <= 320
-        assert message_rect.width() > history_rect.width()
-        assert composer_rect.left() == message_rect.left()
-        assert composer_rect.top() > message_rect.top()
+        assert palette_rect.width() == 360
+        # Floats above the stream instead of stealing viewport width.
+        assert palette_rect.top() <= message_rect.bottom()
+        assert palette_rect.bottom() >= message_rect.top()
+        assert message_rect.width() > palette_rect.width()
+        # The composer stays visible and unobscured.
+        assert not window.composer_shell.isHidden()
+        assert not palette_rect.intersects(composer_rect)
+
+        # Escape dismisses the palette.
+        QTest.keyClick(window.search_edit, Qt.Key.Key_Escape)
+        qt_app.processEvents()
+        assert window.history_panel.isHidden()
     finally:
         dispose(window)

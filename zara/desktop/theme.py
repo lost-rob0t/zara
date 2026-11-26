@@ -644,6 +644,16 @@ QWidget#zaraConversationHistoryPanel {{
     border-radius: 20px;
 }}
 
+QWidget#zaraPrologInspector {{
+    background: {colors["panel_deep"]};
+    border: 1px solid {colors["line"]};
+    border-radius: 20px;
+}}
+
+QLabel#zaraInspectorHint,
+QLabel#zaraInspectorQueryStatus,
+QLabel#zaraInspectorSavedFactsLabel {{ color: {colors["text_muted"]}; }}
+
 QLineEdit,
 QPlainTextEdit,
 QTextBrowser,

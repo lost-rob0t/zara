@@ -1,0 +1,475 @@
+#+TITLE: Calm Console — Zara Desktop as a chat-first copilot with a hidden Prolog ADE
+#+AUTHOR: design council / lens: calm-console
+#+SOURCE_COMMIT: council/calm-console worktree
+#+PROPERTY: header-args :results silent
+
+* 1. Vision
+
+Calm Console is one column, one input, one stream. The window is a reading
+surface first: a centered ~760px measure, generous vertical rhythm, and a
+history that disappears into a summoned overlay instead of a permanent
+sidebar. The Prolog ADE is the hidden depth: a right-anchored inspector
+drawer that slides in over/next to the stream when asked (Ctrl+I or the
+inspector button) and carries three quiet sections — a live query console
+against the daemon's real engine with generation-fenced results, a KB facts
+browser, and the current intent/task state. Nothing about Prolog is visible
+until summoned; once summoned, everything is real. The feel is Linear/Things:
+restraint as the feature, the engine one keystroke away.
+
+* 2. Evidence
+
+Structural claims, verified in this worktree:
+
+- *One canonical renderer exists and presentation changes never copy state.*
+  =CopilotWindow= subclasses =QuickCopilotWindow= and rebuilds zero message
+  widgets on mode change ([[file:zara/desktop/windows/copilot.py][copilot.py:39]], [[file:zara/desktop/windows/copilot.py][copilot.py:133-154]]); the chat column is
+  re-parented, not duplicated ([[file:zara/desktop/windows/copilot.py][copilot.py:98-120]]). =t/test_adaptive_copilot.py=
+  gates renderer identity and draft survival across transitions
+  ([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:58-103]]).
+- *A real, admin-gated query seam already exists and is unused by chat.*
+  The settings factory injects =prolog_query= as =ZaraClient.submit(
+  RunPrologQuery(...))= ([[file:zara/desktop/controller.py][controller.py:55-62]]). The command validates goal
+  ≤4096 bytes and =max_solutions∈[1,100]= ([[file:zara/runtime/commands.py][commands.py:118-129]]), the runtime host
+  answers with =PrologQueryReceipt= ([[file:zara/runtime/host.py][host.py:708-717]]), and the ZARA/1 wire
+  protocol carries =prolog.query= → =prolog.query.completed= with solutions
+  fenced by =reply_to= ([[file:zara/zmq_transport.py][zmq_transport.py:884-892]], [[file:zara/zmq_transport.py][zmq_transport.py:1385-1389]],
+  [[file:zara/zmq_transport.py][zmq_transport.py:2188-2202]], [[file:zara/zmq_transport.py][zmq_transport.py:2516-2532]]).
+- *A generation-fenced query console already exists — in Settings, hidden
+  behind seven other tabs.* =run_prolog_query= bumps a generation token,
+  disables Run, enables Cancel; =_finish_prolog_query= drops any outcome whose
+  generation is stale ([[file:zara/desktop/windows/settings.py][settings.py:896-966]], token init [[file:zara/desktop/windows/settings.py][settings.py:283]]). Render is
+  bounded: 2,000 chars/line, 64,000 chars total ([[file:zara/desktop/windows/settings.py][settings.py:950-961]]).
+  Cancel is honest: it fences, it does not pretend to interrupt the engine
+  ([[file:zara/desktop/windows/settings.py][settings.py:927-933]]).
+- *Prolog never runs on the Qt thread, structurally.* The bridge is
+  "intentionally UI-free … without ever running assistant work on the Qt main
+  thread"; =submit= returns a future and results arrive as Qt signals
+  ([[file:zara/desktop/qt_bridge.py][qt_bridge.py:3-5]], [[file:zara/desktop/qt_bridge.py][qt_bridge.py:64-82]]). The gate test proves the query callable
+  runs on the caller (worker) thread and records history
+  ([[file:t/test_desktop_settings_window.py][test_desktop_settings_window.py:204-231]]), and that a late result after cancel
+  is discarded ([[file:t/test_desktop_settings_window.py][test_desktop_settings_window.py:234-249]]).
+- *The engine is a single process-wide authority with a coarse lock.*
+  =PrologEngine._runtime_lock= is a class-level lock shared by every instance;
+  a lazy query owns it until exhausted/closed ([[file:zara/prolog_engine.py][prolog_engine.py:327-336]],
+  [[file:zara/prolog_engine.py][prolog_engine.py:418-442]]). Consequence: UI queries must be bounded, rare, and
+  never free-form-browsing — the engine is a shared serial resource.
+- *Intent/frame state for the "live state" surface already persists in the
+  canonical store with generation fencing.* =PureSymbolicProjectionAdapter=
+  loads =prolog_context_term=, prior act, unresolved questions and evidence
+  from one canonical projection ([[file:zara/desktop/conversation/symbolic_runtime.py][symbolic_runtime.py:74-96]]), and rejects stale
+  commits by =projection_generation= ([[file:zara/desktop/conversation/symbolic_runtime.py][symbolic_runtime.py:120-126]]). The UI can
+  read this with zero runtime traffic — no second truth.
+- *Tool activity already de-chromes into a distinct "activity" kind, and the
+  status system is one lamp + word.* Activity messages project to
+  =messageKind="activity"= ([[file:zara/desktop/chat_widgets.py][chat_widgets.py:199-200]], [[file:zara/desktop/chat_widgets.py][chat_widgets.py:243-252]]); the
+  runtime rail is an 8px lamp with a state word and detail-on-error
+  ([[file:zara/desktop/windows/quick.py][quick.py:173-185]], [[file:zara/desktop/windows/quick.py][quick.py:325-334]]).
+- *Theming is a closed 15-role semantic projection of the Android authority.*
+  Roles derive deterministically from =ZaraTheme.kt= tokens
+  ([[file:zara/desktop/theme.py][theme.py:142-160]], [[file:android/shared-ui/src/main/java/ai/zara/ui/theme/ZaraTheme.kt][ZaraTheme.kt:25-43]]); parity is byte-checked by
+  =t/test_desktop_mobile_parity.py= ([[file:t/test_desktop_mobile_parity.py][test_desktop_mobile_parity.py:117-131]]) and
+  stylesheet vocabulary is pinned ([[file:t/test_desktop_mobile_parity.py][test_desktop_mobile_parity.py:163-174]]).
+  The ADE drawer needs *zero new tokens*.
+- *KB invariants and limits are machine-checkable facts.* The four invariants
+  ([[file:.prolog/kb/desktop_prolog_ide.pl][desktop_prolog_ide.pl:10-13]]) plus the bounds table — goal 4096, engine
+  solutions 100, *UI-requested 50*, history 20, rendered 64000
+  ([[file:.prolog/kb/desktop_prolog_ide.pl][desktop_prolog_ide.pl:20-23]]) — already encode exactly the drawer's caps.
+- *The screenshot fixture matrix is closed and theme-state restoring.*
+  13 named PNGs ([[file:zara/desktop/ui_fixtures.py][ui_fixtures.py:31-45]]) with exact-set assertions
+  ([[file:t/test_copilot_screenshot_fixtures.py][test_copilot_screenshot_fixtures.py:18-63]]) and QApplication theme
+  restore ([[file:zara/desktop/ui_fixtures.py][ui_fixtures.py:246-273]]).
+
+* 3. UI structure
+
+** 3.1 Hierarchy
+
+One window (=CopilotWindow=, objectName =zaraCopilot=) with exactly three
+layers:
+
+1. *Header* (quiet): conversation title (left), 8px status lamp + one status
+   word (center-right, detail only in tooltip or on error), three text
+   buttons (History, Inspector, Settings). No brand block, no provider label
+   in the header row — provider/model stays in the status tooltip
+   ([[file:zara/desktop/windows/quick.py][quick.py:471-479]] precedent).
+2. *Stream*: one centered column, maximum reading measure **760px**, message
+   spacing raised 6→12px. Chat bubbles keep =MessageWidget= and all gated
+   objectNames (=zaraMessageBubble=, =messageRole=, =messageKind=), but the
+   *activity* kind renders as a hairline row: 2px primary left tick, tool
+   name + status word in =text_muted= mono — no bubble chrome. Assistant
+   bubbles lose their left accent corner radius (16px uniform) so the column
+   reads as a document, not a messenger transcript.
+3. *Composer*: unchanged =ChatComposer= + =ComposerActionButton= inside
+   =zaraComposerShell= (growth behavior is test-gated,
+   [[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:207-220]]). Placeholder: "Ask Zara…".
+
+** 3.2 History palette (replaces the persistent sidebar)
+
+In EXPANDED presentation the sidebar is gone from the default layout.
+=History= (or Ctrl+K) summons a floating =QFrame= that *keeps the gated
+objectName* =zaraConversationHistoryPanel= (its stylesheet rule stays
+meaningful; [[file:zara/desktop/theme.py][theme.py:641-645]]), anchored top-center over the stream, width
+360px, search field auto-focused, list below (=zaraConversationHistory=
+items unchanged). Item activation, rename, and new-chat reuse the exact
+existing signal paths ([[file:zara/desktop/windows/copilot.py][copilot.py:122-125]], [[file:zara/desktop/windows/copilot.py][copilot.py:162-207]]). Esc or
+outbound click dismisses. Compact keeps today's single "New" affordance.
+
+#+BEGIN_EXAMPLE
+EXPANDED, palette open (default: closed)
+┌──────────────────────────────────────────────────────────┐
+│ Daily standup notes     ● ready   History  Inspector  ⚙  │  header (32px)
+├──────────────────────────────────────────────────────────┤
+│        ┌─ Search chats ─────────────────────┐            │
+│        │ ▸ Target history chat              │            │  palette
+│        │ ▸ Renamed in Copilot               │            │  (360px,
+│        └────────────────────────────────────┘            │   floats)
+│                                                          │
+│     You ────────────────────────────                     │
+│     ┌──────────────────────────────────┐                 │
+│     │ Summarize today's plan           │                 │  stream
+│     └──────────────────────────────────┘                 │  (≤760px,
+│     Zara ───────────────────────────                     │  centered)
+│     ┌──────────────────────────────────────────────┐     │
+│     │ Three priorities: finish the desktop pass…   │     │
+│     └──────────────────────────────────────────────┘     │
+│     calendar.sync · Running                              │  activity row
+│                                                          │
+│  ┌────────────────────────────────────────────  ┌───┐    │
+│  │ Ask Zara…                                    │ ↑ │    │  composer
+│  └────────────────────────────────────────────  └───┘    │
+└──────────────────────────────────────────────────────────┘
+#+END_EXAMPLE
+
+** 3.3 Inspector drawer (the ADE)
+
+A right-anchored panel, width **400px**, toggled by =Inspector= / Ctrl+I.
+Docked side-by-side in EXPANDED (chat column shrinks, composer stays full
+width of the chat column); overlay above the stream in COMPACT (the quick
+surface stays one column; the drawer is a summoned instrument, the window
+does not reflow). Drawer state persists per presentation in QSettings,
+exactly mirroring the existing per-presentation geometry keys
+([[file:zara/desktop/windows/copilot.py][copilot.py:33-36]]). Toggling must not rebuild message widgets — the same
+invariant =set_presentation= already honors
+([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:58-103]]).
+
+Three stacked sections, hairline-separated, each collapsible, no tab bar:
+
+#+BEGIN_EXAMPLE
+EXPANDED with inspector docked
+┌───────────────────────────────────────────────┬──────────────────┐
+│ Standup notes      ● ready    History  ⚙     │ PROLOG INSPECTOR │
+├───────────────────────────────────────────────┼──────────────────┤
+│                                               │ ▸ Console        │
+│   You ────────────────────                    │  ┌──────────────┐│
+│   ┌─────────────────────────┐                 │  │ ?- goal      ││
+│   │ Summarize today's plan  │                 │  └──────────────┘│
+│   └─────────────────────────┘                 │  1 X = red       │
+│   Zara ───────────────────                    │  2 X = blue      │
+│   ┌────────────────────────────────────┐      │  2 solutions     │
+│   │ Three priorities: the desktop pass,│      │ ──────────────── │
+│   │ the runtime check, the handoff.    │      │ ▸ KB facts       │
+│   └────────────────────────────────────┘      │  verb_intent×214 │
+│   calendar.sync · Running                     │  app_mapping×9   │
+│                                               │  wake_word×2  ▾  │
+│ ┌───────────────────────────────────  ┌───┐   │ ──────────────── │
+│ │ Ask Zara…                           │ ↑ │   │ ▸ Live state     │
+│ └───────────────────────────────────  └───┘   │  intent: todo.add│
+│                                               │  missing: [when] │
+│                                               │  clarify: "When…"]│
+└───────────────────────────────────────────────┴──────────────────┘
+#+END_EXAMPLE
+
+Sections:
+
+1. *Console* — one =QPlainTextEdit=-style goal input (mono, =?- = prefix in
+   placeholder), result list beneath, one status word ("Ready", "Running…",
+   "2 solutions", "Cancelled · late results will be discarded" — the exact
+   honest-cancel copy already gated in
+   [[file:t/test_desktop_settings_window.py][test_desktop_settings_window.py:247]]). History of the last 20 goals
+   (KB limit [[file:.prolog/kb/desktop_prolog_ide.pl][desktop_prolog_ide.pl:23]]) via a quiet dropdown, as today
+   ([[file:zara/desktop/windows/settings.py][settings.py:909-915]]).
+2. *KB facts* — two sub-lists. "Saved" lists =ManagedFactStore.list()= from
+   the user's config block (labeled "applied on reload"; this is the same
+   file the runtime consults — no fork, [[file:zara/desktop/prolog_studio.py][prolog_studio.py:179-207]]).
+   "Engine" lists *allowlisted live projections only*, each rendered as
+   =predicate × count= plus a bounded sample, issued as fixed goals against
+   =modules/desktop_ade.pl= (see §4.3). Never free-form browsing.
+3. *Live state* — the current conversation's symbolic projection rendered
+   read-only: pretty-printed =prolog_context_term=, active intent frame
+   (name, status, missing slots), unresolved clarification questions,
+   discourse entities. Sourced from =ConversationService= state +
+   =load_symbolic_projection= ([[file:zara/desktop/conversation/symbolic_runtime.py][symbolic_runtime.py:74-96]]) — zero runtime
+   commands. Long-horizon =TaskStore= rows are *phase 2* (§7): they need a
+   new admin-gated ZARA/1 message and are explicitly not fabricated now.
+
+** 3.4 Tokens, type, spacing
+
+Zero new color tokens: drawer ground =panel_deep=, cards =panel=, borders
+=line=, active query state =active=, errors =danger= on =danger_deep=, mono
+text =text= ([[file:zara/desktop/theme.py][theme.py:142-160]]). Type: body stays Adwaita Sans 14px; goals,
+results, fact terms and frame terms stay Hack Nerd Font Mono 12–13px
+(existing families, [[file:zara/desktop/theme.py][theme.py:939-943]]). Spacing rhythm: 4/8/12/16/24 only.
+Section headers are 11px mono uppercase =text_muted= (reuses the
+=zaraMessageRole= vocabulary, [[file:zara/desktop/theme.py][theme.py:763-770]]).
+
+Why it reads simple + modern: one axis of hierarchy (the stream), a single
+accent color doing all state work (the lamp), no permanent panels, and the
+ADE living behind a summonable surface rather than beside the chat.
+
+* 4. Prolog ADE architecture
+
+** 4.1 Process and thread model
+
+- The desktop process *never imports pyswip*. All engine contact rides the
+  existing seam: =CopilotWindow(bridge, conversations, prolog_query=callable)=
+  where =callable = lambda goal, n: client.submit(RunPrologQuery(goal=goal,
+  max_solutions=n))= — built once in =DesktopController= and handed to both
+  the Copilot and the Settings factory, replacing the lambda duplicated at
+  [[file:zara/desktop/controller.py][controller.py:55-62]]. With =prolog_query=None= (all current UI tests,
+  fixtures) the drawer renders the honest "Runtime query unavailable" state,
+  same as Settings ([[file:zara/desktop/windows/settings.py][settings.py:749-752]]).
+- Submission happens on the Qt thread but performs no engine work; the future
+  completes on a worker and re-enters the UI through a Qt signal — the exact
+  =prolog_query_finished = Signal(int, object)= pattern Settings uses
+  ([[file:zara/desktop/windows/settings.py][settings.py:257]], [[file:zara/desktop/windows/settings.py][settings.py:285]]), which satisfies =no_qt_thread_prolog=
+  by construction and by gate test
+  ([[file:t/test_desktop_settings_window.py][test_desktop_settings_window.py:204-231]]).
+- One engine truth: queries execute on the daemon's engine behind
+  =PrologEngine._runtime_lock= ([[file:zara/prolog_engine.py][prolog_engine.py:335-336]]). The UI holds no
+  mirror of KB facts beyond rendered strings; every engine number on screen
+  is the result of a query that just returned, or is labeled as saved-file
+  state.
+
+** 4.2 Query lifecycle (submit / fence / cancel / render)
+
+Mirrors and generalizes the Settings console into a reusable
+=QueryConsoleController= in the new =zara/desktop/inspector.py= (Settings
+migrates onto it in phase 3; behavior-identical):
+
+1. *Submit*: non-empty goal; client-side pre-validation replicating
+   =RunPrologQuery.__post_init__= (≤4096 bytes, no NUL,
+   =max_solutions=50= — the KB's =ui_requested_solutions=
+   [[file:.prolog/kb/desktop_prolog_ide.pl][desktop_prolog_ide.pl:22]], within the wire cap
+   [[file:zara/runtime/commands.py][commands.py:128-129]]); generation token =+1=; Run disabled, Cancel
+   enabled, status "Running…" ([[file:zara/desktop/windows/settings.py][settings.py:896-925]] semantics).
+2. *Fence*: the future's done callback emits =(generation, outcome)= over
+   Qt; =_finish= drops anything with =generation != current= — stale and
+   cancelled results can never render ([[file:zara/desktop/windows/settings.py][settings.py:935-937]]). The wire layer
+   independently fences by =reply_to= request id
+   ([[file:zara/zmq_transport.py][zmq_transport.py:2188-2202]]), so a receipt from a previous request can
+   never be misattributed even across drawer/settings consoles.
+3. *Cancel*: bumps the generation and flips the status copy; no engine-side
+   interrupt exists in the protocol, and the UI does not pretend otherwise
+   ([[file:zara/desktop/windows/settings.py][settings.py:927-933]]).
+4. *Render*: =N solutions= / =false=; per-line 2,000 chars, cumulative
+   64,000 chars with explicit truncation marker ([[file:zara/desktop/windows/settings.py][settings.py:950-962]] =
+   KB =rendered_output_chars=). History deque capped at 20.
+5. *Restart/teardown fence*: on =set_status= transitioning to
+   =DISCONNECTED=/=ERROR=, or on the receipt of the =RestartRuntime=
+   acknowledgment the controller already tracks ([[file:zara/desktop/controller.py][controller.py:246-260]]), the
+   drawer bumps its generation and shows "Runtime restarting — results
+   discarded".
+
+** 4.3 Fact→UI projection
+
+Prolog logic stays in Prolog. A new =modules/desktop_ade.pl= exposes
+bounded, pure projection predicates; Python issues only these fixed goals:
+
+#+BEGIN_EXAMPLE
+desktop_ade:kb_module_summary(Module, Count)         % per loaded kb/ module
+desktop_ade:fact_sample(Module, Term, Limit)         % bounded sample rows
+desktop_ade:intent_catalog(Phrase, Intent, Arity)    % verb_intent/3 grouped
+desktop_ade:wake_words(Words)                        % kb_config:wake_word/1
+#+END_EXAMPLE
+
+Each is called with =max_solutions=50= through =RunPrologQuery=. No
+=consult=, no =assertz=, no =retract= ever originates from the drawer —
+writes stay in the Settings pipeline with its allowlist + fresh-process
+=swipl= validation ([[file:zara/desktop/prolog_studio.py][prolog_studio.py:270-353]]). Managed ("Saved") facts render
+from =ManagedFactStore= file reads only.
+
+** 4.4 Intents / tasks surfaces
+
+- *Intents*: the Live state section reads the canonical projection
+  (=dialogue_state.prolog_context_term=, =unresolved_questions=,
+  =discourse_entities=) with no runtime traffic; frames decode via the
+  existing typed mirror path if a frame view is needed
+  ([[file:zara/prolog_engine.py][prolog_engine.py:486-538]] — server side, not desktop). The catalog query
+  of §4.3 gives the static intent inventory.
+- *Tasks*: long-horizon tasks are =RuntimeHost=-owned and
+  =[tasks].enabled=-gated (wiki contract); there is no desktop command for
+  them today. The design shows the conversation-level truth the desktop
+  already owns (active turn, pending approval, clarifications) and adds a
+  phase-2 =tasks.list= ZARA/1 message, admin-gated identically to
+  =prolog.query=, before any task row is rendered. No mock rows.
+
+* 5. Invariants & security
+
+| Invariant | How Calm Console holds it |
+|---|---|
+| =single_engine_authority= | Drawer has no =Prolog= import; every engine view is a =RunPrologQuery= receipt or a labeled saved-file read; intent state comes from the canonical projection adapter ([[file:zara/desktop/conversation/symbolic_runtime.py][symbolic_runtime.py:1-6]]). New =desktop_ade.pl= predicates are read-only projections loaded by the same =main.pl= the engine consults. |
+| =no_qt_thread_prolog= | Query callable submits a command and returns a future; results re-enter via queued Qt signals ([[file:zara/desktop/qt_bridge.py][qt_bridge.py:64-82]]); gate test asserts the query executes off the Qt thread ([[file:t/test_desktop_settings_window.py][test_desktop_settings_window.py:204-231]]), duplicated for the drawer. |
+| =admin_gated_remote_query= | The drawer uses the *same* =ZaraClient.submit(RunPrologQuery)= path as Settings ([[file:zara/desktop/controller.py][controller.py:55-62]]) — an authenticated, paired ZARA/1 session message ([[file:zara/zmq_transport.py][zmq_transport.py:2516-2532]]). No new socket, no bypass, no local SWI process (contrast: =validate_prolog_file= spawns =swipl= only inside Settings' save path and never for queries). |
+| =late_query_results_are_fenced= | Generation token in the UI ([[file:zara/desktop/windows/settings.py][settings.py:904-905]], [[file:zara/desktop/windows/settings.py][settings.py:935-937]]) + =reply_to= fencing on the wire ([[file:zara/zmq_transport.py][zmq_transport.py:2188-2202]]) + projection-generation fencing for state views ([[file:zara/desktop/conversation/symbolic_runtime.py][symbolic_runtime.py:120-126]]). |
+| Themes project from =ZaraTheme.kt= | Zero new tokens; drawer styles derive from the existing 15 roles ([[file:zara/desktop/theme.py][theme.py:142-160]]); parity tests untouched and extended with new selector assertions only. |
+| No new non-Nix deps | Pure PySide6 widgets; no QML, no WebEngine, no editor component. |
+| Prolog logic in Prolog | All new KB logic (summaries, catalogs, samples) lives in =modules/desktop_ade.pl=; Python formats strings only. |
+| Existing UI gates | See §7 — one test explicitly migrated, everything else green by construction. |
+
+* 6. Failure & recovery
+
+- *Engine crash / daemon loss*: =RuntimeError= events reduce to
+  =DISCONNECTED=/=ERROR= status ([[file:zara/desktop/controller.py][controller.py:287-301]]); the drawer's lamp section
+  mirrors the header status, bumps its generation (§4.2.5), and the console
+  shows the honest unavailable state. Recovery = RestartRuntime from tray or
+  header ([[file:zara/desktop/controller.py][controller.py:246-260]]); the first new query after =IDLE= succeeds
+  normally.
+- *Stale/late results*: fenced at UI generation, wire =reply_to=, and
+  projection generation — three independent fences, tested at
+  [[file:t/test_desktop_settings_window.py][test_desktop_settings_window.py:234-249]] and re-tested for the drawer.
+- *Barge-in during generation*: chat cancel (=CancelTurn=,
+  [[file:zara/desktop/windows/quick.py][quick.py:308-323]]) and drawer queries are independent channels, but both
+  serialize on the one engine; a long user goal can delay a turn (the lock is
+  held until solutions drain, [[file:zara/prolog_engine.py][prolog_engine.py:329-333]]). The drawer therefore
+  defaults to 50-solution goals and displays "Running…" so the user knows
+  the engine is occupied; server-side inflight/backpressure limits bound the
+  queue ([[file:zara/zmq_transport.py][zmq_transport.py:1316-1327]]).
+- *Long queries*: cancel is fence-based; the goal byte cap (4096) and
+  solution cap (50 requested / 100 hard) bound worst-case lock occupancy.
+- *Restart*: receipts from before the restart carry stale generations and are
+  discarded; history (20 goals) survives as pure UI text in QSettings scope
+  of the session, not as engine state.
+- *Drawer opened with no runtime* (=prolog_query=None= in tests/fixtures):
+  "Runtime query unavailable", no buttons that pretend ([[file:zara/desktop/windows/settings.py][settings.py:749-752]]).
+
+* 7. Compatibility & migration
+
+Survives unchanged: compact/expanded renderer identity tests
+([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:58-131]]), composer growth and bubble compactness
+([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:207-243]]), per-presentation geometry
+([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:246-271]]), new-chat clears
+([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:178-204]]), all theme palette/registry/WCAG tests
+([[file:t/test_desktop_theme.py][test_desktop_theme.py:67-266]]), Android token parity
+([[file:t/test_desktop_mobile_parity.py][test_desktop_mobile_parity.py:117-161]]), fixture isolation and theme restore
+([[file:t/test_copilot_screenshot_fixtures.py][test_copilot_screenshot_fixtures.py:66-111]]), Prolog studio
+([[file:t/test_prolog_studio.py][test_prolog_studio.py]]), all Settings-window IDE tests
+([[file:t/test_desktop_settings_window.py][test_desktop_settings_window.py:153-269]]).
+
+Explicit migrations:
+
+1. *Sidebar → palette.* =test_expanded_history_is_sidebar_beside_chat_without_stealing_viewport_height=
+   ([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:274-298]]) is replaced by
+   =test_expanded_history_is_a_summoned_palette_overlay= asserting: palette
+   hidden by default; on summon it floats above =message_scroll= (vertical
+   overlap), leaves the composer visible and unobscured, and =message_rect=
+   keeps =width > palette width=. =test_expanded_history_search_selection_and_rename_use_same_renderer=
+   ([[file:t/test_adaptive_copilot.py][test_adaptive_copilot.py:134-175]]) keeps passing because =history_panel=
+   retains its name, list, and signal wiring — only its parent/layout
+   changes. =test_desktop_mobile_parity= history-panel stylesheet assertions
+   ([[file:t/test_desktop_mobile_parity.py][test_desktop_mobile_parity.py:167-174]]) stay green (rule text unchanged).
+2. *Fixture matrix grows additively.* =_FIXTURES= ([[file:zara/desktop/ui_fixtures.py][ui_fixtures.py:31-45]]) gains
+   =inspector-console=, =inspector-facts=, =inspector-state=;
+   =REQUIRED_SCREENSHOTS= ([[file:t/test_copilot_screenshot_fixtures.py][test_copilot_screenshot_fixtures.py:18-32]]) gains the same
+   names; the original 13 PNGs render byte-identical layouts except the
+   header/button set, and the manifest =schema= bumps 1→2 deliberately.
+3. *Header density*: =test_adaptive_copilot_uses_mobile_first_header_hierarchy=
+   ([[file:t/test_desktop_mobile_parity.py][test_desktop_mobile_parity.py:178-198]]) is preserved by keeping
+   =brand_label= hidden and =expand_button= text behavior ("History"/"Chat"
+   → now "History"/palette toggle) — asserted strings updated in that one
+   test, noted here as the second deliberate migration.
+
+Stepwise path: (1) =zara/desktop/inspector.py= with controller + widgets +
+new tests, =CopilotWindow.toggle_inspector()=, wiring in =DesktopController=
+(shared =prolog_query= callable); (2) history palette migration + test swap;
+(3) =modules/desktop_ade.pl= projections + Settings console re-based onto
+=QueryConsoleController= (behavior-identical, gate = t/test_desktop_settings_window.py);
+(4) phase-2 =tasks.list= protocol message (separate issue).
+
+* 8. Acceptance criteria
+
+1. Ctrl+I / Inspector button toggles the drawer in both presentations
+   without changing =id(window)=, =current_conversation_id=, composer draft,
+   or =message_widgets= (renderer-identity assertion).
+2. Drawer query path: injected callable observed on a worker thread with
+   =("goal", 50)=; results rendered "N solutions"; history capped at 20.
+3. Cancel: late =PrologQueryReceipt= content never renders; status copy is
+   "Cancelled · late results will be discarded".
+4. Client rejects goals >4096 bytes or =max_solutions≠50= before any submit;
+   no =RunPrologQuery= is constructed for the rejected input.
+5. Facts browser issues *only* =desktop_ade:* goals (allowlist asserted);
+   managed facts render from the file store with the "applied on reload"
+   label.
+6. Live state section renders =prolog_context_term=, missing slots, and
+   unresolved questions from the canonical projection with a
+   =RecordingBridge=-style assertion that *zero* runtime commands were
+   submitted.
+7. Palette: hidden by default; summon keeps composer visible and focused
+   item activation rebinding via =ConversationService= with zero bridge
+   commands.
+8. All 16 screenshot fixtures render offscreen, isolated from user state,
+   restoring QApplication theme; original 13 states keep their state names.
+9. Every theme builds a readable drawer palette (existing =assert_readable=
+   harness applied to new objectNames).
+10. Full local gate green: focused UI tests, =scripts/test-all.sh=,
+    =nix flake check=.
+
+* 9. Verification gate
+
+#+BEGIN_EXAMPLE
+# focused red/green per behavior (TDD):
+nix develop -c pytest t/test_desktop_inspector.py            # new
+nix develop -c pytest t/test_adaptive_copilot.py             # 1 migrated test
+nix develop -c pytest t/test_desktop_settings_window.py t/test_prolog_studio.py
+nix develop -c pytest t/test_desktop_theme.py t/test_desktop_mobile_parity.py
+nix develop -c pytest t/test_copilot_screenshot_fixtures.py t/test_copilot_screenshot_ci.py
+
+# full gate:
+nix develop -c bash scripts/test-all.sh
+nix flake check
+nix develop -c bash scripts/test-coverage.sh   # +2pt floor on touched files
+#+END_EXAMPLE
+
+New tests in =t/test_desktop_inspector.py=: renderer-identity across drawer
+toggle; off-QT-thread query + history cap; cancel fence; goal-byte guard;
+solution cap =50=; allowlisted-goals-only facts browser; zero-command state
+panel; drawer-with-=None=-runtime honest state; per-presentation drawer
+visibility persistence; screenshot states render (via extended fixtures).
+
+* 10. Rejected alternatives
+
+1. *A separate ADE window* (dockable IDE-style second window). Loses on both
+   lenses: it duplicates surfaces the way pre-#324 desktop had two copilots,
+   which this repo deliberately collapsed into one renderer
+   ([[file:zara/desktop/windows/copilot.py][copilot.py:39-40]] "One chat renderer"; [[file:zara/desktop/controller.py][controller.py:70-72]] "not a second
+   renderer"); and it makes Prolog a destination instead of an instrument —
+   context-switching away from the conversation the query explains.
+2. *Tabbed inspector (Console | Facts | State).* A tab bar is chrome, needs
+   persistent selected-tab state, and hides two of three surfaces on every
+   glance. Stacked collapsible sections show the whole ADE in one column at
+   400px with no state to remember.
+3. *Full source-editing inside the drawer.* Editing is already solved with
+   an allowlisted repository, atomic writes, fresh-process =swipl=
+   validation, and diagnostics ([[file:zara/desktop/prolog_studio.py][prolog_studio.py:270-353]]) — duplicating an editor
+   in the drawer forks the risk surface and invites unvalidated writes near
+   the query path. The drawer is query/read-only by design; editing stays in
+   Settings.
+
+* 11. Risks
+
+1. *Engine lock contention from curious users running heavy goals.* The lazy
+   query holds the process-wide lock until drained ([[file:zara/prolog_engine.py][prolog_engine.py:329-333]]);
+   a pathological goal stalls turns. *Mitigation:* 50-solution cap, 4096-byte
+   goal cap, honest "Running…" + cancel (fence), server inflight backpressure
+   ([[file:zara/zmq_transport.py][zmq_transport.py:1316-1327]]); phase-2 option: a server-side solution deadline
+   behind the existing admin gate.
+2. *Fixture/theme gate churn.* The screenshot matrix is exact-set and the
+   stylesheet vocabulary is pinned by string asserts; a drawer mistake fails
+   three suites at once. *Mitigation:* additive-only fixture states, keep
+   objectNames/styles for gated selectors byte-identical, bump manifest
+   schema deliberately, extend =test_desktop_theme= selector assertions in
+   the same commit.
+3. *History-palette migration regressing conversation flows.* Rename/bind/new
+   flows are exercised through the palette today and are central to the
+   copilot. *Mitigation:* palette reuses the same =history_list=, signals,
+   and =ConversationService= calls — only geometry changes; the migrated
+   overlay test asserts composer visibility and activation rebinding; the
+   five untouched adaptive-copilot tests catch drift.

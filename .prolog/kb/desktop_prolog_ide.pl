@@ -22,3 +22,19 @@ desktop_prolog_query_limit(max_solutions, 100).
 desktop_prolog_query_limit(ui_requested_solutions, 50).
 desktop_prolog_query_limit(query_history, 20).
 desktop_prolog_query_limit(rendered_output_chars, 64000).
+
+% Desktop inspector drawer (council calm-console, planning/council-desktop-ade).
+desktop_prolog_ide_feature(inspector_drawer).
+desktop_ade_query_path(inspector_drawer, zara_client_run_prolog_query).
+desktop_ade_query_path(settings_console, zara_client_run_prolog_query).
+desktop_ade_projection(desktop_ade, kb_module_summary, 2).
+desktop_ade_projection(desktop_ade, fact_sample, 3).
+desktop_ade_projection(desktop_ade, intent_catalog, 3).
+desktop_ade_projection(desktop_ade, wake_words, 1).
+desktop_ade_invariant(drawer_issues_only_allowlisted_desktop_ade_goals).
+desktop_ade_invariant(drawer_never_mutates_engine).
+% Engine occupancy honesty (C6): drawer queries serialize on the process-wide
+% PrologEngine._runtime_lock; a lazy 50-solution query can delay live turns
+% until drained. No server-side deadline exists yet; this stall window is the
+% documented mitigation until the phase-2 deadline lands.
+desktop_ade_occupancy(drawer_query, serialized_runtime_lock, documented_stall_window).

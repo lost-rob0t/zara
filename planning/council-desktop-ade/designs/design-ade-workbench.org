@@ -1,0 +1,396 @@
+#+TITLE: ADE Workbench — an IDE-grade split workspace for Zara Desktop
+#+FILETAGS: :design:council:desktop:prolog:ade:
+#+DATE: 2026-11-26
+
+* 1. Vision
+
+The ADE Workbench turns Zara Desktop into a JetBrains-class split workspace: the
+canonical copilot conversation lives on the left, a persistent, always-live
+Prolog workbench fills the right, and a slim activity ribbon spans the top
+reporting engine/daemon state at a glance. The feel is *purposeful density* —
+crisp 1px-separated panels, semantic theme tokens, monospace typography for
+everything Prolog — a tool for people who think in clauses, not a toy chat
+with a debug drawer. The Prolog environment is never hidden: facts, queries,
+results, and actor state are first-class citizens of the main window, one
+keyboard focus away (Ctrl+K), always bound to the one authoritative engine
+running inside zara-server.
+
+* 2. Evidence
+
+Everything below was verified in the worktree at the council branch.
+
+- One canonical renderer exists and mutates presentation without copying state:
+  =CopilotWindow.set_presentation= swaps layout only
+  (zara/desktop/windows/copilot.py:137-146); =_apply_presentation= toggles the
+  history panel and title (copilot.py:227-237). Geometry per presentation is
+  already a solved pattern (copilot.py:33-36, 216-225).
+- A runtime status strip already exists: =zaraRuntimeRail=, =zaraStatusLamp=,
+  =runtime_status_label=, =runtime_detail_label=
+  (zara/desktop/windows/quick.py:163-184) with state-driven stylesheet variants
+  (zara/desktop/theme.py:594-624). =DesktopStatus= is produced by a pure
+  reducer over runtime events, =reduce_runtime_event= (zara/desktop/state.py:39-99),
+  and fan-out to windows happens in =DesktopController._set_status=
+  (zara/desktop/controller.py:355-360).
+- Prolog hosting: =PrologEngine= is a serialized process-wide SWI runtime with a
+  class-level =_runtime_lock= (zara/prolog_engine.py:327-335, 418-442). The
+  runtime backend resolves the manager's single engine for queries
+  (zara/runtime/backend.py:407-417).
+- The desktop→engine path already exists end to end: =RunPrologQuery= is a
+  validated command (goal ≤ 4096 bytes, no NUL, 1 ≤ max_solutions ≤ 100,
+  zara/runtime/commands.py:119-129), dispatched by =RuntimeHost= into a
+  =PrologQueryReceipt= (zara/runtime/host.py:708-717), failures surfaced as
+  =RuntimeError= events (host.py:726-737), transported as =prolog.query= /
+  =prolog.query.completed= (zara/zmq_transport.py:2516-2527, 2188-2202), and
+  consumed today by the settings console via
+  =client.submit(RunPrologQuery(...))= (zara/desktop/controller.py:55-62).
+- Generation fencing of late query results is implemented and tested:
+  =_prolog_query_generation= guard (zara/desktop/windows/settings.py:283, 904-925,
+  935-938) and =test_prolog_ide_cancel_discards_late_query_result=
+  (t/test_desktop_settings_window.py:234-249).
+- =QtRuntimeBridge= proves the thread discipline: command work never runs on the
+  Qt thread; completions arrive as signals via queued delivery
+  (zara/desktop/qt_bridge.py:64-82), events are drained in bounded batches
+  (qt_bridge.py:84-90).
+- A safe Prolog toolchain already ships: =PrologSourceRepository= (approved
+  sources only, 512 KB cap, symlink refusal, zara/desktop/prolog_studio.py:270-333),
+  =ManagedFactStore= atomic writes (prolog_studio.py:179-267), syntax validation
+  in a throwaway =swipl= child process — never the engine
+  (prolog_studio.py:336-352), and a theme-aware =PrologHighlighter=
+  (prolog_studio.py:355-405).
+- Monospace-for-Prolog typography is already canonical: =Hack Nerd Font Mono= for
+  =zaraPrologEditor=, =zaraCodeEditor=, and runtime status labels
+  (zara/desktop/theme.py:612-619, 799-805, 939-943).
+- KB invariants and limits are asserted facts: single_engine_authority,
+  no_qt_thread_prolog, admin_gated_remote_query, late_query_results_are_fenced
+  (.prolog/kb/desktop_prolog_ide.pl:10-13); limits: goal 4096 bytes, max
+  solutions 100, UI requests 50, history 20, rendered output 64000 chars
+  (desktop_prolog_ide.pl:20-23).
+- Remote =prolog.query= is admin-gated at the gateway: the message maps to
+  =Capability.DAEMON_ADMIN= (zara/security_gateway.py:157-158), while read-only
+  status maps to =Capability.RUNTIME_STATUS= (security_gateway.py:144-145).
+- Screenshot fixtures are a closed 13-state manifest with sha256 evidence
+  (zara/desktop/ui_fixtures.py:31-45, 237-288) gated by
+  t/test_copilot_screenshot_fixtures.py:35-64.
+- Theme authority and parity: desktop roles derive from =ZaraTheme.kt= tokens
+  (zara/desktop/theme.py:142-160; android/shared-ui/.../ZaraTheme.kt:25-45),
+  locked by t/test_desktop_mobile_parity.py:117-177.
+- Task status vocabulary for the actor panel: =TaskStatus= has nine states
+  (zara/tasks/store.py:27-36); task state changes must go through store
+  transitions (AGENTS.md), so the panel is a read-only projection.
+- Intent knowledge is =verb_intent/3= dynamic facts (kb/intents.pl:14, 19+),
+  resolvable through =intent_resolver:resolve/4= via =PrologEngine.resolve_intent=
+  (zara/prolog_engine.py:469-484).
+
+* 3. UI structure
+
+** Layout
+
+The workbench is the third presentation of the one canonical =CopilotWindow=,
+not a second window and not a second chat renderer:
+
+#+begin_src
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ ● Zara ▎idle ▎daemon: ipc ready ▎engine: 0 queries ▎"2 solutions"     ◆ outrun│ ← activity ribbon (32px)
+├────────────┬───────────────────────────────┬─────────────────────────────────┤
+│ HISTORY    │ CHAT COLUMN (canonical)       │ ADE WORKBENCH (right dock)      │
+│ [search]   │                               │ ┌ KB EXPLORER ─────────────────┐│
+│ ▸ New chat │  (zaraMessageBubble stream,   │ │ ▾ kb_intents                 ││
+│ • Renamed… │   unchanged widgets)          │ │   ▸ verb_intent/3  (212)     ││
+│ • Target…  │                               │ │     hello → greet/0          ││
+│            │                               │ │ ▾ kb_config                  ││
+│            │                               │ │   ▸ wake_word/1              ││
+│            │                               │ ├ QUERY ───────────────────────┤│
+│            │                               │ │ ?- verb_intent(S,I,A)   [⌥]  ││
+│            │                               │ │ [history ▾]           Run ⏎  ││
+│            │                               │ │ ┌ RESULT (gen 7) ── table ─┐ ││
+│            │                               │ │ │ S     │ I     │ A │      ││
+│            │                               │ │ │ hello │ greet │ 0 │      ││
+│            │                               │ │ │ hi    │ greet │ 0 │      ││
+│            │                               │ ├ TASKS & ACTORS ──────────────┤│
+│            │                               │ │ ▸ turn t-9f2  thinking       ││
+│            │                               │ │ ▸ tool calendar.sync  done   ││
+├────────────┴───────────────────────────────┴─────────────────────────────────┤
+│ composer shell (canonical, unchanged)                                [send] │
+└──────────────────────────────────────────────────────────────────────────────┘
+#+end_src
+
+- COMPACT and EXPANDED presentations keep their exact current behavior and
+  geometry keys (copilot.py:33-36). WORKBENCH adds the right dock and promotes
+  the runtime rail into a full-width ribbon; new geometry key
+  =desktop/copilot/workbench-geometry=.
+- The right dock is one vertical =QSplitter= with three sections (KB Explorer,
+  Query, Tasks & Actors), 1px handles reusing the existing splitter style
+  (theme.py:995).
+- The ribbon is the existing rail vocabulary promoted: =zaraStatusLamp= +
+  =zaraRuntimeStatus= label states (theme.py:600-624) extended with daemon
+  endpoint, engine query counter, and last fence generation.
+
+** Tokens, typography, density
+
+- Colors come only from semantic roles: ground/panel/panel_lift/panel_deep for
+  surfaces, line/line_strong for separators, primary/active/danger for state
+  (theme.py:142-160). No raw hex outside =theme.py=.
+- Type ramp: UI text =Adwaita Sans= 14px (theme.py:547-548); everything Prolog
+  and all ribbon labels =Hack Nerd Font Mono= 13px (editor/results) and 11px/700
+  (ribbon, matching =zaraRuntimeStatus=, theme.py:612-619).
+- Density: panel margins 12px, control padding 9-11px (existing idiom,
+  theme.py:647-656; copilot.py:69). Workbench chrome uses 8px radii — visibly
+  "tooling", while chat keeps its 16-20px bubble radii (theme.py:736-744).
+- Why it reads simple + modern: three calm columns, one accent color doing all
+  state signaling (lamp + border), no icon soup, no gradients, density earned by
+  monospace alignment instead of decoration.
+
+** Keyboard model (Qt-native, no new deps)
+
+- =Ctrl+K= focus query editor; =Ctrl+Return / F5= run; =Esc= cancel running query;
+  =Ctrl+1/2/3= focus KB/Query/Tasks sections; =Ctrl+B= toggle workbench dock;
+  =Ctrl+P= quick-open predicate (filters KB tree). All via =QShortcut= on the
+  canonical window.
+
+* 4. Prolog ADE architecture
+
+** Process / thread model
+
+- *One engine, one process*: all Prolog execution happens in the zara-server
+  runtime process behind =PrologEngine= (prolog_engine.py:327). The desktop
+  process never imports pyswip. Every read goes through the existing command
+  path: =Workbench → client.submit(RunPrologQuery) → RuntimeHost → backend
+  → engine.query_all= (controller.py:58-60; host.py:708-717;
+  backend.py:407-417).
+- *Qt thread only renders*: submissions happen off-thread via
+  =ZaraClient.submit=; results arrive as =command_completed= /
+  =command_failed= signals (qt_bridge.py:64-82). This is the same discipline
+  the settings console is tested for (t/test_desktop_settings_window.py:204-231).
+
+** New module layout (all UI-free logic kept pure and testable)
+
+- =modules/desktop_ade.pl= — Prolog-owned *flat catalog projections* mirroring the
+  proven =frame_head_row/frame_slot_row= pattern (prolog_engine.py:517-538):
+  =desktop_ade:fact_group(Group)=, =fact_pred(Group, Functor, Arity, Count)=,
+  =fact_row(Functor, Arity, Idx, TermAtom)=, plus =desktop_ade:intent_index= over
+  =kb_intents:verb_intent/3=. Prolog logic stays in Prolog (AGENTS.md invariant).
+- =zara/desktop/ade.py= — pure model: =QueryFence= (generation counter, stale
+  detection), =CatalogModel= (functor→clause tree rows), =ResultTable= (solutions
+  → rows, bounded formatting). Zero Qt imports; unit-testable like
+  =zara/desktop/state.py=.
+- =zara/desktop/windows/workbench.py= — =AdeWorkbenchPanels= widget + =ActivityRibbon=
+  widget; embeds =PrologHighlighter= from prolog_studio.py for the editor.
+
+** Fact → UI projection (KB explorer)
+
+- Refresh = submit =RunPrologQuery("desktop_ade:fact_pred(G,F,A,N)", 100)=.
+  Expanding a predicate submits
+  =desktop_ade:fact_row(F,A,Idx,Term)= (≤100 rows). Rows render as a
+  =QTreeWidget=; counts come from Prolog, never from file reading — files are
+  not truth, the engine is.
+- Refresh triggers: manual (F5 on tree), after =prolog_reload= success, and after
+  =RuntimeStarted= events. No polling loops; the event bus is the heartbeat
+  (qt_bridge.py:50-54 drains what the daemon emits).
+
+** Query lifecycle (submit / fence / cancel / render)
+
+1. *Submit*: goal validated client-side to mirror =RunPrologQuery.__post_init__=
+   bounds (commands.py:123-129); generation =N= is captured; editor locks, ribbon
+   shows =query N running=; entry inserted into the 20-entry history list
+   (mirroring settings.py:909-915 and =query_history= limit 20,
+   desktop_prolog_ide.pl:23).
+2. *Fence*: =QueryFence= stores =N=. A receipt finishing when =current ≠ N= is
+   discarded and its history row is annotated "superseded" — the exact contract
+   already proven in settings (settings.py:935-938) and its test
+   (t/test_desktop_settings_window.py:234-249).
+3. *Cancel*: =Esc= bumps generation and marks the row cancelled ("late results
+   will be discarded", settings.py:927-933).
+4. *Render*: solutions → monospace table; variables become columns; ≤ 50 rows
+   requested (ui_requested_solutions 50, desktop_prolog_ide.pl:22) out of the ≤
+   100 allowed (commands.py:128); total rendered text capped at 64000 chars
+   (rendered_output_chars, desktop_prolog_ide.pl:24). A result banner records
+   generation, goal, and solution count (e.g. =gen 7 · 2 solutions=, matching the
+   existing status text contract, t/test_desktop_settings_window.py:229).
+
+** Intents & tasks surfaces
+
+- *Intents*: KB explorer has a first-class =kb_intents= group projected from
+  =verb_intent/3= (kb/intents.pl:14) plus a live "resolve" action that submits
+  =intent_resolver:resolve(Text, State, Intent, Args)= — the exact goal
+  =PrologEngine.resolve_intent= runs (prolog_engine.py:469-484) — so you can
+  watch routing decisions happen in the real engine.
+- *Tasks & actors (phase 1, zero new protocol)*: the panel maintains a bounded
+  live model from the runtime event stream the desktop already receives:
+  TurnStarted/TurnCancelled/ToolStarted/ToolWaitingForUser/ToolCompleted/
+  AgentFailed (events enumerated by the reducer, zara/desktop/state.py:45-97).
+  Rows show turn/tool ids with =TaskStatus=-compatible labels
+  (zara/tasks/store.py:27-36). Read-only by construction.
+- *Durable task list (phase 2)*: a read-only =tasks.list= protocol message mapped
+  to =Capability.RUNTIME_STATUS= (the existing read-only capability,
+  security_gateway.py:144-145), returning a frozen snapshot from
+  =zara/tasks/store.py=. No transitions are ever initiated from the UI
+  (AGENTS.md long-horizon rule).
+
+* 5. Invariants & security
+
+- =single_engine_authority=: the workbench holds no engine, no pyswip import, no
+  file-as-truth. Every fact, query, and intent lookup is a =RunPrologQuery=
+  against the manager's one engine (backend.py:414-417). The KB tree shows what
+  the engine answers, not what files contain.
+- =no_qt_thread_prolog=: identical to the shipped pattern — submissions happen
+  through =ZaraClient.submit= (worker-owned), completions arrive as Qt signals
+  (qt_bridge.py:69-82). A new test asserts the query callable never runs on the
+  Qt thread (mirrors t/test_desktop_settings_window.py:204-231).
+- =admin_gated_remote_query=: the workbench adds no new query transport; it
+  reuses =prolog.query= which the gateway maps to =Capability.DAEMON_ADMIN=
+  (security_gateway.py:157-158). The phase-2 =tasks.list= is read-only status,
+  mapped to =RUNTIME_STATUS= — it never becomes a query path.
+- =late_query_results_are_fenced=: generation fence in =QueryFence=, one fence
+  per workbench surface, cancel discards late receipts, stale receipts are
+  visibly annotated. Same contract as settings, enforced by new tests.
+- Themes project from =ZaraTheme.kt=: the workbench introduces no new colors;
+  ribbon/panels/table consume only the existing 15 semantic roles
+  (theme.py:142-160); the =PrologHighlighter= already re-themes itself per theme
+  (prolog_studio.py:372-393).
+- No new non-Nix dependencies: everything is PySide6 widgets + the existing
+  swipl/pyswip stack. The IDE-grade look is achieved with stylesheets,
+  =QSplitter=, =QTreeWidget=, and =QPlainTextEdit= — the same primitives the repo
+  already ships.
+- Prolog logic stays in Prolog: catalog projections and the intent index live in
+  =modules/desktop_ade.pl=; Python only renders rows.
+
+* 6. Failure & recovery
+
+- *Engine crash / daemon loss*: =RuntimeError=/=RuntimeStopped= events reduce to
+  DISCONNECTED/ERROR (state.py:49-65); the ribbon lamp goes danger, panels show
+  "Engine unavailable" and disable submission; =RestartRuntime= via the existing
+  controller path (controller.py:246-260). On =RuntimeStarted=, panels clear and
+  re-fetch the catalog; open queries are fenced out by generation bump.
+- *Stale results*: generation fence as above; late receipts never touch the
+  table (tested).
+- *Barge-in*: running a new goal while one is in flight bumps the generation and
+  marks the in-flight row "superseded" — the UI never queues unbounded queries;
+  at most one outstanding workbench query at a time (the engine lock serializes
+  anyway, prolog_engine.py:335).
+- *Long queries*: cancel is always reachable (=Esc=, ribbon spinner click);
+  solutions bounded at 50 requested/100 max; the runtime already converts query
+  failures into =RuntimeError= events instead of hangs (host.py:726-737). A
+  runaway goal's worst case is a blocked engine — documented risk with
+  =call_with_time_limit= as a future server-side hardening (out of scope here).
+- *Restart*: COMPACT/EXPANDED/WORKBENCH geometry, splitter sizes, and theme are
+  =QSettings=-persisted using the existing geometry machinery (copilot.py:216-225);
+  conversation state is untouched by presentation changes (copilot.py:137-146).
+
+* 7. Compatibility & migration
+
+Survives untouched:
+- COMPACT/EXPANDED presentations, the one-renderer contract, geometry persistence
+  (gated by t/test_adaptive_copilot.py:58-271).
+- The closed 13-fixture screenshot matrix and manifest contract
+  (t/test_copilot_screenshot_fixtures.py:35-64).
+- Theme registry, palette repair, token parity vs Kotlin
+  (t/test_desktop_theme.py, t/test_desktop_mobile_parity.py).
+- The settings Prolog page: it remains the *editing* workspace (source, managed
+  facts, find/replace, diagnostics — desktop_prolog_ide.pl:2-8 features).
+
+Migration path (stepwise, each step green):
+1. Add =CopilotPresentation.WORKBENCH= + right-dock container in =CopilotWindow=
+   (empty panels, geometry key). All existing tests still green.
+2. Add =ActivityRibbon= in workbench mode rendering the =DesktopStatus= the window
+   already receives via =set_status= (quick.py:325-328).
+3. Add =zara/desktop/ade.py= pure models + =modules/desktop_ade.pl= projections;
+   unit-test the fence/catalog/tables without Qt.
+4. Wire KB explorer + query editor through =client.submit(RunPrologQuery)= with
+   the =QueryFence=; add workbench fixtures to the ui_fixtures matrix (the
+   manifest schema stays =1=; the closed set grows, test updated in the same
+   change).
+5. Wire Tasks & Actors event projection; phase 2 =tasks.list= protocol message.
+6. Extend =.prolog/kb/desktop_prolog_ide.pl= with
+   =desktop_prolog_ide_feature(workbench_dock)= and
+   =desktop_prolog_query_path(workbench, zara_client)= so the KB records the new
+   surface; the query path chain (settings_window → zara_client → runtime_host →
+   langgraph_runtime_backend → agent_manager_prolog_engine,
+   desktop_prolog_ide.pl:15-18) is reused verbatim.
+
+* 8. Acceptance criteria
+
+1. =CopilotWindow= gains WORKBENCH presentation; switching COMPACT↔EXPANDED↔WORKBENCH
+   preserves conversation id, message widget identities, and composer draft with
+   zero runtime commands issued (extends the single-renderer test family).
+2. WORKBENCH geometry persists under =desktop/copilot/workbench-geometry= and is
+   restored independently of the other two keys.
+3. Query editor: valid goal → ≤50-row fenced result table with =gen N · M solutions=
+   banner; goal >4096 bytes or max_solutions out of 1..100 is rejected locally
+   with a message (mirrors commands.py:123-129).
+4. Cancel discards late receipts (status "Cancelled · late results will be
+   discarded"); a second run while one is in flight marks the first "superseded"
+   and never renders its results.
+5. History holds the last 20 goals, newest first, selectable.
+6. KB explorer renders groups/predicates/clause-counts answered by
+   =desktop_ade:fact_pred/4= and rows via =desktop_ade:fact_row/4=; no desktop
+   module reads =kb/= files as truth.
+7. Intent resolve action returns the engine's =Intent/Args= for a typed phrase and
+   renders them as a one-row table.
+8. Ribbon reflects every =DesktopRuntimeState= with lamp color variants
+   (primary/active/danger, theme.py:600-624) and shows daemon endpoint + last
+   query generation.
+9. All colors in new widgets come from =THEME_REGISTRY= roles; new stylesheet
+   rules live in =desktop_stylesheet= only.
+10. The query callable used by the workbench is never invoked on the Qt main
+    thread (test asserts thread identity).
+11. Existing gates pass unchanged: t/test_adaptive_copilot.py,
+    t/test_desktop_theme.py, t/test_copilot_screenshot_fixtures.py,
+    t/test_desktop_mobile_parity.py, t/test_desktop_settings_window.py.
+
+* 9. Verification gate
+
+#+begin_src bash
+# Focused red/green cycle for each behavior (AGENTS.md TDD contract)
+nix develop -c pytest t/test_ade_workbench.py -x          # new: workbench behavior
+nix develop -c pytest t/test_adaptive_copilot.py          # single-renderer contract
+nix develop -c pytest t/test_desktop_settings_window.py   # fence/console regression
+nix develop -c pytest t/test_desktop_theme.py t/test_desktop_mobile_parity.py
+nix develop -c pytest t/test_copilot_screenshot_fixtures.py  # grew fixture matrix + manifest
+# Prolog side loads and projections
+nix develop -c pytest t/test_prolog_load.py || nix develop -c bash scripts/test-all.sh
+# Full gate (ZARA-021) + flake checks
+nix develop -c bash scripts/test-all.sh
+nix flake check
+#+end_src
+
+New test files proposed:
+- =t/test_ade_workbench.py= — presentation switch preservation, fence/cancel/
+  supersede, bounded rendering (50 rows / 64000 chars), catalog tree from fake
+  receipts, ribbon state variants, no-Qt-thread query assertion.
+- Extend =zara/desktop/ui_fixtures.py= with workbench states
+  (=workbench-empty=, =workbench-query-result=, =workbench-engine-down=) rendered
+  offscreen like the existing 13.
+
+* 10. Rejected alternatives
+
+1. *Detached ADE window* (separate top-level Prolog console paired with the chat
+   window). Loses: single-window keyboard flow, duplicates geometry/status
+   plumbing, and tempts a second conversation renderer. The one-renderer
+   invariant (copilot.py:39-40, t/test_adaptive_copilot.py:93-103) exists
+   precisely because duplicated surfaces drift. A dock inside the canonical
+   window keeps one truth and one focus order.
+2. *In-process playground engine* (desktop imports pyswip for instant queries).
+   Blatantly forks engine authority and drags SWI onto the GUI process; both
+   named invariants fail (desktop_prolog_ide.pl:10-13). Latency is not worth a
+   second truth; the daemon IPC round-trip is already sub-second for bounded
+   goals.
+3. *WebEngine/HTML IDE* (Monaco-style editor, DOM tables). New non-Nix dependency
+   class, violates the prefer-Qt-native rule, and the repo already proves
+   QPlainTextEdit + QSyntaxHighlighter + QTextBrowser reach the target quality
+   (prolog_studio.py:355-405, chat_widgets.py:31-57). Nothing in the lens needs
+   a browser.
+
+* 11. Risks
+
+1. *Engine lock contention* — a heavy catalog query serializes with live intent
+   resolution (the whole point of =_runtime_lock=, prolog_engine.py:330-335).
+   Mitigation: cheap flat row projections, max_solutions=100, manual refresh
+   only, one outstanding workbench query.
+2. *Result-table cost / layout jank* — wide multi-variable bindings can explode.
+   Mitigation: ≤50 rows, per-cell truncation with ellipsis, 64000-char render
+   cap (desktop_prolog_ide.pl:22,24), virtualized =QTreeWidget= rows.
+3. *Fixture-matrix churn* — adding workbench states changes the "closed" fixture
+   manifest and screenshot budget. Mitigation: grow the set in the same change
+   that adds panels; keep rendering offscreen, theme-locked to outrun, and
+   sha256-evidenced exactly like ui_fixtures.py:237-288 so the evidence transport
+   stays valid.

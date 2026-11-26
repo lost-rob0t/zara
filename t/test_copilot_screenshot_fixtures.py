@@ -29,6 +29,9 @@ REQUIRED_SCREENSHOTS = {
     "copilot-expanded.png",
     "copilot-history.png",
     "copilot-smallest-supported.png",
+    "copilot-inspector-console.png",
+    "copilot-inspector-facts.png",
+    "copilot-inspector-state.png",
 }
 
 

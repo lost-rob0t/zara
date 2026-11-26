@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 
 from zara.client_enrollment import ClientEnrollmentError, ClientEnrollmentStore
 from zara.config import ZaraConfig
+from zara.desktop.inspector import QueryConsoleController
 from zara.desktop.preferences import SettingsDocument, SettingsValidationError
 from zara.desktop.prolog_studio import (
     FACT_TYPES,
@@ -58,7 +59,6 @@ from zara.desktop.prolog_studio import (
 )
 from zara.desktop.theme import THEME_REGISTRY
 from zara.pairing import PairingError, PairingClientProgress, pair_client
-from zara.runtime.commands import PrologQueryReceipt
 
 
 _CATEGORIES = (
@@ -254,7 +254,6 @@ class SettingsWindow(QWidget):
     restart_requested = Signal()
     pairing_progress_observed = Signal(str, str)
     pairing_finished = Signal(str, str)
-    prolog_query_finished = Signal(int, object)
 
     def __init__(
         self,
@@ -280,9 +279,9 @@ class SettingsWindow(QWidget):
         self.source_repository = PrologSourceRepository(self.repo_root, self.user_prolog_config)
         self.prolog_reload = prolog_reload
         self.prolog_query = prolog_query
-        self._prolog_query_generation = 0
+        self._console = QueryConsoleController(prolog_query, self)
+        self._console.query_finished.connect(self._finish_prolog_query)
         self._prolog_saved_text = ""
-        self.prolog_query_finished.connect(self._finish_prolog_query)
         self._allow_close = False
         self.setting_widgets: dict[str, QWidget] = {}
         self.theme_buttons: list[ThemePreviewButton] = []
@@ -750,6 +749,7 @@ class SettingsWindow(QWidget):
             "Ready" if self.prolog_query is not None else "Runtime query unavailable"
         )
         self.prolog_query_status.setObjectName("zaraSettingsHint")
+        self._console.status_changed.connect(self.prolog_query_status.setText)
         console_layout.addLayout(query_bar)
         console_layout.addWidget(self.prolog_results, 1)
         console_layout.addWidget(self.prolog_query_status)
@@ -894,76 +894,34 @@ class SettingsWindow(QWidget):
         self.prolog_find_status.setText(f"{count} replacements{suffix}")
 
     def run_prolog_query(self) -> None:
-        goal = self.prolog_query_input.text().strip()
-        if not goal:
-            self.prolog_query_status.setText("Enter a goal")
-            return
-        if self.prolog_query is None:
-            self.prolog_query_status.setText("Runtime query unavailable")
-            return
-        self._prolog_query_generation += 1
-        generation = self._prolog_query_generation
-        self.prolog_query_button.setEnabled(False)
-        self.prolog_cancel_button.setEnabled(True)
-        self.prolog_query_status.setText("Running…")
-        existing = self.prolog_query_history.findText(goal)
-        if existing > 0:
-            self.prolog_query_history.removeItem(existing)
-        self.prolog_query_history.insertItem(1, goal)
-        while self.prolog_query_history.count() > 21:
-            self.prolog_query_history.removeItem(self.prolog_query_history.count() - 1)
-        self.prolog_query_history.setCurrentIndex(0)
-        try:
-            future = self.prolog_query(goal, 50)
-            future.add_done_callback(
-                lambda completed, token=generation: self.prolog_query_finished.emit(
-                    token,
-                    completed,
-                )
-            )
-        except Exception as error:
-            self._finish_prolog_query(generation, error)
+        self._console.run(self.prolog_query_input.text())
+        # controller.status reflects the settled state even when a resolved
+        # future completes synchronously inside run().
+        self.prolog_query_status.setText(self._console.status)
+        self._sync_query_history()
+        self.prolog_query_button.setEnabled(not self._console.busy)
+        self.prolog_cancel_button.setEnabled(self._console.busy)
 
     def cancel_prolog_query(self) -> None:
-        if not self.prolog_cancel_button.isEnabled():
-            return
-        self._prolog_query_generation += 1
-        self.prolog_query_button.setEnabled(True)
-        self.prolog_cancel_button.setEnabled(False)
-        self.prolog_query_status.setText("Cancelled · late results will be discarded")
+        self._console.cancel()
+        self.prolog_query_button.setEnabled(not self._console.busy)
+        self.prolog_cancel_button.setEnabled(self._console.busy)
 
     def _finish_prolog_query(self, generation: int, outcome: object) -> None:
-        if generation != self._prolog_query_generation:
-            return
-        self.prolog_query_button.setEnabled(True)
-        self.prolog_cancel_button.setEnabled(False)
-        try:
-            if isinstance(outcome, BaseException):
-                raise outcome
-            receipt = outcome.result()
-            if not isinstance(receipt, PrologQueryReceipt):
-                raise TypeError("runtime returned an invalid Prolog query receipt")
-        except BaseException as error:
-            self.prolog_results.setPlainText(f"ERROR\n{error}")
-            self.prolog_query_status.setText("Query failed")
-            return
-        lines = []
-        rendered_chars = 0
-        for index, solution in enumerate(receipt.solutions, start=1):
-            rendered = ", ".join(f"{key} = {value}" for key, value in solution.items())
-            line = f"{index:>2}  {rendered or 'true'}"
-            if len(line) > 2_000:
-                line = f"{line[:1_999]}…"
-            if rendered_chars + len(line) > 64_000:
-                lines.append("… output truncated at 64,000 characters")
-                break
-            lines.append(line)
-            rendered_chars += len(line) + 1
-        self.prolog_results.setPlainText("\n".join(lines) if lines else "false")
-        count = len(receipt.solutions)
-        self.prolog_query_status.setText(
-            f"{count} solution" if count == 1 else f"{count} solutions"
-        )
+        render = self._console.finish(generation, outcome)
+        if render.status:
+            self.prolog_results.setPlainText(render.text)
+        self.prolog_query_button.setEnabled(not self._console.busy)
+        self.prolog_cancel_button.setEnabled(self._console.busy)
+
+    def _sync_query_history(self) -> None:
+        self.prolog_query_history.blockSignals(True)
+        self.prolog_query_history.clear()
+        self.prolog_query_history.addItem("History")
+        for goal in self._console.history:
+            self.prolog_query_history.addItem(goal)
+        self.prolog_query_history.setCurrentIndex(0)
+        self.prolog_query_history.blockSignals(False)
 
     def _select_prolog_query_history(self, index: int) -> None:
         if index > 0:

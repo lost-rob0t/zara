@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication
 
 from zara.database import DatabaseManager
 from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.prolog_studio import ManagedFactStore
 from zara.desktop.theme import apply_desktop_theme
 from zara.desktop.windows import CopilotPresentation, CopilotWindow
 from zara.runtime import events
@@ -42,6 +43,9 @@ _FIXTURES: tuple[tuple[str, str], ...] = (
     ("expanded", "copilot-expanded.png"),
     ("history", "copilot-history.png"),
     ("smallest-supported", "copilot-smallest-supported.png"),
+    ("inspector-console", "copilot-inspector-console.png"),
+    ("inspector-facts", "copilot-inspector-facts.png"),
+    ("inspector-state", "copilot-inspector-state.png"),
 )
 
 
@@ -183,6 +187,21 @@ def _configure_fixture(state: str, window: CopilotWindow, service: ConversationS
     elif state == "smallest-supported":
         _add_user_messages(service, conversation_id, "Composer stays visible at the minimum supported size.")
         window.resize(*_MINIMUM_SIZE)
+    elif state in ("inspector-console", "inspector-facts", "inspector-state"):
+        _add_user_messages(service, conversation_id, "What does the engine know right now?")
+        _add_assistant_message(
+            service,
+            conversation_id,
+            "The Prolog inspector can query the engine directly.",
+            turn_id=f"fixture-{state}",
+        )
+        window.set_presentation(CopilotPresentation.EXPANDED)
+        window.resize(*_EXPANDED_SIZE)
+        window.toggle_inspector()
+        if state == "inspector-console":
+            window.inspector.query_input.setText("?- desktop_ade:intent_catalog(P, I, A).")
+        elif state == "inspector-facts":
+            window.inspector.refresh_engine_facts()
     else:  # pragma: no cover - fixture table is closed and tested by the caller
         raise ValueError(f"unknown Copilot fixture state: {state}")
 
@@ -203,7 +222,15 @@ def _render_one(
     service = ConversationService(ConversationStore(DatabaseManager(db_path)))
     settings = QSettings(str(settings_path), QSettings.Format.IniFormat)
     bridge = _FixtureBridge()
-    window = CopilotWindow(bridge, service, settings=settings)  # type: ignore[arg-type]
+    fact_store = ManagedFactStore(root / "inspector-facts.pl")
+    fact_store.add("app_mapping", {"name": "emacsclient", "argv": ["emacsclient", "-c"]})
+    fact_store.add("direct_app", {"name": "firefox"})
+    window = CopilotWindow(
+        bridge,
+        service,
+        settings=settings,  # type: ignore[arg-type]
+        fact_store=fact_store,
+    )
     window.resize(*_COMPACT_SIZE)
 
     try:
@@ -273,7 +300,7 @@ def render_copilot_fixtures(output_dir: Path | str, *, source_commit: str) -> di
         app.setProperty("zaraTheme", previous_theme)
 
     manifest: dict[str, object] = {
-        "schema": 1,
+        "schema": 2,
         "fixtures": fixtures,
     }
     manifest_path = target / "manifest.json"

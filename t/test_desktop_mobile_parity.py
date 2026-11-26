@@ -190,7 +190,15 @@ def test_adaptive_copilot_uses_mobile_first_header_hierarchy(tmp_path) -> None:
         window.set_presentation(CopilotPresentation.EXPANDED)
         qt_app.processEvents()
         assert window.brand_label.isHidden()
-        assert window.expand_button.text() == "Chat"
+        assert window.expand_button.text() == "History"
+
+        # The header history affordance summons the palette, not a collapse.
+        window.expand_button.click()
+        qt_app.processEvents()
+        assert not window.history_panel.isHidden()
+        window.expand_button.click()
+        qt_app.processEvents()
+        assert window.history_panel.isHidden()
     finally:
         window.prepare_for_quit()
         window.close()
