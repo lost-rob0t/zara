@@ -11,6 +11,7 @@ This is the canonical user-facing changelog for Zara. Entries describe behavior 
 
 ### Changed
 
+- Conversational questions are no longer hijacked into the todo screen: utterances like "show off your prolog skills", "list experts", "set up bluetooth", "edit the prolog file", or "export the report to pdf" now reach the conversational agent instead of deterministically resolving to a todo skill. Explicit todo requests ("show todos", "list tasks", "set reminder ...", "edit todo ...", "export todos ...") still resolve exactly as before.
 - The default voice output is now the new `llamacpp` TTS provider, which shells the local `llama-tts` binary (Pocket TTS GGUF) and runs fully on the GPU through Vulkan — measured at ~1 GiB VRAM and several times faster than realtime on AMD RADV, with optional voice cloning from a reference clip. The previous local/Edge/Qwen3 providers remain selectable, and `qwen` still aliases to `qwen3`.
 
 ## 0.4.0-alpha

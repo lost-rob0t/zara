@@ -32,10 +32,31 @@ intent_fixture(passive, "text alice", pending(text), [message]).
 intent_fixture(passive, "schedule", pending(python(schedule_todo)), [task]).
 intent_fixture(passive, "set", pending(python(schedule_todo)), [task]).
 intent_fixture(passive, "schedule dentist", python(schedule_todo), [dentist]).
+intent_fixture(passive, "show todos", python(list_todos), [todos]).
+intent_fixture(conversation, "show todos", python(list_todos), [todos]).
+intent_fixture(passive, "list tasks", python(list_todos), [tasks]).
+intent_fixture(passive, "show", python(list_todos), []).
+intent_fixture(passive, "set reminder call mom", python(schedule_todo), [reminder, call, mom]).
+intent_fixture(passive, "edit todo milk", python(edit_todo), [todo, milk]).
+intent_fixture(passive, "export todos markdown", python(export_todos), [todos, markdown]).
+
+% Issue #363: generic verbs must not claim turns that are not about todos.
+% These utterances must resolve to NO deterministic intent so the turn
+% falls through to the conversational agent.
+nontodo_fixture(conversation, "show off your prolog skills").
+nontodo_fixture(conversation, "prolog skills show it").
+nontodo_fixture(conversation, "list experts").
+nontodo_fixture(passive, "set up bluetooth").
+nontodo_fixture(conversation, "edit the prolog file").
+nontodo_fixture(passive, "export the report to pdf").
 
 test(stateful_intent_corpus,
      [forall(intent_fixture(State, Input, Intent, Args))]) :-
     intent_resolver:resolve(Input, State, Intent, Args).
+
+test(ambiguous_todo_verbs_fall_through_to_agent,
+     [forall(nontodo_fixture(State, Input))]) :-
+    \+ intent_resolver:resolve(Input, State, _, _).
 
 emit_intent_corpus :-
     forall(intent_fixture(State, Input, _, _),
