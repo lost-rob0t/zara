@@ -3,6 +3,8 @@
 :- ensure_loaded(voice_ingress_stt).
 :- ensure_loaded(desktop_copilot_ui).
 :- ensure_loaded(org_fleet_delivery).
+:- ensure_loaded(android_toolchain).
+:- ensure_loaded(android_model_providers).
 :- ensure_loaded(desktop_prolog_ide).
 :- consult('kb/voice_output_tts.pl').
 :- consult('kb/pet_task_notifier.pl').

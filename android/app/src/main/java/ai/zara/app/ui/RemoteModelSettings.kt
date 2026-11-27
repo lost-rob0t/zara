@@ -2,6 +2,7 @@ package ai.zara.app.ui
 
 import ai.zara.app.model.CloudModelConfig
 import ai.zara.app.model.CloudModelProvider
+import ai.zara.app.model.CloudModelPurpose
 import ai.zara.app.model.CloudModelState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,9 +37,25 @@ internal fun RemoteModelSettingsCard(
     var providerName by rememberSaveable(config) { mutableStateOf(config.provider.name) }
     var endpoint by rememberSaveable(config) { mutableStateOf(config.endpoint) }
     var model by rememberSaveable(config) { mutableStateOf(config.model) }
+    var purposeName by rememberSaveable(config) { mutableStateOf(config.purpose.name) }
     var apiKey by androidx.compose.runtime.remember { mutableStateOf("") }
     val provider = runCatching { CloudModelProvider.valueOf(providerName) }
         .getOrDefault(CloudModelProvider.OPENAI_COMPATIBLE)
+    val purpose = runCatching { CloudModelPurpose.valueOf(purposeName) }
+        .getOrDefault(CloudModelPurpose.GENERAL)
+    val effectivePurpose = if (provider.codingOnly) CloudModelPurpose.CODING else purpose
+
+    fun selectProvider(choice: CloudModelProvider) {
+        providerName = choice.name
+        when (choice) {
+            CloudModelProvider.OPENROUTER -> endpoint = CloudModelConfig.OPENROUTER_ENDPOINT
+            CloudModelProvider.ZAI_CODING_PLAN -> {
+                endpoint = CloudModelConfig.ZAI_CODING_ENDPOINT
+                purposeName = CloudModelPurpose.CODING.name
+            }
+            CloudModelProvider.OPENAI_COMPATIBLE -> Unit
+        }
+    }
 
     SectionCard("REMOTE MODEL API") {
         KeyValueRow("state", state.phase.name.lowercase())
@@ -56,18 +73,14 @@ internal fun RemoteModelSettingsCard(
         listOf(
             CloudModelProvider.OPENROUTER to "OpenRouter",
             CloudModelProvider.OPENAI_COMPATIBLE to "OpenAI-compatible",
+            CloudModelProvider.ZAI_CODING_PLAN to "Z.AI GLM coding plan",
         ).forEach { (choice, label) ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .selectable(
                         selected = provider == choice,
-                        onClick = {
-                            providerName = choice.name
-                            if (choice == CloudModelProvider.OPENROUTER) {
-                                endpoint = CloudModelConfig.OPENROUTER_ENDPOINT
-                            }
-                        },
+                        onClick = { selectProvider(choice) },
                     )
                     .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -75,14 +88,41 @@ internal fun RemoteModelSettingsCard(
             ) {
                 RadioButton(
                     selected = provider == choice,
-                    onClick = {
-                        providerName = choice.name
-                        if (choice == CloudModelProvider.OPENROUTER) {
-                            endpoint = CloudModelConfig.OPENROUTER_ENDPOINT
-                        }
-                    },
+                    onClick = { selectProvider(choice) },
                 )
                 Text(label, color = LocalZaraTokens.current.text)
+            }
+        }
+        if (provider.codingOnly) {
+            MutedNotice("The GLM coding-plan endpoint is coding-only; every request is sent as a coding session request.")
+        }
+
+        Text("Purpose", color = LocalZaraTokens.current.text)
+        listOf(
+            CloudModelPurpose.GENERAL to "General chat",
+            CloudModelPurpose.CODING to "Coding session",
+        ).forEach { (choice, label) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = effectivePurpose == choice,
+                        onClick = {
+                            if (!provider.codingOnly) purposeName = choice.name
+                        },
+                    )
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                RadioButton(
+                    selected = effectivePurpose == choice,
+                    onClick = {
+                        if (!provider.codingOnly) purposeName = choice.name
+                    },
+                    enabled = !provider.codingOnly,
+                )
+                Text(label, color = if (provider.codingOnly) LocalZaraTokens.current.textMuted else LocalZaraTokens.current.text)
             }
         }
 
@@ -133,14 +173,20 @@ internal fun RemoteModelSettingsCard(
             label = "OpenRouter preset",
             enabled = !busy,
         ) {
-            providerName = CloudModelProvider.OPENROUTER.name
-            endpoint = CloudModelConfig.OPENROUTER_ENDPOINT
+            selectProvider(CloudModelProvider.OPENROUTER)
+        }
+        SecondaryAction(
+            label = "Z.AI GLM coding plan preset",
+            enabled = !busy,
+        ) {
+            selectProvider(CloudModelProvider.ZAI_CODING_PLAN)
+            if (model.isBlank()) model = "glm-4.6"
         }
         SecondaryAction(
             label = "StarIntel OpenAI-compatible preset",
             enabled = !busy,
         ) {
-            providerName = CloudModelProvider.OPENAI_COMPATIBLE.name
+            selectProvider(CloudModelProvider.OPENAI_COMPATIBLE)
             endpoint = CloudModelConfig.DEFAULT_STARINTEL_ENDPOINT
         }
 
@@ -154,6 +200,7 @@ internal fun RemoteModelSettingsCard(
                     provider = provider,
                     endpoint = endpoint.trim(),
                     model = model.trim(),
+                    purpose = effectivePurpose,
                 ),
                 apiKey.trim().takeIf(String::isNotEmpty),
             )

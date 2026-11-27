@@ -60,4 +60,27 @@ class RemoteModelRoutingContractTest {
         assertTrue(shell.contains("RemoteModelSettingsCard("))
         assertTrue(shell.contains("cloudModelState = cloudModelState"))
     }
+
+    @Test
+    fun `settings expose the ZAI GLM coding plan with a forced coding purpose`() {
+        val settings = File(
+            "src/main/java/ai/zara/app/ui/RemoteModelSettings.kt"
+        ).readText()
+
+        assertTrue(settings.contains("CloudModelProvider.ZAI_CODING_PLAN"))
+        assertTrue(settings.contains("Z.AI GLM coding plan"))
+        assertTrue(settings.contains("CloudModelConfig.ZAI_CODING_ENDPOINT"))
+        assertTrue(settings.contains("CloudModelPurpose.CODING"))
+        assertTrue("Saving must persist the effective purpose", settings.contains("purpose = effectivePurpose"))
+    }
+
+    @Test
+    fun `direct provider turns use the configured purpose instead of a hard-coded general purpose`() {
+        val session = File("src/main/java/ai/zara/app/AndroidAppSession.kt").readText()
+        val submit = session.substringAfter("private fun submitCloudModelText(")
+            .substringBefore("private fun submit")
+
+        assertFalse("Cloud chat turns must not hard-code the general purpose", submit.contains("CloudModelPurpose.GENERAL"))
+        assertTrue(submit.contains("state.config.purpose"))
+    }
 }

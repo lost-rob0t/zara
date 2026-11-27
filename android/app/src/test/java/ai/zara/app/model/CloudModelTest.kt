@@ -45,6 +45,7 @@ class CloudModelTest {
                 provider = CloudModelProvider.ZAI_CODING_PLAN,
                 endpoint = CloudModelConfig.ZAI_CODING_ENDPOINT,
                 model = "glm-coding",
+                purpose = CloudModelPurpose.CODING,
             ).runCatchingValidated().isSuccess
         )
         assertTrue(
@@ -187,6 +188,7 @@ class CloudModelTest {
                 provider = CloudModelProvider.ZAI_CODING_PLAN,
                 endpoint = CloudModelConfig.ZAI_CODING_ENDPOINT,
                 model = "glm-coding",
+                purpose = CloudModelPurpose.CODING,
             )
         )
         val keyStore = CloudApiKeyStore(File(root, "key.bin"), PassThroughCipher())
@@ -205,6 +207,43 @@ class CloudModelTest {
         assertEquals("coding-ok", coding.text)
         assertEquals(listOf(CloudModelPurpose.CODING), backend.purposes)
         coordinator.close()
+    }
+
+    @Test
+    fun codingPlanProfileMustDeclareCodingPurpose() {
+        assertTrue(
+            CloudModelConfig(
+                enabled = true,
+                provider = CloudModelProvider.ZAI_CODING_PLAN,
+                endpoint = CloudModelConfig.ZAI_CODING_ENDPOINT,
+                model = "glm-4.6",
+                purpose = CloudModelPurpose.GENERAL,
+            ).runCatchingValidated().isFailure
+        )
+        val safe = CloudModelConfig(
+            enabled = true,
+            provider = CloudModelProvider.ZAI_CODING_PLAN,
+            endpoint = CloudModelConfig.ZAI_CODING_ENDPOINT,
+            model = "glm-4.6",
+            purpose = CloudModelPurpose.CODING,
+        ).validated()
+        assertEquals(CloudModelPurpose.CODING, safe.purpose)
+
+        val openRouter = CloudModelConfig(
+            enabled = true,
+            provider = CloudModelProvider.OPENROUTER,
+            endpoint = CloudModelConfig.OPENROUTER_ENDPOINT,
+            model = "openai/gpt-5",
+            purpose = CloudModelPurpose.CODING,
+        ).validated()
+        assertEquals(CloudModelPurpose.CODING, openRouter.purpose)
+
+        val root = temporary.newFolder("purpose-store")
+        val configFile = File(root, "cloud.properties")
+        val store = CloudModelConfigStore(configFile)
+        store.save(safe)
+        assertEquals(safe, store.load())
+        assertTrue(configFile.readText().contains("purpose=coding"))
     }
 
     @Test
