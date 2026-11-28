@@ -6,5 +6,6 @@
 :- ensure_loaded(android_toolchain).
 :- ensure_loaded(android_model_providers).
 :- ensure_loaded(desktop_prolog_ide).
+:- ensure_loaded(expert_tools_surface).
 :- consult('kb/voice_output_tts.pl').
 :- consult('kb/pet_task_notifier.pl').
