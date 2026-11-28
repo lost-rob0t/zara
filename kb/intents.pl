@@ -124,6 +124,20 @@ python_skill_intent(forecast, noaa_weather, rest).
 
 % Built-in human TODO skills are one coherent optional surface. Org is the
 % default canonical backend; SQLite remains available as a legacy backend.
+% todo_object_word/1 lists todo-domain object words: generic verbs
+% (show/list/set/edit/update/export) only resolve to todo skills when one
+% of these follows or the verb stands alone; otherwise the utterance
+% belongs to the conversational agent.
+todo_object_word(todo).
+todo_object_word(todos).
+todo_object_word(task).
+todo_object_word(tasks).
+todo_object_word(note).
+todo_object_word(notes).
+todo_object_word(reminder).
+todo_object_word(reminders).
+todo_object_word(org).
+todo_object_word(orgmode).
 todo_python_skill_intent(todo, capture_todo, rest).
 todo_python_skill_intent(add, capture_todo, rest).
 todo_python_skill_intent(note, capture_todo, rest).

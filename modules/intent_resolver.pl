@@ -122,11 +122,48 @@ canonicalize_tokens(Toks0, Toks) :-
 
 try_exact([Word|Rest], Intent, Args) :-
     ( kb_intents:verb_intent(Word, Intent, Arity) ->
-        ( Arity = rest, member(Word, [why, what, how, when, where, who]) ->
-            Args = [Word|Rest]
-        ; extract_args(Arity, Rest, Intent, Args)
+        ( todo_skill_gate(Intent, Word, Rest) ->
+            ( Arity = rest, member(Word, [why, what, how, when, where, who]) ->
+                Args = [Word|Rest]
+            ; extract_args(Arity, Rest, Intent, Args)
+            )
+        ; fail
         )
     ; fail ).
+
+%% ============================================================
+%% TODO SKILL GATING
+%%
+%% Generic verbs whose KB mapping lands on a todo skill must not claim
+%% turns that are not about todos (issue #363). The gate succeeds only
+%% for allowed combinations; gated combinations with an unmatched
+%% remainder fail the whole deterministic resolution so the turn falls
+%% through to the conversational agent. Capture-style verbs (schedule,
+%% plan, note, remind, task, add) keep payload semantics and stay
+%% ungated.
+%% ============================================================
+
+ambiguous_todo_verb(show).
+ambiguous_todo_verb(list).
+ambiguous_todo_verb(set).
+ambiguous_todo_verb(edit).
+ambiguous_todo_verb(update).
+ambiguous_todo_verb(export).
+
+ambiguous_todo_skill(list_todos).
+ambiguous_todo_skill(schedule_todo).
+ambiguous_todo_skill(edit_todo).
+ambiguous_todo_skill(export_todos).
+
+todo_skill_gate(python(Skill), Word, Rest) :-
+    ambiguous_todo_verb(Word),
+    ambiguous_todo_skill(Skill),
+    !,
+    ( Rest == []
+    ; member(Tok, Rest),
+      kb_intents:todo_object_word(Tok)
+    ).
+todo_skill_gate(_, _, _).
 
 %% ============================================================
 %% VERB SELECTION
