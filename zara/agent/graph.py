@@ -456,6 +456,7 @@ def create_approval_node(tool_registry):
         tool_calls = messages[-1].tool_calls
         tool_run_ids = [_tool_call_id(tool_call) for tool_call in tool_calls]
         tool_names = [_tool_call_name(tool_call) for tool_call in tool_calls]
+        conversation_id = state.get("conversation_id")
         if (
             any(
                 not tool_run_id or len(tool_run_id) > MAX_TOOL_RUN_ID_LENGTH
@@ -469,7 +470,9 @@ def create_approval_node(tool_registry):
         decisions: Dict[str, Dict[str, str]] = {}
         for tool_call in tool_calls:
             tool_name = _tool_call_name(tool_call)
-            if not tool_name or not tool_registry.requires_approval(tool_name):
+            if not tool_name or not tool_registry.requires_approval(
+                tool_name, conversation_id=conversation_id
+            ):
                 continue
             tool_run_id = _tool_call_id(tool_call)
             resolution = interrupt(
@@ -521,7 +524,9 @@ def create_tools_node(tool_registry, publisher=None, stream_publisher=None):
             if not tool_name or not tool_run_id:
                 raise ValueError("tool call metadata is invalid")
 
-            if tool_registry.requires_approval(tool_name):
+            if tool_registry.requires_approval(
+                tool_name, conversation_id=conversation_id
+            ):
                 decision = decisions.get(tool_run_id, {}).get("decision")
                 if decision != "approve":
                     results.append(

@@ -147,14 +147,18 @@ def create_application(
         else:
             service = _default_desktop_client(active_config)
     bridge = QtRuntimeBridge(service, parent=app)
+    from zara.desktop.file_access import file_access_control_for_host
+
+    file_access = file_access_control_for_host(service)
     if conversation_service is None:
-        controller = DesktopController(app, service, bridge)
+        controller = DesktopController(app, service, bridge, file_access=file_access)
     else:
         controller = DesktopController(
             app,
             service,
             bridge,
             conversation_service=conversation_service,
+            file_access=file_access,
         )
     setattr(app, _CONTROLLER_ATTR, controller)
     return app, controller

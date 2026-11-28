@@ -8,4 +8,8 @@ trap 'rm -rf "$test_root"' EXIT
 export XDG_CONFIG_HOME="$test_root/config"
 export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
 
-pytest -q "$repo_root/t/test_file_tools.py" "$repo_root/t/test_config.py"
+pytest -q "$repo_root/t/test_file_tools.py" \
+  "$repo_root/t/test_file_access_policy.py" \
+  "$repo_root/t/test_file_tool_permissions.py" \
+  "$repo_root/t/test_file_access_config.py" \
+  "$repo_root/t/test_config.py"

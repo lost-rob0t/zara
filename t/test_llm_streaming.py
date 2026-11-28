@@ -95,7 +95,7 @@ class FakeToolRegistry:
     def to_langchain_tools(self):
         return [calc]
 
-    def requires_approval(self, name):
+    def requires_approval(self, name, conversation_id=None):
         return False
 
     def get_tool(self, name):
@@ -1032,7 +1032,7 @@ async def test_tools_node_publishes_tool_result_for_rejected_tool():
     recorder = RecordingPublisher()
 
     class ApprovingRegistry(FakeToolRegistry):
-        def requires_approval(self, name):
+        def requires_approval(self, name, conversation_id=None):
             return True
 
     node = create_tools_node(

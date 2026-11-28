@@ -12,6 +12,8 @@ from langchain_core.tools import BaseTool as LangChainTool
 
 from ..approval import valid_tool_name
 from ..tool_cancellation import bind_tool_cancellation_transport, original_tool
+from .file_access import FileAccessMode
+from .file_tools import FILE_WRITE_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,16 @@ class ToolRegistry:
             str(name) for name in approval_config.get("required_tools", [])
         )
         self._registered_approval_required: set[str] = set()
+        self._file_access_policy = None
+
+    def attach_file_access_policy(self, policy) -> None:
+        """Bind the single per-chat file access policy authority."""
+
+        self._file_access_policy = policy
+
+    @property
+    def file_access_policy(self):
+        return self._file_access_policy
 
     def register_tool(self, tool: LangChainTool):
         if not valid_tool_name(tool.name):
@@ -107,26 +119,33 @@ class ToolRegistry:
     def to_langchain_tools(self) -> List[LangChainTool]:
         return list(self._tools.values())
 
-    def requires_approval(self, name: str) -> bool:
+    def requires_approval(
+        self, name: str, conversation_id: Optional[str] = None
+    ) -> bool:
         if (
             name in self._configured_approval_required
             or name in self._registered_approval_required
         ):
             return True
         tool = self._tools.get(name)
-        return tool is not None and _tool_requires_approval(tool)
+        if tool is not None and _tool_requires_approval(tool):
+            return True
+        policy = self._file_access_policy
+        if policy is not None and name in FILE_WRITE_TOOL_NAMES:
+            return policy.effective_mode(conversation_id) is FileAccessMode.ASK
+        return False
 
     def invoke_composed_tool(self, name: str, request: Mapping[str, Any]) -> Any:
         """Invoke one registry-owned tool without bypassing approval policy."""
         if not isinstance(request, Mapping):
             raise TypeError("composed tool request must be a mapping")
-        tool = self.get_tool(name)
-        if tool is None:
-            raise LookupError("tool is unavailable")
         if self.requires_approval(name):
             raise PermissionError(
                 "tool requires canonical interactive approval and cannot be invoked directly"
             )
+        tool = self.get_tool(name)
+        if tool is None:
+            raise LookupError("tool is unavailable")
         return tool.invoke(dict(request))
 
     async def prepare_async(self) -> None:
@@ -193,6 +212,7 @@ class ToolRegistry:
             self.prolog_engine,
             memory_manager=memory_manager,
             file_tool_config=file_tool_config,
+            file_access_policy=self._file_access_policy,
         )
         if not todos_enabled:
             all_tools = [tool for tool in all_tools if tool.name not in TODO_TOOL_NAMES]

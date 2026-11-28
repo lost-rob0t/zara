@@ -12,8 +12,16 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
 DEFAULT_FILE_TOOL_MAX_BYTES = 20000
+DEFAULT_FILE_TOOL_MODE = "sandbox"
+DEFAULT_FILE_TOOL_GUEST_CEILING = "readonly"
+
+
+def _file_access_mode_names() -> tuple[str, ...]:
+    # Lazy: zara.agent imports zara.config, so config must not import it eagerly.
+    from zara.agent.tools.file_access import FILE_ACCESS_MODE_NAMES
+
+    return FILE_ACCESS_MODE_NAMES
 DEFAULT_OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
 
 # Use tomllib (Python 3.11+) or fallback to tomli
@@ -202,6 +210,8 @@ step_log_chars = 2000
 readable_roots = ["."]
 writable_roots = ["."]
 max_bytes = 20000
+# mode = "sandbox"          # full | sandbox | readonly | ask
+# guest_ceiling = "readonly"
 
 [database]
 # Shared SQLite database
@@ -513,6 +523,17 @@ class ZaraConfig:
         max_bytes = file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES)
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
             raise ConfigError("file_tools.max_bytes must be a positive integer")
+        file_mode = file_config.get("mode", DEFAULT_FILE_TOOL_MODE)
+        names = _file_access_mode_names()
+        if file_mode not in names:
+            raise ConfigError(
+                "file_tools.mode must be one of: " + ", ".join(names)
+            )
+        guest_ceiling = file_config.get("guest_ceiling", DEFAULT_FILE_TOOL_GUEST_CEILING)
+        if guest_ceiling not in names:
+            raise ConfigError(
+                "file_tools.guest_ceiling must be one of: " + ", ".join(names)
+            )
 
         plugins_config = config.get("plugins", {})
         if not isinstance(plugins_config, dict):
@@ -789,6 +810,15 @@ class ZaraConfig:
             "readable_roots": expand_roots("readable_roots"),
             "writable_roots": expand_roots("writable_roots"),
             "max_bytes": file_config.get("max_bytes", DEFAULT_FILE_TOOL_MAX_BYTES),
+            "mode": file_config.get("mode", DEFAULT_FILE_TOOL_MODE),
+        }
+
+    def get_file_access_config(self) -> Dict[str, str]:
+        """Return the per-chat file access policy defaults (mode + guest ceiling)."""
+        file_config = self.get_section("file_tools")
+        return {
+            "default_mode": file_config.get("mode", DEFAULT_FILE_TOOL_MODE),
+            "guest_ceiling": file_config.get("guest_ceiling", DEFAULT_FILE_TOOL_GUEST_CEILING),
         }
 
     def get_tool_approval_config(self) -> Dict[str, Any]:

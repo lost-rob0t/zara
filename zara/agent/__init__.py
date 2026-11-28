@@ -29,6 +29,7 @@ from .hooks import AgentLoopAdviceRegistry, HookDiagnostic
 from .loops import AgentLoopBackendOverrideDisabled, AgentLoopDiagnostic, AgentLoopRegistry
 from .prompting import build_agent_system_prompt
 from .tools.registry import ToolRegistry
+from .tools.file_access import FileAccessPolicy, bind_file_access_scope
 from .user_hooks import UserHookLoader
 from ..config import ZaraConfig, get_config
 from ..memory import build_memory_manager, MemoryManager
@@ -75,6 +76,21 @@ class AgentManager:
         self.memory_top_k = int(memory_config.get("top_k", 5))
 
         self.tool_registry = ToolRegistry(prolog_engine, self.config)
+        file_access_config = getattr(self.config, "get_file_access_config", None)
+        if callable(file_access_config):
+            access = file_access_config()
+            config_dir = getattr(self.config, "config_dir", None)
+            self.tool_registry.attach_file_access_policy(
+                FileAccessPolicy(
+                    default_mode=access["default_mode"],
+                    guest_ceiling=access["guest_ceiling"],
+                    store_path=(
+                        Path(config_dir) / "file_access_modes.json"
+                        if config_dir
+                        else None
+                    ),
+                )
+            )
         self.tool_registry.load_builtin_tools(self.memory_manager)
 
         for plugin_dir in self.config.get_module_search_paths():
@@ -340,16 +356,17 @@ class AgentManager:
         )
 
         principal_id = getattr(self.principal, "principal_id", "local")
-        result = await advice_registry.invoke(
-            backend.callback,
-            self.llm_client,
-            self.tool_registry,
-            state,
-            approval_controller=self.approval_controller,
-            publisher=self.approval_controller.publisher,
-            principal_id=principal_id,
-            stream_publisher=stream_publisher,
-        )
+        with bind_file_access_scope(conversation_id):
+            result = await advice_registry.invoke(
+                backend.callback,
+                self.llm_client,
+                self.tool_registry,
+                state,
+                approval_controller=self.approval_controller,
+                publisher=self.approval_controller.publisher,
+                principal_id=principal_id,
+                stream_publisher=stream_publisher,
+            )
 
         result_messages = result.get("messages", [])
         if memory_context_message is not None:

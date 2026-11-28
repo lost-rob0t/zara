@@ -450,11 +450,17 @@ def get_builtin_tools(
     prolog_engine=None,
     memory_manager=None,
     file_tool_config: Optional[Dict[str, Any]] = None,
+    file_access_policy=None,
     task_service=None,
 ) -> List[StructuredTool]:
     tools: List[StructuredTool] = [calculator, get_current_time]
 
     if file_tool_config is not None:
+        if file_access_policy is not None:
+            file_tool_config = {
+                **file_tool_config,
+                "mode_provider": file_access_policy.scoped_mode,
+            }
         tools.extend(build_file_tools(**file_tool_config))
     tools.extend(build_todo_tools())
 
