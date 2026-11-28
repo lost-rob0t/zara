@@ -164,6 +164,12 @@ class ToolRegistry:
         from pathlib import Path
 
         from .builtin_tools import get_builtin_tools
+        from .expert_tools import (
+            DEFAULT_HANDLERS,
+            build_expert_registry,
+            resolve_expert_roots,
+            workspace_identity,
+        )
         from ...python_skills import python_skills
 
         repo_root = Path(__file__).resolve().parents[3]
@@ -172,6 +178,25 @@ class ToolRegistry:
         file_tool_config = None
         if self.config and tool_config.get("file_tools", False):
             file_tool_config = self.config.get_file_tool_config(repo_root)
+
+        expert_config = None
+        if self.config:
+            experts_config = self.config.get_experts_config()
+            if experts_config["enabled"]:
+                try:
+                    expert_config = {
+                        "registry": build_expert_registry(handlers=DEFAULT_HANDLERS),
+                        "roots": resolve_expert_roots(
+                            repo_root,
+                            experts_config["extra_roots"],
+                        ),
+                        "workspace": workspace_identity(repo_root),
+                    }
+                except Exception as error:
+                    logger.warning(
+                        "Expert tools disabled: canonical registry seeding failed: %r",
+                        error,
+                    )
 
         todos_enabled = todo_config.get("enabled", True)
         if not isinstance(todos_enabled, bool):
@@ -193,6 +218,7 @@ class ToolRegistry:
             self.prolog_engine,
             memory_manager=memory_manager,
             file_tool_config=file_tool_config,
+            expert_config=expert_config,
         )
         if not todos_enabled:
             all_tools = [tool for tool in all_tools if tool.name not in TODO_TOOL_NAMES]

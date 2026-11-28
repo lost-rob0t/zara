@@ -25,9 +25,52 @@ status, invoke, explain, cancel, deactivate. LLM assistance is optional and,
 where used, is metered through =max_model_calls= limits and never treated as
 evidence.
 
+* Conversational agent surface
+
+The voice/desktop agent speaks the protocol through LangChain tools built
+by =zara/agent/tools/expert_tools.py= over the one canonical registry:
+
+| Tool | Vocabulary operation |
+|------+----------------------|
+| =expert_list= | =expert.list= |
+| =expert_describe= | =expert.describe= |
+| =expert_match= | =expert.match= |
+| =expert_activate= | =expert.activate= |
+| =expert_status= | =expert.status= |
+| =expert_invoke= | =expert.invoke= |
+| =expert_explain= | =expert.explain= |
+| =expert_deactivate= | =expert.deactivate= |
+
+=expert_invoke= requires an explicit prior =expert_activate= for the same
+principal/workspace identity; without an active activation it fails closed
+with =denied=. Incompatible protocol majors (e.g. the =ZARA-EXPERT/2=
+fixture) are skipped at registration and can never activate. Handlers are
+zero-model by default and terminal outcomes report =usage.model_calls=
+explicitly. The deterministic =zara:expert/todo= handler wraps
+=todo_skills.todo_brief= and is the first real in-process expert.
+
+* Out-of-the-box expert pack roots
+
+=expert_read_file=, =expert_write_file=, =expert_diff_file= and
+=expert_list_dir= are FileTooling projections scoped to the resolved
+expert roots only, independent of the general =[file_tools]= gate:
+
+1. =<repo-root>/.zara/experts/= (project-local packs);
+2. =$XDG_CONFIG_HOME/zarathushtra/experts/= (user-level packs,
+   fallback =~/.config/zarathushtra/experts/=);
+3. =[experts] extra_roots= entries such as the dotfiles canonical expert
+   library =~/.dotfiles/.zara/experts/=.
+
+Missing or symlinked roots are skipped at startup with a warning rather
+than failing it; paths outside the roots and symlink escapes are policy
+errors. The whole surface is gated by =[experts] enabled= (default true)
+plus the ordinary per-tool =[tools]= switches.
+
 * Deterministic gates
 
-- Python: =t/test_expert_registry_v1.py=, =t/test_expert_descriptor_schema_v1.py=
+- Python: =t/test_expert_tools.py= (tool surface, registry seeding,
+  activation/invoke flow, pack-root policy), =t/test_expert_registry_v1.py=,
+  =t/test_expert_descriptor_schema_v1.py=
 - Prolog: =t/expert_contract.pl= via =scripts/test-expert-contract.sh=
   (plunit + golden corpus + TSV parity), part of the ZARA-021 gate
 - Android: =ExpertContractV1Test= under the android unit-test gate

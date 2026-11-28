@@ -14,6 +14,7 @@ from langchain_core.tools import StructuredTool, tool
 from pydantic import BaseModel, Field
 
 from .file_tools import build_file_tools
+from .expert_tools import DEFAULT_HANDLERS, build_expert_registry, build_expert_tools
 from .todo_tools import build_todo_tools
 from ...noaa import build_noaa_weather_tool
 
@@ -451,11 +452,14 @@ def get_builtin_tools(
     memory_manager=None,
     file_tool_config: Optional[Dict[str, Any]] = None,
     task_service=None,
+    expert_config: Optional[Dict[str, Any]] = None,
 ) -> List[StructuredTool]:
     tools: List[StructuredTool] = [calculator, get_current_time]
 
     if file_tool_config is not None:
         tools.extend(build_file_tools(**file_tool_config))
+    if expert_config is not None:
+        tools.extend(build_expert_tools(**expert_config))
     tools.extend(build_todo_tools())
 
     if task_service is not None:

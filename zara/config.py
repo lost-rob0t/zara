@@ -203,6 +203,13 @@ readable_roots = ["."]
 writable_roots = ["."]
 max_bytes = 20000
 
+[experts]
+# ZARA-EXPERT/1 expert tools plus read/write access to expert pack roots.
+# The project .zara/experts dir and the user XDG experts dir are honored
+# whenever they exist; extra roots add machine-specific canonical libraries.
+enabled = true
+extra_roots = ["~/.dotfiles/.zara/experts"]
+
 [database]
 # Shared SQLite database
 path = "~/.local/share/zarathushtra/zara.db"
@@ -794,6 +801,14 @@ class ZaraConfig:
     def get_tool_approval_config(self) -> Dict[str, Any]:
         """Return validated server-side tool approval policy."""
         return self.get_section("tool_approval")
+
+    def get_experts_config(self) -> Dict[str, Any]:
+        """Return ZARA-EXPERT/1 tool policy and extra canonical expert roots."""
+        experts_config = self.get_section("experts")
+        return {
+            "enabled": bool(experts_config.get("enabled", True)),
+            "extra_roots": list(experts_config.get("extra_roots", ["~/.dotfiles/.zara/experts"])),
+        }
 
     def get_tasks_config(self) -> Dict[str, Any]:
         """Return validated long-horizon task runner settings."""

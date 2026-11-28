@@ -22,6 +22,9 @@ class FakeConfig:
     def get_tool_config(self):
         return {}
 
+    def get_experts_config(self):
+        return {"enabled": False, "extra_roots": []}
+
 
 class FakeProlog:
     def __init__(self):

@@ -60,6 +60,9 @@ class ApprovalConfig:
     def get_tool_config(self):
         return {"file_tools": False}
 
+    def get_experts_config(self):
+        return {"enabled": False, "extra_roots": []}
+
     def get_agent_system_prompt(self):
         return "Test assistant."
 
