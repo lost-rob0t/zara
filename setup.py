@@ -112,6 +112,7 @@ setup(
         "pysilero-vad>=3.0",
         "pyside6>=6.5",
         "pillow>=10.0",
+        "qrcode>=8.0",
         "pyzmq>=25.0",
         "mcp>=2,<3",
         "httpx2>=2.5",

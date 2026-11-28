@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -48,6 +49,10 @@ from PySide6.QtWidgets import (
 from zara.client_enrollment import ClientEnrollmentError, ClientEnrollmentStore
 from zara.config import ZaraConfig
 from zara.desktop.preferences import SettingsDocument, SettingsValidationError
+from zara.desktop.windows.pairing_host import (
+    list_paired_devices as default_device_lister,
+    set_device_nickname as default_device_renamer,
+)
 from zara.desktop.prolog_studio import (
     FACT_TYPES,
     ManagedFact,
@@ -59,6 +64,7 @@ from zara.desktop.prolog_studio import (
 from zara.desktop.theme import THEME_REGISTRY
 from zara.pairing import PairingError, PairingClientProgress, pair_client
 from zara.runtime.commands import PrologQueryReceipt
+from zara.security_state import SecurityStateError
 
 
 _CATEGORIES = (
@@ -263,6 +269,8 @@ class SettingsWindow(QWidget):
         repo_root: Path | None = None,
         prolog_reload: Callable[[], bool] | None = None,
         prolog_query: Callable[[str, int], object] | None = None,
+        device_lister: Callable[[ZaraConfig], tuple[dict[str, object], ...]] = default_device_lister,
+        device_renamer: Callable[[ZaraConfig, str, str], object] = default_device_renamer,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -280,6 +288,8 @@ class SettingsWindow(QWidget):
         self.source_repository = PrologSourceRepository(self.repo_root, self.user_prolog_config)
         self.prolog_reload = prolog_reload
         self.prolog_query = prolog_query
+        self._device_lister = device_lister
+        self._device_renamer = device_renamer
         self._prolog_query_generation = 0
         self._prolog_saved_text = ""
         self.prolog_query_finished.connect(self._finish_prolog_query)
@@ -513,8 +523,78 @@ class SettingsWindow(QWidget):
         form.addRow("Status", self.pairing_status)
         form.addRow("Pairing URI", self.pairing_uri_input)
         form.addRow("", actions)
+
+        self.pair_remote_button = QPushButton("Pair Remote device")
+        self.pair_remote_button.setObjectName("zaraPrimaryAction")
+        self.pair_remote_button.clicked.connect(self.open_remote_pairing)
+        self.device_list = QListWidget()
+        self.device_list.setObjectName("zaraRemoteDeviceList")
+        self.device_list.setMinimumHeight(120)
+        self.rename_device_button = QPushButton("Rename device")
+        self.rename_device_button.setObjectName("zaraSecondaryAction")
+        self.rename_device_button.clicked.connect(self.rename_selected_device)
+        device_actions = QWidget()
+        device_actions_layout = QHBoxLayout(device_actions)
+        device_actions_layout.setContentsMargins(0, 0, 0, 0)
+        device_actions_layout.addStretch(1)
+        device_actions_layout.addWidget(self.rename_device_button)
+        self.device_status = QLabel()
+        self.device_status.setObjectName("zaraSettingsHint")
+        self.device_status.setWordWrap(True)
+
+        form.addRow("", self.pair_remote_button)
+        form.addRow("Devices", self.device_list)
+        form.addRow("", device_actions)
+        form.addRow("", self.device_status)
         self._refresh_pairing_status()
+        self._refresh_paired_devices()
         return page
+
+    def open_remote_pairing(self) -> None:
+        from zara.desktop.windows.pairing_host import PairRemoteDeviceDialog
+
+        dialog = PairRemoteDeviceDialog(self.config, parent=self)
+        dialog.session_finished.connect(lambda _device, _error: self._refresh_paired_devices())
+        dialog.exec()
+
+    def _refresh_paired_devices(self) -> None:
+        self.device_list.clear()
+        try:
+            devices = self._device_lister(self.config)
+        except (OSError, SecurityStateError, TypeError, ValueError) as error:
+            self.device_status.setText(f"Paired devices unavailable: {error}")
+            return
+        self.device_status.setText("")
+        for device in devices:
+            nickname = str(device.get("nickname") or "").strip()
+            label = nickname or "Unnamed device"
+            state_label = "active" if device.get("active") else "revoked"
+            item = QListWidgetItem(
+                f"{label} — {device['device_id']} · {device['principal_kind']} · {state_label}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, str(device["device_id"]))
+            self.device_list.addItem(item)
+
+    def rename_selected_device(self) -> None:
+        item = self.device_list.currentItem()
+        if item is None:
+            self.device_status.setText("Select a device to rename.")
+            return
+        device_id = str(item.data(Qt.ItemDataRole.UserRole))
+        nickname, confirmed = QInputDialog.getText(
+            self,
+            "Rename device",
+            "Nickname",
+            text=item.text().split(" — ", 1)[0] if " — " in item.text() else "",
+        )
+        if not confirmed:
+            return
+        try:
+            self._device_renamer(self.config, device_id, str(nickname))
+        except (OSError, SecurityStateError, TypeError, ValueError) as error:
+            self.device_status.setText(f"Nickname was not saved: {error}")
+            return
+        self._refresh_paired_devices()
 
     def _refresh_pairing_status(self) -> None:
         try:

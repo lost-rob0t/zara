@@ -43,6 +43,10 @@ class PairingExpired(PairingError):
     pass
 
 
+class PairingCancelled(PairingError):
+    pass
+
+
 @dataclass
 class PairingClaim:
     public_key: str
@@ -179,14 +183,17 @@ class PairingBroker:
         )
         return f"zara://pair/v1?{query}"
 
-    def wait_for_claim(self) -> PairingClaim:
-        remaining = self.expires_at - time.time()
-        if remaining <= 0:
-            raise PairingExpired("pairing session expired")
-        try:
-            return self._claims.get(timeout=remaining)
-        except queue.Empty as error:
-            raise PairingExpired("pairing session expired") from error
+    def wait_for_claim(self, *, stop: Optional[threading.Event] = None) -> PairingClaim:
+        while True:
+            remaining = self.expires_at - time.time()
+            if remaining <= 0:
+                raise PairingExpired("pairing session expired")
+            if stop is not None and stop.is_set():
+                raise PairingCancelled("pairing session was cancelled")
+            try:
+                return self._claims.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                continue
 
     def approve(self, claim: PairingClaim) -> None:
         self._decide(claim, "approve", None)
@@ -526,6 +533,69 @@ def _validate_tcp_endpoint(endpoint: str) -> str:
     return value.rstrip("/")
 
 
+@dataclass(frozen=True)
+class PairingHostPlan:
+    """Everything a pairing host needs before opening a broker session."""
+
+    endpoint: str
+    advertise_host: str
+    bind_host: str
+    server_public_key: str
+    security_dir: Path
+    control_socket_path: Path
+
+
+def plan_host_pairing(
+    config=None,
+    *,
+    endpoint: Optional[str] = None,
+    advertise_host: Optional[str] = None,
+    security_dir: Optional[str] = None,
+) -> PairingHostPlan:
+    """Resolve the host-side pairing prerequisites shared by CLI and desktop.
+
+    Raises the underlying ``SecurityAdminError`` when the daemon's owner-local
+    control plane is not live, so callers can surface one actionable message.
+    """
+    from zara.daemon_client import resolve_daemon_endpoint
+    from zara.security_admin import SecurityAdminClient
+    from zara.security_state import PersistentSecurityState
+
+    resolved = _validate_tcp_endpoint(resolve_daemon_endpoint(config, explicit=endpoint))
+    host = str(advertise_host or _endpoint_host(resolved)).strip()
+    if not host:
+        host = _local_route_address()
+    directory = security_directory(config, security_dir)
+    state = PersistentSecurityState(directory)
+    control_socket_path = state.control_socket_path
+    SecurityAdminClient(control_socket_path).request("list")
+    return PairingHostPlan(
+        endpoint=_endpoint_with_host(resolved, host),
+        advertise_host=host,
+        bind_host="0.0.0.0",
+        server_public_key=state.server_public_key(),
+        security_dir=directory,
+        control_socket_path=control_socket_path,
+    )
+
+
+def security_directory(config, explicit: str | None) -> Path:
+    if explicit:
+        return Path(explicit).expanduser()
+    environment = os.getenv("ZARA_SECURITY_DIR", "").strip()
+    if environment:
+        return Path(environment).expanduser()
+    if config is not None:
+        section = config.get_section("daemon") or {}
+        if isinstance(section, dict):
+            configured = str(section.get("security_dir") or "").strip()
+            if configured:
+                return Path(configured).expanduser()
+    state_home = os.getenv("XDG_STATE_HOME", "").strip()
+    base = Path(state_home).expanduser() if state_home else Path.home() / ".local" / "state"
+    return base / "zarathushtra" / "security"
+
+
 def _endpoint_host(endpoint: str) -> str:
     parsed = urlparse(endpoint)
     host = parsed.hostname or ""
@@ -555,23 +625,6 @@ def _local_route_address() -> str:
     if address in _LOOPBACK_HOSTS or address in _WILDCARD_HOSTS:
         raise PairingError("could not determine a reachable local address; use --advertise-host")
     return address
-
-
-def _security_directory(config, explicit: str | None) -> Path:
-    if explicit:
-        return Path(explicit).expanduser()
-    environment = os.getenv("ZARA_SECURITY_DIR", "").strip()
-    if environment:
-        return Path(environment).expanduser()
-    if config is not None:
-        section = config.get_section("daemon") or {}
-        if isinstance(section, dict):
-            configured = str(section.get("security_dir") or "").strip()
-            if configured:
-                return Path(configured).expanduser()
-    state_home = os.getenv("XDG_STATE_HOME", "").strip()
-    base = Path(state_home).expanduser() if state_home else Path.home() / ".local" / "state"
-    return base / "zarathushtra" / "security"
 
 
 def _render_qr(uri: str) -> bool:
@@ -605,37 +658,31 @@ def main(argv: Optional[list[str]] = None, *, config=None) -> int:
     if args.timeout < 15 or args.timeout > 600:
         parser.error("--timeout must be between 15 and 600 seconds")
 
-    from zara.daemon_client import resolve_daemon_endpoint
     from zara.security_admin import SecurityAdminClient, SecurityAdminError
-    from zara.security_state import PersistentSecurityState, SecurityStateError
+    from zara.security_state import SecurityStateError
 
     try:
-        endpoint = _validate_tcp_endpoint(
-            resolve_daemon_endpoint(config, explicit=args.endpoint)
+        plan = plan_host_pairing(
+            config,
+            endpoint=args.endpoint,
+            advertise_host=args.advertise_host,
+            security_dir=args.security_dir,
         )
-        advertise_host = str(args.advertise_host or _endpoint_host(endpoint)).strip()
-        if not advertise_host:
-            advertise_host = _local_route_address()
-        advertised_endpoint = _endpoint_with_host(endpoint, advertise_host)
-
-        state = PersistentSecurityState(_security_directory(config, args.security_dir))
-        server_public_key = state.server_public_key()
-        admin = SecurityAdminClient(state.control_socket_path)
-        admin.request("list")
     except (OSError, PairingError, SecurityAdminError, SecurityStateError, TypeError, ValueError) as error:
         print(f"Pairing unavailable: {error}", file=os.sys.stderr)
         return 2
 
     token = secrets.token_urlsafe(32)
     expires_at = int(time.time()) + args.timeout
+    admin = SecurityAdminClient(plan.control_socket_path)
 
     def enroll(public_key: str, device_id: str) -> object:
         return admin.request("enroll", public_key=public_key, device_id=device_id)
 
     try:
         broker = PairingBroker(
-            endpoint=advertised_endpoint,
-            server_public_key=server_public_key,
+            endpoint=plan.endpoint,
+            server_public_key=plan.server_public_key,
             token=token,
             expires_at=expires_at,
             bind_host=args.bind_host,
@@ -646,7 +693,7 @@ def main(argv: Optional[list[str]] = None, *, config=None) -> int:
         return 2
 
     try:
-        uri = broker.pairing_uri(advertise_host=advertise_host)
+        uri = broker.pairing_uri(advertise_host=plan.advertise_host)
         print("Scan this with Zara Android, or paste the URI into Zara Desktop:")
         print()
         if not _render_qr(uri):
@@ -675,7 +722,7 @@ def main(argv: Optional[list[str]] = None, *, config=None) -> int:
         if not result.approved:
             print(f"Pairing rejected: {result.code}", file=os.sys.stderr)
             return 1
-        print(f"Paired {claim.device_id}. Android can now authenticate to {advertised_endpoint}.")
+        print(f"Paired {claim.device_id}. Android can now authenticate to {plan.endpoint}.")
         return 0
     except (OSError, PairingError, PairingExpired, subprocess.SubprocessError) as error:
         print(f"Pairing failed: {error}", file=os.sys.stderr)
@@ -686,8 +733,10 @@ def main(argv: Optional[list[str]] = None, *, config=None) -> int:
 
 __all__ = [
     "PairingBroker",
+    "PairingCancelled",
     "PairingClientOutcome",
     "PairingClientProgress",
+    "PairingHostPlan",
     "PairingPayload",
     "PairingClaim",
     "PairingError",
@@ -698,5 +747,7 @@ __all__ = [
     "pair_client",
     "pair_client_main",
     "parse_pairing_uri",
+    "plan_host_pairing",
+    "security_directory",
     "verification_code",
 ]

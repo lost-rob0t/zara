@@ -28,6 +28,7 @@ from zara.security_transport import CurveServerConfig
 _STATE_VERSION = 1
 _MAX_STATE_BYTES = 1024 * 1024
 _MAX_CLIENTS = 256
+_MAX_NICKNAME_LENGTH = 48
 _SERVER_FILE = "server-curve.json"
 _CLIENTS_FILE = "clients.json"
 _CONTROL_SOCKET_FILE = "security-admin.sock"
@@ -211,9 +212,45 @@ class PersistentSecurityState:
                 "device_id": record["device_id"],
                 "capabilities": tuple(record["capabilities"]),
                 "active": record["active"],
+                "nickname": record["nickname"],
             }
             for record in records
         )
+
+    def rename_device(self, device_id: str, nickname: str) -> dict[str, object]:
+        """Attach an operator-facing nickname to one actively enrolled device."""
+        normalized = self._validate_nickname(nickname, allow_empty=False)
+        self._prepare_directory()
+        with self._state_transaction():
+            records = self._load_client_records()
+            renamed: dict[str, object] | None = None
+            updated_records: list[dict[str, object]] = []
+            for record in records:
+                if renamed is None and record["device_id"] == device_id and record["active"]:
+                    renamed = dict(record)
+                    renamed["nickname"] = normalized
+                    updated_records.append(renamed)
+                else:
+                    updated_records.append(record)
+            if renamed is None:
+                raise SecurityStateError("device is not actively enrolled")
+            self._save_client_records(updated_records)
+            return dict(renamed)
+
+    @staticmethod
+    def _validate_nickname(value: object, *, allow_empty: bool) -> str:
+        if not isinstance(value, str):
+            raise SecurityStateError("device nickname must be a string")
+        normalized = value.strip()
+        if not normalized:
+            if allow_empty:
+                return ""
+            raise SecurityStateError("device nickname must not be empty")
+        if len(normalized) > _MAX_NICKNAME_LENGTH:
+            raise SecurityStateError("device nickname is too long")
+        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in normalized):
+            raise SecurityStateError("device nickname must not contain control characters")
+        return normalized
 
     @staticmethod
     def _record_from_enrolled(enrolled: EnrolledKey) -> dict[str, object]:
@@ -224,6 +261,7 @@ class PersistentSecurityState:
             "device_id": enrolled.device_id,
             "capabilities": sorted(capability.value for capability in enrolled.capabilities),
             "active": enrolled.active,
+            "nickname": "",
         }
 
     def _registry_from_records(self, records: list[dict[str, object]]) -> SecurityRegistry:
@@ -369,7 +407,8 @@ class PersistentSecurityState:
             "capabilities",
             "active",
         }
-        if set(raw) != required:
+        optional = {"nickname"}
+        if not set(raw) <= required | optional:
             raise SecurityStateError("client registry entry has invalid fields")
         public_key = raw.get("public_key")
         principal_id = raw.get("principal_id")
@@ -407,6 +446,10 @@ class PersistentSecurityState:
             normalized_capabilities.append(capability.value)
         if type(active) is not bool:
             raise SecurityStateError("client active flag must be boolean")
+        nickname = raw.get("nickname", "")
+        canonical_nickname = self._validate_nickname(nickname, allow_empty=True)
+        if canonical_nickname != nickname:
+            raise SecurityStateError("client nickname metadata is not canonical")
         return {
             "public_key": public_key,
             "principal_id": principal_id,
@@ -414,6 +457,7 @@ class PersistentSecurityState:
             "device_id": device_id,
             "capabilities": normalized_capabilities,
             "active": active,
+            "nickname": canonical_nickname,
         }
 
     def _save_client_records(self, records: list[dict[str, object]]) -> None:
