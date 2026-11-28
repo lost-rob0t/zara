@@ -218,6 +218,7 @@ def test_persistent_security_state_json_fuzz_has_closed_exception_surface(
                 "device_id",
                 "capabilities",
                 "active",
+                "nickname",
             }
 
 
@@ -236,8 +237,9 @@ def test_persisted_client_record_mutation_fuzz_fails_closed(tmp_path: Path, seed
             "device_id": f"structured-{seed}-{index}",
             "capabilities": [Capability.SESSION_BASIC.value],
             "active": True,
+            "nickname": "",
         }
-        mutation = rng.randrange(9)
+        mutation = rng.randrange(10)
         if mutation == 0:
             record["public_key"] = _invalid_json_curve_key(_valid_curve_key(rng), rng)
         elif mutation == 1:
@@ -254,8 +256,23 @@ def test_persisted_client_record_mutation_fuzz_fails_closed(tmp_path: Path, seed
             record["active"] = rng.choice([0, 1, "true", None])
         elif mutation == 7:
             record["unknown"] = True
+        elif mutation == 8:
+            record["nickname"] = rng.choice([7, None, [], {}, " padded", "bad\nname", "x" * 49])
         else:
-            record.pop(rng.choice(tuple(record)))
+            # Popping the optional nickname would leave a still-valid legacy
+            # record, so the fail-closed mutation only removes required fields.
+            record.pop(
+                rng.choice(
+                    [
+                        "public_key",
+                        "principal_id",
+                        "principal_kind",
+                        "device_id",
+                        "capabilities",
+                        "active",
+                    ]
+                )
+            )
 
         clients_path.write_text(
             json.dumps({"version": 1, "clients": [record]}, ensure_ascii=False) + "\n",

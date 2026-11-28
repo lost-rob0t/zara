@@ -107,6 +107,7 @@ def test_security_list_exposes_no_server_secret_or_zap_internal_user_id(tmp_path
         "active",
         "capabilities",
         "device_id",
+        "nickname",
         "principal_id",
         "principal_kind",
         "public_key",

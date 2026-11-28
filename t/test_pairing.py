@@ -11,11 +11,26 @@ import pytest
 from zara.client_enrollment import ClientEnrollmentStore
 from zara.pairing import (
     PairingBroker,
+    PairingCancelled,
     PairingExpired,
     derive_device_id,
     pair_client,
+    plan_host_pairing,
     verification_code,
 )
+from zara.security import Capability
+from zara.security_admin import SecurityAdminClient, SecurityAdminError, SecurityAdminServer
+from zara.security_state import PersistentSecurityState
+
+
+def _live_admin(tmp_path, name="security"):
+    state = PersistentSecurityState(tmp_path / name)
+    state.initialize()
+    registry = state.load_registry()
+    admin = SecurityAdminServer(state, capabilities={Capability.SESSION_BASIC})
+    admin.bind_registry(registry)
+    admin.start()
+    return state, admin
 
 
 SERVER_KEY = "a" * 40
@@ -232,3 +247,65 @@ def test_desktop_pair_client_installs_private_identity_and_server_profile(tmp_pa
     assert profile.server_public_key == SERVER_KEY
     assert profile.curve_config().server_public_key == SERVER_KEY
     assert (tmp_path / "client-curve.json").stat().st_mode & 0o077 == 0
+
+
+def test_wait_for_claim_honours_stop_event_promptly() -> None:
+    broker = PairingBroker(
+        endpoint="tcp://127.0.0.1:7731",
+        server_public_key=SERVER_KEY,
+        token="stop-token",
+        expires_at=int(time.time()) + 30,
+        bind_host="127.0.0.1",
+    )
+    stop = threading.Event()
+    stop.set()
+    try:
+        started = time.monotonic()
+        with pytest.raises(PairingCancelled):
+            broker.wait_for_claim(stop=stop)
+        assert time.monotonic() - started < 5.0
+    finally:
+        broker.close()
+
+
+def test_plan_host_pairing_resolves_advertised_endpoint_and_control_socket(tmp_path) -> None:
+    state, admin = _live_admin(tmp_path)
+    try:
+        plan = plan_host_pairing(
+            endpoint="tcp://127.0.0.1:7731",
+            advertise_host="10.0.0.5",
+            security_dir=str(tmp_path / "security"),
+        )
+        assert plan.endpoint == "tcp://10.0.0.5:7731"
+        assert plan.advertise_host == "10.0.0.5"
+        assert plan.bind_host == "0.0.0.0"
+        assert plan.server_public_key == state.server_public_key()
+        assert plan.security_dir == tmp_path / "security"
+        assert plan.control_socket_path == state.control_socket_path
+        assert SecurityAdminClient(plan.control_socket_path).request("list") == []
+    finally:
+        admin.close(timeout=1.0)
+
+
+def test_plan_host_pairing_reuses_endpoint_host_when_advertise_host_is_unset(tmp_path) -> None:
+    _state, admin = _live_admin(tmp_path, name="host-security")
+    try:
+        plan = plan_host_pairing(
+            endpoint="tcp://10.0.0.9:7731",
+            security_dir=str(tmp_path / "host-security"),
+        )
+        assert plan.advertise_host == "10.0.0.9"
+        assert plan.endpoint == "tcp://10.0.0.9:7731"
+    finally:
+        admin.close(timeout=1.0)
+
+
+def test_plan_host_pairing_fails_fast_without_live_security_admin(tmp_path) -> None:
+    state = PersistentSecurityState(tmp_path / "quiet")
+    state.initialize()
+    with pytest.raises(SecurityAdminError):
+        plan_host_pairing(
+            endpoint="tcp://127.0.0.1:7731",
+            advertise_host="10.0.0.5",
+            security_dir=str(tmp_path / "quiet"),
+        )
