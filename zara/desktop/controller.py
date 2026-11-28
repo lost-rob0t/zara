@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 from zara.client import ZaraClient
 from zara.config import get_config
 from zara.desktop.conversation import ConversationService, ConversationStore
+from zara.desktop.file_access import FileAccessControl
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import (
     DesktopRuntimeState,
@@ -41,6 +42,7 @@ class DesktopController(QObject):
         window_factory: Optional[Callable[[], object]] = None,
         settings_factory: Optional[Callable[[], object]] = None,
         conversation_service: Optional[ConversationService] = None,
+        file_access: Optional[FileAccessControl] = None,
     ) -> None:
         super().__init__(app)
         self.app = app
@@ -66,6 +68,7 @@ class DesktopController(QObject):
             self.window = CopilotWindow(
                 self.bridge,
                 self.conversation_service,
+                file_access=file_access,
             )
             # Transitional API compatibility only: this is the exact same
             # QWidget, not a second renderer or presentation path.

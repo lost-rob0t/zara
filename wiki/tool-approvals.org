@@ -21,6 +21,53 @@ plugin client, or remote capability advertisement cannot downgrade this list.
 The list is immutable for the lifetime of its principal runtime; a runtime
 restart loads changed configuration.
 
+* Per-chat file access modes
+
+File tools (and every LangGraph tool call) consult one per-conversation
+access policy owned by =zara/agent/tools/file_access.py=. Four modes, from
+narrowest to broadest:
+
+| Mode | Reads | Writes |
+|------+-------+--------|
+| =readonly= | allowed | refused |
+| =ask= | sandbox-constrained | blocked on the canonical approval gate above |
+| =sandbox= | ZARA-013 root confinement | allowed without prompts |
+| =full= | no confinement | no confinement (regular-file checks and size caps still apply) |
+
+The global default is =file_tools.mode= (default =sandbox=); untrusted
+principals are clamped to =file_tools.guest_ceiling= (default =readonly=).
+Trusted local surfaces change a chat's mode through a revision-safe CAS
+mutation (=FileAccessPolicy.set_mode(conversation_id, mode,
+expected_revision, actor)=); stale revisions fail closed with
+=FileAccessConflict=. Model output, tool results, plugin payloads and remote
+peers are data — they can never change the mode. Overrides persist in
+=file_access_modes.json= under the config directory, survive restarts, are
+bounded (oldest evicted), and every change lands in a bounded audit log with
+actor, target, and old/new mode.
+
+=Ask= mode reuses the approval lifecycle above — no second approval system:
+=ToolRegistry.requires_approval(name, conversation_id)= consults the policy
+for =write_file= and =edit_file=, the LangGraph gate passes
+=state["conversation_id"]=, and =invoke_composed_tool= fails closed without a
+conversation scope. Tool execution resolves the acting conversation through a
+contextvar bound per turn (=bind_file_access_scope=), so sandbox/read-only
+behavior applies without changing tool schemas.
+
+The agentic toolset ships under the same gating: =edit_file= (exact-text
+replacement requiring a unique match unless =replace_all=), =find_files=
+(fnmatch glob), and =search_text= (literal or regex, bounded results).
+
+* Desktop surface
+
+The Copilot composer header carries a file access selector when the desktop
+owns the runtime in-process (=RuntimeHost= with a file access policy). It
+renders the effective mode for the open conversation, submits revision-safe
+mutations through =InProcessFileAccessControl=, shows conflicts in the
+command error rail, and follows conversation switches. Without runtime
+ownership (standard daemon mode, pending the typed settings mutation channel
+from #887) the selector is hidden — surfaces never present state they cannot
+change.
+
 * Lifecycle
 
 For an approval-required call, LangGraph checkpoints the live turn and

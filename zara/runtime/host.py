@@ -377,6 +377,12 @@ class RuntimeHost:
             raise
         self._backend = candidate
 
+    @property
+    def backend(self) -> Optional[RuntimeBackend]:
+        """The active runtime backend, when started."""
+
+        return self._backend
+
     async def _start_api_service(self) -> None:
         try:
             config = self._config

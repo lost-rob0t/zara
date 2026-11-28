@@ -380,7 +380,7 @@ def test_create_application_repairs_palette_before_controller_construction(monke
             self.parent = parent
 
     class FakeController:
-        def __init__(self, qt_application, host, bridge) -> None:
+        def __init__(self, qt_application, host, bridge, **kwargs) -> None:
             palette = qt_application.palette()
             seen["window"] = contrast_ratio(
                 palette.color(QPalette.ColorRole.WindowText),

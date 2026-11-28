@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from zara.desktop.conversation import ConversationService
+from zara.desktop.file_access import FileAccessControl
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.windows.quick import QuickCopilotWindow
 
@@ -49,6 +50,7 @@ class CopilotWindow(QuickCopilotWindow):
         *,
         initial_conversation_id: Optional[str] = None,
         settings: Optional[QSettings] = None,
+        file_access: Optional[FileAccessControl] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(
@@ -56,6 +58,7 @@ class CopilotWindow(QuickCopilotWindow):
             conversations,
             initial_conversation_id=initial_conversation_id,
             settings=settings,
+            file_access=file_access,
             parent=parent,
         )
         self._presentation = CopilotPresentation.COMPACT

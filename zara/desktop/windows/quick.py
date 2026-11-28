@@ -8,6 +8,7 @@ from PySide6.QtCore import QRect, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QCursor, QHideEvent, QKeyEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from zara.desktop.chat_widgets import ChatComposer, ComposerActionButton, MessageWidget
 from zara.desktop.conversation import ConversationService, ConversationUpdate
+from zara.desktop.file_access import FILE_ACCESS_MODE_ITEMS, FileAccessControl
 from zara.desktop.qt_bridge import QtRuntimeBridge
 from zara.desktop.state import DesktopStatus, INITIAL_STATUS
 from zara.desktop.theme import refresh_dynamic_style
@@ -105,12 +107,15 @@ class QuickCopilotWindow(QWidget):
         *,
         initial_conversation_id: Optional[str] = None,
         settings: Optional[QSettings] = None,
+        file_access: Optional[FileAccessControl] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self.bridge = bridge
         self.conversations = conversations
         self._settings = settings or QSettings()
+        self._file_access = file_access
+        self._file_access_sync = False
         self._status = INITIAL_STATUS
         self._allow_close = False
         self._conversation_id = self._resolve_initial_conversation(initial_conversation_id)
@@ -156,6 +161,17 @@ class QuickCopilotWindow(QWidget):
         header.addWidget(self.title_label)
         header.addStretch(1)
         header.addWidget(self.provider_label)
+        self.file_access_combo = QComboBox()
+        self.file_access_combo.setObjectName("zaraFileAccessMode")
+        self.file_access_combo.setAccessibleName("File access mode for this chat")
+        self.file_access_combo.setToolTip(
+            "File permission for this chat: Ask prompts before writes, "
+            "Sandbox confines paths, Read-only refuses writes, Full access lifts confinement."
+        )
+        for mode_value, mode_label in FILE_ACCESS_MODE_ITEMS:
+            self.file_access_combo.addItem(mode_label, mode_value)
+        self.file_access_combo.setVisible(self._file_access is not None)
+        header.addWidget(self.file_access_combo)
         header.addWidget(self.new_chat_button)
         header.addWidget(self.expand_button)
         header.addWidget(self.settings_button)
@@ -248,9 +264,13 @@ class QuickCopilotWindow(QWidget):
         self.new_chat_button.clicked.connect(self.new_chat)
         self.expand_button.clicked.connect(self._request_expand)
         self.settings_button.clicked.connect(self.settings_requested.emit)
+        self.file_access_combo.currentIndexChanged.connect(
+            self._on_file_access_mode_changed
+        )
 
         self.set_status(INITIAL_STATUS)
         self.sync_from_shared_state()
+        self._sync_file_access_mode()
         self._apply_header_density()
 
     @property
@@ -271,6 +291,32 @@ class QuickCopilotWindow(QWidget):
         self.command_error_label.hide()
         self._rendered_message_ids = None
         self.sync_from_shared_state()
+        self._sync_file_access_mode()
+
+    def _on_file_access_mode_changed(self, index: int) -> None:
+        if self._file_access is None or self._file_access_sync:
+            return
+        mode = self.file_access_combo.itemData(index)
+        error = self._file_access.set_mode(self.current_conversation_id, mode)
+        if error:
+            self.command_error_label.setText(error)
+            self.command_error_label.show()
+            self._sync_file_access_mode()
+            return
+        self._sync_file_access_mode()
+
+    def _sync_file_access_mode(self) -> None:
+        if self._file_access is None:
+            return
+        mode = self._file_access.mode_for(self.current_conversation_id)
+        index = self.file_access_combo.findData(mode)
+        if index < 0:
+            return
+        self._file_access_sync = True
+        try:
+            self.file_access_combo.setCurrentIndex(index)
+        finally:
+            self._file_access_sync = False
 
     def new_chat(self) -> None:
         state = self.conversations.create_conversation()

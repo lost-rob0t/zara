@@ -47,6 +47,11 @@ class RuntimeBackend:
             "principal identity is not available in this runtime backend"
         )
 
+    @property
+    def file_access_policy(self):
+        """Per-chat file access policy when this backend owns one; else None."""
+        return None
+
     def bind_event_publisher(self, publisher) -> None:
         pass
 
@@ -180,6 +185,16 @@ class LangGraphRuntimeBackend(RuntimeBackend):
         if not isinstance(principal_id, str) or not principal_id.strip():
             raise RuntimeError("runtime backend manager has no principal identity")
         return principal_id
+
+    @property
+    def file_access_policy(self):
+        manager = self._manager
+        if manager is None:
+            return None
+        registry = getattr(manager, "tool_registry", None)
+        if registry is None:
+            return None
+        return registry.file_access_policy
 
     def bind_event_publisher(self, publisher) -> None:
         self._publisher = publisher
